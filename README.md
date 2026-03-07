@@ -1,0 +1,372 @@
+# Personalized Exam Generator + Local Auto-Grading
+
+Project README / Scope Spec
+
+## What this is
+
+This project is a local-first system for generating per-student variants of chemistry exams
+(Chem 101 / Orgo 101 style) from reusable question templates, then grading them
+automatically from scanned paper submissions using a robust, intentionally boring
+computer-vision pipeline.
+
+The point is exam integrity (each student gets their own numerical variant and answer-key
+mapping) and operational sanity (grading becomes fast, auditable, and resilient to the
+ordinary weirdness of paper/scanner workflows without assuming chaotic inputs).
+
+This README is intentionally written as a scope/spec document for a project that has been
+scoped well enough to start building, but not yet implemented. It emphasizes problem
+space, invariants, workflow, and favorable constraints rather than premature
+implementation detail.
+
+## Non-goals
+
+These are here to keep the project from exploding.
+
+- No full question-type library with a GUI editor. Authoring is power-user YAML/JSON plus
+  helper scripts.
+- No LMS integration (Canvas, Blackboard, etc.) in v1. CSV in and out is sufficient.
+- No cloud dependency required for the core workflow. The system should run on a
+  professor's laptop.
+- No attempt to solve all chemistry. v1 focuses on numeric parameterization and
+  multiple-choice grading, with a path to expand later.
+- No cross-platform support requirement in early versions. Initial development and
+  deployment target recent Apple Silicon Macs only.
+
+## Core ideas and decisions already locked in
+
+- Database-backed spine: the system is stateful and auditable; it uses a database to
+  preserve identity, reproducibility, and workflow state.
+- Template-driven exam generation: exams are built from a schema describing templates and
+  variable parameterization.
+- Per-student exam instances: each student receives a unique variant with unique
+  answer-key mapping.
+- Page-level identity markers on paper: printed artifacts include duplicated QR codes and
+  human-readable fallback codes for reliable scan association and manual recovery.
+- Local scan ingestion and grading: the grading pipeline operates on scanned photographic
+  copies (batch scans) using local CV tooling.
+- Local LLM-assisted template inference (optional helper): a local model can assist in
+  inferring templated configs from historical exam variants, but outputs must be
+  reviewable and verifiable. The model is not a source of truth.
+- Tamper-evident, auditable workflow: the system is designed so anomalies are surfaced,
+  quarantined, and traceable rather than silently guessed away.
+
+## Why a database is not optional here
+
+This system interacts with the physical world. Paper moves, pages get shuffled, scans
+duplicate, files get re-uploaded, and mistakes happen. The database exists to:
+
+- map paper artifacts back to canonical exam instances
+- preserve what happened for audit and dispute resolution
+- enforce invariants like no two finalized grades for the same student plus exam attempt
+- support idempotent ingestion so re-scans do not corrupt state
+- enable reconciliation between the expected set of exam artifacts and the observed set of
+  scanned artifacts
+
+The database should not be treated as a dumping ground for blobs. It is the spine of truth
+and process.
+
+## System overview
+
+### 1. Authoring (Templates)
+
+Professors create question templates and exam definitions using YAML/JSON. The authoring
+format is designed for researchers: structured, explicit, validated, and not dependent on
+terminal expertise.
+
+Key properties:
+
+- templates represent "same question, different numbers"
+- variables are typed (`int` or `float`), constrained (ranges, step), and formatted
+  (significant figures and rounding rules)
+- questions define correct answers and distractor generation strategies, or allow explicit
+  distractor lists
+- template versions are immutable once used to generate student exams
+
+### 2. Generation (Per-student exams)
+
+Given:
+
+- a roster
+- an exam definition (template set plus configuration)
+
+The system generates:
+
+- per-student exam instances
+- per-student answer keys (mapping correct choice to bubble position)
+- printable PDFs (exam pages and answer sheets, depending on layout)
+
+A central requirement is reproducibility. It must always be possible to reconstruct what a
+given student received, even later.
+
+### 3. Paper artifacts (Identification + Layout)
+
+Printed artifacts include:
+
+- duplicated QR codes encoding an opaque exam-instance identifier plus page number
+- human-readable fallback identifiers for manual recovery
+- alignment markers and registration aids for scan normalization
+
+The goal is not fancy. The goal is "works under copier reality."
+
+### 4. Ingestion (Scans -> Identified pages)
+
+The ingestion pipeline:
+
+- accepts scanned page images produced by the institutional batch scanning system
+- decodes identity markers where possible
+- registers and normalizes the page to a canonical coordinate space
+- associates each scan with the correct exam instance and page number
+- stores ingestion outcomes (`matched`, `unmatched`, `ambiguous`, `duplicate`) without
+  silent corruption
+
+Importantly:
+
+- ingestion must be idempotent
+- failed identification attempts must still be recorded as tracked artifacts with explicit
+  failure reasons
+- ingestion must never silently drop pages
+- ingestion must never silently guess identity
+
+### 5. Grading (Bubbles -> Responses -> Score)
+
+Once pages are identified and registered:
+
+- bubble regions are interpreted
+- responses are recorded with confidence and ambiguity flags
+- answer keys are applied per-student variant
+- scores are computed
+- ambiguous cases are flagged for review rather than guessed
+
+### 6. Review + Export
+
+The system needs a minimal workflow for:
+
+- resolving unmatched scans by manual entry of fallback identifiers
+- reviewing ambiguous marks
+- finalizing grades
+- exporting results as CSV
+
+A rough, cheap GUI is acceptable. A local web UI served from the app is acceptable. The UI
+is a tool, not the product.
+
+## Data model
+
+This is high-level and intentionally does not commit to table names yet.
+
+Entities and relationships are expected to include:
+
+- student identity (possibly hashed or otherwise privacy-preserving representations of
+  institutional IDs)
+- roster membership (which students are included for an exam)
+- template definitions (versioned)
+- exam definitions (composition of templates plus configuration, versioned)
+- exam instances (per student per exam attempt; includes identifiers and generation
+  metadata)
+- scan artifacts (file paths, checksums, decoded IDs, status)
+- extracted responses (per question)
+- grade records (computed plus finalized state)
+- audit trail and events (likely useful, even if lightweight)
+
+This spec intentionally avoids prematurely committing to exact naming, indexing strategy,
+or normalization patterns, but it assumes relational constraints will be used to prevent
+impossible states.
+
+## Critical invariants
+
+These are conceptual. Implementation should encode them via DB constraints, application
+logic, and tests.
+
+- A student must not end up with two finalized grades for the same exam attempt.
+- An exam instance must be uniquely identifiable and traceable from paper artifacts.
+- Template and exam versions used for a generated instance must be immutable and
+  reconstructable.
+- Ingestion must never silently guess identity; unmatched or ambiguous scans must be
+  quarantined.
+- Duplicate ingestion must not duplicate or corrupt results.
+- Automated grading must never confidently produce an answer where confidence is low;
+  ambiguity must be surfaced.
+- Failed scans must remain auditable artifacts with clear status and traceable provenance.
+- The system must prefer explicit state transitions over implicit best-effort mutation.
+
+## Template format goals
+
+The authoring schema should support:
+
+- variable declarations (type, constraints, formatting expectations)
+- prompt text with placeholders
+- correct answer computation or specification
+- distractor strategies or explicit distractors
+- option shuffling and stable per-student mapping
+- validation tooling (static validation plus randomized sampling sanity checks)
+- versioning (explicit or content-hash based)
+
+The schema should remain compact and strict. A small, validated vocabulary is preferable
+to permissive anything-goes configuration.
+
+## Helper tools
+
+These tools reduce professor burden and prevent the blank YAML from scratch tax.
+
+- Template validator: checks schema validity, missing fields, unsafe configs, and likely
+  collisions such as duplicate choices after rounding.
+- Preview generator: shows a single generated instance, or several, for sanity checking.
+- Roster import/export tools: CSV parsing, consistent identifiers, minimal friction.
+- Skeletonizer (non-ML): takes an existing exam document and drafts a template by
+  identifying numeric literals and replacing them with placeholders.
+- Optional LLM-assisted inferencer (local): drafts template configs from multiple
+  historical versions of a question, producing a reviewable YAML with plausible variable
+  ranges and formatting.
+
+## Local LLM-assisted inference
+
+This is explicitly an authoring helper, not a grading dependency.
+
+### Motivation
+
+If the professor already has multiple versions of the same question across past exams
+where only numbers changed, much of the variable structure is inferable. The professor
+would rather review plausible defaults than fill everything from scratch.
+
+### Approach (conceptual)
+
+For each question:
+
+- Input: multiple historical variants of the same question, ideally 2-3 or more,
+  including prompts and answer keys or answers.
+- The model proposes:
+  - which literals should become variables versus constants
+  - variable types (`int` or `float`), formatting expectations (significant figures), and
+    plausible ranges
+  - an initial correct-answer computation rule, where inferable
+  - plausible distractor patterns, where inferable
+- Output: a draft YAML/JSON template and a structured reasoning/debug artifact describing
+  what it inferred.
+
+### Guardrails
+
+- The output is not trusted by default.
+- Drafts must be reviewable and pass deterministic checks before being accepted.
+- Checks may include:
+  - reconstruction against historical variants, where possible
+  - sanity validation of formatting rules and uniqueness of correct answers
+  - sampling-based validation to catch collisions or obviously bad ranges
+- Ranges are allowed to be broad and coherently plausible rather than perfect.
+- The goal is to reduce professor effort by providing reasonable defaults and letting them
+  tighten as needed.
+
+### Why do it at all?
+
+- Portfolio relevance is a nice side benefit.
+- The real value is reducing professor friction and avoiding the fill 60 configs by hand
+  failure mode.
+
+## Project workflow
+
+### Professor flow (happy path)
+
+1. Create or open a project folder.
+2. Import roster CSV.
+3. Create or edit templates, or run skeletonizer / LLM inferencer and review drafts.
+4. Validate templates.
+5. Preview a few generated variants.
+6. Generate exam PDFs.
+7. Print and administer exams.
+8. Drop scan files into an ingestion folder, or import them.
+9. Run grading and review flagged items.
+10. Finalize and export grades CSV.
+
+### Failure modes that must be supported
+
+These are expected tail cases, not assumed common-case behavior.
+
+- Scans contain duplicates or rescans.
+- Some pages have unreadable QR codes.
+- Some pages are missing.
+- Some bubble marks are ambiguous.
+- A scan batch contains unexpected pages.
+- A professor reruns ingestion or grading by accident.
+- The roster changes between runs and the system must respond with explicit, logged
+  behavior.
+
+## Known favorable constraints
+
+This project benefits from several unusually favorable constraints:
+
+- Development and deployment both target recent Apple Silicon Macs on closely matched
+  macOS versions.
+- The professor's laptop is accessible for debugging, deployment, and packaging work.
+- Historical scan images from the existing institutional scanning workflow are available
+  for evaluating image quality and consistency, even though they do not contain the new
+  identity markers.
+- The observed scan quality appears closer to high-quality photographic copies than
+  aggressively compressed black-and-white document scans.
+- Registration consistency in the existing scan corpus appears high.
+- The paper format is under project control, which substantially reduces CV complexity
+  compared to hostile or unconstrained document inputs.
+
+These constraints should be treated as real scope reducers, not incidental details.
+
+## Local-first operational constraints
+
+Assumptions:
+
+- Development and deployment target recent Apple Silicon Macs on closely matched macOS
+  versions.
+- The professor uses their own laptop, without university device-management complications.
+- The core should function offline and avoid cloud dependencies.
+- Initial packaging may be lightweight.
+- Cross-platform support is explicitly out of scope for early versions.
+
+Packaging is important but not a v0 requirement. v0 can be developer-run. v1 should
+minimize terminal rituals for the professor.
+
+## What done looks like (MVP definition)
+
+An MVP is successful when:
+
+- a professor can define a small set of templates in YAML/JSON
+- the system generates per-student exam instances with correct, varied answer keys
+- page-level identity markers on paper allow reliable scan association
+- scan ingestion is robust to typical scanner/copy workflow behavior
+- grading is mostly automatic with a small manual review queue
+- results export cleanly and reproducibly
+- the system maintains an audit trail and does not silently corrupt state
+
+## Where an agent should start (implementation order)
+
+This is the intended build order for an agent-driven solo workflow:
+
+1. Define the minimal template schema and validator.
+2. Implement the database spine, core entities, invariants, and migrations.
+3. Implement the generation pipeline (roster -> instances -> PDFs) with page-level
+   identity markers.
+4. Implement the ingestion pipeline (scan files -> matched pages -> stored artifacts).
+5. Implement the grading pipeline (registered page -> response extraction -> scoring).
+6. Implement the minimal review workflow and export.
+7. Add the skeletonizer helper.
+8. Add the optional local LLM inferencer helper, guardrailed by validators.
+
+At every step, prioritize end-to-end vertical slices and reproducibility over feature
+breadth.
+
+## Open questions
+
+These are areas to discuss before committing to implementation decisions:
+
+- What is the minimal template spec that covers 80% of the professor's question set?
+- How are correct answers expressed: expressions, lookup, or function hooks?
+- How strict should formatting and rounding rules be to avoid collisions?
+- How much versioning and audit logging is required for the professor's comfort?
+- What is the acceptable level of manual review per exam?
+- What QR size, redundancy, and error-correction settings are appropriate once tested
+  against the actual scan pipeline?
+- What registration tolerances and preprocessing steps are actually needed, given the
+  observed scan consistency?
+- What data privacy constraints matter, such as storing raw student IDs versus hashed
+  keys?
+
+## Guiding principles
+
+Make the common case boring and automatic. Make the weird case survivable and auditable.
+
+Prefer explicit state, explicit logs, and recoverable failure modes over cleverness.
