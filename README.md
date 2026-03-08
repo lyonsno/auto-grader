@@ -127,6 +127,13 @@ Importantly:
 - ingestion must never silently drop pages
 - ingestion must never silently guess identity
 
+For the initial schema contract, the supported scan status vocabulary is `matched`,
+`unmatched`, and `ambiguous`. `matched` is treated as a success state and should not carry
+a failure reason. `unmatched` and `ambiguous` are treated as supported tracked failure
+states and must record an explicit, non-blank failure reason. Exact re-ingestion of the
+same file should be idempotent via a unique checksum key. Richer `duplicate` artifact
+linkage is deferred until there is canonical-artifact linkage to point at.
+
 ### 5. Grading (Bubbles -> Responses -> Score)
 
 Once pages are identified and registered:
@@ -153,6 +160,22 @@ is a tool, not the product.
 
 This is high-level and intentionally does not commit to table names yet.
 
+For the initial SQLite schema slice and its contract tests, we do intentionally adopt a
+concrete working vocabulary so the first migrations and tests are not underspecified. The
+default v0 names are:
+
+- `students`
+- `template_versions`
+- `exam_definitions`
+- `exam_instances`
+- `exam_pages`
+- `scan_artifacts`
+- `grade_records`
+- `audit_events`
+
+Those names are not meant as an irreversible architectural claim, but they are the
+default names the first schema/tests will target unless we later migrate both together.
+
 Entities and relationships are expected to include:
 
 - student identity (possibly hashed or otherwise privacy-preserving representations of
@@ -166,6 +189,12 @@ Entities and relationships are expected to include:
 - extracted responses (per question)
 - grade records (computed plus finalized state)
 - audit trail and events (likely useful, even if lightweight)
+
+For the initial SQLite schema contract, exam instances also carry a required,
+paper-facing `opaque_instance_code` that is globally unique for the generated artifacts.
+The initial `audit_events` table is intentionally lightweight but should still capture a
+subject (`entity_type`, `entity_id`), an `event_type`, and a payload with a recorded
+timestamp.
 
 This spec intentionally avoids prematurely committing to exact naming, indexing strategy,
 or normalization patterns, but it assumes relational constraints will be used to prevent
