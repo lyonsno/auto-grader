@@ -160,9 +160,9 @@ is a tool, not the product.
 
 This is high-level and intentionally does not commit to table names yet.
 
-For the initial SQLite schema slice and its contract tests, we do intentionally adopt a
-concrete working vocabulary so the first migrations and tests are not underspecified. The
-default v0 names are:
+For the initial schema slice and its contract tests, we intentionally adopt a concrete
+working vocabulary so the first migrations and tests are not underspecified. The default
+v0 names are:
 
 - `students`
 - `template_versions`
@@ -174,7 +174,7 @@ default v0 names are:
 - `audit_events`
 
 Those names are not meant as an irreversible architectural claim, but they are the
-default names the first schema/tests will target unless we later migrate both together.
+default names the first schema/tests will target.
 
 Entities and relationships are expected to include:
 
@@ -190,7 +190,7 @@ Entities and relationships are expected to include:
 - grade records (computed plus finalized state)
 - audit trail and events (likely useful, even if lightweight)
 
-For the initial SQLite schema contract, exam instances also carry a required,
+For the initial schema contract, exam instances also carry a required,
 paper-facing `opaque_instance_code` that is globally unique for the generated artifacts.
 The initial `audit_events` table is intentionally lightweight but should still capture a
 subject (`entity_type`, `entity_id`), an `event_type`, and a payload with a recorded
@@ -345,6 +345,15 @@ Assumptions:
 - The core should function offline and avoid cloud dependencies.
 - Initial packaging may be lightweight.
 - Cross-platform support is explicitly out of scope for early versions.
+
+Database development strategy:
+
+- Build Postgres-first from the start (no "SQLite now, migrate later" phase).
+- Use native local Postgres on the main laptop (no Docker requirement).
+- Keep memory usage conservative so inference workloads stay prioritized.
+- Keep all DB configuration URL-driven so we can move the DB host later if needed.
+- Optional fallback: if local Postgres materially interferes with model workloads, move
+  Postgres to a second laptop and keep application code unchanged except `DATABASE_URL`.
 
 Packaging is important but not a v0 requirement. v0 can be developer-run. v1 should
 minimize terminal rituals for the professor.
