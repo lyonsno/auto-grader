@@ -217,6 +217,19 @@ logic, and tests.
 - Failed scans must remain auditable artifacts with clear status and traceable provenance.
 - The system must prefer explicit state transitions over implicit best-effort mutation.
 
+## Schema contract authority and test policy
+
+To keep behavior stable and auditable, we treat docs and tests as a paired contract:
+
+- This README defines intent-level invariants, vocabulary, and workflow expectations.
+- `tests/test_db_contract.py` defines enforceable schema behavior and is the source of
+  truth for constraint-level semantics (nullability, uniqueness, nonblank checks,
+  foreign-key behavior, and status/value rules).
+- Contract changes must update both this README and contract tests in the same change.
+- New schema behavior should follow fail-first discipline:
+  add a non-vacuous failing contract test first, then implement.
+- Contract tests should assert concrete invariants, not only "it runs" signals.
+
 ## Template format goals
 
 The authoring schema should support:
