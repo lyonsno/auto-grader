@@ -942,6 +942,90 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                         failure_reason=failure_reason,
                     )
 
+    def test_scan_artifacts_reject_invalid_status_reason_transitions(self) -> None:
+        self._require_tables("scan_artifacts")
+
+        matched_id = self._insert_scan_artifact(
+            sha256=self._sha256(30),
+            original_filename="scan-transition-matched.png",
+            status="matched",
+            failure_reason=None,
+        )
+        unmatched_id = self._insert_scan_artifact(
+            sha256=self._sha256(31),
+            original_filename="scan-transition-unmatched.png",
+            status="unmatched",
+            failure_reason="qr_decode_failed",
+        )
+        ambiguous_id = self._insert_scan_artifact(
+            sha256=self._sha256(32),
+            original_filename="scan-transition-ambiguous.png",
+            status="ambiguous",
+            failure_reason="multiple_qr_candidates",
+        )
+
+        with self.assertRaises(errors.CheckViolation):
+            self.connection.execute(
+                """
+                UPDATE scan_artifacts
+                SET failure_reason = %s
+                WHERE id = %s
+                """,
+                ("should_not_exist_for_success", matched_id),
+            )
+
+        with self.assertRaises(errors.CheckViolation):
+            self.connection.execute(
+                """
+                UPDATE scan_artifacts
+                SET status = %s
+                WHERE id = %s
+                """,
+                ("matched", unmatched_id),
+            )
+
+        with self.assertRaises(errors.CheckViolation):
+            self.connection.execute(
+                """
+                UPDATE scan_artifacts
+                SET failure_reason = %s
+                WHERE id = %s
+                """,
+                ("   ", ambiguous_id),
+            )
+
+        rows = self.connection.execute(
+            """
+            SELECT id, status, failure_reason
+            FROM scan_artifacts
+            WHERE id IN (%s, %s, %s)
+            ORDER BY id
+            """,
+            (matched_id, unmatched_id, ambiguous_id),
+        ).fetchall()
+        self.assertEqual(
+            [dict(row) for row in rows],
+            [
+                {
+                    "id": matched_id,
+                    "status": "matched",
+                    "failure_reason": None,
+                },
+                {
+                    "id": unmatched_id,
+                    "status": "unmatched",
+                    "failure_reason": "qr_decode_failed",
+                },
+                {
+                    "id": ambiguous_id,
+                    "status": "ambiguous",
+                    "failure_reason": "multiple_qr_candidates",
+                },
+            ],
+            "Invalid scan-artifact status transitions must be rejected and leave "
+            "tracked artifact state unchanged.",
+        )
+
     def test_grade_records_require_existing_exam_instance_and_only_one_finalized_grade(
         self,
     ) -> None:

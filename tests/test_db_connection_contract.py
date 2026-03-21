@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 from urllib.parse import parse_qsl, urlparse
 
+from auto_grader import db as db_module
 from auto_grader.db import create_connection
 
 _DATABASE_URL_REQUIRED_RE = (
@@ -196,6 +197,65 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
             close = getattr(connection, "close", None)
             if callable(close):
                 close()
+
+    def test_default_connector_configures_psycopg_for_autocommit_and_mapping_rows(
+        self,
+    ) -> None:
+        sentinel_connection = object()
+        connect_mock = mock.Mock(return_value=sentinel_connection)
+        fake_dict_row = object()
+        fake_psycopg = SimpleNamespace(connect=connect_mock)
+        fake_rows_module = SimpleNamespace(dict_row=fake_dict_row)
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "psycopg": fake_psycopg,
+                "psycopg.rows": fake_rows_module,
+            },
+        ):
+            connection = db_module._default_connect(
+                "postgresql://localhost/auto_grader_dev"
+            )
+
+        self.assertIs(connection, sentinel_connection)
+        connect_mock.assert_called_once_with(
+            "postgresql://localhost/auto_grader_dev",
+            autocommit=True,
+            row_factory=fake_dict_row,
+        )
+
+    def test_create_connection_without_connect_fn_uses_default_connector_for_explicit_url(
+        self,
+    ) -> None:
+        sentinel_connection = object()
+
+        with mock.patch.object(
+            db_module,
+            "_default_connect",
+            return_value=sentinel_connection,
+        ) as default_connect:
+            connection = self._invoke_connection(
+                database_url="postgresql://localhost/from-arg"
+            )
+
+        self.assertIs(connection, sentinel_connection)
+        default_connect.assert_called_once_with("postgresql://localhost/from-arg")
+
+    def test_create_connection_without_connect_fn_uses_default_connector_for_env_url(
+        self,
+    ) -> None:
+        sentinel_connection = object()
+
+        with _patched_env(DATABASE_URL="postgresql://localhost/from-env"), mock.patch.object(
+            db_module,
+            "_default_connect",
+            return_value=sentinel_connection,
+        ) as default_connect:
+            connection = self._invoke_connection(database_url=None)
+
+        self.assertIs(connection, sentinel_connection)
+        default_connect.assert_called_once_with("postgresql://localhost/from-env")
 
     def test_create_connection_without_connect_fn_accepts_uppercase_postgres_scheme(
         self,
