@@ -3,7 +3,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 import inspect
 import os
+import sys
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 from urllib.parse import parse_qsl, urlparse
 
 from auto_grader.db import create_connection
@@ -48,6 +51,13 @@ class _ConnectSpy:
     def __call__(self, *args: object, **kwargs: object) -> object:
         self.calls.append((args, kwargs))
         return self.return_value
+
+
+def _load_psycopg_for_default_connector() -> tuple[object, object]:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    return psycopg, dict_row
 
 
 class DatabaseConnectionSignatureContractTests(unittest.TestCase):
@@ -390,12 +400,12 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
                 "contract against a real Postgres instance."
             )
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            psycopg, dict_row = _load_psycopg_for_default_connector()
         except ModuleNotFoundError:
-            self.skipTest(
-                "Default-connector happy-path test requires psycopg in the active "
-                "environment. Run `uv sync` first."
+            raise AssertionError(
+                "Default-connector integration contract requires psycopg in the "
+                "active environment when TEST_DATABASE_URL is explicitly set. "
+                "Run `uv sync` first."
             )
 
         try:
@@ -405,12 +415,16 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
                 row_factory=dict_row,
             ) as probe:
                 row = probe.execute("SELECT 1 AS value").fetchone()
-                self.assertEqual(row["value"], 1)
         except Exception as exc:
-            self.skipTest(
-                "Default-connector happy-path test requires reachable local Postgres "
-                f"at {database_url!r}: {exc}"
-            )
+            raise AssertionError(
+                "Default-connector integration contract requires reachable local "
+                f"Postgres at {database_url!r}: {exc}"
+            ) from exc
+        self.assertEqual(
+            row["value"],
+            1,
+            "Default-connector integration probe must return the expected row shape.",
+        )
 
         return database_url
 
@@ -432,6 +446,71 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
             sorted(parse_qsl(actual.query, keep_blank_values=True)),
             sorted(parse_qsl(expected.query, keep_blank_values=True)),
         )
+
+
+class DatabaseConnectionHarnessContractTests(unittest.TestCase):
+    def test_default_connector_helper_skips_without_test_database_url(self) -> None:
+        case = DatabaseConnectionBehaviorContractTests(methodName="runTest")
+
+        with _patched_env(TEST_DATABASE_URL=None):
+            with self.assertRaises(unittest.SkipTest):
+                case._require_default_connector_test_database_url()
+
+    def test_default_connector_helper_fails_when_explicit_database_url_lacks_driver(
+        self,
+    ) -> None:
+        case = DatabaseConnectionBehaviorContractTests(methodName="runTest")
+        module = sys.modules[__name__]
+
+        with _patched_env(TEST_DATABASE_URL="postgresql:///postgres"), mock.patch.object(
+            module,
+            "_load_psycopg_for_default_connector",
+            side_effect=ModuleNotFoundError("No module named 'psycopg'"),
+        ):
+            with self.assertRaisesRegex(AssertionError, "psycopg"):
+                case._require_default_connector_test_database_url()
+
+    def test_default_connector_helper_fails_when_explicit_database_url_is_unreachable(
+        self,
+    ) -> None:
+        case = DatabaseConnectionBehaviorContractTests(methodName="runTest")
+        module = sys.modules[__name__]
+        fake_psycopg = SimpleNamespace(
+            connect=mock.Mock(side_effect=RuntimeError("connection refused"))
+        )
+
+        with _patched_env(TEST_DATABASE_URL="postgresql:///postgres"), mock.patch.object(
+            module,
+            "_load_psycopg_for_default_connector",
+            return_value=(fake_psycopg, object()),
+        ):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "reachable local Postgres",
+            ):
+                case._require_default_connector_test_database_url()
+
+    def test_default_connector_helper_does_not_hide_probe_assertion_failures(
+        self,
+    ) -> None:
+        case = DatabaseConnectionBehaviorContractTests(methodName="runTest")
+        module = sys.modules[__name__]
+        fake_cursor = mock.Mock()
+        fake_cursor.fetchone.return_value = {"value": 2}
+        fake_connection = mock.Mock()
+        fake_connection.execute.return_value = fake_cursor
+        fake_context = mock.Mock()
+        fake_context.__enter__ = mock.Mock(return_value=fake_connection)
+        fake_context.__exit__ = mock.Mock(return_value=False)
+        fake_psycopg = SimpleNamespace(connect=mock.Mock(return_value=fake_context))
+
+        with _patched_env(TEST_DATABASE_URL="postgresql:///postgres"), mock.patch.object(
+            module,
+            "_load_psycopg_for_default_connector",
+            return_value=(fake_psycopg, object()),
+        ):
+            with self.assertRaises(case.failureException):
+                case._require_default_connector_test_database_url()
 
 
 if __name__ == "__main__":

@@ -26,3 +26,18 @@ class PostgresHarnessContractTests(unittest.TestCase):
         ), mock.patch.object(postgres_contract, "psycopg", None):
             with self.assertRaisesRegex(AssertionError, "psycopg"):
                 postgres_contract.PostgresDatabaseContractTests.setUpClass()
+
+    def test_schema_suite_fails_when_explicit_database_url_is_unreachable(self) -> None:
+        fake_psycopg = mock.Mock()
+        fake_psycopg.connect.side_effect = RuntimeError("connection refused")
+
+        with mock.patch.object(
+            postgres_contract,
+            "_postgres_test_database_url",
+            return_value="postgresql:///postgres",
+        ), mock.patch.object(postgres_contract, "psycopg", fake_psycopg):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "reachable database access and CREATE SCHEMA privilege",
+            ):
+                postgres_contract.PostgresDatabaseContractTests.setUpClass()
