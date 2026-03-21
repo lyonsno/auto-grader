@@ -33,10 +33,10 @@ Current status snapshot:
 - [x] Cover locked Postgres-specific decisions:
   `JSONB`, `TIMESTAMPTZ`, DB-level immutability for versioned rows, and the
   Postgres-first connection contract.
-- [ ] Audit the remaining legacy SQLite reference tests one by one and either:
+- [x] Audit the remaining legacy SQLite reference tests one by one and either:
   port the invariant to Postgres, or explicitly decide it is intentionally
   retired/merged into another stronger Postgres test.
-- [ ] Write down the disposition of every remaining legacy-only assertion so the
+- [x] Write down the disposition of every remaining legacy-only assertion so the
   suite can be retired without ambiguity.
 
 ## Remaining parity audit checklist
@@ -44,49 +44,46 @@ Current status snapshot:
 - [x] `exam_definitions` update guard parity:
   verify we still explicitly test that updates cannot repoint a row to a missing
   `template_version_id`.
-- [ ] `scan_artifacts` split parity:
+- [x] `scan_artifacts` split parity:
   verify every legacy rule is either ported directly or intentionally merged:
   supported statuses, lowercase-only values, status required, failure reason
   rules, checksum required/nonblank/64-hex shape, filename required/nonblank,
   and uniqueness.
-- [ ] `grade_records` split parity:
+- [x] `grade_records` split parity:
   verify supported statuses, lowercase-only values, nonblank status, status and
   score field requirements, nonnegative `score_points`, positive `max_points`,
   `score_points <= max_points`, and one-finalized-grade rule.
-- [ ] `audit_events` split parity:
+- [x] `audit_events` split parity:
   verify complete subject fields, nonblank `event_type`, payload required,
   nonblank payload, valid JSON only, default timestamp present/current, explicit
   timestamp preservation, and explicit timestamp validation.
-- [ ] Delete/update lifecycle parity pass:
+- [x] Delete/update lifecycle parity pass:
   verify every legacy FK-protection and allowed-delete case is covered in the
   Postgres suite, not only the high-traffic tables.
 
 ## Phase 2: Runtime implementation after parity is acceptable
 
-- [ ] Implement `create_connection(database_url=None, connect_fn=None)` in
+- [x] Implement `create_connection(database_url=None, connect_fn=None)` in
   `auto_grader/db.py`.
-- [ ] Make `create_connection()` use `psycopg` v3 with autocommit enabled and
+- [x] Make `create_connection()` use `psycopg` v3 with autocommit enabled and
   rows addressable by column name.
-- [ ] Make the connection contract suite pass:
+- [x] Make the connection contract suite pass:
   `python -m unittest tests.test_db_connection_contract -q`
-- [ ] Implement Postgres `initialize_schema(connection)` in dependency order.
-- [ ] Make the Postgres schema contract suite pass:
+- [x] Implement Postgres `initialize_schema(connection)` in dependency order.
+- [x] Make the Postgres schema contract suite pass:
   `TEST_DATABASE_URL=... uv run python -m unittest tests.test_db_postgres_contract -q`
 
 ## Phase 3: Cleanup and cutover
 
-- [ ] Decide when the Postgres suite is authoritative enough to stop using the
+- [x] Decide when the Postgres suite is authoritative enough to stop using the
   SQLite reference suite as a parity checklist.
-- [ ] Retire `tests/test_db_contract.py` once its remaining assertions have
+- [x] Retire `tests/test_db_contract.py` once its remaining assertions have
   either been ported or intentionally dropped with rationale.
-- [ ] Remove legacy SQLite connection/schema code paths from `auto_grader/db.py`.
-- [ ] Update README migration wording from "gate before implementation" to the
+- [x] Remove legacy SQLite connection/schema code paths from `auto_grader/db.py`.
+- [x] Update README migration wording from "gate before implementation" to the
   steady-state Postgres authority once the suite is green.
 
-## Recommended execution order
-
-1. Finish the remaining parity audit.
-2. Implement `create_connection()`.
-3. Implement core schema tables and constraints in `initialize_schema()`.
-4. Expand/fix schema implementation until the Postgres suite is green.
-5. Retire the SQLite reference suite and remove legacy runtime code.
+Result:
+- This checklist is complete for the Postgres hard cut.
+- `tests/test_db_connection_contract.py` and
+  `tests/test_db_postgres_contract.py` are now the active DB contract suites.

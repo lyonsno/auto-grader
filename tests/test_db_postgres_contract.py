@@ -1168,12 +1168,35 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                         payload_json=payload_json,
                     )
 
+    def test_audit_events_require_explicit_recorded_timestamp_when_supplied(
+        self,
+    ) -> None:
+        self._require_tables("audit_events")
+
+        for recorded_at, expected_exception in (
+            (None, errors.NotNullViolation),
+            ("", errors.InvalidDatetimeFormat),
+            ("   ", errors.InvalidDatetimeFormat),
+        ):
+            with self.subTest(recorded_at=recorded_at):
+                with self.assertRaises(expected_exception):
+                    self._insert_audit_event(
+                        entity_type="scan_artifact",
+                        entity_id=1,
+                        event_type="scan_recorded",
+                        payload_json="{}",
+                        recorded_at=recorded_at,
+                    )
+
     def test_audit_events_reject_invalid_explicit_recorded_timestamps(self) -> None:
         self._require_tables("audit_events")
 
-        for recorded_at in ("", "   ", "not-a-timestamp", "2026-99-99 25:61:00"):
+        for recorded_at, expected_exception in (
+            ("not-a-timestamp", errors.InvalidDatetimeFormat),
+            ("2026-99-99 25:61:00", errors.DatetimeFieldOverflow),
+        ):
             with self.subTest(recorded_at=recorded_at):
-                with self.assertRaises(errors.InvalidDatetimeFormat):
+                with self.assertRaises(expected_exception):
                     self._insert_audit_event(
                         entity_type="scan_artifact",
                         entity_id=1,
@@ -1787,9 +1810,9 @@ class PostgresDatabaseContractTests(unittest.TestCase):
         entity_id: int | None,
         event_type: str | None,
         payload_json: str | None,
-        recorded_at: str | None = None,
+        recorded_at: str | None | object = _UNSET,
     ) -> int:
-        if recorded_at is None:
+        if recorded_at is _UNSET:
             cursor = self.connection.execute(
                 """
                 INSERT INTO audit_events (

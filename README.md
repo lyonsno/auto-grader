@@ -226,8 +226,6 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   API and URL-handling contract for the Postgres hard cut.
 - `tests/test_db_postgres_contract.py` defines the enforceable Postgres schema
   contract when run against an explicit disposable `TEST_DATABASE_URL`.
-- `tests/test_db_contract.py` remains a legacy SQLite reference suite during migration
-  and should shrink until it can be retired.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
   add a non-vacuous failing contract test first, then implement.
@@ -388,9 +386,8 @@ Locked Postgres contract decisions (v0):
   `template_versions`, `exam_definitions`).
 - Event payload and timestamp storage: `JSONB` payloads and `TIMESTAMPTZ` timestamps,
   treated as UTC in app logic/tests.
-- Migration gate: do not implement Postgres runtime wiring until Postgres contract tests
-  cover required invariants at parity and pass when run against an explicit
-  disposable `TEST_DATABASE_URL`.
+- Postgres contract authority: keep the connection and schema contract suites green
+  against an explicit disposable `TEST_DATABASE_URL`.
 
 Packaging is important but not a v0 requirement. v0 can be developer-run. v1 should
 minimize terminal rituals for the professor.
