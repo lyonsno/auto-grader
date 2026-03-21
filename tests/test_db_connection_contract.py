@@ -456,6 +456,42 @@ class DatabaseConnectionHarnessContractTests(unittest.TestCase):
             with self.assertRaises(unittest.SkipTest):
                 case._require_default_connector_test_database_url()
 
+    def test_default_connector_helper_fails_when_test_database_url_is_blank(self) -> None:
+        case = DatabaseConnectionBehaviorContractTests(methodName="runTest")
+        module = sys.modules[__name__]
+
+        for database_url in ("", "   "):
+            with self.subTest(database_url=database_url):
+                load_psycopg = mock.Mock(
+                    return_value=(
+                        SimpleNamespace(connect=mock.Mock()),
+                        object(),
+                    )
+                )
+                with _patched_env(TEST_DATABASE_URL=database_url), mock.patch.object(
+                    module,
+                    "_load_psycopg_for_default_connector",
+                    load_psycopg,
+                ):
+                    try:
+                        case._require_default_connector_test_database_url()
+                    except unittest.SkipTest as exc:
+                        self.fail(
+                            "Blank TEST_DATABASE_URL must fail as misconfiguration, "
+                            f"not skip the explicit integration contract: {exc}"
+                        )
+                    except AssertionError as exc:
+                        load_psycopg.assert_not_called()
+                        self.assertRegex(
+                            str(exc),
+                            r"(?is)TEST_DATABASE_URL.*(?:blank|empty|whitespace)",
+                        )
+                    else:
+                        self.fail(
+                            "Blank TEST_DATABASE_URL must raise AssertionError instead "
+                            "of being treated like an unset harness."
+                        )
+
     def test_default_connector_helper_fails_when_explicit_database_url_lacks_driver(
         self,
     ) -> None:
