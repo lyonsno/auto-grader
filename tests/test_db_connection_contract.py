@@ -167,34 +167,7 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
     def test_create_connection_without_connect_fn_uses_mapping_rows_and_autocommit(
         self,
     ) -> None:
-        database_url = os.environ.get("TEST_DATABASE_URL")
-        if not database_url:
-            self.skipTest(
-                "Set TEST_DATABASE_URL to run the default-connector integration "
-                "contract against a real Postgres instance."
-        )
-        try:
-            import psycopg
-            from psycopg.rows import dict_row
-        except ModuleNotFoundError:
-            self.skipTest(
-                "Default-connector happy-path test requires psycopg in the active "
-                "environment. Run `uv sync` first."
-            )
-
-        try:
-            with psycopg.connect(
-                database_url,
-                autocommit=True,
-                row_factory=dict_row,
-            ) as probe:
-                row = probe.execute("SELECT 1 AS value").fetchone()
-                self.assertEqual(row["value"], 1)
-        except Exception as exc:
-            self.skipTest(
-                "Default-connector happy-path test requires reachable local Postgres "
-                f"at {database_url!r}: {exc}"
-            )
+        database_url = self._require_default_connector_test_database_url()
 
         connection = self._invoke_connection(database_url=database_url)
         try:
@@ -208,6 +181,26 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
                 row["value"],
                 1,
                 "Default Postgres connection should return rows addressable by column name.",
+            )
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+
+    def test_create_connection_without_connect_fn_accepts_uppercase_postgres_scheme(
+        self,
+    ) -> None:
+        database_url = self._require_default_connector_test_database_url()
+        scheme, separator, remainder = database_url.partition("://")
+        uppercase_database_url = f"{scheme.upper()}{separator}{remainder}"
+
+        connection = self._invoke_connection(database_url=uppercase_database_url)
+        try:
+            row = connection.execute("SELECT 1 AS value").fetchone()
+            self.assertEqual(
+                row["value"],
+                1,
+                "Default connector path should accept uppercase Postgres URL schemes.",
             )
         finally:
             close = getattr(connection, "close", None)
@@ -388,6 +381,38 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
         except self.failureException:
             return False
         return True
+
+    def _require_default_connector_test_database_url(self) -> str:
+        database_url = os.environ.get("TEST_DATABASE_URL")
+        if not database_url:
+            self.skipTest(
+                "Set TEST_DATABASE_URL to run the default-connector integration "
+                "contract against a real Postgres instance."
+            )
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ModuleNotFoundError:
+            self.skipTest(
+                "Default-connector happy-path test requires psycopg in the active "
+                "environment. Run `uv sync` first."
+            )
+
+        try:
+            with psycopg.connect(
+                database_url,
+                autocommit=True,
+                row_factory=dict_row,
+            ) as probe:
+                row = probe.execute("SELECT 1 AS value").fetchone()
+                self.assertEqual(row["value"], 1)
+        except Exception as exc:
+            self.skipTest(
+                "Default-connector happy-path test requires reachable local Postgres "
+                f"at {database_url!r}: {exc}"
+            )
+
+        return database_url
 
     def _assert_dsn_equivalent_except_scheme_case(
         self,

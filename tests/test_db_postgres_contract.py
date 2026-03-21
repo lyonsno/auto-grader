@@ -31,14 +31,14 @@ class PostgresDatabaseContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if psycopg is None:
-            raise unittest.SkipTest(
+            raise AssertionError(
                 "Postgres contract tests require psycopg in the active environment. "
                 "Run `uv sync` and `uv run python -m unittest "
                 "tests.test_db_postgres_contract -q`."
             )
         cls.database_url = _postgres_test_database_url()
         if not cls.database_url:
-            raise unittest.SkipTest(
+            raise AssertionError(
                 "Set TEST_DATABASE_URL to run Postgres schema contract tests "
                 "against an explicit disposable Postgres instance."
             )
@@ -54,7 +54,7 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                     )
                 )
         except Exception as exc:
-            raise unittest.SkipTest(
+            raise AssertionError(
                 "Postgres contract tests require reachable database access and "
                 f"CREATE SCHEMA privilege at {cls.database_url!r}: {exc}"
             ) from exc
