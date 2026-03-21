@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-grader"
+version = "0.1.0"
+description = "Local-first personalized exam generation and grading tooling."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]>=3.2,<4",
+]
+
+[tool.setuptools.packages.find]
+include = ["auto_grader*"]

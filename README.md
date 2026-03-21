@@ -222,9 +222,12 @@ logic, and tests.
 To keep behavior stable and auditable, we treat docs and tests as a paired contract:
 
 - This README defines intent-level invariants, vocabulary, and workflow expectations.
-- `tests/test_db_contract.py` defines enforceable schema behavior and is the source of
-  truth for constraint-level semantics (nullability, uniqueness, nonblank checks,
-  foreign-key behavior, and status/value rules).
+- `tests/test_db_connection_contract.py` defines the enforceable `create_connection`
+  API and URL-handling contract for the Postgres hard cut.
+- `tests/test_db_postgres_contract.py` defines the enforceable Postgres schema
+  contract when run against an explicit disposable `TEST_DATABASE_URL`.
+- `tests/test_db_contract.py` remains a legacy SQLite reference suite during migration
+  and should shrink until it can be retired.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
   add a non-vacuous failing contract test first, then implement.
@@ -368,6 +371,27 @@ Database development strategy:
 - Optional fallback: if local Postgres materially interferes with model workloads, move
   Postgres to a second laptop and keep application code unchanged except `DATABASE_URL`.
 
+Locked Postgres contract decisions (v0):
+
+- Connector: use `psycopg` v3, with `psycopg[binary]` as the default local dev/test
+  install target.
+- `create_connection` API: `create_connection(database_url=None, connect_fn=None)`.
+- URL source precedence: explicit `database_url` wins over `DATABASE_URL`.
+- Invalid explicit `database_url`: raise `ValueError`; never fallback to env URL.
+- Missing explicit URL: read `DATABASE_URL`; if missing or blank, raise `ValueError`.
+- Accepted URL schemes: `postgres://` and `postgresql://` (case-insensitive).
+- URL handling policy: validate early, then pass through without heavy normalization.
+- Legacy SQLite path API: unsupported (hard-cut from `path`-style connection contract).
+- Primary keys for v0: surrogate integer identity keys; keep business uniqueness as
+  separate constraints.
+- Versioned table immutability: enforce at DB layer with triggers (for example
+  `template_versions`, `exam_definitions`).
+- Event payload and timestamp storage: `JSONB` payloads and `TIMESTAMPTZ` timestamps,
+  treated as UTC in app logic/tests.
+- Migration gate: do not implement Postgres runtime wiring until Postgres contract tests
+  cover required invariants at parity and pass when run against an explicit
+  disposable `TEST_DATABASE_URL`.
+
 Packaging is important but not a v0 requirement. v0 can be developer-run. v1 should
 minimize terminal rituals for the professor.
 
@@ -415,6 +439,9 @@ These are areas to discuss before committing to implementation decisions:
   observed scan consistency?
 - What data privacy constraints matter, such as storing raw student IDs versus hashed
   keys?
+
+Supporting rationale and deferred Postgres topics are tracked in
+`docs/postgres_contract_decision_worksheet.md`.
 
 ## Guiding principles
 

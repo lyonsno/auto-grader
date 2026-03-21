@@ -4,33 +4,23 @@ from datetime import datetime, timedelta, timezone
 import sqlite3
 import unittest
 
-from auto_grader.db import create_connection, initialize_schema
+from auto_grader.db import initialize_schema
 
 _DEFAULT = object()
 
 
-class DatabaseContractTests(unittest.TestCase):
-    """Fail-first contract tests for the first database slice.
+class LegacySqliteSchemaReferenceAssertions:
+    """Temporary SQLite-specific schema reference assertions during migration.
 
-    These tests intentionally lock in a small working vocabulary for v0:
-    SQLite, explicit status fields, and DB-level constraints for the most important
-    invariants.
+    This file intentionally preserves the legacy SQLite-shaped contract while
+    the Postgres suite is still being built out. It is not a backend-agnostic
+    abstraction and should be retired once Postgres schema parity lands.
     """
+    integrity_error = Exception
+    database_error = Exception
 
-    def setUp(self) -> None:
-        self.connection = create_connection()
-        initialize_schema(self.connection)
-
-    def tearDown(self) -> None:
-        self.connection.close()
-
-    def test_schema_exposes_initial_sqlite_workflow_tables(self) -> None:
-        actual_tables = {
-            row["name"]
-            for row in self.connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
+    def test_schema_exposes_initial_workflow_tables(self) -> None:
+        actual_tables = self._list_table_names()
 
         expected_tables = {
             "students",
@@ -54,16 +44,16 @@ class DatabaseContractTests(unittest.TestCase):
 
         self._insert_student("student-001")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_student("student-001")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_student(None)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_student("")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_student("   ")
 
     def test_student_cannot_have_duplicate_exam_instance_for_same_attempt(self) -> None:
@@ -96,7 +86,7 @@ class DatabaseContractTests(unittest.TestCase):
             opaque_instance_code="inst-003",
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_exam_instance_record(
                 exam_definition_id=midterm_id,
                 student_id=student_id,
@@ -123,7 +113,7 @@ class DatabaseContractTests(unittest.TestCase):
             opaque_instance_code="opaque-001",
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_exam_instance_record(
                 exam_definition_id=final_id,
                 student_id=second_student_id,
@@ -131,7 +121,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code="opaque-001",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_exam_instance_record(
                 exam_definition_id=final_id,
                 student_id=second_student_id,
@@ -151,7 +141,7 @@ class DatabaseContractTests(unittest.TestCase):
         student_id = self._insert_student("student-001")
         exam_definition_id = self._insert_exam_definition("chem101-midterm")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_instance_record(
                 exam_definition_id=exam_definition_id,
                 student_id=student_id,
@@ -159,7 +149,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code="",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_instance_record(
                 exam_definition_id=exam_definition_id,
                 student_id=student_id,
@@ -167,7 +157,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code="   ",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_exam_instance_record(
                 exam_definition_id=exam_definition_id,
                 student_id=student_id,
@@ -175,7 +165,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code="inst-zero-attempt",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_exam_instance_record(
                 exam_definition_id=exam_definition_id,
                 student_id=student_id,
@@ -183,7 +173,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code="inst-negative-attempt",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_exam_instance_record(
                 exam_definition_id=exam_definition_id,
                 student_id=student_id,
@@ -201,7 +191,7 @@ class DatabaseContractTests(unittest.TestCase):
         student_id = self._insert_student("student-001")
         exam_definition_id = self._insert_exam_definition("chem101-midterm")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self._insert_exam_instance_record(
                 exam_definition_id=exam_definition_id,
                 student_id=999_001,
@@ -209,7 +199,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code="inst-missing-student",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self._insert_exam_instance_record(
                 exam_definition_id=999_002,
                 student_id=student_id,
@@ -235,13 +225,13 @@ class DatabaseContractTests(unittest.TestCase):
             opaque_instance_code="inst-update-guard",
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "UPDATE exam_instances SET student_id = ? WHERE opaque_instance_code = ?",
                 (999_101, "inst-update-guard"),
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "UPDATE exam_instances SET exam_definition_id = ? WHERE opaque_instance_code = ?",
                 (999_102, "inst-update-guard"),
@@ -263,7 +253,7 @@ class DatabaseContractTests(unittest.TestCase):
             opaque_instance_code="inst-delete-guard-student",
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "DELETE FROM students WHERE student_key = ?",
                 ("student-delete-guard",),
@@ -299,7 +289,7 @@ class DatabaseContractTests(unittest.TestCase):
             opaque_instance_code="inst-delete-guard-exam",
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "DELETE FROM exam_definitions WHERE slug = ? AND version = ?",
                 ("chem101-delete-guard", 1),
@@ -347,13 +337,13 @@ class DatabaseContractTests(unittest.TestCase):
         self._insert_exam_page(exam_instance_id, 2, "MIDTERM-P2-A1")
         self._insert_exam_page(other_exam_instance_id, 1, "MIDTERM-P1-B1")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_exam_page(exam_instance_id, 1, "MIDTERM-P1-A2")
 
     def test_exam_page_requires_existing_exam_instance(self) -> None:
         self._require_tables("exam_instances", "exam_pages")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self._insert_exam_page(
                 exam_instance_id=999_003,
                 page_number=1,
@@ -376,7 +366,7 @@ class DatabaseContractTests(unittest.TestCase):
         )
         self._insert_exam_page(exam_instance_id, 1, "UPDATE-GUARD-P1")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "UPDATE exam_pages SET exam_instance_id = ? WHERE fallback_page_code = ?",
                 (999_103, "UPDATE-GUARD-P1"),
@@ -394,42 +384,42 @@ class DatabaseContractTests(unittest.TestCase):
         )
         exam_instance_id = self._insert_exam_instance()
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_exam_page(
                 exam_instance_id=exam_instance_id,
                 page_number=0,
                 fallback_page_code="MIDTERM-P0-INVALID",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_exam_page(
                 exam_instance_id=exam_instance_id,
                 page_number=-1,
                 fallback_page_code="MIDTERM-PNEG-INVALID",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_exam_page(
                 exam_instance_id=exam_instance_id,
                 page_number=1,
                 fallback_page_code=None,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_page(
                 exam_instance_id=exam_instance_id,
                 page_number=1,
                 fallback_page_code="",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_page(
                 exam_instance_id=exam_instance_id,
                 page_number=1,
                 fallback_page_code="   ",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_exam_page(
                 exam_instance_id=exam_instance_id,
                 page_number=None,
@@ -460,7 +450,7 @@ class DatabaseContractTests(unittest.TestCase):
             failure_reason="multiple_qr_candidates",
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|invalid"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|invalid"):
             self._insert_scan_artifact(
                 sha256=self._sha256(3),
                 original_filename="scan-003.png",
@@ -479,7 +469,7 @@ class DatabaseContractTests(unittest.TestCase):
         ):
             with self.subTest(status=status_value):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|blank|invalid"
+                    self.integrity_error, "CHECK|blank|invalid"
                 ):
                     self._insert_scan_artifact(
                         sha256=sha256_value,
@@ -497,7 +487,7 @@ class DatabaseContractTests(unittest.TestCase):
             (self._sha256(20), "Matched", None),
         ):
             with self.subTest(status=status_value):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|invalid"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK|invalid"):
                     self._insert_scan_artifact(
                         sha256=sha256_value,
                         original_filename=f"scan-case-{status_value}.png",
@@ -508,7 +498,7 @@ class DatabaseContractTests(unittest.TestCase):
     def test_scan_artifact_status_is_required(self) -> None:
         self._require_tables("scan_artifacts")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_scan_artifact(
                 sha256=self._sha256(12),
                 original_filename="scan-012.png",
@@ -519,7 +509,7 @@ class DatabaseContractTests(unittest.TestCase):
     def test_scan_artifact_matched_status_requires_null_failure_reason(self) -> None:
         self._require_tables("scan_artifacts")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_scan_artifact(
                 sha256=self._sha256(4),
                 original_filename="scan-004.png",
@@ -536,7 +526,7 @@ class DatabaseContractTests(unittest.TestCase):
         ):
             with self.subTest(status=status_value):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|required"
+                    self.integrity_error, "CHECK|required"
                 ):
                     self._insert_scan_artifact(
                         sha256=sha256_value,
@@ -553,7 +543,7 @@ class DatabaseContractTests(unittest.TestCase):
             (self._sha256(8), "ambiguous", "scan-008.png", "   "),
         ):
             with self.subTest(status=status_value, failure_reason=failure_reason):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
                     self._insert_scan_artifact(
                         sha256=sha256_value,
                         original_filename=filename,
@@ -572,7 +562,7 @@ class DatabaseContractTests(unittest.TestCase):
             failure_reason=None,
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_scan_artifact(
                 sha256=digest,
                 original_filename="scan-009-rerun.png",
@@ -583,7 +573,7 @@ class DatabaseContractTests(unittest.TestCase):
     def test_scan_artifact_checksum_is_required(self) -> None:
         self._require_tables("scan_artifacts")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_scan_artifact(
                 sha256=None,
                 original_filename="scan-missing-digest.png",
@@ -599,7 +589,7 @@ class DatabaseContractTests(unittest.TestCase):
             ("   ", "scan-whitespace-digest.png"),
         ):
             with self.subTest(sha256=sha256_value):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
                     self._insert_scan_artifact(
                         sha256=sha256_value,
                         original_filename=filename,
@@ -610,7 +600,7 @@ class DatabaseContractTests(unittest.TestCase):
     def test_scan_artifact_original_filename_is_required(self) -> None:
         self._require_tables("scan_artifacts")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_scan_artifact(
                 sha256=self._sha256(10),
                 original_filename=None,
@@ -626,7 +616,7 @@ class DatabaseContractTests(unittest.TestCase):
             (self._sha256(11), "   "),
         ):
             with self.subTest(original_filename=original_filename):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
                     self._insert_scan_artifact(
                         sha256=sha256_value,
                         original_filename=original_filename,
@@ -644,7 +634,7 @@ class DatabaseContractTests(unittest.TestCase):
         ):
             with self.subTest(sha256=sha256_value):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|hex|sha256"
+                    self.integrity_error, "CHECK|hex|sha256"
                 ):
                     self._insert_scan_artifact(
                         sha256=sha256_value,
@@ -682,13 +672,13 @@ class DatabaseContractTests(unittest.TestCase):
         self._insert_grade_record(exam_instance_id, "finalized", 18.0, 20.0)
         self._insert_grade_record(other_exam_instance_id, "finalized", 16.0, 20.0)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_grade_record(exam_instance_id, "finalized", 19.0, 20.0)
 
     def test_grade_record_requires_existing_exam_instance(self) -> None:
         self._require_tables("exam_instances", "grade_records")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self._insert_grade_record(
                 exam_instance_id=999_004,
                 status="draft",
@@ -712,7 +702,7 @@ class DatabaseContractTests(unittest.TestCase):
         )
         self._insert_grade_record(exam_instance_id, "draft", 10.0, 20.0)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "UPDATE grade_records SET exam_instance_id = ? WHERE exam_instance_id = ?",
                 (999_104, exam_instance_id),
@@ -738,7 +728,7 @@ class DatabaseContractTests(unittest.TestCase):
             fallback_page_code="DELETE-GUARD-P1",
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "DELETE FROM exam_instances WHERE opaque_instance_code = ?",
                 ("inst-delete-guard-with-page",),
@@ -789,7 +779,7 @@ class DatabaseContractTests(unittest.TestCase):
             max_points=20.0,
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "DELETE FROM exam_instances WHERE opaque_instance_code = ?",
                 ("inst-delete-guard-with-grade",),
@@ -810,7 +800,7 @@ class DatabaseContractTests(unittest.TestCase):
         self._insert_grade_record(exam_instance_id, "draft", 0.0, 20.0)
         self._insert_grade_record(exam_instance_id, "finalized", 20.0, 20.0)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|invalid"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|invalid"):
             self._insert_grade_record(exam_instance_id, "bogus", 10.0, 20.0)
 
     def test_grade_records_status_requires_canonical_lowercase_values(self) -> None:
@@ -830,7 +820,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code=f"inst-grade-case-{index}",
             )
             with self.subTest(status=status_value):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|invalid"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK|invalid"):
                     self._insert_grade_record(exam_instance_id, status_value, 10.0, 20.0)
 
     def test_grade_records_require_nonblank_status(self) -> None:
@@ -845,7 +835,7 @@ class DatabaseContractTests(unittest.TestCase):
 
         for status_value in ("", "   "):
             with self.subTest(status=status_value):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
                     self._insert_grade_record(
                         exam_instance_id,
                         status_value,
@@ -874,7 +864,7 @@ class DatabaseContractTests(unittest.TestCase):
                 max_points=max_points,
             ):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "NOT NULL|required"
+                    self.integrity_error, "NOT NULL|required"
                 ):
                     self._insert_grade_record(
                         exam_instance_id,
@@ -893,7 +883,7 @@ class DatabaseContractTests(unittest.TestCase):
         )
         exam_instance_id = self._insert_exam_instance()
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_grade_record(exam_instance_id, "draft", -0.5, 20.0)
 
     def test_grade_records_require_score_points_not_exceed_max_points(self) -> None:
@@ -906,7 +896,7 @@ class DatabaseContractTests(unittest.TestCase):
         )
         exam_instance_id = self._insert_exam_instance()
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_grade_record(exam_instance_id, "draft", 20.5, 20.0)
 
     def test_grade_records_require_positive_max_points(self) -> None:
@@ -921,7 +911,7 @@ class DatabaseContractTests(unittest.TestCase):
 
         for max_points in (0.0, -5.0):
             with self.subTest(max_points=max_points):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK"):
                     self._insert_grade_record(
                         exam_instance_id, "draft", 0.0, max_points
                     )
@@ -933,7 +923,7 @@ class DatabaseContractTests(unittest.TestCase):
         self._insert_template_version(slug="stoichiometry-q1", version=2)
         self._insert_template_version(slug="kinetics-q1", version=1)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_template_version(slug="stoichiometry-q1", version=1)
 
     def test_template_versions_require_positive_versions_and_complete_metadata_fields(
@@ -941,39 +931,39 @@ class DatabaseContractTests(unittest.TestCase):
     ) -> None:
         self._require_tables("template_versions")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_template_version(slug="stoichiometry-q2", version=None)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_template_version(slug="stoichiometry-q3", version=0)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_template_version(slug="stoichiometry-q4", version=-1)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_template_version(slug=None, version=1)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_template_version(slug="", version=2)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_template_version(slug="   ", version=3)
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_template_version(
                 slug="stoichiometry-q5",
                 version=1,
                 source_yaml=None,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_template_version(
                 slug="stoichiometry-q6",
                 version=1,
                 source_yaml="",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_template_version(
                 slug="stoichiometry-q7",
                 version=1,
@@ -1059,14 +1049,14 @@ class DatabaseContractTests(unittest.TestCase):
             template_version_id=template_v1,
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_exam_definition(
                 slug="chem101-midterm",
                 version=1,
                 template_version_id=template_v1,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self._insert_exam_definition(
                 slug="chem101-quiz",
                 version=1,
@@ -1091,7 +1081,7 @@ class DatabaseContractTests(unittest.TestCase):
                 """,
                 (999_105, "chem101-update-guard", 1),
             )
-        except sqlite3.DatabaseError:
+        except self.database_error:
             # Either FK enforcement or immutability enforcement is acceptable.
             pass
 
@@ -1120,7 +1110,7 @@ class DatabaseContractTests(unittest.TestCase):
             template_version_id=template_version_id,
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "FOREIGN KEY"):
+        with self.assertRaisesRegex(self.integrity_error, "FOREIGN KEY"):
             self.connection.execute(
                 "DELETE FROM template_versions WHERE slug = ? AND version = ?",
                 ("chem101-delete-guard-template", 1),
@@ -1152,49 +1142,49 @@ class DatabaseContractTests(unittest.TestCase):
             version=1,
         )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_exam_definition(
                 slug="chem101-null-version",
                 version=None,
                 template_version_id=template_version_id,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_exam_definition(
                 slug="chem101-zero-version",
                 version=0,
                 template_version_id=template_version_id,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK"):
             self._insert_exam_definition(
                 slug="chem101-negative-version",
                 version=-1,
                 template_version_id=template_version_id,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_exam_definition(
                 slug=None,
                 version=1,
                 template_version_id=template_version_id,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_definition(
                 slug="",
                 version=2,
                 template_version_id=template_version_id,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_definition(
                 slug="   ",
                 version=3,
                 template_version_id=template_version_id,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_exam_definition(
                 slug="chem101-null-title",
                 version=4,
@@ -1202,7 +1192,7 @@ class DatabaseContractTests(unittest.TestCase):
                 title=None,
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_definition(
                 slug="chem101-empty-title",
                 version=5,
@@ -1210,7 +1200,7 @@ class DatabaseContractTests(unittest.TestCase):
                 title="",
             )
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+        with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
             self._insert_exam_definition(
                 slug="chem101-blank-title",
                 version=6,
@@ -1309,7 +1299,7 @@ class DatabaseContractTests(unittest.TestCase):
         self._insert_exam_page(first_exam_instance_id, 1, "RECOVER-P1-A")
         self._insert_exam_page(first_exam_instance_id, 2, "RECOVER-P2-A")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE|duplicate"):
+        with self.assertRaisesRegex(self.integrity_error, "UNIQUE|duplicate"):
             self._insert_exam_page(second_exam_instance_id, 1, "RECOVER-P1-A")
 
     def test_audit_events_default_recorded_timestamp_is_present_and_current(self) -> None:
@@ -1364,7 +1354,7 @@ class DatabaseContractTests(unittest.TestCase):
         ):
             with self.subTest(entity_type=entity_type, entity_id=entity_id):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|blank|NOT NULL|required"
+                    self.integrity_error, "CHECK|blank|NOT NULL|required"
                 ):
                     self._insert_audit_event(
                         entity_type=entity_type,
@@ -1379,7 +1369,7 @@ class DatabaseContractTests(unittest.TestCase):
         for event_type in (None, "", "   "):
             with self.subTest(event_type=event_type):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|blank|NOT NULL|required"
+                    self.integrity_error, "CHECK|blank|NOT NULL|required"
                 ):
                     self._insert_audit_event(
                         entity_type="scan_artifact",
@@ -1391,7 +1381,7 @@ class DatabaseContractTests(unittest.TestCase):
     def test_audit_events_require_payload_json(self) -> None:
         self._require_tables("audit_events")
 
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "NOT NULL|required"):
+        with self.assertRaisesRegex(self.integrity_error, "NOT NULL|required"):
             self._insert_audit_event(
                 entity_type="scan_artifact",
                 entity_id=1,
@@ -1404,7 +1394,7 @@ class DatabaseContractTests(unittest.TestCase):
 
         for payload_json in ("", "   "):
             with self.subTest(payload_json=payload_json):
-                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK|blank"):
+                with self.assertRaisesRegex(self.integrity_error, "CHECK|blank"):
                     self._insert_audit_event(
                         entity_type="scan_artifact",
                         entity_id=1,
@@ -1418,7 +1408,7 @@ class DatabaseContractTests(unittest.TestCase):
         for payload_json in ("not-json", "{"):
             with self.subTest(payload_json=payload_json):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|json|malformed"
+                    self.integrity_error, "CHECK|json|malformed"
                 ):
                     self._insert_audit_event(
                         entity_type="scan_artifact",
@@ -1433,7 +1423,7 @@ class DatabaseContractTests(unittest.TestCase):
         for recorded_at in (None, "", "   "):
             with self.subTest(recorded_at=recorded_at):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|blank|NOT NULL|required"
+                    self.integrity_error, "CHECK|blank|NOT NULL|required"
                 ):
                     self._insert_audit_event(
                         entity_type="scan_artifact",
@@ -1449,7 +1439,7 @@ class DatabaseContractTests(unittest.TestCase):
         for recorded_at in ("not-a-timestamp", "2026-99-99 25:61:00"):
             with self.subTest(recorded_at=recorded_at):
                 with self.assertRaisesRegex(
-                    sqlite3.IntegrityError, "CHECK|timestamp|datetime"
+                    self.integrity_error, "CHECK|timestamp|datetime"
                 ):
                     self._insert_audit_event(
                         entity_type="scan_artifact",
@@ -1460,12 +1450,7 @@ class DatabaseContractTests(unittest.TestCase):
                     )
 
     def _require_tables(self, *table_names: str) -> None:
-        actual_tables = {
-            row["name"]
-            for row in self.connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
+        actual_tables = self._list_table_names()
         missing_tables = [name for name in table_names if name not in actual_tables]
         if missing_tables:
             requirement = self._testMethodName.removeprefix("test_").replace("_", " ")
@@ -1478,9 +1463,7 @@ class DatabaseContractTests(unittest.TestCase):
     def _insert_student(self, student_key: str | None) -> int:
         # `student_key` is the v0 identity contract from the README. `display_name`
         # is treated as optional helper metadata unless the schema explicitly adds it.
-        student_columns = {
-            row["name"] for row in self.connection.execute("PRAGMA table_info(students)")
-        }
+        student_columns = self._list_column_names("students")
         if "display_name" in student_columns:
             cursor = self.connection.execute(
                 """
@@ -1502,7 +1485,7 @@ class DatabaseContractTests(unittest.TestCase):
                 """,
                 (student_key,),
             )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _insert_template_version(
         self,
@@ -1523,7 +1506,7 @@ class DatabaseContractTests(unittest.TestCase):
             """,
             (slug, version, source_yaml),
         )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _insert_exam_definition(
         self,
@@ -1549,7 +1532,7 @@ class DatabaseContractTests(unittest.TestCase):
             """,
             (slug, version, title, template_version_id),
         )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _insert_exam_instance(
         self,
@@ -1591,7 +1574,7 @@ class DatabaseContractTests(unittest.TestCase):
                 opaque_instance_code,
             ),
         )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _insert_exam_page(
         self,
@@ -1610,7 +1593,7 @@ class DatabaseContractTests(unittest.TestCase):
             """,
             (exam_instance_id, page_number, fallback_page_code),
         )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _insert_scan_artifact(
         self,
@@ -1631,7 +1614,7 @@ class DatabaseContractTests(unittest.TestCase):
             """,
             (sha256, original_filename, status, failure_reason),
         )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _insert_grade_record(
         self,
@@ -1652,7 +1635,7 @@ class DatabaseContractTests(unittest.TestCase):
             """,
             (exam_instance_id, status, score_points, max_points),
         )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _insert_audit_event(
         self,
@@ -1689,7 +1672,7 @@ class DatabaseContractTests(unittest.TestCase):
                 """,
                 (entity_type, entity_id, event_type, payload_json, recorded_at),
             )
-        return int(cursor.lastrowid)
+        return self._inserted_id(cursor)
 
     def _assert_row_is_immutable(
         self,
@@ -1736,7 +1719,7 @@ class DatabaseContractTests(unittest.TestCase):
                 f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}",
                 values,
             )
-        except sqlite3.DatabaseError:
+        except self.database_error:
             # The contract is about preserving the original versioned row, not the
             # particular mechanism SQLite uses to reject or absorb an update attempt.
             pass
@@ -1798,6 +1781,46 @@ class DatabaseContractTests(unittest.TestCase):
 
     def _sha256(self, value: int) -> str:
         return f"{value:064x}"
+
+
+class LegacySqliteSchemaReferenceTests(
+    LegacySqliteSchemaReferenceAssertions, unittest.TestCase
+):
+    """Temporary SQLite harness for the legacy schema reference suite."""
+
+    integrity_error = sqlite3.IntegrityError
+    database_error = sqlite3.DatabaseError
+
+    def setUp(self) -> None:
+        # This harness is intentionally SQLite-specific reference coverage.
+        # Runtime connection semantics are now owned by the Postgres connection
+        # contract; this intentionally bypasses create_connection() because the
+        # legacy SQLite helper is being retired. This suite will be removed once
+        # Postgres schema parity lands.
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA foreign_keys = ON")
+        initialize_schema(self.connection)
+
+    def tearDown(self) -> None:
+        self.connection.close()
+
+    def _list_table_names(self) -> set[str]:
+        return {
+            row["name"]
+            for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    def _list_column_names(self, table_name: str) -> set[str]:
+        return {
+            row["name"]
+            for row in self.connection.execute(f"PRAGMA table_info({table_name})")
+        }
+
+    def _inserted_id(self, cursor) -> int:
+        return int(cursor.lastrowid)
 
 
 if __name__ == "__main__":
