@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from pip._vendor.packaging.requirements import InvalidRequirement, Requirement
-from pip._vendor.packaging.version import Version
 import re
 import tomllib
 import unittest
@@ -11,6 +10,37 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 _DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)(?:\[([^\]]+)\])?")
+_SPECIFIER_RE = re.compile(r"^\s*(<=|>=|==|!=|~=|<|>)\s*(.+?)\s*$")
+_VERSION_RE = re.compile(
+    r"^(?P<release>\d+(?:\.\d+)*)"
+    r"(?:(?P<pre_tag>a|b|rc)(?P<pre_num>\d+)|"
+    r"\.post(?P<post_num>\d+)|"
+    r"\.dev(?P<dev_num>\d+))?$"
+)
+_PHASE_ORDER = {
+    "dev": 0,
+    "a": 1,
+    "b": 2,
+    "rc": 3,
+    "final": 4,
+    "post": 5,
+}
+
+
+@dataclass(frozen=True)
+class _ParsedVersion:
+    release: tuple[int, ...]
+    raw_release: tuple[int, ...]
+    phase: str = "final"
+    phase_num: int = 0
+
+
+@dataclass(frozen=True)
+class _ParsedSpecifier:
+    operator: str
+    version_text: str
+    version: _ParsedVersion | None = None
+    wildcard_prefix: tuple[int, ...] | None = None
 
 
 class ProjectMetadataContractTests(unittest.TestCase):
@@ -89,19 +119,31 @@ class ProjectMetadataContractTests(unittest.TestCase):
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]==3.2.1"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3,<4,!=3.2.1"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]==3.2.*"))
+        self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]~=3.0"))
+        self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]~=3.0.0"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3.2rc1,<4"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3.2.post1,<4"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3.2.dev1,<4"))
-        self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3,<4; python_version >= '3.12'"))
 
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]>30,<4"))
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]>=3.2,<5"))
+        self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]==3.2a1,<3.2"))
+        self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]<=3.2.post1,>3.2"))
         self.assertFalse(
             self._is_psycopg_v3_spec("psycopg[binary]>=3,<7,!=4.*,!=5.*")
         )
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]<=3.4"))
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]~=3"))
+        self.assertFalse(
+            self._is_psycopg_v3_spec("psycopg[binary]>=3,<4; python_version >= '3.12'")
+        )
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]>=3,<4; python_version < '0'"))
+        self.assertFalse(
+            self._is_psycopg_v3_spec("psycopg[binary]>=3,<4; platform_machine == 'arm64'")
+        )
+        self.assertFalse(
+            self._is_psycopg_v3_spec("psycopg[binary]>=3,<4; platform_machine == 'x86_64'")
+        )
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]"))
 
     def _load_pyproject(self) -> dict[str, object]:
@@ -131,140 +173,207 @@ class ProjectMetadataContractTests(unittest.TestCase):
         return normalized_name, extras, entry
 
     def _is_psycopg_v3_spec(self, entry: str) -> bool:
-        try:
-            parsed_requirement = Requirement(entry)
-        except InvalidRequirement:
+        requirement_text, marker_text = self._split_requirement_and_marker(entry)
+        if marker_text is not None:
             return False
 
-        requirement_name = parsed_requirement.name.lower().replace("_", "-")
-        if requirement_name != "psycopg":
+        requirement_name, extras, _ = self._parse_dependency(requirement_text)
+        if requirement_name != "psycopg" or "binary" not in extras:
             return False
-        if parsed_requirement.marker is not None and not parsed_requirement.marker.evaluate():
+        dependency_match = _DEPENDENCY_NAME_RE.match(requirement_text)
+        if dependency_match is None:
             return False
 
-        spec_text = str(parsed_requirement.specifier).replace(" ", "")
+        spec_text = requirement_text[dependency_match.end() :].strip()
         if not spec_text:
             return False
+        try:
+            specifiers = self._parse_specifiers(spec_text)
+        except ValueError:
+            return False
 
-        v3_candidates = self._candidate_versions_for_major(parsed_requirement, major=3)
+        v3_candidates = self._candidate_versions_for_major(specifiers, major=3)
         if not any(
-            parsed_requirement.specifier.contains(candidate, prereleases=True)
+            self._specifier_set_contains(specifiers, candidate)
             for candidate in v3_candidates
         ):
             return False
 
-        for major in sorted(self._probe_majors_for_requirement(parsed_requirement)):
+        for major in sorted(self._probe_majors_for_specifiers(specifiers)):
             if major == 3:
                 continue
             non_v3_candidates = self._candidate_versions_for_major(
-                parsed_requirement,
+                specifiers,
                 major=major,
             )
             if any(
-                parsed_requirement.specifier.contains(candidate, prereleases=True)
+                self._specifier_set_contains(specifiers, candidate)
                 for candidate in non_v3_candidates
             ):
                 return False
 
         return True
 
-    def _probe_majors_for_requirement(self, parsed_requirement: Requirement) -> set[int]:
+    def _split_requirement_and_marker(self, entry: str) -> tuple[str, str | None]:
+        requirement_text, separator, marker_text = entry.partition(";")
+        if not separator:
+            return entry.strip(), None
+        return requirement_text.strip(), marker_text.strip()
+
+    def _parse_specifiers(self, spec_text: str) -> list[_ParsedSpecifier]:
+        tokens = [token.strip() for token in spec_text.split(",")]
+        if not tokens or any(not token for token in tokens):
+            raise ValueError("Specifier list must not be blank.")
+        return [self._parse_specifier(token) for token in tokens]
+
+    def _parse_specifier(self, token: str) -> _ParsedSpecifier:
+        match = _SPECIFIER_RE.fullmatch(token)
+        if match is None:
+            raise ValueError(f"Unsupported specifier token: {token!r}")
+
+        operator, version_text = match.groups()
+        if version_text.endswith(".*"):
+            if operator not in {"==", "!="}:
+                raise ValueError("Wildcard prefix matches require == or !=.")
+            return _ParsedSpecifier(
+                operator=operator,
+                version_text=version_text,
+                wildcard_prefix=self._parse_release_prefix(version_text[:-2]),
+            )
+
+        version = self._parse_version(version_text)
+        if operator == "~=" and len(version.raw_release) < 2:
+            raise ValueError("Compatible-release pins must specify at least major.minor.")
+        return _ParsedSpecifier(
+            operator=operator,
+            version_text=version_text,
+            version=version,
+        )
+
+    def _probe_majors_for_specifiers(self, specifiers: list[_ParsedSpecifier]) -> set[int]:
         probe_majors = {0, 1, 2, 3, 4, 5}
-        for specifier in parsed_requirement.specifier:
-            for major in self._major_neighbors_for_specifier_version(specifier.version):
+        for specifier in specifiers:
+            for major in self._major_neighbors_for_specifier(specifier):
                 probe_majors.add(major)
         return {major for major in probe_majors if major >= 0}
 
     def _candidate_versions_for_major(
         self,
-        parsed_requirement: Requirement,
+        specifiers: list[_ParsedSpecifier],
         *,
         major: int,
-    ) -> set[Version]:
+    ) -> set[_ParsedVersion]:
         candidate_texts = {
             f"{major}",
             f"{major}.0",
             f"{major}.0.1",
-            f"{major}.0.1.post1",
-            f"{major}.0.1.dev1",
             f"{major}.1",
             f"{major}.1.1",
-            f"{major}.2a1",
-            f"{major}.2b1",
-            f"{major}.2rc1",
             f"{major}.2",
-            f"{major}.2.post1",
-            f"{major}.2.dev1",
             f"{major}.2.1",
-            f"{major}.2.1.post1",
-            f"{major}.2.1.dev1",
             f"{major}.3",
             f"{major}.3.1",
             f"{major}.9",
             f"{major}.9.1",
         }
 
-        for specifier in parsed_requirement.specifier:
+        for specifier in specifiers:
             candidate_texts.update(
-                self._derived_candidate_texts_for_specifier(
-                    version_text=specifier.version,
-                    major=major,
-                )
+                self._derived_candidate_texts_for_specifier(specifier, major=major)
             )
 
-        return {Version(text) for text in candidate_texts}
+        return {self._parse_version(text) for text in candidate_texts}
 
-    def _major_neighbors_for_specifier_version(self, version_text: str) -> set[int]:
-        if version_text.endswith(".*"):
-            version_text = version_text[:-2]
-
-        try:
-            version = Version(version_text)
-        except Exception:
-            return set()
-
-        if not version.release:
-            return set()
-
-        major = version.release[0]
+    def _major_neighbors_for_specifier(self, specifier: _ParsedSpecifier) -> set[int]:
+        if specifier.wildcard_prefix is not None:
+            major = specifier.wildcard_prefix[0]
+        else:
+            assert specifier.version is not None
+            major = specifier.version.release[0]
         return {major - 1, major, major + 1}
 
     def _derived_candidate_texts_for_specifier(
         self,
+        specifier: _ParsedSpecifier,
         *,
-        version_text: str,
         major: int,
     ) -> set[str]:
         candidate_texts: set[str] = set()
-        if version_text.endswith(".*"):
-            prefix = version_text[:-2]
-            try:
-                base_version = Version(prefix)
-            except Exception:
+        if specifier.wildcard_prefix is not None:
+            prefix = specifier.wildcard_prefix
+            if prefix[0] != major:
                 return candidate_texts
-            if base_version.release[0] != major:
-                return candidate_texts
-            candidate_texts.add(prefix)
-            candidate_texts.add(self._successor_release_text(base_version))
+            candidate_texts.add(self._release_text(prefix))
+            candidate_texts.add(self._successor_release_text(prefix))
             return candidate_texts
 
-        try:
-            version = Version(version_text)
-        except Exception:
-            return candidate_texts
+        assert specifier.version is not None
+        version = specifier.version
         if version.release[0] != major:
             return candidate_texts
 
-        candidate_texts.add(str(version))
-        release_text = ".".join(str(part) for part in version.release)
+        candidate_texts.add(self._format_version(version))
+        release_text = self._release_text(version.release)
         candidate_texts.add(release_text)
-        candidate_texts.add(f"{release_text}.post1")
-        candidate_texts.add(f"{release_text}.dev1")
-        candidate_texts.add(self._successor_release_text(version))
+        if version.phase in {"post", "dev"}:
+            candidate_texts.add(f"{release_text}.{version.phase}1")
+        candidate_texts.add(self._successor_release_text(version.release))
         return candidate_texts
 
-    def _successor_release_text(self, version: Version) -> str:
-        release = list(version.release)
+    def _parse_release_prefix(self, version_text: str) -> tuple[int, ...]:
+        if not re.fullmatch(r"\d+(?:\.\d+)*", version_text):
+            raise ValueError(f"Unsupported wildcard prefix: {version_text!r}")
+        return self._normalize_release(tuple(int(part) for part in version_text.split(".")))
+
+    def _parse_version(self, version_text: str) -> _ParsedVersion:
+        match = _VERSION_RE.fullmatch(version_text)
+        if match is None:
+            raise ValueError(f"Unsupported version text: {version_text!r}")
+
+        raw_release = tuple(int(part) for part in match.group("release").split("."))
+        release = self._normalize_release(raw_release)
+        if match.group("pre_tag") is not None:
+            return _ParsedVersion(
+                release=release,
+                raw_release=raw_release,
+                phase=match.group("pre_tag"),
+                phase_num=int(match.group("pre_num")),
+            )
+        if match.group("post_num") is not None:
+            return _ParsedVersion(
+                release=release,
+                raw_release=raw_release,
+                phase="post",
+                phase_num=int(match.group("post_num")),
+            )
+        if match.group("dev_num") is not None:
+            return _ParsedVersion(
+                release=release,
+                raw_release=raw_release,
+                phase="dev",
+                phase_num=int(match.group("dev_num")),
+            )
+        return _ParsedVersion(release=release, raw_release=raw_release)
+
+    def _normalize_release(self, release: tuple[int, ...]) -> tuple[int, ...]:
+        normalized = list(release)
+        while len(normalized) > 1 and normalized[-1] == 0:
+            normalized.pop()
+        return tuple(normalized)
+
+    def _release_text(self, release: tuple[int, ...]) -> str:
+        return ".".join(str(part) for part in release)
+
+    def _format_version(self, version: _ParsedVersion) -> str:
+        release_text = self._release_text(version.release)
+        if version.phase == "final":
+            return release_text
+        if version.phase in {"a", "b", "rc"}:
+            return f"{release_text}{version.phase}{version.phase_num}"
+        return f"{release_text}.{version.phase}{version.phase_num}"
+
+    def _successor_release_text(self, release: tuple[int, ...]) -> str:
+        release = list(release)
         if len(release) == 1:
             return f"{release[0]}.0.1"
         if len(release) == 2:
@@ -272,55 +381,102 @@ class ProjectMetadataContractTests(unittest.TestCase):
         release[-1] += 1
         return ".".join(str(part) for part in release)
 
-    def _parse_version_tuple(self, version_text: str) -> tuple[int, ...]:
-        return tuple(int(part) for part in version_text.split("."))
-
-    def _prefix_upper_bound(self, version: tuple[int, ...]) -> tuple[int, ...]:
-        incremented = list(version)
-        incremented[-1] += 1
-        return tuple(incremented)
-
     def _compare_versions(
         self,
-        left: tuple[int, ...],
-        right: tuple[int, ...],
+        left: _ParsedVersion,
+        right: _ParsedVersion,
     ) -> int:
-        width = max(len(left), len(right))
-        padded_left = left + (0,) * (width - len(left))
-        padded_right = right + (0,) * (width - len(right))
-        return (padded_left > padded_right) - (padded_left < padded_right)
+        width = max(len(left.release), len(right.release))
+        padded_left = left.release + (0,) * (width - len(left.release))
+        padded_right = right.release + (0,) * (width - len(right.release))
+        release_comparison = (padded_left > padded_right) - (padded_left < padded_right)
+        if release_comparison != 0:
+            return release_comparison
 
-    def _tighten_lower_bound(
-        self,
-        current_bound: tuple[int, ...] | None,
-        current_inclusive: bool,
-        new_bound: tuple[int, ...],
-        new_inclusive: bool,
-    ) -> tuple[tuple[int, ...], bool]:
-        if current_bound is None:
-            return new_bound, new_inclusive
-        comparison = self._compare_versions(new_bound, current_bound)
-        if comparison > 0:
-            return new_bound, new_inclusive
-        if comparison < 0:
-            return current_bound, current_inclusive
-        return current_bound, current_inclusive and new_inclusive
+        phase_comparison = (_PHASE_ORDER[left.phase] > _PHASE_ORDER[right.phase]) - (
+            _PHASE_ORDER[left.phase] < _PHASE_ORDER[right.phase]
+        )
+        if phase_comparison != 0:
+            return phase_comparison
+        return (left.phase_num > right.phase_num) - (left.phase_num < right.phase_num)
 
-    def _tighten_upper_bound(
+    def _specifier_set_contains(
         self,
-        current_bound: tuple[int, ...] | None,
-        current_inclusive: bool,
-        new_bound: tuple[int, ...],
-        new_inclusive: bool,
-    ) -> tuple[tuple[int, ...], bool]:
-        if current_bound is None:
-            return new_bound, new_inclusive
-        comparison = self._compare_versions(new_bound, current_bound)
-        if comparison < 0:
-            return new_bound, new_inclusive
-        if comparison > 0:
-            return current_bound, current_inclusive
-        return current_bound, current_inclusive and new_inclusive
+        specifiers: list[_ParsedSpecifier],
+        candidate: _ParsedVersion,
+    ) -> bool:
+        return all(self._specifier_contains(specifier, candidate) for specifier in specifiers)
+
+    def _specifier_contains(
+        self,
+        specifier: _ParsedSpecifier,
+        candidate: _ParsedVersion,
+    ) -> bool:
+        if specifier.wildcard_prefix is not None:
+            matches = candidate.release[: len(specifier.wildcard_prefix)] == specifier.wildcard_prefix
+            if specifier.operator == "==":
+                return matches
+            if specifier.operator == "!=":
+                return not matches
+            raise AssertionError("Wildcard prefixes should only use == or !=.")
+
+        assert specifier.version is not None
+        comparison = self._compare_versions(candidate, specifier.version)
+        if specifier.operator == "==":
+            return comparison == 0
+        if specifier.operator == "!=":
+            return comparison != 0
+        if specifier.operator == ">":
+            return (
+                comparison > 0
+                and not self._is_same_release_post_of_final_baseline(
+                    candidate,
+                    specifier.version,
+                )
+            )
+        if specifier.operator == ">=":
+            return comparison >= 0
+        if specifier.operator == "<":
+            return (
+                comparison < 0
+                and not self._is_same_release_prerelease_of_final_ceiling(
+                    candidate,
+                    specifier.version,
+                )
+            )
+        if specifier.operator == "<=":
+            return comparison <= 0
+        if specifier.operator == "~=":
+            upper_bound = _ParsedVersion(
+                release=self._normalize_release(
+                    self._compatible_release_upper_bound(specifier.version.raw_release)
+                ),
+                raw_release=self._compatible_release_upper_bound(specifier.version.raw_release),
+            )
+            return comparison >= 0 and self._compare_versions(candidate, upper_bound) < 0
+        raise AssertionError(f"Unsupported specifier operator: {specifier.operator!r}")
+
+    def _is_same_release_post_of_final_baseline(
+        self,
+        candidate: _ParsedVersion,
+        baseline: _ParsedVersion,
+    ) -> bool:
+        return (
+            baseline.phase == "final"
+            and candidate.release == baseline.release
+            and candidate.phase == "post"
+        )
+
+    def _is_same_release_prerelease_of_final_ceiling(
+        self,
+        candidate: _ParsedVersion,
+        ceiling: _ParsedVersion,
+    ) -> bool:
+        return (
+            ceiling.phase == "final"
+            and candidate.release == ceiling.release
+            and candidate.phase in {"dev", "a", "b", "rc"}
+        )
 
     def _compatible_release_upper_bound(
         self,
@@ -331,48 +487,6 @@ class ProjectMetadataContractTests(unittest.TestCase):
         prefix = list(version[:-1])
         prefix[-1] += 1
         return tuple(prefix + [0])
-
-    def _minimum_candidate_version(
-        self,
-        lower_bound: tuple[int, ...],
-        lower_inclusive: bool,
-    ) -> tuple[int, ...] | None:
-        if lower_inclusive:
-            return lower_bound
-        return lower_bound + (0, 1)
-
-    def _increment_version(self, version: tuple[int, ...]) -> tuple[int, ...]:
-        if not version:
-            return (1,)
-        incremented = list(version)
-        incremented[-1] += 1
-        return tuple(incremented)
-
-    def _version_is_within_bounds(
-        self,
-        version: tuple[int, ...],
-        upper_bound: tuple[int, ...],
-        upper_inclusive: bool,
-    ) -> bool:
-        comparison = self._compare_versions(version, upper_bound)
-        if comparison < 0:
-            return True
-        if comparison > 0:
-            return False
-        return upper_inclusive
-
-    def _matching_excluded_prefix_range(
-        self,
-        candidate: tuple[int, ...],
-        excluded_prefix_ranges: list[tuple[tuple[int, ...], tuple[int, ...]]],
-    ) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
-        for start, end in excluded_prefix_ranges:
-            if (
-                self._compare_versions(candidate, start) >= 0
-                and self._compare_versions(candidate, end) < 0
-            ):
-                return start, end
-        return None
 
     def _collect_project_dependencies(self, project: dict[str, object]) -> list[object]:
         dependency_entries: list[object] = []
