@@ -31,10 +31,15 @@ class PostgresDatabaseContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.database_url = _postgres_test_database_url()
-        if not cls.database_url:
+        if cls.database_url is None:
             raise unittest.SkipTest(
                 "Set TEST_DATABASE_URL to run Postgres schema contract tests "
                 "against an explicit disposable Postgres instance."
+            )
+        if not cls.database_url.strip():
+            raise AssertionError(
+                "TEST_DATABASE_URL must be non-blank when explicitly set for the "
+                "Postgres schema contract suite."
             )
         if psycopg is None:
             raise AssertionError(
@@ -117,6 +122,163 @@ class PostgresDatabaseContractTests(unittest.TestCase):
             f"Missing Postgres workflow tables in schema {self.schema_name}: "
             f"{sorted(missing_tables)}",
         )
+
+    def test_initialize_schema_is_idempotent_for_existing_schema(self) -> None:
+        self._require_tables(
+            "students",
+            "template_versions",
+            "exam_definitions",
+            "exam_instances",
+            "exam_pages",
+            "scan_artifacts",
+            "grade_records",
+            "audit_events",
+        )
+
+        source_yaml = "slug: idempotent-template\nversion: 1"
+        template_version_id = self._insert_template_version(
+            slug="idempotent-template",
+            version=1,
+            source_yaml=source_yaml,
+        )
+        self._assert_row_is_immutable(
+            table_name="template_versions",
+            key_columns={"slug": "idempotent-template", "version": 1},
+            assignments={"source_yaml": "slug: mutated-template"},
+            expected_row={
+                "slug": "idempotent-template",
+                "version": 1,
+                "source_yaml": source_yaml,
+            },
+        )
+
+        exam_definition_id = self._insert_exam_definition(
+            slug="idempotent-midterm",
+            version=1,
+            template_version_id=template_version_id,
+            title="Idempotent Midterm",
+        )
+        student_id = self._insert_student("student-idempotent")
+        exam_instance_id = self._insert_exam_instance_record(
+            exam_definition_id=exam_definition_id,
+            student_id=student_id,
+            attempt_number=1,
+            opaque_instance_code="inst-idempotent-001",
+        )
+        exam_page_id = self._insert_exam_page(
+            exam_instance_id,
+            1,
+            "IDEMPOTENT-P1",
+        )
+        grade_record_id = self._insert_grade_record(
+            exam_instance_id,
+            "finalized",
+            18.0,
+            20.0,
+        )
+        scan_artifact_id = self._insert_scan_artifact(
+            sha256=self._sha256(901),
+            original_filename="idempotent-scan.png",
+            status="matched",
+            failure_reason=None,
+        )
+        audit_event_id = self._insert_audit_event(
+            entity_type="exam_instance",
+            entity_id=exam_instance_id,
+            event_type="bootstrapped",
+            payload_json='{"phase":"before-rerun"}',
+        )
+
+        initialize_schema(self.connection)
+
+        self.assertEqual(
+            self._list_table_names(),
+            {
+                "students",
+                "template_versions",
+                "exam_definitions",
+                "exam_instances",
+                "exam_pages",
+                "scan_artifacts",
+                "grade_records",
+                "audit_events",
+            },
+            "initialize_schema() must be rerunnable against an existing schema "
+            "without dropping or renaming workflow tables.",
+        )
+        self.assertEqual(self._count_rows("students"), 1)
+        self.assertEqual(self._count_rows("template_versions"), 1)
+        self.assertEqual(self._count_rows("exam_definitions"), 1)
+        self.assertEqual(self._count_rows("exam_instances"), 1)
+        self.assertEqual(self._count_rows("exam_pages"), 1)
+        self.assertEqual(self._count_rows("grade_records"), 1)
+        self.assertEqual(self._count_rows("scan_artifacts"), 1)
+        self.assertEqual(self._count_rows("audit_events"), 1)
+
+        exam_page_row = self.connection.execute(
+            """
+            SELECT id, exam_instance_id, page_number, fallback_page_code
+            FROM exam_pages
+            WHERE id = %s
+            """,
+            (exam_page_id,),
+        ).fetchone()
+        self.assertEqual(
+            dict(exam_page_row),
+            {
+                "id": exam_page_id,
+                "exam_instance_id": exam_instance_id,
+                "page_number": 1,
+                "fallback_page_code": "IDEMPOTENT-P1",
+            },
+            "Rerunning initialize_schema() must preserve populated exam page rows.",
+        )
+        grade_row = self.connection.execute(
+            """
+            SELECT id, status, score_points, max_points
+            FROM grade_records
+            WHERE id = %s
+            """,
+            (grade_record_id,),
+        ).fetchone()
+        self.assertEqual(
+            dict(grade_row),
+            {
+                "id": grade_record_id,
+                "status": "finalized",
+                "score_points": 18.0,
+                "max_points": 20.0,
+            },
+            "Rerunning initialize_schema() must preserve populated grade rows.",
+        )
+        self.assertEqual(
+            self._count_rows("scan_artifacts", "id = %s", (scan_artifact_id,)),
+            1,
+            "Rerunning initialize_schema() must preserve existing scan artifacts.",
+        )
+        self.assertEqual(
+            self._count_rows("audit_events", "id = %s", (audit_event_id,)),
+            1,
+            "Rerunning initialize_schema() must preserve existing audit events.",
+        )
+
+        with self.assertRaises(errors.UniqueViolation):
+            self._insert_exam_page(exam_instance_id, 1, "IDEMPOTENT-P1-DUP")
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_exam_page(exam_instance_id, 2, "   ")
+
+        self._assert_row_is_immutable(
+            table_name="template_versions",
+            key_columns={"slug": "idempotent-template", "version": 1},
+            assignments={"source_yaml": "slug: mutated-template"},
+            expected_row={
+                "slug": "idempotent-template",
+                "version": 1,
+                "source_yaml": source_yaml,
+            },
+        )
+        with self.assertRaises(errors.UniqueViolation):
+            self._insert_grade_record(exam_instance_id, "finalized", 19.0, 20.0)
 
     def test_students_require_unique_nonblank_student_keys(self) -> None:
         self._require_tables("students")
@@ -821,6 +983,76 @@ class PostgresDatabaseContractTests(unittest.TestCase):
 
         with self.assertRaises(errors.UniqueViolation):
             self._insert_grade_record(exam_instance_id, "finalized", 19.0, 20.0)
+
+    def test_grade_records_block_second_finalize_transition_for_same_exam_instance(
+        self,
+    ) -> None:
+        self._require_tables(
+            "students",
+            "template_versions",
+            "exam_definitions",
+            "exam_instances",
+            "grade_records",
+        )
+
+        exam_definition_id = self._insert_exam_definition("chem101-finalize-transition")
+        student_id = self._insert_student("student-finalize-transition")
+        exam_instance_id = self._insert_exam_instance_record(
+            exam_definition_id=exam_definition_id,
+            student_id=student_id,
+            attempt_number=1,
+            opaque_instance_code="inst-finalize-transition",
+        )
+        first_grade_id = self._insert_grade_record(
+            exam_instance_id,
+            "draft",
+            18.0,
+            20.0,
+        )
+        second_grade_id = self._insert_grade_record(
+            exam_instance_id,
+            "draft",
+            17.0,
+            20.0,
+        )
+
+        self.connection.execute(
+            """
+            UPDATE grade_records
+            SET status = 'finalized'
+            WHERE id = %s
+            """,
+            (first_grade_id,),
+        )
+
+        with self.assertRaises(errors.UniqueViolation):
+            self.connection.execute(
+                """
+                UPDATE grade_records
+                SET status = 'finalized'
+                WHERE id = %s
+                """,
+                (second_grade_id,),
+            )
+
+        rows = self.connection.execute(
+            """
+            SELECT id, status
+            FROM grade_records
+            WHERE exam_instance_id = %s
+            ORDER BY id
+            """,
+            (exam_instance_id,),
+        ).fetchall()
+        self.assertEqual(
+            [dict(row) for row in rows],
+            [
+                {"id": first_grade_id, "status": "finalized"},
+                {"id": second_grade_id, "status": "draft"},
+            ],
+            "The one-finalized-grade invariant must hold on UPDATE, not only on "
+            "INSERT.",
+        )
 
     def test_grade_records_require_supported_lowercase_status_and_score_bounds(
         self,
@@ -1573,13 +1805,14 @@ class PostgresDatabaseContractTests(unittest.TestCase):
             assignment_filter_values,
         ).fetchone()["row_count"]
 
-        try:
+        with self.assertRaisesRegex(
+            psycopg.Error,
+            "(?is)immutable|versioned table rows are immutable",
+        ):
             self.connection.execute(
                 f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}",
                 values,
             )
-        except psycopg.Error:
-            pass
 
         exact_row_count = self.connection.execute(
             f"""

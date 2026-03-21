@@ -394,10 +394,15 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
 
     def _require_default_connector_test_database_url(self) -> str:
         database_url = os.environ.get("TEST_DATABASE_URL")
-        if not database_url:
+        if database_url is None:
             self.skipTest(
                 "Set TEST_DATABASE_URL to run the default-connector integration "
                 "contract against a real Postgres instance."
+            )
+        if not database_url.strip():
+            raise AssertionError(
+                "TEST_DATABASE_URL must be non-blank when explicitly set for the "
+                "default-connector integration contract."
             )
         try:
             psycopg, dict_row = _load_psycopg_for_default_connector()
