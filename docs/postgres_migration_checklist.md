@@ -68,10 +68,10 @@ Current status snapshot:
 - [x] Make `create_connection()` use `psycopg` v3 with autocommit enabled and
   rows addressable by column name.
 - [x] Make the connection contract suite pass:
-  `python -m unittest tests.test_db_connection_contract -q`
+  `python -m auto_grader.contract_test_runner`
 - [x] Implement Postgres `initialize_schema(connection)` in dependency order.
 - [x] Make the Postgres schema contract suite pass:
-  `TEST_DATABASE_URL=... uv run python -m unittest tests.test_db_postgres_contract -q`
+  `TEST_DATABASE_URL=... uv run python -m auto_grader.contract_test_runner --require-postgres`
 
 ## Phase 3: Cleanup and cutover
 
@@ -87,3 +87,5 @@ Result:
 - This checklist is complete for the Postgres hard cut.
 - `tests/test_db_connection_contract.py` and
   `tests/test_db_postgres_contract.py` are now the active DB contract suites.
+- `python -m auto_grader.contract_test_runner` is the preferred repo-local
+  entrypoint for those authoritative contract suites.

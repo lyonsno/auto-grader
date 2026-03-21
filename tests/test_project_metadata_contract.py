@@ -121,14 +121,18 @@ class ProjectMetadataContractTests(unittest.TestCase):
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]==3.2.*"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]~=3.0"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]~=3.0.0"))
+        self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3,<4,!=3.0.*"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3.2rc1,<4"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3.2.post1,<4"))
         self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>=3.2.dev1,<4"))
 
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]>30,<4"))
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]>=3.2,<5"))
+        self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]>=3.1,==3.0.*"))
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]==3.2a1,<3.2"))
         self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]<=3.2.post1,>3.2"))
+        self.assertFalse(self._is_psycopg_v3_spec("psycopg[binary]>=3.2rc1,~=3.1.0"))
+        self.assertTrue(self._is_psycopg_v3_spec("psycopg[binary]>3.2rc1,<=3.2.post1"))
         self.assertFalse(
             self._is_psycopg_v3_spec("psycopg[binary]>=3,<7,!=4.*,!=5.*")
         )
@@ -323,7 +327,7 @@ class ProjectMetadataContractTests(unittest.TestCase):
     def _parse_release_prefix(self, version_text: str) -> tuple[int, ...]:
         if not re.fullmatch(r"\d+(?:\.\d+)*", version_text):
             raise ValueError(f"Unsupported wildcard prefix: {version_text!r}")
-        return self._normalize_release(tuple(int(part) for part in version_text.split(".")))
+        return tuple(int(part) for part in version_text.split("."))
 
     def _parse_version(self, version_text: str) -> _ParsedVersion:
         match = _VERSION_RE.fullmatch(version_text)
@@ -413,7 +417,13 @@ class ProjectMetadataContractTests(unittest.TestCase):
         candidate: _ParsedVersion,
     ) -> bool:
         if specifier.wildcard_prefix is not None:
-            matches = candidate.release[: len(specifier.wildcard_prefix)] == specifier.wildcard_prefix
+            padded_release = candidate.raw_release + (0,) * (
+                len(specifier.wildcard_prefix) - len(candidate.raw_release)
+            )
+            matches = (
+                padded_release[: len(specifier.wildcard_prefix)]
+                == specifier.wildcard_prefix
+            )
             if specifier.operator == "==":
                 return matches
             if specifier.operator == "!=":
@@ -429,7 +439,7 @@ class ProjectMetadataContractTests(unittest.TestCase):
         if specifier.operator == ">":
             return (
                 comparison > 0
-                and not self._is_same_release_post_of_final_baseline(
+                and not self._is_same_release_post_of_exclusive_baseline(
                     candidate,
                     specifier.version,
                 )
@@ -453,16 +463,24 @@ class ProjectMetadataContractTests(unittest.TestCase):
                 ),
                 raw_release=self._compatible_release_upper_bound(specifier.version.raw_release),
             )
-            return comparison >= 0 and self._compare_versions(candidate, upper_bound) < 0
+            upper_comparison = self._compare_versions(candidate, upper_bound)
+            return (
+                comparison >= 0
+                and upper_comparison < 0
+                and not self._is_same_release_prerelease_of_final_ceiling(
+                    candidate,
+                    upper_bound,
+                )
+            )
         raise AssertionError(f"Unsupported specifier operator: {specifier.operator!r}")
 
-    def _is_same_release_post_of_final_baseline(
+    def _is_same_release_post_of_exclusive_baseline(
         self,
         candidate: _ParsedVersion,
         baseline: _ParsedVersion,
     ) -> bool:
         return (
-            baseline.phase == "final"
+            baseline.phase != "post"
             and candidate.release == baseline.release
             and candidate.phase == "post"
         )

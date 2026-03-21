@@ -226,6 +226,10 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   API and URL-handling contract for the Postgres hard cut.
 - `tests/test_db_postgres_contract.py` defines the enforceable Postgres schema
   contract when run against an explicit disposable `TEST_DATABASE_URL`.
+- `python -m auto_grader.contract_test_runner` is the preferred low-friction local
+  entrypoint for the authoritative contract suites. It always runs the metadata and
+  connection contracts, and includes the Postgres schema contract when
+  `TEST_DATABASE_URL` is set.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
   add a non-vacuous failing contract test first, then implement.
@@ -388,6 +392,12 @@ Locked Postgres contract decisions (v0):
   treated as UTC in app logic/tests.
 - Postgres contract authority: keep the connection and schema contract suites green
   against an explicit disposable `TEST_DATABASE_URL`.
+
+Preferred commands:
+- Default local contract run:
+  `python -m auto_grader.contract_test_runner`
+- Explicit DB-backed contract run:
+  `TEST_DATABASE_URL=... uv run python -m auto_grader.contract_test_runner --require-postgres`
 
 Packaging is important but not a v0 requirement. v0 can be developer-run. v1 should
 minimize terminal rituals for the professor.
