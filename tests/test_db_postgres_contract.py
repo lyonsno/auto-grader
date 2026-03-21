@@ -172,6 +172,33 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 template_version_id=999_001,
             )
 
+    def test_exam_definitions_do_not_repoint_to_missing_template_versions(
+        self,
+    ) -> None:
+        self._require_tables("template_versions", "exam_definitions")
+
+        template_version_id = self._insert_template_version(
+            slug="chem101-update-guard-template",
+            version=1,
+        )
+        self._insert_exam_definition(
+            slug="chem101-update-guard",
+            version=1,
+            template_version_id=template_version_id,
+        )
+
+        self._assert_row_is_immutable(
+            table_name="exam_definitions",
+            key_columns={"slug": "chem101-update-guard", "version": 1},
+            assignments={"template_version_id": 999_105},
+            expected_row={
+                "slug": "chem101-update-guard",
+                "version": 1,
+                "title": "Chem 101 Midterm",
+                "template_version_id": template_version_id,
+            },
+        )
+
     def test_exam_instances_require_existing_student_and_exam_definition(self) -> None:
         self._require_tables(
             "students",

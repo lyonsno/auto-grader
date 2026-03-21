@@ -442,6 +442,8 @@ These are areas to discuss before committing to implementation decisions:
 
 Supporting rationale and deferred Postgres topics are tracked in
 `docs/postgres_contract_decision_worksheet.md`.
+Execution sequencing for the migration is tracked in
+`docs/postgres_migration_checklist.md`.
 
 ## Guiding principles
 
