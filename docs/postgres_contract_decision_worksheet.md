@@ -62,10 +62,22 @@ Rationale:
 
 Locked behavior:
 - Accept `postgres://` and `postgresql://` schemes (case-insensitive).
-- Reject blank/whitespace URL values.
+- Reject blank/whitespace URL values, including leading/trailing whitespace around
+  an otherwise valid URL.
 - Validate scheme before connector call.
 - If explicit URL is valid, ignore invalid env URL.
-- Pass URL through after validation without heavy normalization.
+- Normalize accepted Postgres scheme casing to lowercase for connector
+  compatibility; otherwise avoid heavy normalization.
+
+### Nonblank text semantics
+
+Locked behavior:
+- For DB-enforced "nonblank" text fields, reject any all-whitespace value,
+  including spaces, tabs, and newlines.
+- Rerunning `initialize_schema()` against a legacy schema intentionally
+  hard-fails if existing rows still rely on older `btrim(...) <> ''`
+  constraints to permit newly forbidden whitespace-only values; operators must
+  clean that data before rerunning schema initialization.
 
 Rationale:
 - Early, explicit validation gives cleaner failures.

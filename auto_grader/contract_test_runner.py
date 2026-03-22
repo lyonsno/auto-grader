@@ -9,6 +9,9 @@ import sys
 _ALWAYS_ON_SUITES = (
     "tests.test_project_metadata_contract",
     "tests.test_db_connection_contract",
+    "tests.test_db_postgres_harness_contract",
+    "tests.test_contract_test_runner",
+    "test_unittest_discovery_contract",
 )
 _POSTGRES_SUITE = "tests.test_db_postgres_contract"
 
@@ -45,13 +48,22 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv or [])
     database_url = _get_test_database_url()
 
-    if database_url is not None and not database_url.strip():
-        print(
-            "TEST_DATABASE_URL must be non-blank when explicitly set for the "
-            "contract test runner.",
-            file=sys.stderr,
-        )
-        return 2
+    if database_url is not None:
+        stripped_database_url = database_url.strip()
+        if stripped_database_url == "":
+            print(
+                "TEST_DATABASE_URL must be non-blank when explicitly set for the "
+                "contract test runner.",
+                file=sys.stderr,
+            )
+            return 2
+        if stripped_database_url != database_url:
+            print(
+                "TEST_DATABASE_URL must not include leading or trailing "
+                "whitespace for the contract test runner.",
+                file=sys.stderr,
+            )
+            return 2
 
     if args.require_postgres and database_url is None:
         print(

@@ -21,6 +21,15 @@ _DATABASE_URL_BLANK_RE = (
 _DATABASE_URL_SCHEME_RE = (
     r"(?is)(?=.*(?:database[_ ]?url|\burl\b))(?=.*(?:postgres|scheme|unsupported|invalid))"
 )
+_DATABASE_URL_SURROUNDING_WHITESPACE_RE = (
+    r"(?is)(?=.*(?:database[_ ]?url|\burl\b))(?=.*(?:whitespace|trim|leading|trailing))"
+)
+_DATABASE_URL_WITH_SURROUNDING_WHITESPACE = (
+    " postgresql:///postgres ",
+    "\npostgresql:///postgres",
+    "postgresql:///postgres\n",
+    "\tpostgresql:///postgres\t",
+)
 
 
 @contextmanager
@@ -322,6 +331,103 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
                     ):
                         self._invoke_connection(database_url=database_url)
 
+    def test_create_connection_rejects_urls_with_surrounding_whitespace(self) -> None:
+        for database_url in _DATABASE_URL_WITH_SURROUNDING_WHITESPACE:
+            with self.subTest(database_url=database_url):
+                spy = _ConnectSpy(return_value=object())
+                with self.assertRaisesRegex(
+                    ValueError,
+                    _DATABASE_URL_SURROUNDING_WHITESPACE_RE,
+                ):
+                    self._invoke_connection(
+                        database_url=database_url,
+                        connect_fn=spy,
+                    )
+                self.assertEqual(
+                    spy.calls,
+                    [],
+                    "database_url values with leading or trailing whitespace must "
+                    "fail validation before connector invocation.",
+                )
+
+    def test_explicit_url_with_surrounding_whitespace_does_not_fallback_to_env(self) -> None:
+        for database_url in _DATABASE_URL_WITH_SURROUNDING_WHITESPACE:
+            with self.subTest(database_url=database_url):
+                spy = _ConnectSpy(return_value=object())
+                with _patched_env(DATABASE_URL="postgresql://localhost/from-env"):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        _DATABASE_URL_SURROUNDING_WHITESPACE_RE,
+                    ):
+                        self._invoke_connection(
+                            database_url=database_url,
+                            connect_fn=spy,
+                        )
+                self.assertEqual(
+                    spy.calls,
+                    [],
+                    "database_url values with surrounding whitespace must fail "
+                    "validation, not connect using env fallback.",
+                )
+
+    def test_explicit_url_with_surrounding_whitespace_does_not_fallback_to_env_without_connect_fn(
+        self,
+    ) -> None:
+        for database_url in _DATABASE_URL_WITH_SURROUNDING_WHITESPACE:
+            with self.subTest(database_url=database_url):
+                with _patched_env(
+                    DATABASE_URL="postgresql://localhost/from-env"
+                ), mock.patch.object(
+                    db_module,
+                    "_default_connect",
+                    return_value=object(),
+                ) as default_connect:
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        _DATABASE_URL_SURROUNDING_WHITESPACE_RE,
+                    ):
+                        self._invoke_connection(database_url=database_url)
+                default_connect.assert_not_called()
+
+    def test_create_connection_rejects_database_url_from_env_with_surrounding_whitespace(
+        self,
+    ) -> None:
+        for env_value in _DATABASE_URL_WITH_SURROUNDING_WHITESPACE:
+            with self.subTest(env_value=env_value):
+                spy = _ConnectSpy(return_value=object())
+                with _patched_env(DATABASE_URL=env_value):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        _DATABASE_URL_SURROUNDING_WHITESPACE_RE,
+                    ):
+                        self._invoke_connection(
+                            database_url=None,
+                            connect_fn=spy,
+                        )
+                self.assertEqual(
+                    spy.calls,
+                    [],
+                    "Env-sourced database URLs with surrounding whitespace must "
+                    "fail fast before connector invocation.",
+                )
+
+    def test_env_url_with_surrounding_whitespace_is_rejected_without_connect_fn(
+        self,
+    ) -> None:
+        for env_value in _DATABASE_URL_WITH_SURROUNDING_WHITESPACE:
+            with self.subTest(env_value=env_value):
+                with _patched_env(DATABASE_URL=env_value), mock.patch.object(
+                    db_module,
+                    "_default_connect",
+                    return_value=object(),
+                ) as default_connect:
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        _DATABASE_URL_SURROUNDING_WHITESPACE_RE,
+                    ):
+                        self._invoke_connection(database_url=None)
+                default_connect.assert_not_called()
+
     def test_create_connection_rejects_blank_database_url_from_env_var(self) -> None:
         for env_value in ("", "   "):
             with self.subTest(env_value=env_value):
@@ -459,11 +565,15 @@ class DatabaseConnectionBehaviorContractTests(unittest.TestCase):
                 "Set TEST_DATABASE_URL to run the default-connector integration "
                 "contract against a real Postgres instance."
             )
-        if not database_url.strip():
-            raise AssertionError(
-                "TEST_DATABASE_URL must be non-blank when explicitly set for the "
-                "default-connector integration contract."
+        try:
+            database_url = db_module._normalize_postgres_database_url(
+                database_url,
+                label="TEST_DATABASE_URL",
             )
+        except ValueError as exc:
+            raise AssertionError(
+                f"{exc} for the default-connector integration contract."
+            ) from exc
         try:
             psycopg, dict_row = _load_psycopg_for_default_connector()
         except ModuleNotFoundError:
@@ -556,6 +666,72 @@ class DatabaseConnectionHarnessContractTests(unittest.TestCase):
                             "Blank TEST_DATABASE_URL must raise AssertionError instead "
                             "of being treated like an unset harness."
                         )
+
+    def test_default_connector_helper_fails_when_test_database_url_has_surrounding_whitespace(
+        self,
+    ) -> None:
+        case = DatabaseConnectionBehaviorContractTests(methodName="runTest")
+        module = sys.modules[__name__]
+
+        for database_url in _DATABASE_URL_WITH_SURROUNDING_WHITESPACE:
+            with self.subTest(database_url=database_url):
+                load_psycopg = mock.Mock(
+                    return_value=(
+                        SimpleNamespace(connect=mock.Mock()),
+                        object(),
+                    )
+                )
+                with _patched_env(TEST_DATABASE_URL=database_url), mock.patch.object(
+                    module,
+                    "_load_psycopg_for_default_connector",
+                    load_psycopg,
+                ):
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        _DATABASE_URL_SURROUNDING_WHITESPACE_RE,
+                    ):
+                        case._require_default_connector_test_database_url()
+                load_psycopg.assert_not_called()
+
+    def test_default_connector_helper_normalizes_uppercase_postgres_scheme_before_probe(
+        self,
+    ) -> None:
+        if os.environ.get("AUTO_GRADER_SKIP_UPPERCASE_HARNESS_NORMALIZATION_PROBES") == "1":
+            self.skipTest(
+                "Skip uppercase harness-normalization probe inside the spawned "
+                "out-of-tree contract-runner subprocess."
+            )
+
+        case = DatabaseConnectionBehaviorContractTests(methodName="runTest")
+        module = sys.modules[__name__]
+        fake_cursor = mock.Mock()
+        fake_cursor.fetchone.return_value = {"value": 1}
+        fake_connection = mock.Mock()
+        fake_connection.execute.return_value = fake_cursor
+        fake_context = mock.Mock()
+        fake_context.__enter__ = mock.Mock(return_value=fake_connection)
+        fake_context.__exit__ = mock.Mock(return_value=False)
+        fake_psycopg = SimpleNamespace(connect=mock.Mock(return_value=fake_context))
+        fake_dict_row = object()
+
+        with _patched_env(TEST_DATABASE_URL="POSTGRESQL:///postgres"), mock.patch.object(
+            module,
+            "_load_psycopg_for_default_connector",
+            return_value=(fake_psycopg, fake_dict_row),
+        ):
+            database_url = case._require_default_connector_test_database_url()
+
+        self.assertEqual(
+            database_url,
+            "postgresql:///postgres",
+            "Default-connector harness should normalize accepted Postgres scheme "
+            "casing before returning the explicit TEST_DATABASE_URL.",
+        )
+        fake_psycopg.connect.assert_called_once_with(
+            "postgresql:///postgres",
+            autocommit=True,
+            row_factory=fake_dict_row,
+        )
 
     def test_default_connector_helper_fails_when_explicit_database_url_lacks_driver(
         self,

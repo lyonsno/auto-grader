@@ -16,9 +16,11 @@ except ModuleNotFoundError:
     sql = None
     dict_row = None
 
+from auto_grader import db as db_module
 from auto_grader.db import initialize_schema
 
 _UNSET = object()
+_WHITESPACE_ONLY_TEXT_VALUES = ("", "   ", "\n", "\t", "\n\t")
 
 
 def _postgres_test_database_url() -> str | None:
@@ -36,11 +38,15 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 "Set TEST_DATABASE_URL to run Postgres schema contract tests "
                 "against an explicit disposable Postgres instance."
             )
-        if not cls.database_url.strip():
-            raise AssertionError(
-                "TEST_DATABASE_URL must be non-blank when explicitly set for the "
-                "Postgres schema contract suite."
+        try:
+            cls.database_url = db_module._normalize_postgres_database_url(
+                cls.database_url,
+                label="TEST_DATABASE_URL",
             )
+        except ValueError as exc:
+            raise AssertionError(
+                f"{exc} for the Postgres schema contract suite."
+            ) from exc
         if psycopg is None:
             raise AssertionError(
                 "Postgres contract tests require psycopg in the active environment. "
@@ -280,6 +286,138 @@ class PostgresDatabaseContractTests(unittest.TestCase):
         with self.assertRaises(errors.UniqueViolation):
             self._insert_grade_record(exam_instance_id, "finalized", 19.0, 20.0)
 
+    def test_initialize_schema_hard_fails_when_legacy_rows_violate_strengthened_nonblank_constraints(
+        self,
+    ) -> None:
+        self._require_tables(
+            "students",
+            "template_versions",
+            "exam_definitions",
+            "exam_instances",
+            "exam_pages",
+            "scan_artifacts",
+            "audit_events",
+        )
+
+        self._replace_nonblank_constraints_with_legacy_space_only_checks()
+
+        self._insert_student("\n")
+
+        with self.assertRaises(errors.CheckViolation) as exc_info:
+            initialize_schema(self.connection)
+
+        self.assertEqual(
+            getattr(exc_info.exception.diag, "constraint_name", None),
+            "students_student_key_nonblank",
+            "Rerunning initialize_schema() must hard-fail at the strengthened "
+            "constraint when legacy rows still contain newly forbidden "
+            "whitespace-only values.",
+        )
+
+    def test_initialize_schema_strengthens_legacy_space_only_nonblank_constraints_when_existing_data_is_clean(
+        self,
+    ) -> None:
+        self._require_tables(
+            "students",
+            "template_versions",
+            "exam_definitions",
+            "exam_instances",
+            "exam_pages",
+            "scan_artifacts",
+            "audit_events",
+        )
+
+        self._replace_nonblank_constraints_with_legacy_space_only_checks()
+
+        initialize_schema(self.connection)
+
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_student("\n")
+
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_template_version(slug="\n", version=1)
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_template_version(
+                slug="legacy-upgrade-template",
+                version=2,
+                source_yaml="\t",
+            )
+
+        template_version_id = self._insert_template_version(
+            slug="legacy-upgrade-template",
+            version=3,
+        )
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_exam_definition(
+                slug="\n",
+                version=1,
+                template_version_id=template_version_id,
+            )
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_exam_definition(
+                slug="legacy-upgrade-exam",
+                version=2,
+                template_version_id=template_version_id,
+                title="\t",
+            )
+
+        student_id = self._insert_student("legacy-upgrade-student")
+        exam_definition_id = self._insert_exam_definition(
+            slug="legacy-upgrade-midterm",
+            version=1,
+            template_version_id=template_version_id,
+        )
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_exam_instance_record(
+                exam_definition_id=exam_definition_id,
+                student_id=student_id,
+                attempt_number=1,
+                opaque_instance_code="\n",
+            )
+
+        exam_instance_id = self._insert_exam_instance_record(
+            exam_definition_id=exam_definition_id,
+            student_id=student_id,
+            attempt_number=2,
+            opaque_instance_code="legacy-upgrade-instance",
+        )
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_exam_page(
+                exam_instance_id,
+                1,
+                "\t",
+            )
+
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_scan_artifact(
+                sha256=self._sha256(950),
+                original_filename="\n",
+                status="matched",
+                failure_reason=None,
+            )
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_scan_artifact(
+                sha256=self._sha256(951),
+                original_filename="legacy-upgrade.png",
+                status="ambiguous",
+                failure_reason="\t",
+            )
+
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_audit_event(
+                entity_type="\n",
+                entity_id=exam_instance_id,
+                event_type="legacy_upgrade_check",
+                payload_json='{"ok":true}',
+            )
+        with self.assertRaises(errors.CheckViolation):
+            self._insert_audit_event(
+                entity_type="exam_instance",
+                entity_id=exam_instance_id,
+                event_type="\t",
+                payload_json='{"ok":true}',
+            )
+
     def test_students_require_unique_nonblank_student_keys(self) -> None:
         self._require_tables("students")
 
@@ -291,11 +429,10 @@ class PostgresDatabaseContractTests(unittest.TestCase):
         with self.assertRaises(errors.NotNullViolation):
             self._insert_student(None)
 
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_student("")
-
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_student("   ")
+        for student_key in _WHITESPACE_ONLY_TEXT_VALUES:
+            with self.subTest(student_key=student_key):
+                with self.assertRaises(errors.CheckViolation):
+                    self._insert_student(student_key)
 
     def test_template_versions_require_unique_slug_version_pairs(self) -> None:
         self._require_tables("template_versions")
@@ -507,21 +644,15 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 opaque_instance_code=None,
             )
 
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_instance_record(
-                exam_definition_id=exam_definition_id,
-                student_id=student_id,
-                attempt_number=1,
-                opaque_instance_code="",
-            )
-
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_instance_record(
-                exam_definition_id=exam_definition_id,
-                student_id=student_id,
-                attempt_number=1,
-                opaque_instance_code="   ",
-            )
+        for opaque_instance_code in _WHITESPACE_ONLY_TEXT_VALUES:
+            with self.subTest(opaque_instance_code=opaque_instance_code):
+                with self.assertRaises(errors.CheckViolation):
+                    self._insert_exam_instance_record(
+                        exam_definition_id=exam_definition_id,
+                        student_id=student_id,
+                        attempt_number=1,
+                        opaque_instance_code=opaque_instance_code,
+                    )
 
         with self.assertRaises(errors.CheckViolation):
             self._insert_exam_instance_record(
@@ -717,11 +848,14 @@ class PostgresDatabaseContractTests(unittest.TestCase):
         with self.assertRaises(errors.NotNullViolation):
             self._insert_exam_page(exam_instance_id, 1, None)
 
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_page(exam_instance_id, 1, "")
-
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_page(exam_instance_id, 1, "   ")
+        for fallback_page_code in _WHITESPACE_ONLY_TEXT_VALUES:
+            with self.subTest(fallback_page_code=fallback_page_code):
+                with self.assertRaises(errors.CheckViolation):
+                    self._insert_exam_page(
+                        exam_instance_id,
+                        1,
+                        fallback_page_code,
+                    )
 
         with self.assertRaises(errors.NotNullViolation):
             self._insert_exam_page(exam_instance_id, None, "MIDTERM-PNULL-INVALID")
@@ -917,7 +1051,7 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                         failure_reason=None,
                     )
 
-        for original_filename in ("", "   "):
+        for original_filename in _WHITESPACE_ONLY_TEXT_VALUES:
             with self.subTest(original_filename=original_filename):
                 with self.assertRaises(errors.CheckViolation):
                     self._insert_scan_artifact(
@@ -930,8 +1064,12 @@ class PostgresDatabaseContractTests(unittest.TestCase):
         for digest_seed, status, failure_reason, filename in (
             (19, "unmatched", "", "scan-bad-reason-unmatched-empty.png"),
             (20, "unmatched", "   ", "scan-bad-reason-unmatched-blank.png"),
-            (21, "ambiguous", "", "scan-bad-reason-ambiguous-empty.png"),
-            (22, "ambiguous", "   ", "scan-bad-reason-ambiguous-blank.png"),
+            (21, "unmatched", "\n", "scan-bad-reason-unmatched-newline.png"),
+            (22, "unmatched", "\t", "scan-bad-reason-unmatched-tab.png"),
+            (23, "ambiguous", "", "scan-bad-reason-ambiguous-empty.png"),
+            (24, "ambiguous", "   ", "scan-bad-reason-ambiguous-blank.png"),
+            (25, "ambiguous", "\n", "scan-bad-reason-ambiguous-newline.png"),
+            (26, "ambiguous", "\t", "scan-bad-reason-ambiguous-tab.png"),
         ):
             with self.subTest(status=status, failure_reason=failure_reason):
                 with self.assertRaises(errors.CheckViolation):
@@ -1439,6 +1577,8 @@ class PostgresDatabaseContractTests(unittest.TestCase):
         for entity_type, entity_id in (
             ("", 1),
             ("   ", 1),
+            ("\n", 1),
+            ("\t", 1),
             (None, 1),
             ("scan_artifact", None),
         ):
@@ -1451,7 +1591,7 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                         payload_json="{}",
                     )
 
-        for event_type in (None, "", "   "):
+        for event_type in (None, "", "   ", "\n", "\t"):
             with self.subTest(event_type=event_type):
                 with self.assertRaises((errors.NotNullViolation, errors.CheckViolation)):
                     self._insert_audit_event(
@@ -1652,11 +1792,10 @@ class PostgresDatabaseContractTests(unittest.TestCase):
         with self.assertRaises(errors.NotNullViolation):
             self._insert_template_version(slug=None, version=1)
 
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_template_version(slug="", version=2)
-
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_template_version(slug="   ", version=3)
+        for slug, version in zip(_WHITESPACE_ONLY_TEXT_VALUES, range(2, 7)):
+            with self.subTest(slug=slug):
+                with self.assertRaises(errors.CheckViolation):
+                    self._insert_template_version(slug=slug, version=version)
 
         with self.assertRaises(errors.NotNullViolation):
             self._insert_template_version(
@@ -1665,19 +1804,14 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 source_yaml=None,
             )
 
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_template_version(
-                slug="stoichiometry-q6",
-                version=1,
-                source_yaml="",
-            )
-
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_template_version(
-                slug="stoichiometry-q7",
-                version=1,
-                source_yaml="   ",
-            )
+        for source_yaml, suffix in zip(_WHITESPACE_ONLY_TEXT_VALUES, range(6, 11)):
+            with self.subTest(source_yaml=source_yaml):
+                with self.assertRaises(errors.CheckViolation):
+                    self._insert_template_version(
+                        slug=f"stoichiometry-q{suffix}",
+                        version=1,
+                        source_yaml=source_yaml,
+                    )
 
     def test_exam_definitions_preserve_exact_metadata_and_are_immutable(self) -> None:
         self._require_tables("template_versions", "exam_definitions")
@@ -1781,19 +1915,14 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 template_version_id=template_version_id,
             )
 
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_definition(
-                slug="",
-                version=2,
-                template_version_id=template_version_id,
-            )
-
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_definition(
-                slug="   ",
-                version=3,
-                template_version_id=template_version_id,
-            )
+        for slug, version in zip(_WHITESPACE_ONLY_TEXT_VALUES, range(2, 7)):
+            with self.subTest(slug=slug):
+                with self.assertRaises(errors.CheckViolation):
+                    self._insert_exam_definition(
+                        slug=slug,
+                        version=version,
+                        template_version_id=template_version_id,
+                    )
 
         with self.assertRaises(errors.NotNullViolation):
             self._insert_exam_definition(
@@ -1803,21 +1932,15 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 title=None,
             )
 
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_definition(
-                slug="chem101-empty-title",
-                version=5,
-                template_version_id=template_version_id,
-                title="",
-            )
-
-        with self.assertRaises(errors.CheckViolation):
-            self._insert_exam_definition(
-                slug="chem101-blank-title",
-                version=6,
-                template_version_id=template_version_id,
-                title="   ",
-            )
+        for title, version in zip(_WHITESPACE_ONLY_TEXT_VALUES, range(5, 10)):
+            with self.subTest(title=title):
+                with self.assertRaises(errors.CheckViolation):
+                    self._insert_exam_definition(
+                        slug=f"chem101-title-{version}",
+                        version=version,
+                        template_version_id=template_version_id,
+                        title=title,
+                    )
 
     def _require_tables(self, *table_names: str) -> None:
         actual_tables = self._list_table_names()
@@ -1952,6 +2075,90 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                     )
                 )
         self._schema_created = False
+
+    def _replace_check_constraint(
+        self,
+        table_name: str,
+        constraint_name: str,
+        check_expression: str,
+    ) -> None:
+        self.connection.execute(
+            f"""
+            ALTER TABLE {table_name}
+            DROP CONSTRAINT IF EXISTS {constraint_name}
+            """
+        )
+        self.connection.execute(
+            f"""
+            ALTER TABLE {table_name}
+            ADD CONSTRAINT {constraint_name}
+            CHECK ({check_expression})
+            """
+        )
+
+    def _replace_nonblank_constraints_with_legacy_space_only_checks(self) -> None:
+        self._replace_check_constraint(
+            "students",
+            "students_student_key_nonblank",
+            "btrim(student_key) <> ''",
+        )
+        self._replace_check_constraint(
+            "template_versions",
+            "template_versions_slug_nonblank",
+            "btrim(slug) <> ''",
+        )
+        self._replace_check_constraint(
+            "template_versions",
+            "template_versions_source_yaml_nonblank",
+            "btrim(source_yaml) <> ''",
+        )
+        self._replace_check_constraint(
+            "exam_definitions",
+            "exam_definitions_slug_nonblank",
+            "btrim(slug) <> ''",
+        )
+        self._replace_check_constraint(
+            "exam_definitions",
+            "exam_definitions_title_nonblank",
+            "btrim(title) <> ''",
+        )
+        self._replace_check_constraint(
+            "exam_instances",
+            "exam_instances_opaque_code_nonblank",
+            "btrim(opaque_instance_code) <> ''",
+        )
+        self._replace_check_constraint(
+            "exam_pages",
+            "exam_pages_fallback_page_code_nonblank",
+            "btrim(fallback_page_code) <> ''",
+        )
+        self._replace_check_constraint(
+            "scan_artifacts",
+            "scan_artifacts_original_filename_nonblank",
+            "btrim(original_filename) <> ''",
+        )
+        self._replace_check_constraint(
+            "scan_artifacts",
+            "scan_artifacts_failure_reason_rules",
+            """
+            (status = 'matched' AND failure_reason IS NULL)
+            OR (
+                status IN ('unmatched', 'ambiguous')
+                AND failure_reason IS NOT NULL
+                AND btrim(failure_reason) <> ''
+            )
+            """,
+        )
+        self._replace_check_constraint(
+            "audit_events",
+            "audit_events_entity_type_nonblank",
+            "btrim(entity_type) <> ''",
+        )
+        self._replace_check_constraint(
+            "audit_events",
+            "audit_events_event_type_nonblank",
+            "btrim(event_type) <> ''",
+        )
 
     def _insert_student(self, student_key: str | None) -> int:
         cursor = self.connection.execute(

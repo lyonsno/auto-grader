@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 
 
@@ -13,7 +14,11 @@ def _iter_test_cases(suite: unittest.TestSuite):
 
 class UnittestDiscoveryContractTests(unittest.TestCase):
     def test_repo_root_unittest_discovery_finds_contract_suites(self) -> None:
-        discovered = unittest.defaultTestLoader.discover(".")
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        discovered = unittest.defaultTestLoader.discover(
+            start_dir=repo_root,
+            top_level_dir=repo_root,
+        )
         test_ids = {case.id() for case in _iter_test_cases(discovered)}
 
         self.assertTrue(
@@ -33,6 +38,15 @@ class UnittestDiscoveryContractTests(unittest.TestCase):
             "Default `python -m unittest` discovery from repo root must include "
             "tests/test_project_metadata_contract.py rather than only ad hoc "
             "module-level invocations.",
+        )
+        self.assertTrue(
+            any(
+                test_id.startswith("tests.test_contract_test_runner.")
+                for test_id in test_ids
+            ),
+            "Default `python -m unittest` discovery from repo root must include "
+            "tests/test_contract_test_runner.py so the authoritative low-friction "
+            "runner cannot silently fall out of conventional test runs.",
         )
         self.assertTrue(
             any(

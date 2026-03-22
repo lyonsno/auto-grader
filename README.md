@@ -227,9 +227,9 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
 - `tests/test_db_postgres_contract.py` defines the enforceable Postgres schema
   contract when run against an explicit disposable `TEST_DATABASE_URL`.
 - `python -m auto_grader.contract_test_runner` is the preferred low-friction local
-  entrypoint for the authoritative contract suites. It always runs the metadata and
-  connection contracts, and includes the Postgres schema contract when
-  `TEST_DATABASE_URL` is set.
+  entrypoint for the authoritative contract suites. It always runs the metadata,
+  connection, Postgres harness, runner, and discovery guardrail contracts, and
+  includes the Postgres schema contract when `TEST_DATABASE_URL` is set.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
   add a non-vacuous failing contract test first, then implement.
@@ -382,7 +382,15 @@ Locked Postgres contract decisions (v0):
 - Invalid explicit `database_url`: raise `ValueError`; never fallback to env URL.
 - Missing explicit URL: read `DATABASE_URL`; if missing or blank, raise `ValueError`.
 - Accepted URL schemes: `postgres://` and `postgresql://` (case-insensitive).
-- URL handling policy: validate early, then pass through without heavy normalization.
+- URL handling policy: validate early; reject blank values and leading/trailing
+  whitespace; normalize accepted Postgres scheme casing to lowercase for connector
+  compatibility; otherwise avoid heavy normalization.
+- Nonblank text semantics: DB-enforced "nonblank" text fields reject any all-
+  whitespace value, including spaces, tabs, and newlines.
+- Legacy rerun policy for strengthened nonblank constraints: `initialize_schema()`
+  intentionally hard-fails on existing schemas that still contain newly
+  forbidden whitespace-only values under legacy `btrim(...) <> ''` checks;
+  clean those rows before rerunning schema initialization.
 - Legacy SQLite path API: unsupported (hard-cut from `path`-style connection contract).
 - Primary keys for v0: surrogate integer identity keys; keep business uniqueness as
   separate constraints.
@@ -398,6 +406,33 @@ Preferred commands:
   `python -m auto_grader.contract_test_runner`
 - Explicit DB-backed contract run:
   `TEST_DATABASE_URL=... uv run python -m auto_grader.contract_test_runner --require-postgres`
+
+Disposable local Postgres for contract tests:
+1. Create a temporary native Postgres cluster and socket directory. Adjust port
+   `55432` if another local service is already using it. Pin UTF-8 explicitly so
+   the contract suite does not false-red against a SQL_ASCII cluster.
+   ```bash
+   tmp_root="$(mktemp -d /tmp/auto-grader-pg.XXXXXX)"
+   mkdir -p "$tmp_root/socket"
+   initdb -D "$tmp_root/data" -U postgres -A trust --no-locale -E UTF8
+   pg_ctl -D "$tmp_root/data" \
+     -l "$tmp_root/postgres.log" \
+     -o "-k $tmp_root/socket -p 55432 -h 127.0.0.1" \
+     start
+   ```
+2. Verify the disposable server is reachable.
+   ```bash
+   psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -Atqc 'select 1'
+   ```
+3. Run the DB-backed contract suite against that disposable instance.
+   ```bash
+   export TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:55432/postgres"
+   uv run python -m auto_grader.contract_test_runner --require-postgres
+   ```
+4. Stop the disposable server when finished.
+   ```bash
+   pg_ctl -D "$tmp_root/data" stop
+   ```
 
 Packaging is important but not a v0 requirement. v0 can be developer-run. v1 should
 minimize terminal rituals for the professor.

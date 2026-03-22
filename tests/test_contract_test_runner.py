@@ -5,6 +5,9 @@ from io import StringIO
 from types import SimpleNamespace
 import importlib
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -60,9 +63,13 @@ class ContractTestRunnerTests(unittest.TestCase):
             [
                 "tests.test_project_metadata_contract",
                 "tests.test_db_connection_contract",
+                "tests.test_db_postgres_harness_contract",
+                "tests.test_contract_test_runner",
+                "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
-            "metadata and connection suites in a fixed, repo-local order.",
+            "metadata, connection, Postgres harness, runner, and discovery "
+            "guardrail suites in a fixed, repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -100,10 +107,14 @@ class ContractTestRunnerTests(unittest.TestCase):
             [
                 "tests.test_project_metadata_contract",
                 "tests.test_db_connection_contract",
+                "tests.test_db_postgres_harness_contract",
+                "tests.test_contract_test_runner",
+                "test_unittest_discovery_contract",
                 "tests.test_db_postgres_contract",
             ],
             "Setting TEST_DATABASE_URL should cause the repo-local runner to "
-            "include the authoritative Postgres schema contract suite.",
+            "include the authoritative Postgres schema contract suite alongside "
+            "the always-on guardrail suites.",
         )
 
     def test_runner_require_postgres_fails_without_database_url(self) -> None:
@@ -149,6 +160,81 @@ class ContractTestRunnerTests(unittest.TestCase):
                 )
                 stderr.seek(0)
                 stderr.truncate(0)
+
+    def test_runner_rejects_database_url_with_surrounding_whitespace(self) -> None:
+        runner = _load_runner_module(self)
+        stderr = StringIO()
+
+        for database_url in (
+            " postgresql:///postgres ",
+            "\npostgresql:///postgres",
+            "postgresql:///postgres\n",
+            "\tpostgresql:///postgres\t",
+        ):
+            with self.subTest(database_url=database_url):
+                with _patched_env(
+                    TEST_DATABASE_URL=database_url
+                ), redirect_stderr(stderr), mock.patch.object(
+                    runner.subprocess,
+                    "run",
+                ) as run_mock:
+                    exit_code = runner.main([])
+
+                self.assertNotEqual(exit_code, 0)
+                run_mock.assert_not_called()
+                self.assertRegex(
+                    stderr.getvalue(),
+                    r"(?is)TEST_DATABASE_URL.*(?:leading|trailing|whitespace|trim)",
+                    "TEST_DATABASE_URL values with surrounding whitespace must "
+                    "fail fast instead of activating the Postgres contract path.",
+                )
+                stderr.seek(0)
+                stderr.truncate(0)
+
+    def test_runner_executes_always_on_suites_from_repo_root_when_invoked_elsewhere(
+        self,
+    ) -> None:
+        if os.environ.get("AUTO_GRADER_OUT_OF_TREE_RUNNER_PROBE") == "1":
+            self.skipTest(
+                "Skip recursive out-of-tree runner probe inside the spawned "
+                "contract-runner subprocess."
+            )
+
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            repo_root
+            if not existing_pythonpath
+            else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+        )
+        env.pop("TEST_DATABASE_URL", None)
+        env["AUTO_GRADER_OUT_OF_TREE_RUNNER_PROBE"] = "1"
+        env["AUTO_GRADER_SKIP_UPPERCASE_HARNESS_NORMALIZATION_PROBES"] = "1"
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "auto_grader.contract_test_runner"],
+                cwd=tempdir,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            "Module entrypoint runs from outside the repo root should still "
+            "succeed when auto_grader is importable. "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}",
+        )
+        self.assertRegex(
+            result.stdout,
+            r"(?is)Skipping Postgres schema contract suite because TEST_DATABASE_URL is not set.",
+            "A successful out-of-tree runner invocation should still reach the "
+            "normal Postgres-suite skip message when TEST_DATABASE_URL is unset.",
+        )
 
 
 if __name__ == "__main__":
