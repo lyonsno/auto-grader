@@ -62,20 +62,27 @@ class ContractTestRunnerTests(unittest.TestCase):
             [command[-2] for command in commands],
             [
                 "tests.test_project_metadata_contract",
+                "tests.test_postgres_contract_bootstrap_script",
                 "tests.test_db_connection_contract",
                 "tests.test_db_postgres_harness_contract",
                 "tests.test_contract_test_runner",
                 "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
-            "metadata, connection, Postgres harness, runner, and discovery "
-            "guardrail suites in a fixed, repo-local order.",
+            "metadata, bootstrap-script, connection, Postgres harness, runner, "
+            "and discovery guardrail suites in a fixed, repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
             [command[-2] for command in commands],
             "Postgres schema tests should not run implicitly when "
             "TEST_DATABASE_URL is unset.",
+        )
+        self.assertNotIn(
+            "tests.postgres_contract_bootstrap_script_smoke_contract",
+            [command[-2] for command in commands],
+            "The DB-backed bootstrap smoke probe should stay out of the default "
+            "sandbox-safe runner path until Postgres is explicitly configured.",
         )
         self.assertRegex(
             stdout.getvalue(),
@@ -106,15 +113,19 @@ class ContractTestRunnerTests(unittest.TestCase):
             [command[-2] for command in commands],
             [
                 "tests.test_project_metadata_contract",
+                "tests.test_postgres_contract_bootstrap_script",
                 "tests.test_db_connection_contract",
                 "tests.test_db_postgres_harness_contract",
                 "tests.test_contract_test_runner",
                 "test_unittest_discovery_contract",
+                "tests.test_db_postgres_smoke_contract",
+                "tests.postgres_contract_bootstrap_script_smoke_contract",
                 "tests.test_db_postgres_contract",
             ],
             "Setting TEST_DATABASE_URL should cause the repo-local runner to "
-            "include the authoritative Postgres schema contract suite alongside "
-            "the always-on guardrail suites.",
+            "run the fail-fast schema smoke suite, the one-command bootstrap "
+            "script smoke suite, and then the full authoritative schema "
+            "contract suite, alongside the always-on guardrail suites.",
         )
 
     def test_runner_require_postgres_fails_without_database_url(self) -> None:

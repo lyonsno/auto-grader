@@ -50,6 +50,15 @@ class UnittestDiscoveryContractTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
+                test_id.startswith("tests.test_postgres_contract_bootstrap_script.")
+                for test_id in test_ids
+            ),
+            "Default `python -m unittest` discovery from repo root must include "
+            "tests/test_postgres_contract_bootstrap_script.py so the documented "
+            "one-command DB bootstrap entrypoint cannot silently disappear.",
+        )
+        self.assertTrue(
+            any(
                 test_id.startswith("tests.test_db_postgres_contract.")
                 for test_id in test_ids
             ),
@@ -65,6 +74,24 @@ class UnittestDiscoveryContractTests(unittest.TestCase):
             "Default `python -m unittest` discovery from repo root must include "
             "tests/test_db_postgres_harness_contract.py so harness-policy coverage "
             "does not silently disappear.",
+        )
+        self.assertTrue(
+            any(
+                test_id.startswith("tests.test_db_postgres_smoke_contract.")
+                for test_id in test_ids
+            ),
+            "Default `python -m unittest` discovery from repo root must include "
+            "tests/test_db_postgres_smoke_contract.py so the fail-fast real-"
+            "Postgres smoke coverage cannot silently disappear.",
+        )
+        self.assertFalse(
+            any(
+                test_id.startswith("tests.postgres_contract_bootstrap_script_smoke_contract.")
+                for test_id in test_ids
+            ),
+            "Default `python -m unittest` discovery from repo root must stay "
+            "sandbox-safe and therefore must not pick up the DB-backed bootstrap "
+            "script smoke probe automatically.",
         )
 
 

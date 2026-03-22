@@ -406,8 +406,14 @@ Preferred commands:
   `python -m auto_grader.contract_test_runner`
 - Explicit DB-backed contract run:
   `TEST_DATABASE_URL=... uv run python -m auto_grader.contract_test_runner --require-postgres`
+- One-command disposable DB-backed run:
+  `./scripts/run_postgres_contracts.sh`
 
 Disposable local Postgres for contract tests:
+If you just want the low-friction path, run `./scripts/run_postgres_contracts.sh`.
+It bootstraps a disposable UTF-8 local cluster, sets `TEST_DATABASE_URL`, runs the
+authoritative DB-backed contract runner, and tears the cluster down afterward.
+
 1. Create a temporary native Postgres cluster and socket directory. Adjust port
    `55432` if another local service is already using it. Pin UTF-8 explicitly so
    the contract suite does not false-red against a SQL_ASCII cluster.

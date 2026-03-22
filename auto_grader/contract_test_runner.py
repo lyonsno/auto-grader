@@ -8,12 +8,17 @@ import sys
 
 _ALWAYS_ON_SUITES = (
     "tests.test_project_metadata_contract",
+    "tests.test_postgres_contract_bootstrap_script",
     "tests.test_db_connection_contract",
     "tests.test_db_postgres_harness_contract",
     "tests.test_contract_test_runner",
     "test_unittest_discovery_contract",
 )
-_POSTGRES_SUITE = "tests.test_db_postgres_contract"
+_POSTGRES_SUITES = (
+    "tests.test_db_postgres_smoke_contract",
+    "tests.postgres_contract_bootstrap_script_smoke_contract",
+    "tests.test_db_postgres_contract",
+)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -85,7 +90,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    return _run_suite(_POSTGRES_SUITE)
+    for suite in _POSTGRES_SUITES:
+        exit_code = _run_suite(suite)
+        if exit_code != 0:
+            return exit_code
+
+    return 0
 
 
 if __name__ == "__main__":
