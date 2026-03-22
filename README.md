@@ -413,26 +413,30 @@ Disposable local Postgres for contract tests:
 If you just want the low-friction path, run `./scripts/run_postgres_contracts.sh`.
 It bootstraps a disposable UTF-8 local cluster, sets `TEST_DATABASE_URL`, runs the
 authoritative DB-backed contract runner, and tears the cluster down afterward.
+It binds Postgres to a per-run Unix socket directory with TCP disabled; set
+`AUTO_GRADER_POSTGRES_PORT` if you want to pin an explicit socket port instead.
 
-1. Create a temporary native Postgres cluster and socket directory. Adjust port
-   `55432` if another local service is already using it. Pin UTF-8 explicitly so
-   the contract suite does not false-red against a SQL_ASCII cluster.
+1. Create a temporary native Postgres cluster and socket directory. The per-run
+   socket directory keeps this isolated from unrelated local TCP listeners; the
+   `55432` port just gives the socket file and DSN a predictable name. Pin UTF-8
+   explicitly so the contract suite does not false-red against a SQL_ASCII cluster.
    ```bash
    tmp_root="$(mktemp -d /tmp/auto-grader-pg.XXXXXX)"
    mkdir -p "$tmp_root/socket"
    initdb -D "$tmp_root/data" -U postgres -A trust --no-locale -E UTF8
    pg_ctl -D "$tmp_root/data" \
      -l "$tmp_root/postgres.log" \
-     -o "-k $tmp_root/socket -p 55432 -h 127.0.0.1" \
+     -w \
+     -o "-k $tmp_root/socket -p 55432 -h ''" \
      start
    ```
-2. Verify the disposable server is reachable.
+2. Verify the disposable server is reachable through the Unix socket directory.
    ```bash
-   psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -Atqc 'select 1'
+   psql -h "$tmp_root/socket" -p 55432 -U postgres -d postgres -Atqc 'select 1'
    ```
 3. Run the DB-backed contract suite against that disposable instance.
    ```bash
-   export TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:55432/postgres"
+   export TEST_DATABASE_URL="postgresql://postgres@/postgres?host=$tmp_root/socket&port=55432"
    uv run python -m auto_grader.contract_test_runner --require-postgres
    ```
 4. Stop the disposable server when finished.

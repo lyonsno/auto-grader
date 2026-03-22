@@ -10,6 +10,9 @@ These repo-specific instructions supplement the global Codex defaults.
   `Operation not permitted` even when the disposable database is healthy.
 - If that happens, treat it as an environment limitation and rerun the DB-backed
   suite outside the sandbox / with escalation instead of changing the contract.
+- If DB-backed smoke or schema coverage would materially reduce uncertainty, do
+  not hesitate to run it. Prefer requesting escalation / permissions over
+  skipping the run due to sandbox limits.
 - The always-on non-DB contract suites should remain sandbox-safe.
 
 Preferred DB-backed commands:
@@ -18,6 +21,8 @@ Preferred DB-backed commands:
   `TEST_DATABASE_URL=... .venv/bin/python -m unittest tests.test_db_postgres_contract -q`
 - Full contract runner with Postgres required:
   `TEST_DATABASE_URL=... .venv/bin/python -m auto_grader.contract_test_runner --require-postgres`
+- One-command disposable DB-backed run:
+  `./scripts/run_postgres_contracts.sh`
 
 Notes:
 
