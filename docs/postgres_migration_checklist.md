@@ -1,6 +1,6 @@
 # Postgres Migration Checklist
 
-Last updated: 2026-03-20
+Last updated: 2026-03-22
 
 Purpose:
 - Give the migration a visible burn-down list.
@@ -12,10 +12,12 @@ Current status snapshot:
   `create_connection()` hard-cut contract.
 - `tests/test_db_postgres_contract.py` exists and covers a substantial first
   slice of Postgres schema behavior against an explicit `TEST_DATABASE_URL`.
-- `tests/test_db_contract.py` still exists as the shrinking SQLite reference
-  suite for parity comparison during migration.
-- `auto_grader/db.py` is still pre-migration runtime code:
-  `create_connection(path=":memory:")` plus stub `initialize_schema(...)`.
+- `tests/test_db_contract.py` has been retired; the active DB contract suites are
+  the Postgres connection and schema suites plus the repo-local contract runner
+  guardrails around them.
+- `auto_grader/db.py` now implements the Postgres runtime hard cut:
+  `create_connection(database_url=None, connect_fn=None)` and a real
+  `initialize_schema(connection)` implementation.
 
 ## Phase 1: Contract parity before runtime work
 
