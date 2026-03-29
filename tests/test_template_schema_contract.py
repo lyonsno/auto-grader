@@ -803,5 +803,93 @@ class TestRoundTrip(unittest.TestCase):
         )
 
 
+# ===========================================================================
+# 10. Real exam template integration
+# ===========================================================================
+
+
+class TestRealExamTemplate(unittest.TestCase):
+    """The real CHM 141 template must load and validate cleanly."""
+
+    _TEMPLATE_PATH = "templates/chm141-final-fall2023.yaml"
+
+    def _load_real_template(self):
+        import os
+        import pathlib
+
+        # Find the template relative to the repo root
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
+        template_path = repo_root / self._TEMPLATE_PATH
+        if not template_path.exists():
+            self.skipTest(f"Template not found at {template_path}")
+        return template_path.read_text()
+
+    def test_real_template_loads(self):
+        from auto_grader.template_schema import load_template
+
+        yaml_str = self._load_real_template()
+        tmpl = load_template(yaml_str)
+        self.assertEqual(tmpl["slug"], "chm141-final-fall2023")
+
+    def test_real_template_validates(self):
+        from auto_grader.template_schema import load_template, validate_template
+
+        yaml_str = self._load_real_template()
+        tmpl = load_template(yaml_str)
+        errors = validate_template(tmpl)
+        self.assertEqual(errors, [], f"Validation errors:\n" + "\n".join(errors))
+
+    def test_real_template_has_expected_sections(self):
+        from auto_grader.template_schema import load_template
+
+        yaml_str = self._load_real_template()
+        tmpl = load_template(yaml_str)
+        section_ids = [s["id"] for s in tmpl["sections"]]
+        self.assertIn("mc", section_ids)
+        self.assertIn("free-response", section_ids)
+
+    def test_real_template_question_count(self):
+        from auto_grader.template_schema import load_template
+
+        yaml_str = self._load_real_template()
+        tmpl = load_template(yaml_str)
+        mc_section = next(s for s in tmpl["sections"] if s["id"] == "mc")
+        fr_section = next(s for s in tmpl["sections"] if s["id"] == "free-response")
+        # 19 MC questions (mc-5 omitted: requires isotope figure)
+        self.assertEqual(len(mc_section["questions"]), 19)
+        # 16 free-response questions
+        self.assertEqual(len(fr_section["questions"]), 16)
+
+    def test_real_template_expression_evaluation(self):
+        """Spot-check that key expressions produce correct answers."""
+        from auto_grader.template_schema import evaluate_expr
+
+        # Q1: density calculation with original exam values
+        result = evaluate_expr("mass / density", {"mass": 95.0, "density": 13.6})
+        self.assertAlmostEqual(result, 6.985, places=2)
+
+        # Q5: limiting reagent with original values
+        result = evaluate_expr(
+            "2 * min(mol_n2, mol_h2 / 3)",
+            {"mol_n2": 10.2, "mol_h2": 27.9},
+        )
+        self.assertAlmostEqual(result, 18.6, places=1)
+
+        # Q8: Hess's law with original values
+        result = evaluate_expr(
+            "dh2 - dh1", {"dh1": -325.1, "dh2": -511.3}
+        )
+        self.assertAlmostEqual(result, -186.2, places=1)
+
+        # Q15d: calorimetry total with original values
+        result = evaluate_expr(
+            "(mass_water * 4.184 * (100.0 - t_initial) + mass_water * 2256 "
+            "+ mass_water * 1.92 * (t_final - 100.0)) / 1000",
+            {"mass_water": 100.0, "t_initial": 25.0, "t_final": 200.0},
+        )
+        # Original answer key: 302 kJ (with slight rounding)
+        self.assertAlmostEqual(result, 288.0, delta=15)
+
+
 if __name__ == "__main__":
     unittest.main()
