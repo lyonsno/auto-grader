@@ -47,6 +47,10 @@ def validate_template(tmpl: dict) -> list[str]:
 
     Returns a list of human-readable error strings. An empty list means
     the template is valid.
+
+    Validation is pure — the input dict is not mutated. Consumers that
+    need default values (e.g., inferred ``grading``) must derive them
+    separately. This keeps validation side-effect-free and idempotent.
     """
     errors: list[str] = []
     _validate_top_level(tmpl, errors)
@@ -344,6 +348,20 @@ def _validate_mc_answer(
             )
         else:
             _check_expr_variables(answer["expr"], path + ".answer.expr", errors, variables)
+        # Validate distractor expressions for variable references
+        distractors = q["distractors"]
+        if isinstance(distractors, dict):
+            for strategy_key in ("common_errors", "offset", "percentage"):
+                entries = distractors.get(strategy_key)
+                if isinstance(entries, list):
+                    for di, entry in enumerate(entries):
+                        if isinstance(entry, dict) and "expr" in entry:
+                            _check_expr_variables(
+                                entry["expr"],
+                                f"{path}.distractors.{strategy_key}[{di}].expr",
+                                errors,
+                                variables,
+                            )
     else:
         errors.append(
             f"{path}: multiple_choice requires either 'choices' or 'distractors'"
@@ -365,6 +383,8 @@ def _validate_numeric_answer(
 
     if "tolerance" not in answer:
         errors.append(f"{path}: numeric answer requires 'tolerance'")
+    else:
+        _validate_tolerance(answer["tolerance"], path, errors)
 
 
 def _validate_exact_match_answer(
@@ -423,6 +443,27 @@ def _validate_manual_review_answer(
                 )
 
 
+_VALID_TOLERANCE_TYPES = frozenset({"absolute", "relative"})
+
+
+def _validate_tolerance(tolerance: Any, path: str, errors: list[str]) -> None:
+    """Validate tolerance structure: {type: absolute|relative, value: positive number}."""
+    if not isinstance(tolerance, dict):
+        errors.append(f"{path}: tolerance must be a mapping, got {type(tolerance).__name__}")
+        return
+    ttype = tolerance.get("type")
+    if ttype not in _VALID_TOLERANCE_TYPES:
+        errors.append(
+            f"{path}: tolerance.type must be one of {sorted(_VALID_TOLERANCE_TYPES)}, "
+            f"got {ttype!r}"
+        )
+    tvalue = tolerance.get("value")
+    if tvalue is None:
+        errors.append(f"{path}: tolerance requires 'value'")
+    elif not isinstance(tvalue, (int, float)) or tvalue <= 0:
+        errors.append(f"{path}: tolerance.value must be a positive number, got {tvalue!r}")
+
+
 # ---------------------------------------------------------------------------
 # Variable validation
 # ---------------------------------------------------------------------------
@@ -479,6 +520,10 @@ def _check_expr_variables(
 # ---------------------------------------------------------------------------
 
 _EXPR_BUILTINS = frozenset({"min", "max", "abs", "round", "pi", "True", "False"})
+
+# Security note: ast.Pow is allowed because templates are authored by the
+# professor (trusted input). If templates ever accept untrusted input,
+# add an exponent-magnitude guard to prevent DoS via nested power towers.
 
 _ALLOWED_AST_NODES = frozenset({
     ast.Expression,

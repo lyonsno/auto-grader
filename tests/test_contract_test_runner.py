@@ -66,11 +66,13 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_db_connection_contract",
                 "tests.test_db_postgres_harness_contract",
                 "tests.test_contract_test_runner",
+                "tests.test_template_schema_contract",
                 "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
             "metadata, bootstrap-script, connection, Postgres harness, runner, "
-            "and discovery guardrail suites in a fixed, repo-local order.",
+            "template schema, and discovery guardrail suites in a fixed, "
+            "repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -117,6 +119,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_db_connection_contract",
                 "tests.test_db_postgres_harness_contract",
                 "tests.test_contract_test_runner",
+                "tests.test_template_schema_contract",
                 "test_unittest_discovery_contract",
                 "tests.test_db_postgres_smoke_contract",
                 "tests.postgres_contract_bootstrap_script_smoke_contract",

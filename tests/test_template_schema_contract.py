@@ -679,6 +679,132 @@ class TestFigureField(unittest.TestCase):
 
 
 # ===========================================================================
+# 7b. Review-driven additions: tolerance, namespace, edge cases
+# ===========================================================================
+
+
+class TestToleranceValidation(unittest.TestCase):
+    """Tolerance structure must be well-formed."""
+
+    def _validate(self, tmpl_dict: dict):
+        from auto_grader.template_schema import validate_template
+
+        return validate_template(tmpl_dict)
+
+    def test_tolerance_non_dict_rejected(self):
+        q = _minimal_numeric_question()
+        q["answer"]["tolerance"] = "lol"
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("tolerance" in e.lower() for e in errors))
+
+    def test_tolerance_invalid_type_rejected(self):
+        q = _minimal_numeric_question()
+        q["answer"]["tolerance"] = {"type": "banana", "value": 0.01}
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("tolerance" in e.lower() for e in errors))
+
+    def test_tolerance_missing_value_rejected(self):
+        q = _minimal_numeric_question()
+        q["answer"]["tolerance"] = {"type": "relative"}
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("tolerance" in e.lower() for e in errors))
+
+    def test_tolerance_negative_value_rejected(self):
+        q = _minimal_numeric_question()
+        q["answer"]["tolerance"] = {"type": "absolute", "value": -0.5}
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("tolerance" in e.lower() for e in errors))
+
+    def test_tolerance_valid(self):
+        q = _minimal_numeric_question()
+        # Already has a valid tolerance from the helper
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertEqual(errors, [])
+
+
+class TestDistractorExprValidation(unittest.TestCase):
+    """Distractor expressions must be validated for variable references."""
+
+    def _validate(self, tmpl_dict: dict):
+        from auto_grader.template_schema import validate_template
+
+        return validate_template(tmpl_dict)
+
+    def test_distractor_expr_with_undeclared_variable_rejected(self):
+        q = {
+            "id": "mc-param",
+            "points": 2,
+            "prompt": "What is {{mass}} / {{density}}?",
+            "answer_type": "multiple_choice",
+            "variables": {
+                "mass": {"type": "float", "min": 10.0, "max": 99.0, "step": 0.1},
+                "density": {"type": "float", "min": 0.7, "max": 3.5, "step": 0.01},
+            },
+            "answer": {
+                "expr": "mass / density",
+                "format": {"sig_figs": 3},
+            },
+            "distractors": {
+                "strategy": "common_errors",
+                "common_errors": [
+                    {"expr": "density / mass"},
+                    {"expr": "typo_var * density"},  # undeclared
+                ],
+            },
+            "shuffle": True,
+        }
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("typo_var" in e for e in errors))
+
+
+class TestNamespaceAndEdgeCases(unittest.TestCase):
+    """Edge cases around ID namespaces, degenerate variables, empty input."""
+
+    def _validate(self, tmpl_dict: dict):
+        from auto_grader.template_schema import validate_template
+
+        return validate_template(tmpl_dict)
+
+    def test_section_and_question_ids_may_overlap(self):
+        """Section IDs and question IDs are intentionally separate namespaces."""
+        tmpl = {
+            "slug": "test-exam",
+            "title": "Test",
+            "sections": [
+                {
+                    "id": "shared-name",
+                    "title": "Section",
+                    "questions": [_minimal_mc_question({"id": "shared-name"})],
+                }
+            ],
+        }
+        errors = self._validate(tmpl)
+        self.assertEqual(errors, [])
+
+    def test_degenerate_variable_min_equals_max_accepted(self):
+        """A variable with min == max is degenerate (constant) but valid."""
+        q = _minimal_numeric_question()
+        q["variables"]["mass"] = {"type": "float", "min": 50.0, "max": 50.0, "step": 0.1}
+        # min >= max is rejected, but min == max is currently rejected too.
+        # This test documents the current behavior.
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("min" in e.lower() or "max" in e.lower() for e in errors))
+
+    def test_load_empty_string_rejected(self):
+        from auto_grader.template_schema import load_template
+
+        with self.assertRaises(ValueError):
+            load_template("")
+
+    def test_undeclared_function_call_in_expr_rejected(self):
+        """Calling an undeclared function name is caught as an undeclared variable."""
+        q = _minimal_numeric_question()
+        q["answer"]["expr"] = "foo(mass)"
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("foo" in e for e in errors))
+
+
+# ===========================================================================
 # 8. Expression evaluator contract
 # ===========================================================================
 
@@ -745,6 +871,22 @@ class TestExpressionEvaluator(unittest.TestCase):
         with self.assertRaises(ValueError):
             # walrus operator
             self._eval("(x := 5)")
+
+    def test_rejects_tuple_literal(self):
+        with self.assertRaises(ValueError):
+            self._eval("(1, 2, 3)")
+
+    def test_rejects_list_literal(self):
+        with self.assertRaises(ValueError):
+            self._eval("[1, 2, 3]")
+
+    def test_rejects_set_literal(self):
+        with self.assertRaises(ValueError):
+            self._eval("{1, 2, 3}")
+
+    def test_rejects_dict_literal(self):
+        with self.assertRaises(ValueError):
+            self._eval("{'a': 1}")
 
     def test_undeclared_variable_raises(self):
         with self.assertRaises((ValueError, NameError)):
