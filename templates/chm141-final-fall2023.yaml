@@ -1,0 +1,970 @@
+# CHM 141 Final Examination — Fall 2023
+# Transcribed from the professor's exam source document and answer key.
+# This template demonstrates the full schema across question types.
+
+slug: chm141-final-fall2023
+title: "CHM 141 Final Examination"
+course: "CHM 141"
+term: "Fall 2023"
+
+sections:
+  # ====================================================================
+  # Section I: Multiple Choice (2 pts each, 40 pts total)
+  # ====================================================================
+  - id: mc
+    title: "Section I: Multiple Choice"
+    instructions: >
+      Select one answer to each question; no explanation or solution needed.
+    questions:
+      - id: mc-1
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          Which one of the following substances is classified as an element?
+        choices:
+          A: "CO2"
+          B: "NO"
+          C: "C6H12O6"
+          D: "KCl"
+          E: "O2"
+        correct: "E"
+        shuffle: true
+
+      - id: mc-2
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          All of the following are examples of chemical change EXCEPT:
+        choices:
+          A: "the burning of wood"
+          B: "the rusting of iron"
+          C: "the decomposition of cinnabar (HgS) to mercury metal upon heating"
+          D: "the tarnishing of silver"
+          E: "the mixing of water and alcohol"
+        correct: "E"
+        shuffle: true
+
+      - id: mc-3
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          All of the following are examples of intensive properties EXCEPT:
+        choices:
+          A: "density"
+          B: "color"
+          C: "boiling point"
+          D: "melting point"
+          E: "mass"
+        correct: "E"
+        shuffle: true
+
+      - id: mc-4
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          Which of the following compounds is a weak acid?
+        choices:
+          A: "NaOH"
+          B: "H2CO3"
+          C: "NaCl"
+          D: "NH3"
+          E: "HCl"
+        correct: "B"
+        shuffle: true
+
+      # mc-5 references isotope notation images — not parameterizable in text
+      # Omitted: requires figure support for isotope notation symbols
+
+      - id: mc-6
+        points: 2
+        answer_type: multiple_choice
+        prompt: "N2O4 is ______."
+        choices:
+          A: "dinitrogen peroxide"
+          B: "dinitrogen tetroxide"
+          C: "nitrogen oxide"
+          D: "nitrogen (II) tetroxide"
+        correct: "B"
+        shuffle: true
+
+      - id: mc-7
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          If we consider 100.0 mol of each of the following metals,
+          which one has the highest mass?
+        choices:
+          A: "Cr"
+          B: "Mn"
+          C: "Fe"
+          D: "Cu"
+          E: "Zn"
+        correct: "E"
+        shuffle: true
+
+      - id: mc-8
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          The empirical formula of a compound is known to be CH2,
+          and its molar mass is 56 g/mol. What is the molecular formula?
+        choices:
+          A: "CH2"
+          B: "C2H4"
+          C: "C3H6"
+          D: "C4H8"
+          E: "C5H10"
+        correct: "D"
+        shuffle: true
+
+      - id: mc-9
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          In 10.0 g of each of the following elements, which one
+          contains the greatest number of atoms?
+        choices:
+          A: "Na"
+          B: "Li"
+          C: "K"
+          D: "Cs"
+          E: "Rb"
+        correct: "B"
+        shuffle: true
+
+      - id: mc-10
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          In the reaction 2Al(s) + 3I2(s) -> 2AlI3(s), the theoretical
+          yield is 24 g. A student obtained 6.0 g. Calculate the percent yield.
+        choices:
+          A: "40%"
+          B: "35%"
+          C: "25%"
+          D: "50%"
+          E: "30%"
+        correct: "C"
+        shuffle: true
+
+      - id: mc-11
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          One balloon is filled with one mole of He, the other with
+          one mole of N2. Both are at the same T and P.
+          Which statement about their volume is most correct?
+        choices:
+          A: "The two balloons have the same volume."
+          B: "Helium balloon is larger than the Nitrogen balloon."
+          C: "Nitrogen balloon is larger than the Helium balloon."
+          D: "Not enough information to decide."
+          E: "The balloon shapes are too irregular to measure accurately."
+        correct: "A"
+        shuffle: true
+
+      - id: mc-12
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          When ice gradually melts to an ice/water mixture,
+          what happens to the temperature of the liquid water?
+        choices:
+          A: "The temperature increases"
+          B: "The temperature decreases"
+          C: "The temperature remains constant at 0 C"
+          D: "The temperature depends on the volume of ice"
+          E: "Insufficient information to answer"
+        correct: "C"
+        shuffle: true
+
+      - id: mc-13
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          What volume of O2 reacts with 0.250 L of ethanol vapor at
+          the same T and P?
+          2 CH3CH2OH(g) + 6 O2(g) -> 4 CO2(g) + 6 H2O(g)
+        choices:
+          A: "500 mL"
+          B: "125.5 mL"
+          C: "1.00 L"
+          D: "750 mL"
+          E: "100 mL"
+        correct: "D"
+        shuffle: true
+
+      - id: mc-14
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          Which gas molecules travel at the highest average velocity?
+          One mole of each in a 1.00 L container at 100 C.
+        choices:
+          A: "H2"
+          B: "NO"
+          C: "O2"
+          D: "HF"
+          E: "HCN"
+        correct: "A"
+        shuffle: true
+
+      - id: mc-15
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          Given H2(g) + 1/2 O2(g) -> H2O(g), dH = -242 kJ.
+          What is dH for 2 H2O(g) -> 2 H2(g) + O2(g)?
+        choices:
+          A: "-242 kJ"
+          B: "-484 kJ"
+          C: "-121 kJ"
+          D: "+242 kJ"
+          E: "+484 kJ"
+        correct: "E"
+        shuffle: true
+
+      - id: mc-16
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          What is the orbital hybridization of the central atom in NH3?
+        choices:
+          A: "sp"
+          B: "sp2"
+          C: "sp3"
+          D: "sp4"
+          E: "sp2d"
+        correct: "C"
+        shuffle: true
+
+      - id: mc-17
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          Which Period 3 element (Na, Mg, Si, P, Cl) has the lowest
+          first ionization energy?
+        choices:
+          A: "Na"
+          B: "Mg"
+          C: "Si"
+          D: "P"
+          E: "Cl"
+        correct: "A"
+        shuffle: true
+
+      - id: mc-18
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          Which ion is highly unlikely to form in any chemical reaction?
+        choices:
+          A: "Li+ (Group 1A)"
+          B: "Ba3+ (Group 2A)"
+          C: "N3- (Group 5A)"
+          D: "Se2- (Group 6A)"
+          E: "F- (Group 7A)"
+        correct: "B"
+        shuffle: true
+
+      - id: mc-19
+        points: 2
+        answer_type: multiple_choice
+        prompt: >
+          The Lewis structure of CO suggests a triple bond.
+          Which statement confirms this?
+        choices:
+          A: "The bond in CO is much stronger than the bond in CO2"
+          B: "CO is toxic"
+          C: "Carbon is less electronegative than oxygen"
+          D: "There are lone pairs in CO"
+          E: "Bonds between C and O tend to be strong"
+        correct: "A"
+        shuffle: true
+
+      - id: mc-20
+        points: 2
+        answer_type: multiple_choice
+        prompt: "Which element has the largest electronegativity?"
+        choices:
+          A: "O"
+          B: "F"
+          C: "N"
+          D: "Cl"
+          E: "C"
+        correct: "B"
+        shuffle: true
+
+  # ====================================================================
+  # Section II: Free Response
+  # ====================================================================
+  - id: free-response
+    title: "Section II: Short-Answer and Longer Questions"
+    instructions: >
+      Show step-by-step solutions and explain your reasoning.
+    questions:
+      # ---- Q1: Density (parameterizable) ----
+      - id: fr-1
+        points: 2
+        answer_type: numeric
+        grading: auto
+        prompt: >
+          Mercury (Hg) has a density of {{density}} g/cm3.
+          What is the volume of {{mass}} g of Hg in cm3?
+        variables:
+          density:
+            type: float
+            min: 10.0
+            max: 16.0
+            step: 0.1
+            format: {sig_figs: 3, unit: "g/cm3"}
+          mass:
+            type: float
+            min: 50.0
+            max: 150.0
+            step: 1.0
+            format: {sig_figs: 3, unit: "g"}
+        answer:
+          expr: "mass / density"
+          format: {sig_figs: 3, unit: "cm3"}
+          tolerance: {type: relative, value: 0.02}
+        tags: [density, unit-conversion]
+
+      # ---- Q2: Balanced equation (not parameterizable) ----
+      - id: fr-2
+        points: 3
+        answer_type: balanced_equation
+        grading: manual_review
+        prompt: >
+          Write the balanced equation for the reaction between
+          P4(s) and Cl2(g) to produce PCl5(g).
+        answer:
+          reference: "P4(s) + 10 Cl2(g) -> 4 PCl5(g)"
+          rubric:
+            - criterion: "Correct reactants and products"
+              points: 1
+            - criterion: "Balanced coefficients"
+              points: 1
+            - criterion: "Physical states labeled"
+              points: 1
+        tags: [balancing, stoichiometry]
+
+      # ---- Q3: Net ionic equation ----
+      - id: fr-3
+        points: 4
+        answer_type: balanced_equation
+        grading: manual_review
+        prompt: >
+          Write the net ionic equation for the reaction between
+          NaCl(aq) and Pb(NO3)2(aq).
+        answer:
+          reference: "2 Cl-(aq) + Pb2+(aq) -> PbCl2(s)"
+          rubric:
+            - criterion: "Correct ions identified"
+              points: 1
+            - criterion: "Correct precipitate product"
+              points: 1
+            - criterion: "Balanced charges"
+              points: 1
+            - criterion: "Spectator ions removed"
+              points: 1
+        tags: [net-ionic, precipitation]
+
+      # ---- Q4: Atom count (parameterizable) ----
+      - id: fr-4
+        points: 4
+        answer_type: numeric
+        grading: auto
+        prompt: >
+          Calculate the number of Cu atoms in {{moles}} mol of Cu sample.
+        variables:
+          moles:
+            type: float
+            min: 0.100
+            max: 0.900
+            step: 0.005
+            format: {sig_figs: 3, unit: "mol"}
+        answer:
+          expr: "moles * 6.0221e23"
+          format: {sig_figs: 3}
+          tolerance: {type: relative, value: 0.02}
+        tags: [mole-concept, avogadro]
+
+      # ---- Q5: Limiting reagent (parameterizable, multi-part) ----
+      - id: fr-5
+        points: 4
+        prompt: >
+          In the following reaction, {{mol_n2}} mol of N2 mix with
+          {{mol_h2}} mol of H2.
+          N2(g) + 3 H2(g) -> 2 NH3(g)
+        variables:
+          mol_n2:
+            type: float
+            min: 5.0
+            max: 15.0
+            step: 0.1
+            format: {sig_figs: 3, unit: "mol"}
+          mol_h2:
+            type: float
+            min: 15.0
+            max: 35.0
+            step: 0.1
+            format: {sig_figs: 3, unit: "mol"}
+        parts:
+          - id: fr-5a
+            points: 1
+            prompt: "Find the limiting reagent."
+            answer_type: exact_match
+            grading: auto
+            answer:
+              expr: "'H2' if mol_h2 / 3 < mol_n2 else 'N2'"
+              accept_map:
+                "H2": ["H2", "hydrogen", "H₂"]
+                "N2": ["N2", "nitrogen", "N₂"]
+
+          - id: fr-5b
+            points: 2
+            prompt: "How many moles of NH3 will be produced?"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "2 * min(mol_n2, mol_h2 / 3)"
+              format: {sig_figs: 3, unit: "mol"}
+              tolerance: {type: relative, value: 0.02}
+
+          - id: fr-5c
+            points: 1
+            prompt: "How many grams of NH3 will be produced?"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "2 * min(mol_n2, mol_h2 / 3) * 17.031"
+              format: {sig_figs: 3, unit: "g"}
+              tolerance: {type: relative, value: 0.02}
+        tags: [limiting-reagent, stoichiometry]
+
+      # ---- Q6: Dilution (parameterizable) ----
+      - id: fr-6
+        points: 4
+        answer_type: numeric
+        grading: auto
+        prompt: >
+          What volume of {{m_conc}} M HCl is required to prepare
+          {{vol_dilute}} mL of {{m_dilute}} M HCl?
+        variables:
+          m_conc:
+            type: float
+            min: 1.00
+            max: 5.00
+            step: 0.01
+            format: {sig_figs: 3, unit: "M"}
+          vol_dilute:
+            type: float
+            min: 100.0
+            max: 500.0
+            step: 10.0
+            format: {sig_figs: 4, unit: "mL"}
+          m_dilute:
+            type: float
+            min: 0.100
+            max: 0.900
+            step: 0.001
+            format: {sig_figs: 3, unit: "M"}
+        answer:
+          expr: "m_dilute * vol_dilute / m_conc"
+          format: {sig_figs: 3, unit: "mL"}
+          tolerance: {type: relative, value: 0.02}
+        tags: [dilution, molarity]
+
+      # ---- Q7: Molecular geometry (sub-parts, closed vocabulary) ----
+      # NOTE: This question references a Lewis structure diagram.
+      # The figure field points to where the diagram will be stored.
+      - id: fr-7
+        points: 5
+        figure: figures/fr-7-lewis-structure.png
+        prompt: >
+          Use the following Lewis structure to define the geometry
+          of the molecule below.
+        parts:
+          - id: fr-7a
+            points: 1
+            prompt: "The name of the geometry about atom C1 is:"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["tetrahedral", "Tetrahedral"]
+              normalize: lowercase
+
+          - id: fr-7b
+            points: 1
+            prompt: "The name of the hybrid orbitals around C1:"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["sp3", "sp³"]
+              normalize: lowercase
+
+          - id: fr-7c
+            points: 1
+            prompt: "The ideal value of the C-C-N angle at C2 is:"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["120", "120°", "120 degrees"]
+              normalize: lowercase
+
+          - id: fr-7d
+            points: 1
+            prompt: "The name of the hybrid orbitals around C2:"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["sp2", "sp²"]
+              normalize: lowercase
+
+          - id: fr-7e
+            points: 1
+            prompt: "The ideal value of the H-N-H angle at N3 is:"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["109", "109.5", "109°", "109.5°"]
+              normalize: lowercase
+        tags: [molecular-geometry, hybridization, VSEPR]
+
+      # ---- Q8: Hess's law (parameterizable) ----
+      - id: fr-8
+        points: 4
+        answer_type: numeric
+        grading: auto
+        prompt: >
+          Given:
+          (1) Sn(s) + Cl2(g) -> SnCl2(s), dH1 = {{dh1}} kJ
+          (2) Sn(s) + 2Cl2(g) -> SnCl4(l), dH2 = {{dh2}} kJ
+          What is dH for SnCl2(s) + Cl2(g) -> SnCl4(l)?
+        variables:
+          dh1:
+            type: float
+            min: -400.0
+            max: -250.0
+            step: 0.1
+            format: {sig_figs: 4, unit: "kJ"}
+          dh2:
+            type: float
+            min: -600.0
+            max: -450.0
+            step: 0.1
+            format: {sig_figs: 4, unit: "kJ"}
+        answer:
+          expr: "dh2 - dh1"
+          format: {sig_figs: 4, unit: "kJ"}
+          tolerance: {type: absolute, value: 0.2}
+        tags: [hess-law, enthalpy]
+
+      # ---- Q9: Gas volume from decomposition (multi-part) ----
+      - id: fr-9
+        points: 6
+        prompt: >
+          A volume of CO2 gas is produced when {{mass_ite}} g of CaCO3
+          react completely at 25 C and 1 atm.
+          CaCO3(s) -> CaO(s) + CO2(g)
+        variables:
+          mass_ite:
+            type: float
+            min: 50.0
+            max: 150.0
+            step: 0.1
+            format: {sig_figs: 3, unit: "g"}
+        parts:
+          - id: fr-9a
+            points: 2
+            prompt: "Write a balanced chemical equation for this reaction."
+            answer_type: balanced_equation
+            grading: manual_review
+            answer:
+              reference: "CaCO3(s) -> CaO(s) + CO2(g)"
+              rubric:
+                - criterion: "Correct products"
+                  points: 1
+                - criterion: "Balanced and states labeled"
+                  points: 1
+
+          - id: fr-9b
+            points: 2
+            prompt: "Calculate the number of moles of CO2 gas produced."
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "mass_ite / 100.09"
+              format: {sig_figs: 3, unit: "mol"}
+              tolerance: {type: relative, value: 0.02}
+
+          - id: fr-9c
+            points: 2
+            prompt: "Calculate the volume of CO2 gas produced."
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "(mass_ite / 100.09) * 0.08206 * 298.15 / 1.0"
+              format: {sig_figs: 3, unit: "L"}
+              tolerance: {type: relative, value: 0.02}
+        tags: [ideal-gas-law, stoichiometry, decomposition]
+
+      # ---- Q10: Photon energy (parameterizable) ----
+      - id: fr-10
+        points: 4
+        prompt: >
+          The electron in a hydrogen atom had energy {{e_initial}} J.
+          Absorption of a photon increased the energy to {{e_final}} J.
+        variables:
+          e_initial:
+            type: float
+            min: -6.0e-19
+            max: -4.0e-19
+            step: 1.0e-21
+            format: {sig_figs: 3, unit: "J"}
+          e_final:
+            type: float
+            min: -2.0e-19
+            max: -1.0e-19
+            step: 1.0e-21
+            format: {sig_figs: 3, unit: "J"}
+        parts:
+          - id: fr-10a
+            points: 3
+            prompt: "What was the frequency of the photon?"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "(e_final - e_initial) / 6.626e-34"
+              format: {sig_figs: 3, unit: "Hz"}
+              tolerance: {type: relative, value: 0.02}
+
+          - id: fr-10b
+            points: 1
+            prompt: "What is the energy of one mole of these photons?"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "(e_final - e_initial) * 6.0221e23"
+              format: {sig_figs: 3, unit: "J/mol"}
+              tolerance: {type: relative, value: 0.02}
+        tags: [photon-energy, bohr-model, planck]
+
+      # ---- Q11: Electron configuration (manual review) ----
+      - id: fr-11
+        points: 4
+        prompt: "For the chlorine atom (Z = 17):"
+        parts:
+          - id: fr-11a
+            points: 3
+            prompt: >
+              Provide the ground state electron configuration
+              in the orbital box notation.
+            answer_type: electron_config
+            grading: manual_review
+            answer:
+              reference: "1s2 2s2 2p6 3s2 3p5"
+              rubric:
+                - criterion: "Core electrons correct (1s2 2s2 2p6)"
+                  points: 1
+                - criterion: "Valence s orbital correct (3s2)"
+                  points: 1
+                - criterion: "Valence p orbitals correct (3p5) with box notation"
+                  points: 1
+
+          - id: fr-11b
+            points: 0.5
+            prompt: "How many valence electrons does chlorine have?"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["7", "seven"]
+              normalize: lowercase
+
+          - id: fr-11c
+            points: 0.5
+            prompt: "How many unpaired electrons does chlorine have?"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["1", "one"]
+              normalize: lowercase
+        tags: [electron-config, orbital-notation]
+
+      # ---- Q12: Lewis structure + resonance (manual review) ----
+      - id: fr-12
+        points: 4
+        prompt: "For the ozone (O3) molecule:"
+        parts:
+          - id: fr-12a
+            points: 2
+            prompt: "Draw the Lewis structure of O3."
+            answer_type: lewis_structure
+            grading: manual_review
+            answer:
+              reference: "O=O-O with lone pairs; central O has formal charge"
+              rubric:
+                - criterion: "Correct number of valence electrons (18)"
+                  points: 1
+                - criterion: "Valid Lewis structure with correct bonds and lone pairs"
+                  points: 1
+
+          - id: fr-12b
+            points: 2
+            prompt: >
+              Are there two or more significant resonance structures?
+              If so, draw all of them.
+            answer_type: lewis_structure
+            grading: manual_review
+            answer:
+              reference: "Two resonance structures — double bond alternates sides"
+              rubric:
+                - criterion: "Identifies that resonance structures exist"
+                  points: 1
+                - criterion: "Draws both valid resonance structures"
+                  points: 1
+        tags: [lewis-structure, resonance, formal-charge]
+
+      # ---- Q13: Full equation from net ionic ----
+      - id: fr-13
+        points: 6
+        prompt: >
+          The net ionic equation for CaBr2 and K2CO3 is:
+          Ca2+(aq) + CO3 2-(aq) -> CaCO3(s)
+        parts:
+          - id: fr-13a
+            points: 4
+            prompt: >
+              Write the full balanced equation with physical states.
+            answer_type: balanced_equation
+            grading: manual_review
+            answer:
+              reference: "CaBr2(aq) + K2CO3(aq) -> CaCO3(s) + 2 KBr(aq)"
+              rubric:
+                - criterion: "Correct reactants"
+                  points: 1
+                - criterion: "Correct products"
+                  points: 1
+                - criterion: "Balanced coefficients"
+                  points: 1
+                - criterion: "Physical states labeled"
+                  points: 1
+
+          - id: fr-13b
+            points: 1
+            prompt: "What are the spectator ions?"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["K+ and Br-", "K+, Br-", "potassium and bromide"]
+              normalize: lowercase
+
+          - id: fr-13c
+            points: 1
+            prompt: "What type of reaction is this?"
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept:
+                - "precipitation"
+                - "precipitation reaction"
+                - "double replacement"
+                - "double displacement"
+              normalize: lowercase
+        tags: [net-ionic, precipitation, spectator-ions]
+
+      # ---- Q14: Titration (parameterizable, multi-part) ----
+      - id: fr-14
+        points: 6
+        prompt: >
+          An aqueous solution of Ba(OH)2 is titrated with a
+          {{m_acid}} M solution of HNO3.
+        variables:
+          m_acid:
+            type: float
+            min: 0.050
+            max: 0.250
+            step: 0.005
+            format: {sig_figs: 3, unit: "M"}
+          vol_base:
+            type: float
+            min: 15.0
+            max: 40.0
+            step: 0.1
+            format: {sig_figs: 3, unit: "mL"}
+          vol_acid:
+            type: float
+            min: 20.0
+            max: 50.0
+            step: 0.1
+            format: {sig_figs: 3, unit: "mL"}
+        parts:
+          - id: fr-14a
+            points: 2
+            prompt: "Write the balanced chemical equation."
+            answer_type: balanced_equation
+            grading: manual_review
+            answer:
+              reference: "Ba(OH)2(aq) + 2 HNO3(aq) -> Ba(NO3)2(aq) + 2 H2O(l)"
+              rubric:
+                - criterion: "Correct balanced equation"
+                  points: 1
+                - criterion: "Physical states"
+                  points: 1
+
+          - id: fr-14b
+            points: 3
+            prompt: >
+              If {{vol_base}} mL of base neutralize {{vol_acid}} mL
+              of the acid, what is the molarity of Ba(OH)2?
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "(m_acid * vol_acid) / (2 * vol_base)"
+              format: {sig_figs: 3, unit: "M"}
+              tolerance: {type: relative, value: 0.02}
+
+          - id: fr-14c
+            points: 1
+            prompt: "Calculate the pH of the HNO3 solution."
+            answer_type: text_reasoning
+            grading: manual_review
+            # pH = -log10(m_acid). Requires log10 which is not in v1 builtins.
+            # Could add log10 to the expression builtins in a future pass.
+            answer:
+              reference: "pH = -log(0.110) = 0.959"
+              rubric:
+                - criterion: "Correct pH calculation using -log[H3O+]"
+                  points: 1
+        tags: [titration, acid-base, molarity]
+
+      # ---- Q15: Calorimetry (parameterizable, multi-step) ----
+      - id: fr-15
+        points: 6
+        prompt: >
+          Calculate the energy required to convert {{mass_water}} g of
+          liquid water at {{t_initial}} C to steam at {{t_final}} C.
+          Heat of vaporization: 2256 J/g.
+          Specific heat of liquid water: 4.184 J/(g*K).
+          Specific heat of steam: 1.92 J/(g*K).
+        variables:
+          mass_water:
+            type: float
+            min: 50.0
+            max: 200.0
+            step: 10.0
+            format: {sig_figs: 3, unit: "g"}
+          t_initial:
+            type: float
+            min: 15.0
+            max: 35.0
+            step: 1.0
+            format: {sig_figs: 3, unit: "C"}
+          t_final:
+            type: float
+            min: 150.0
+            max: 250.0
+            step: 10.0
+            format: {sig_figs: 3, unit: "C"}
+        parts:
+          - id: fr-15a
+            points: 2
+            prompt: "Energy to heat water from initial temp to 100 C:"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "mass_water * 4.184 * (100.0 - t_initial)"
+              format: {sig_figs: 3, unit: "J"}
+              tolerance: {type: relative, value: 0.02}
+
+          - id: fr-15b
+            points: 1
+            prompt: "Energy to convert liquid water to steam at 100 C:"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "mass_water * 2256"
+              format: {sig_figs: 3, unit: "J"}
+              tolerance: {type: relative, value: 0.02}
+
+          - id: fr-15c
+            points: 2
+            prompt: "Energy to heat steam from 100 C to final temp:"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "mass_water * 1.92 * (t_final - 100.0)"
+              format: {sig_figs: 3, unit: "J"}
+              tolerance: {type: relative, value: 0.02}
+
+          - id: fr-15d
+            points: 1
+            prompt: "Total energy required in kJ:"
+            answer_type: numeric
+            grading: auto
+            answer:
+              expr: "(mass_water * 4.184 * (100.0 - t_initial) + mass_water * 2256 + mass_water * 1.92 * (t_final - 100.0)) / 1000"
+              format: {sig_figs: 3, unit: "kJ"}
+              tolerance: {type: relative, value: 0.02}
+        tags: [calorimetry, phase-change, specific-heat]
+
+      # ---- Q16: NH3 molecule properties (multi-part, mixed) ----
+      - id: fr-16
+        points: 6
+        prompt: "For the NH3 molecule:"
+        parts:
+          - id: fr-16a
+            points: 2
+            prompt: "Draw a Lewis structure."
+            answer_type: lewis_structure
+            grading: manual_review
+            answer:
+              reference: "N with three N-H bonds and one lone pair"
+              rubric:
+                - criterion: "Correct number of bonds (3 N-H)"
+                  points: 1
+                - criterion: "Lone pair on nitrogen shown"
+                  points: 1
+
+          - id: fr-16b
+            points: 0.5
+            prompt: "Describe the electron pair geometry."
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept: ["tetrahedral", "Tetrahedral"]
+              normalize: lowercase
+
+          - id: fr-16c
+            points: 1.5
+            prompt: >
+              Describe the molecular geometry (preferably draw a picture
+              showing the 3-dimensional arrangement of atoms).
+            answer_type: exact_match
+            grading: auto
+            answer:
+              accept:
+                - "trigonal pyramidal"
+                - "trigonal-pyramidal"
+                - "pyramidal"
+              normalize: lowercase
+
+          - id: fr-16d
+            points: 2
+            prompt: >
+              Determine if ammonia is polar. Provide your reasoning.
+              Electronegativity: N = 3.0, H = 2.2.
+            answer_type: text_reasoning
+            grading: manual_review
+            answer:
+              reference: >
+                NH3 is polar. The N-H bonds are polar (EN difference 0.8)
+                and the trigonal pyramidal geometry means bond dipoles
+                do not cancel, producing a net molecular dipole moment.
+              rubric:
+                - criterion: "Correctly identifies NH3 as polar"
+                  points: 1
+                - criterion: "Explains via asymmetric geometry / net dipole"
+                  points: 1
+        tags: [lewis-structure, molecular-geometry, polarity, VSEPR]
