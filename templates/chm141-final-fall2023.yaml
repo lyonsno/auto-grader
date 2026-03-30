@@ -828,15 +828,12 @@ sections:
           - id: fr-14c
             points: 1
             prompt: "Calculate the pH of the HNO3 solution."
-            answer_type: text_reasoning
-            grading: manual_review
-            # pH = -log10(m_acid). Requires log10 which is not in v1 builtins.
-            # Could add log10 to the expression builtins in a future pass.
+            answer_type: numeric
+            grading: auto
             answer:
-              reference: "pH = -log(0.110) = 0.959"
-              rubric:
-                - criterion: "Correct pH calculation using -log[H3O+]"
-                  points: 1
+              expr: "-log10(m_acid)"
+              format: {sig_figs: 3}
+              tolerance: {type: absolute, value: 0.01}
         tags: [titration, acid-base, molarity]
 
       # ---- Q15: Calorimetry (parameterizable, multi-step) ----
