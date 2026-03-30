@@ -226,10 +226,15 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   API and URL-handling contract for the Postgres hard cut.
 - `tests/test_db_postgres_contract.py` defines the enforceable Postgres schema
   contract when run against an explicit disposable `TEST_DATABASE_URL`.
+- `tests/test_template_schema_contract.py` defines the enforceable YAML template
+  schema contract: structural validation, variable declarations, answer-type rules,
+  expression evaluator safety, and integration tests against the real CHM 141 exam
+  template.
 - `python -m auto_grader.contract_test_runner` is the preferred low-friction local
   entrypoint for the authoritative contract suites. It always runs the metadata,
-  connection, Postgres harness, runner, and discovery guardrail contracts, and
-  includes the Postgres schema contract when `TEST_DATABASE_URL` is set.
+  connection, Postgres harness, runner, template schema, and discovery guardrail
+  contracts, and includes the Postgres schema contract when `TEST_DATABASE_URL` is
+  set.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
   add a non-vacuous failing contract test first, then implement.

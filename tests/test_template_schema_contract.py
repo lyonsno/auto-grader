@@ -851,6 +851,17 @@ class TestExpressionEvaluator(unittest.TestCase):
         result = self._eval("pi")
         self.assertAlmostEqual(result, math.pi, places=5)
 
+    def test_log10_builtin(self):
+        self.assertAlmostEqual(self._eval("log10(100)"), 2.0)
+
+    def test_log10_ph_calculation(self):
+        """pH = -log10([H3O+]) — the real use case from Q14c."""
+        result = self._eval("-log10(m_acid)", {"m_acid": 0.110})
+        self.assertAlmostEqual(result, 0.9586, places=3)
+
+    def test_sqrt_builtin(self):
+        self.assertAlmostEqual(self._eval("sqrt(144)"), 12.0)
+
     def test_rejects_import(self):
         with self.assertRaises(ValueError):
             self._eval("__import__('os').system('echo hi')")

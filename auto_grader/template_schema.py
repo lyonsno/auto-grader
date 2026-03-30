@@ -60,8 +60,8 @@ def validate_template(tmpl: dict) -> list[str]:
 def evaluate_expr(expr_str: str, variables: dict[str, Any] | None = None) -> Any:
     """Safely evaluate a restricted Python expression.
 
-    Allowed: arithmetic, comparison, ternary, min/max/abs/round, pi,
-    and declared variable names. Everything else raises ValueError.
+    Allowed: arithmetic, comparison, ternary, min/max/abs/round/log10/sqrt,
+    pi, and declared variable names. Everything else raises ValueError.
     """
     variables = variables or {}
     tree = _parse_and_validate_ast(expr_str)
@@ -519,7 +519,7 @@ def _check_expr_variables(
 # Expression evaluator
 # ---------------------------------------------------------------------------
 
-_EXPR_BUILTINS = frozenset({"min", "max", "abs", "round", "pi", "True", "False"})
+_EXPR_BUILTINS = frozenset({"min", "max", "abs", "round", "log10", "sqrt", "pi", "True", "False"})
 
 # Security note: ast.Pow is allowed because templates are authored by the
 # professor (trusted input). If templates ever accept untrusted input,
@@ -582,6 +582,8 @@ _SAFE_GLOBALS: dict[str, Any] = {
     "max": max,
     "abs": abs,
     "round": round,
+    "log10": math.log10,
+    "sqrt": math.sqrt,
     "pi": math.pi,
     "True": True,
     "False": False,
