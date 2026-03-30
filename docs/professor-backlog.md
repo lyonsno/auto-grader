@@ -47,3 +47,24 @@ can act on them. Each item is tagged with priority and what's blocked on it.
   authoring and the inference pipeline.
 - **Blocked**: Nothing immediate. One template is sufficient to build and
   test the full pipeline.
+
+### Completed exam scan corpus (OCR dataset)
+- **Priority**: When OCR model evaluation begins
+- **What**: The professor has an estimated 10-100 additional completed exam
+  scans from the same institutional scanner, same course, same paper format.
+  Currently 4 are in the assets repo. The full corpus is a significant
+  affordance for OCR work:
+  1. **Validation set**: Evaluate OCR model accuracy against real handwriting
+     diversity (neat vs. messy, chemical notation, equations, diagrams).
+  2. **Fine-tuning dataset**: If a base OCR model underperforms on chemistry
+     handwriting, a corpus this size is plausibly sufficient for fine-tuning
+     or LoRA adaptation of a small model to the specific handwriting +
+     scanning distribution.
+  3. **Confidence calibration**: Establish the relationship between model
+     confidence scores and actual accuracy on this specific input
+     distribution.
+- **Action**: When OCR evaluation begins, request the full scan corpus from
+  the professor. Ingest into `auto-grader-assets/scans/`.
+- **Blocked**: Nothing — the 4 scans already available are enough to start
+  model evaluation. The full corpus unlocks fine-tuning and robust
+  calibration.
