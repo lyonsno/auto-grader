@@ -4,3 +4,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Real exam materials live in the private auto-grader-assets repo
+assets/
