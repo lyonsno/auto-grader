@@ -1,0 +1,178 @@
+# Ground Truth Eval Dataset — CHM 141 Fall 2023 Final
+#
+# Extracted from professor-marked scanned exams via VLM-assisted annotation
+# (Claude Opus 4 reading page images, 2026-03-30).
+#
+# Only free-response (Section II) — scanned pages do not contain MC sheets.
+#
+# Schema:
+#   exam_id, question_id, answer_type, page, professor_score, max_points,
+#   professor_mark (check|x|partial|unclear), student_answer, notes
+#
+# UNVERIFIED — requires professor review before use as calibration truth.
+
+exams:
+
+  - exam_id: "15-blue"
+    items:
+      - {question_id: fr-1, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "6.98 mL", notes: "Clear check. Correct d=m/V."}
+      - {question_id: fr-2, answer_type: balanced_equation, page: 1, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "P4(s)+10Cl2(g)->4PCl5(g)", notes: "Clear check."}
+      - {question_id: fr-3, answer_type: balanced_equation, page: 1, professor_score: 0, max_points: 4, professor_mark: x, student_answer: "NaCl(aq)+Pb(NO3)2(aq)->Na+Cl+Pb2+NO3", notes: "X. Wrote full equation not net ionic."}
+      - {question_id: fr-4, answer_type: numeric, page: 1, professor_score: 0, max_points: 4, professor_mark: x, student_answer: "13459", notes: "X. Divided by atomic mass instead of multiplying by NA."}
+      - {question_id: fr-5a, answer_type: exact_match, page: 1, professor_score: 0, max_points: 1, professor_mark: x, student_answer: "N2", notes: "X. Should be H2."}
+      - {question_id: fr-5b, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "13.839 mol", notes: "Check. Internally consistent with wrong 5a."}
+      - {question_id: fr-5c, answer_type: numeric, page: 1, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "241.99 g", notes: "Check. Consistent with 5b."}
+      - {question_id: fr-6, answer_type: numeric, page: 2, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "56.944 mL", notes: "Clear check."}
+      - {question_id: fr-7a, answer_type: exact_match, page: 2, professor_score: 0, max_points: 1, professor_mark: x, student_answer: "trigonal pyramidal", notes: "X. Should be tetrahedral for C1."}
+      - {question_id: fr-7b, answer_type: exact_match, page: 2, professor_score: 0, max_points: 1, professor_mark: x, student_answer: "sp2", notes: "X. Should be sp3 for C1."}
+      - {question_id: fr-7c, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "180", notes: "Check visible but answer key says 120. NEEDS VERIFICATION."}
+      - {question_id: fr-7d, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "sp3", notes: "Check visible but answer key says sp2. NEEDS VERIFICATION."}
+      - {question_id: fr-7e, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "109", notes: "Check. Correct."}
+      - {question_id: fr-8, answer_type: numeric, page: 2, professor_score: 4, max_points: 4, professor_mark: unclear, student_answer: "186.2", notes: "Two attempts shown. Final answer correct magnitude but missing negative sign. Mark ambiguous."}
+      - {question_id: fr-9a, answer_type: balanced_equation, page: 3, professor_score: 0, max_points: 2, professor_mark: x, student_answer: "CaC3->CaO+2CO2", notes: "X. Wrong formula for calcium carbonate."}
+      - {question_id: fr-9b, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "2.129 mol", notes: "Check visible. Student used wrong molar mass. NEEDS VERIFICATION."}
+      - {question_id: fr-9c, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "52.064 L", notes: "Check. Consistent with 9b via PV=nRT."}
+      - {question_id: fr-10a, answer_type: numeric, page: 3, professor_score: 1.5, max_points: 3, professor_mark: partial, student_answer: "v=-8.225 J/s", notes: "Half annotation visible. Setup correct but errors in execution."}
+      - {question_id: fr-10b, answer_type: numeric, page: 3, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "-2.415", notes: "Check."}
+      - {question_id: fr-11a, answer_type: electron_config, page: 3, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "[Ne] 3s2 3p5 with orbital boxes", notes: "Check. Correct."}
+      - {question_id: fr-11b, answer_type: exact_match, page: 3, professor_score: 0, max_points: 0.5, professor_mark: x, student_answer: "4 8", notes: "X. Should be 7."}
+      - {question_id: fr-11c, answer_type: exact_match, page: 3, professor_score: 0, max_points: 0.5, professor_mark: x, student_answer: "2", notes: "X. Should be 1."}
+      - {question_id: fr-12a, answer_type: lewis_structure, page: 4, professor_score: 1, max_points: 2, professor_mark: partial, student_answer: "O3 Lewis structure drawn", notes: "Half annotation. Partially correct."}
+      - {question_id: fr-12b, answer_type: lewis_structure, page: 4, professor_score: 1, max_points: 2, professor_mark: partial, student_answer: "Two resonance structures O=O-O and O-O=O", notes: "Half annotation."}
+      - {question_id: fr-13a, answer_type: balanced_equation, page: 4, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "CaBr2(aq)+K2CO3(aq)->CaCO3(s)+2KBr(aq)", notes: "Check. Correct."}
+      - {question_id: fr-13b, answer_type: exact_match, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "K & Br", notes: "Check."}
+      - {question_id: fr-13c, answer_type: exact_match, page: 4, professor_score: 0, max_points: 1, professor_mark: unclear, student_answer: "Oxidation-Reduction or Precipitate", notes: "Two answers given. Should be precipitation. Mark unclear."}
+      - {question_id: fr-14a, answer_type: balanced_equation, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "Ba(OH)2+HNO3->BaNO3+H(OH)2", notes: "Check visible but products look wrong. NEEDS VERIFICATION."}
+      - {question_id: fr-14b, answer_type: numeric, page: 4, professor_score: 3, max_points: 3, professor_mark: unclear, student_answer: "M=0.1565", notes: "Student showed V1M1=V2M2. Answer key gives 0.0785. Mark hard to read."}
+      - {question_id: fr-14c, answer_type: numeric, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "pH=0.958", notes: "Check. Correct approach -log(0.110)."}
+      - {question_id: fr-15a, answer_type: numeric, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "31380 J", notes: "Check. Correct."}
+      - {question_id: fr-15b, answer_type: numeric, page: 5, professor_score: 0, max_points: 1, professor_mark: x, student_answer: "33600", notes: "Wrong formula — used steam heat capacity instead of Hvap."}
+      - {question_id: fr-15c, answer_type: numeric, page: 5, professor_score: 0, max_points: 2, professor_mark: partial, student_answer: "22560000", notes: "Half annotation. Multiplied by 100C instead of using q=mHvap."}
+      - {question_id: fr-15d, answer_type: numeric, page: 5, professor_score: 0, max_points: 1, professor_mark: unclear, student_answer: "22624.98 kJ", notes: "Sum of wrong sub-answers."}
+      - {question_id: fr-16a, answer_type: lewis_structure, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "H-N with bonds drawn", notes: "Check."}
+      - {question_id: fr-16b, answer_type: exact_match, page: 5, professor_score: 0, max_points: 0.5, professor_mark: x, student_answer: "trigonal piomidal", notes: "X. Should be tetrahedral (electron pair geometry)."}
+      - {question_id: fr-16c, answer_type: exact_match, page: 5, professor_score: 0, max_points: 1.5, professor_mark: unclear, student_answer: "3D drawing attempted", notes: "Mark unclear."}
+      - {question_id: fr-16d, answer_type: text_reasoning, page: 5, professor_score: 0, max_points: 2, professor_mark: x, student_answer: "NH3 ammonia is non polar", notes: "X. NH3 is polar."}
+
+  - exam_id: "27-blue-2023"
+    items:
+      - {question_id: fr-1, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "6.99 cm3", notes: "Clear check."}
+      - {question_id: fr-2, answer_type: balanced_equation, page: 1, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "P4(s)+10Cl2(g)->4PCl5(g)", notes: "Check."}
+      - {question_id: fr-3, answer_type: balanced_equation, page: 1, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "2Cl-(aq)+Pb2+(aq)->PbCl2(s)", notes: "Check. Correct net ionic."}
+      - {question_id: fr-4, answer_type: numeric, page: 1, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "2.20e23 atoms", notes: "Check. Correct."}
+      - {question_id: fr-5a, answer_type: exact_match, page: 1, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "H2", notes: "Check. Correct."}
+      - {question_id: fr-5b, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "18.6 mol", notes: "Check. Correct."}
+      - {question_id: fr-5c, answer_type: numeric, page: 1, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "316.78 g", notes: "Check. Correct."}
+      - {question_id: fr-6, answer_type: numeric, page: 2, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "56.9 mL", notes: "Clear check."}
+      - {question_id: fr-7a, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "tetrahedral", notes: "Check. Correct."}
+      - {question_id: fr-7b, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "sp3", notes: "Check. Correct."}
+      - {question_id: fr-7c, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "120", notes: "Check. Correct."}
+      - {question_id: fr-7d, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "sp2", notes: "Check. Correct."}
+      - {question_id: fr-7e, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "109.5", notes: "Check. Correct."}
+      - {question_id: fr-8, answer_type: numeric, page: 2, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "-186.2 kJ", notes: "Check. Correct Hess law."}
+      - {question_id: fr-9a, answer_type: balanced_equation, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "CaCO3(s)->CaO(s)+CO2(g)", notes: "Check."}
+      - {question_id: fr-9b, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "0.936 mol", notes: "Check. Correct."}
+      - {question_id: fr-9c, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "22.9 L", notes: "Check. Correct PV=nRT."}
+      - {question_id: fr-10a, answer_type: numeric, page: 3, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "6.17e14 Hz", notes: "Check. Correct."}
+      - {question_id: fr-10b, answer_type: numeric, page: 3, professor_score: 0, max_points: 1, professor_mark: x, student_answer: "246303.89 J", notes: "X. Arithmetic error."}
+      - {question_id: fr-11a, answer_type: electron_config, page: 3, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "1s2 2s2 2p6 3s2 3p5 with boxes", notes: "Check. Correct."}
+      - {question_id: fr-11b, answer_type: exact_match, page: 3, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "7", notes: "Check. Correct."}
+      - {question_id: fr-11c, answer_type: exact_match, page: 3, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "1", notes: "Check. Correct."}
+      - {question_id: fr-12a, answer_type: lewis_structure, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "O3 Lewis structure correct", notes: "Check."}
+      - {question_id: fr-12b, answer_type: lewis_structure, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "Two resonance structures drawn", notes: "Check."}
+      - {question_id: fr-13a, answer_type: balanced_equation, page: 4, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "CaBr2(aq)+K2CO3(aq)->CaCO3(s)+2KBr(aq)", notes: "Check. Correct."}
+      - {question_id: fr-13b, answer_type: exact_match, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "Br- and K+", notes: "Check."}
+      - {question_id: fr-13c, answer_type: exact_match, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "replacement reaction", notes: "Check. Professor accepted."}
+      - {question_id: fr-14a, answer_type: balanced_equation, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "Ba(OH)2+2HNO3->Ba(NO3)2+2H2O", notes: "Check. Correct."}
+      - {question_id: fr-14b, answer_type: numeric, page: 4, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "0.0783 M", notes: "Check. Correct."}
+      - {question_id: fr-14c, answer_type: numeric, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "0.959", notes: "Check. Correct pH."}
+      - {question_id: fr-15a, answer_type: numeric, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "31380 J", notes: "Check. Correct."}
+      - {question_id: fr-15b, answer_type: numeric, page: 5, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "225600 J", notes: "Check."}
+      - {question_id: fr-15c, answer_type: numeric, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "19200 J", notes: "Check."}
+      - {question_id: fr-15d, answer_type: numeric, page: 5, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "276.18 kJ", notes: "Check. Internally consistent."}
+      - {question_id: fr-16a, answer_type: lewis_structure, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "NH3 Lewis structure", notes: "Check."}
+      - {question_id: fr-16b, answer_type: exact_match, page: 5, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "tetrahedral", notes: "Check. Correct."}
+      - {question_id: fr-16c, answer_type: exact_match, page: 5, professor_score: 0.5, max_points: 1.5, professor_mark: partial, student_answer: "pyramidal drawing", notes: "Partial 0.5 annotation."}
+      - {question_id: fr-16d, answer_type: text_reasoning, page: 5, professor_score: 1, max_points: 2, professor_mark: partial, student_answer: "Yes polar. Has lone pair of electrons.", notes: "Half credit. Correct conclusion, incomplete reasoning."}
+
+  - exam_id: "34-blue"
+    items:
+      - {question_id: fr-1, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "6.98 cm3", notes: "Clear check."}
+      - {question_id: fr-2, answer_type: balanced_equation, page: 1, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "P4(s)+10Cl2(g)->4PCl5(g)", notes: "Check."}
+      - {question_id: fr-3, answer_type: balanced_equation, page: 1, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "2Cl-+Pb2+->PbCl2(s)", notes: "Check. Derived net ionic correctly."}
+      - {question_id: fr-4, answer_type: numeric, page: 1, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "2.19e23 atoms", notes: "Check. Correct."}
+      - {question_id: fr-5a, answer_type: exact_match, page: 1, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "H2", notes: "Check."}
+      - {question_id: fr-5b, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "18.6 mol", notes: "Check."}
+      - {question_id: fr-5c, answer_type: numeric, page: 1, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "316.77 g", notes: "Check."}
+      - {question_id: fr-6, answer_type: numeric, page: 2, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "56.9 mL", notes: "Check."}
+      - {question_id: fr-7a, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "Tetrahedral", notes: "Check. Correct."}
+      - {question_id: fr-7b, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "Sp3", notes: "Check. Correct."}
+      - {question_id: fr-7c, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "120", notes: "Check. Correct."}
+      - {question_id: fr-7d, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "Sp2", notes: "Check. Correct."}
+      - {question_id: fr-7e, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "109", notes: "Check. Correct."}
+      - {question_id: fr-8, answer_type: numeric, page: 2, professor_score: 2, max_points: 4, professor_mark: partial, student_answer: "-186.2 kJ", notes: "Partial. Correct answer but confused intermediate work."}
+      - {question_id: fr-9a, answer_type: balanced_equation, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "CaCO3(s)->CaO(s)+CO2(g)", notes: "Check."}
+      - {question_id: fr-9b, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "0.936 mol", notes: "Check."}
+      - {question_id: fr-9c, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "22.9 L", notes: "Check."}
+      - {question_id: fr-10a, answer_type: numeric, page: 3, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "-2.05e14", notes: "Check. Negative sign wrong but magnitude correct."}
+      - {question_id: fr-10b, answer_type: numeric, page: 3, professor_score: 0, max_points: 1, professor_mark: x, student_answer: "-3.41e-10 J/mol", notes: "X. Wrong."}
+      - {question_id: fr-11a, answer_type: electron_config, page: 3, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "1s2 2s2 2p6 3s2 3p5", notes: "Check."}
+      - {question_id: fr-11b, answer_type: exact_match, page: 3, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "7", notes: "Check."}
+      - {question_id: fr-11c, answer_type: exact_match, page: 3, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "1", notes: "Check."}
+      - {question_id: fr-12a, answer_type: lewis_structure, page: 4, professor_score: 1.5, max_points: 2, professor_mark: partial, student_answer: "O3 structure drawn", notes: "Partial. Annotation about valence electrons."}
+      - {question_id: fr-12b, answer_type: lewis_structure, page: 4, professor_score: 0, max_points: 2, professor_mark: x, student_answer: "No resonance drawn", notes: "X. Did not identify resonance."}
+      - {question_id: fr-13a, answer_type: balanced_equation, page: 4, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "CaBr2(aq)+K2CO3(aq)->CaCO3(s)+2KBr(aq)", notes: "Check."}
+      - {question_id: fr-13b, answer_type: exact_match, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "K+ Br-", notes: "Check."}
+      - {question_id: fr-13c, answer_type: exact_match, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "Precipitation reaction", notes: "Check."}
+      - {question_id: fr-14a, answer_type: balanced_equation, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "2HNO3+Ba(OH)2->Ba(NO3)2+2H2O", notes: "Check."}
+      - {question_id: fr-14b, answer_type: numeric, page: 4, professor_score: 0, max_points: 3, professor_mark: unclear, student_answer: "0.0782 M", notes: "Multiple attempts. Boxed answer close to key (0.0785). Mark unclear."}
+      - {question_id: fr-14c, answer_type: numeric, page: 4, professor_score: 0.5, max_points: 1, professor_mark: partial, student_answer: "-1.79", notes: "0.5 annotation. Wrong value but correct formula approach."}
+      - {question_id: fr-15a, answer_type: numeric, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "31380 J", notes: "Check."}
+      - {question_id: fr-15b, answer_type: numeric, page: 5, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "225600 J", notes: "Check."}
+      - {question_id: fr-15c, answer_type: numeric, page: 5, professor_score: 0, max_points: 2, professor_mark: x, student_answer: "(blank)", notes: "X. Not answered."}
+      - {question_id: fr-15d, answer_type: numeric, page: 5, professor_score: 0, max_points: 1, professor_mark: x, student_answer: "(incomplete)", notes: "X. Cannot compute without 15c."}
+      - {question_id: fr-16a, answer_type: lewis_structure, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "H-N-H with lone pair", notes: "Check."}
+      - {question_id: fr-16b, answer_type: exact_match, page: 5, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "tetrahedral", notes: "Check."}
+      - {question_id: fr-16c, answer_type: exact_match, page: 5, professor_score: 1.5, max_points: 1.5, professor_mark: check, student_answer: "trigonal pyramid", notes: "Check."}
+      - {question_id: fr-16d, answer_type: text_reasoning, page: 5, professor_score: 0, max_points: 2, professor_mark: unclear, student_answer: "(blank or not visible)", notes: "Student may not have answered."}
+
+  - exam_id: "39-blue-redacted"
+    items:
+      - {question_id: fr-1, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "6.98->7 cm3", notes: "Check. Rounded to 7."}
+      - {question_id: fr-2, answer_type: balanced_equation, page: 1, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "P4(s)+10Cl2(g)->4PCl5(g)", notes: "Check."}
+      - {question_id: fr-3, answer_type: balanced_equation, page: 1, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "2Cl-+Pb2+->PbCl2(s)", notes: "Check. Showed full then net ionic."}
+      - {question_id: fr-4, answer_type: numeric, page: 1, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "2.20e23 atoms", notes: "Check. Circled."}
+      - {question_id: fr-5a, answer_type: exact_match, page: 1, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "H2", notes: "Check."}
+      - {question_id: fr-5b, answer_type: numeric, page: 1, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "18.6 mol", notes: "Check. Circled."}
+      - {question_id: fr-5c, answer_type: numeric, page: 1, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "317 g", notes: "Check. Circled."}
+      - {question_id: fr-6, answer_type: numeric, page: 2, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "56.9 mL", notes: "Check. Circled."}
+      - {question_id: fr-7a, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "tetrahedral", notes: "Check."}
+      - {question_id: fr-7b, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "SP3", notes: "Check."}
+      - {question_id: fr-7c, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "120", notes: "Check."}
+      - {question_id: fr-7d, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "SP2", notes: "Check."}
+      - {question_id: fr-7e, answer_type: exact_match, page: 2, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "109.5", notes: "Check."}
+      - {question_id: fr-8, answer_type: numeric, page: 2, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "-186.2 kJ", notes: "Check. Clear work. Circled."}
+      - {question_id: fr-9a, answer_type: balanced_equation, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "CaCO3(s)->CaO(s)+CO2(g)", notes: "Check."}
+      - {question_id: fr-9b, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "0.936 mol", notes: "Check. Circled."}
+      - {question_id: fr-9c, answer_type: numeric, page: 3, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "22.9 L", notes: "Check."}
+      - {question_id: fr-10a, answer_type: numeric, page: 3, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "6.17e14 Hz", notes: "Check. Circled 'the frequency'."}
+      - {question_id: fr-10b, answer_type: numeric, page: 3, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "246e3 kJ", notes: "Check."}
+      - {question_id: fr-11a, answer_type: electron_config, page: 3, professor_score: 3, max_points: 3, professor_mark: check, student_answer: "1s2 2s2 2p6 3s2 3p5 with boxes", notes: "Check."}
+      - {question_id: fr-11b, answer_type: exact_match, page: 3, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "7", notes: "Check."}
+      - {question_id: fr-11c, answer_type: exact_match, page: 3, professor_score: 0.5, max_points: 0.5, professor_mark: check, student_answer: "1", notes: "Check."}
+      - {question_id: fr-12a, answer_type: lewis_structure, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "O3 Lewis structure", notes: "Check. Professor verified electron count."}
+      - {question_id: fr-12b, answer_type: lewis_structure, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "Identified resonance", notes: "Check visible. Student wrote 'not 2 more' which seems wrong. NEEDS VERIFICATION."}
+      - {question_id: fr-13a, answer_type: balanced_equation, page: 4, professor_score: 4, max_points: 4, professor_mark: check, student_answer: "CaBr2(aq)+K2CO3(aq)->2KBr(aq)+CaCO3(s)", notes: "Check."}
+      - {question_id: fr-13b, answer_type: exact_match, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "2Br- and 2K+", notes: "Check."}
+      - {question_id: fr-13c, answer_type: exact_match, page: 4, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "Precipitation reaction", notes: "Check."}
+      - {question_id: fr-14a, answer_type: balanced_equation, page: 4, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "Ba(OH)2+2HNO3->2H2O+Ba(NO3)2", notes: "Check."}
+      - {question_id: fr-14b, answer_type: numeric, page: 4, professor_score: 3, max_points: 3, professor_mark: unclear, student_answer: "0.082 M", notes: "Boxed answer. Answer key 0.0785. Close. Mark unclear."}
+      - {question_id: fr-14c, answer_type: numeric, page: 4, professor_score: 0.5, max_points: 1, professor_mark: partial, student_answer: "pH=2", notes: "0.5 annotation. Wrong value, correct formula."}
+      - {question_id: fr-15a, answer_type: numeric, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "31445 J", notes: "Check."}
+      - {question_id: fr-15b, answer_type: numeric, page: 5, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "226 kJ", notes: "Check."}
+      - {question_id: fr-15c, answer_type: numeric, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "19.2 kJ", notes: "Check."}
+      - {question_id: fr-15d, answer_type: numeric, page: 5, professor_score: 1, max_points: 1, professor_mark: check, student_answer: "277 kJ", notes: "Check. Internally consistent."}
+      - {question_id: fr-16a, answer_type: lewis_structure, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "H-N-H with lone pair", notes: "Check."}
+      - {question_id: fr-16b, answer_type: exact_match, page: 5, professor_score: 0, max_points: 0.5, professor_mark: x, student_answer: "T-shaped structure", notes: "X. Should be tetrahedral."}
+      - {question_id: fr-16c, answer_type: exact_match, page: 5, professor_score: 0, max_points: 1.5, professor_mark: unclear, student_answer: "Confused answer about electrons and angles", notes: "Mark unclear."}
+      - {question_id: fr-16d, answer_type: text_reasoning, page: 5, professor_score: 2, max_points: 2, professor_mark: check, student_answer: "Slightly polar because N is more electronegative, pulls electrons closer", notes: "Check. Good reasoning."}
