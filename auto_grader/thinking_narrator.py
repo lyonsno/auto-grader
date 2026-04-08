@@ -96,12 +96,6 @@ _MAX_TOKENS = 50           # generation budget for each summary
 _MAX_DISPATCHES_PER_ITEM = 12  # hard cap (loose — dedup is the real limit)
 _SIMILARITY_THRESHOLD = 0.55  # reject lines that overlap > this with prior
 
-# Stop sequences — bonsai is instructed to produce ONE sentence with no
-# preamble or commentary. The moment it emits a newline it's violating
-# that, so we abort generation immediately. Saves tokens and prevents
-# bonsai from rambling into a second sentence or starting a list.
-_NARRATOR_STOP = ["\n"]
-
 
 def _rough_token_count(text: str) -> int:
     """Approximate token count (words * 1.3)."""
@@ -408,7 +402,6 @@ class ThinkingNarrator:
             "temperature": temperature,
             "top_p": top_p,
             "top_k": top_k,
-            "stop": _NARRATOR_STOP,
             "stream": False,
         }
         headers = {"Content-Type": "application/json"}
@@ -441,8 +434,7 @@ class ThinkingNarrator:
         top_k: int = 20,
     ) -> str:
         """Streaming call. Calls on_delta(token) per content delta and
-        returns the full accumulated text. Stops the moment bonsai emits
-        a newline (one-sentence rule)."""
+        returns the full accumulated text."""
         body = {
             "model": self._model,
             "messages": messages,
@@ -450,7 +442,6 @@ class ThinkingNarrator:
             "temperature": temperature,
             "top_p": top_p,
             "top_k": top_k,
-            "stop": _NARRATOR_STOP,
             "stream": True,
         }
         headers = {"Content-Type": "application/json"}
