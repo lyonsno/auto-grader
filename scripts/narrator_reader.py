@@ -51,15 +51,27 @@ class PaintDryDisplay:
         self.subtitle = "bonsai narrator · live"
         self.live_line = ""
         # History entries are tuples (kind, text):
-        #   kind in {"line", "header", "topic"}
+        #   kind in {"line", "header", "topic", "drop"}
         self.history: Deque[tuple[str, str]] = deque(maxlen=_MAX_HISTORY_LINES)
+        # Running counters
+        self.stat_emitted = 0
+        self.stat_dropped_dedup = 0
+        self.stat_dropped_empty = 0
 
     def render(self) -> Group:
-        # Header panel
+        # Header panel — title + running stats
         header_text = Text()
         header_text.append(self.title, style="bold magenta")
         header_text.append("  ·  ", style="dim")
         header_text.append(self.subtitle, style="dim cyan")
+        header_text.append("   |   ", style="dim")
+        header_text.append(f"emitted={self.stat_emitted} ", style="green")
+        header_text.append(
+            f"dedup={self.stat_dropped_dedup} ", style="yellow"
+        )
+        header_text.append(
+            f"empty={self.stat_dropped_empty}", style="red"
+        )
         header = Panel(
             Align.left(header_text),
             border_style="magenta",
@@ -93,6 +105,9 @@ class PaintDryDisplay:
             elif kind == "topic":
                 history_text.append("  → ", style="dim green")
                 history_text.append(text, style="green")
+            elif kind == "drop":
+                history_text.append("  ✗ ", style="dim red")
+                history_text.append(text, style="dim red strike")
             else:
                 history_text.append("  ", style="dim")
                 history_text.append(text, style="white")
@@ -122,6 +137,17 @@ class PaintDryDisplay:
         if self.live_line:
             self.history.append(("line", self.live_line))
             self.live_line = ""
+            self.stat_emitted += 1
+
+    def on_drop(self, reason: str, text: str) -> None:
+        # Surface drop in history so user sees the narrator working
+        label = text[:80] if text else f"<{reason}>"
+        self.history.append(("drop", f"[{reason}] {label}"))
+        self.live_line = ""  # clear any in-flight live content
+        if reason == "dedup":
+            self.stat_dropped_dedup += 1
+        elif reason == "empty":
+            self.stat_dropped_empty += 1
 
     def on_topic(self, text: str) -> None:
         # Commit any in-flight live line first
@@ -182,6 +208,11 @@ def main() -> int:
                         display.on_commit()
                     elif msg_type == "topic":
                         display.on_topic(msg.get("text", ""))
+                    elif msg_type == "drop":
+                        display.on_drop(
+                            msg.get("reason", "unknown"),
+                            msg.get("text", ""),
+                        )
                     elif msg_type == "end":
                         live.update(display.render(), refresh=True)
                         # Wait for keypress before exiting so the user

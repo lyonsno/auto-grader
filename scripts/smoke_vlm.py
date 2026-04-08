@@ -95,6 +95,7 @@ def main():
         sink_cm = nullcontext()
 
     t0 = time.time()
+    narrator_stats = None
     with sink_cm as sink:
         narrator = (
             ThinkingNarrator(
@@ -112,6 +113,8 @@ def main():
             narrator=narrator,
             sink=sink,
         )
+        if narrator is not None:
+            narrator_stats = narrator.stats()
     elapsed = time.time() - t0
 
     print(f"\nInference: {elapsed:.1f}s ({elapsed / len(subset):.1f}s/item)")
@@ -143,6 +146,21 @@ def main():
                 f"n={b.count:3d} conf={b.avg_confidence:.2f} "
                 f"acc={b.accuracy:.2f} {bar}"
             )
+
+    if narrator_stats is not None:
+        print(f"\nNarrator stats:")
+        print(f"  items started:      {narrator_stats['items_started']}")
+        print(f"  dispatches total:   {narrator_stats['dispatches_total']}")
+        print(f"  summaries emitted:  {narrator_stats['summaries_emitted']}")
+        print(f"  drops (dedup):      {narrator_stats['drops_dedup']}")
+        print(f"  drops (empty):      {narrator_stats['drops_empty']}")
+        print(f"  items hit cap:      {narrator_stats['drops_cap']}")
+        total_drops = (
+            narrator_stats['drops_dedup'] + narrator_stats['drops_empty']
+        )
+        if narrator_stats['dispatches_total']:
+            drop_rate = total_drops / narrator_stats['dispatches_total']
+            print(f"  drop rate:          {drop_rate:.1%}")
 
 
 if __name__ == "__main__":

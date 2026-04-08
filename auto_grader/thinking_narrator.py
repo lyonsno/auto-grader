@@ -136,6 +136,27 @@ class ThinkingNarrator:
         self._dispatch_count = 0  # per-item dispatch counter
         self._prior_summaries: list[str] = []  # for dedup
 
+        # Lifetime stats (across all items)
+        self._stats_lock = threading.Lock()
+        self._stat_dispatches_total = 0
+        self._stat_summaries_emitted = 0
+        self._stat_drops_dedup = 0
+        self._stat_drops_empty = 0
+        self._stat_drops_cap = 0  # incremented by feed() when cap hit
+        self._stat_items_started = 0
+
+    def stats(self) -> dict:
+        """Snapshot of lifetime narrator stats across all items."""
+        with self._stats_lock:
+            return {
+                "items_started": self._stat_items_started,
+                "dispatches_total": self._stat_dispatches_total,
+                "summaries_emitted": self._stat_summaries_emitted,
+                "drops_dedup": self._stat_drops_dedup,
+                "drops_empty": self._stat_drops_empty,
+                "drops_cap": self._stat_drops_cap,
+            }
+
     def start(self, item_header: str | None = None) -> None:
         """Begin a new narration session for one item.
 
@@ -162,6 +183,9 @@ class ThinkingNarrator:
             self._pending_dispatch = False
             self._dispatch_count = 0
             self._prior_summaries = []
+            self._cap_hit_this_item = False
+        with self._stats_lock:
+            self._stat_items_started += 1
         logger.info("Narrator session started")
 
     def stop(self) -> None:
@@ -235,8 +259,13 @@ class ThinkingNarrator:
             elapsed = now - self._last_dispatch
             tokens = _rough_token_count(self._buffer)
 
-            # Hard cap on dispatches per item
+            # Hard cap on dispatches per item — count items-where-cap-hit
+            # exactly once per item, not once per feed() call.
             if self._dispatch_count >= _MAX_DISPATCHES_PER_ITEM:
+                if not self._cap_hit_this_item:
+                    self._cap_hit_this_item = True
+                    with self._stats_lock:
+                        self._stat_drops_cap += 1
                 return
 
             enough_tokens = (
@@ -260,6 +289,8 @@ class ThinkingNarrator:
         t.start()
 
     def _dispatch(self, chunk: str) -> None:
+        with self._stats_lock:
+            self._stat_dispatches_total += 1
         try:
             # Inject explicit "don't repeat yourself" instruction with the
             # actual prior summaries inline. Bonsai is a small model and
@@ -296,6 +327,13 @@ class ThinkingNarrator:
             full = full.strip()
 
             if not full:
+                with self._stats_lock:
+                    self._stat_drops_empty += 1
+                self._sink.write_drop("empty", "")
+                # Roll back the user message we added
+                with self._lock:
+                    if self._messages and self._messages[-1]["role"] == "user":
+                        self._messages.pop()
                 return
 
             # Dedup check
@@ -303,6 +341,9 @@ class ThinkingNarrator:
                 self._lines_too_similar(full, prev)
                 for prev in prior
             ):
+                with self._stats_lock:
+                    self._stat_drops_dedup += 1
+                self._sink.write_drop("dedup", full)
                 logger.info("Narrator: dropped repetitive summary: %s", full)
                 # Roll back the user message we added so history stays clean
                 with self._lock:
@@ -320,6 +361,8 @@ class ThinkingNarrator:
                     {"role": "assistant", "content": full}
                 )
                 self._prior_summaries.append(full)
+            with self._stats_lock:
+                self._stat_summaries_emitted += 1
             logger.info("Narrator summary: %s", full)
         except Exception:
             logger.exception("Narrator dispatch failed")
@@ -386,8 +429,8 @@ class ThinkingNarrator:
         *,
         temperature: float = 0.7,
         max_tokens: int = _MAX_TOKENS,
-        top_p: float = 0.9,
-        top_k: int = 30,
+        top_p: float = 0.95,
+        top_k: int = 20,
     ) -> str:
         """Streaming call. Calls on_delta(token) per content delta and
         returns the full accumulated text."""
