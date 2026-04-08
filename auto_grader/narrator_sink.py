@@ -217,6 +217,18 @@ class NarratorSink:
                 self._fallback.write("\n")
                 self._fallback.flush()
 
+    def start_wrap_up(self) -> None:
+        """Signal that the post-game wrap-up generation has started.
+
+        Sent the moment narrator.wrap_up() begins, BEFORE the (slow)
+        chat completion call to the grader server. The reader uses
+        this to immediately show a 'writing post-game commentary...'
+        placeholder in the post-game panel so the user knows the
+        script is alive and working on the wrap-up rather than hung.
+        """
+        with self._lock:
+            self._emit({"type": "wrap_up_pending"})
+
     def write_wrap_up(self, text: str) -> None:
         """Final color-commentary line at the end of the run."""
         with self._lock:
