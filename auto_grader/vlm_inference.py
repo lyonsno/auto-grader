@@ -205,15 +205,16 @@ def grade_single_item(
 ) -> Prediction:
     """Send one item to the VLM and return a Prediction.
 
-    If on_reasoning_delta is provided, it's called with each reasoning_content
-    token as it streams from the VLM (used by the live narrator).
+    Always uses streaming mode so the SSE iterator is interruptible
+    by SIGINT (Ctrl-C). When on_reasoning_delta is provided, reasoning
+    tokens are pumped through it for the live narrator; otherwise the
+    stream is consumed silently and we just need the final content.
+    Closing the response mid-stream tells OMLX to abort the inference.
     """
     import urllib.request
 
     prompt_text = _build_grading_prompt(item, template_question)
     image_url = _image_to_data_url(page_image)
-
-    use_streaming = on_reasoning_delta is not None
 
     payload = {
         "model": config.model,
@@ -232,7 +233,7 @@ def grade_single_item(
         ],
         "max_tokens": config.max_tokens,
         "temperature": config.temperature,
-        "stream": use_streaming,
+        "stream": True,
     }
 
     body = json.dumps(payload).encode()
@@ -252,15 +253,27 @@ def grade_single_item(
     for attempt in range(3):
         try:
             req = _build_request()
-            with urllib.request.urlopen(req, timeout=600) as resp:
-                if use_streaming:
-                    content = _consume_streaming_response(
-                        resp, on_reasoning_delta
-                    )
-                else:
-                    result = json.loads(resp.read())
-                    content = result["choices"][0]["message"]["content"]
+            resp = urllib.request.urlopen(req, timeout=600)
+            try:
+                content = _consume_streaming_response(
+                    resp, on_reasoning_delta
+                )
+            except KeyboardInterrupt:
+                # User hit Ctrl-C — close the socket so OMLX cancels
+                # the in-flight inference, then re-raise.
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
             break
+        except KeyboardInterrupt:
+            raise
         except (TimeoutError, OSError) as e:
             last_err = e
             if attempt < 2:
@@ -286,8 +299,11 @@ def grade_single_item(
 
 def _consume_streaming_response(resp, on_reasoning_delta) -> str:
     """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
-    through the callback as they arrive; returns the assistant content
-    (the JSON response) for parsing."""
+    through the callback as they arrive (when provided); returns the
+    assistant content (the JSON response) for parsing.
+
+    SIGINT propagates through the iterator naturally — Python checks for
+    signals between chunk reads, so Ctrl-C interrupts within ~one chunk."""
     content_full = ""
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
@@ -301,9 +317,9 @@ def _consume_streaming_response(resp, on_reasoning_delta) -> str:
         except json.JSONDecodeError:
             continue
         delta = chunk.get("choices", [{}])[0].get("delta", {})
-        # Reasoning tokens — pump to narrator
+        # Reasoning tokens — pump to narrator if wired
         rc_delta = delta.get("reasoning_content", "")
-        if rc_delta:
+        if rc_delta and on_reasoning_delta is not None:
             try:
                 on_reasoning_delta(rc_delta)
             except Exception:

@@ -91,14 +91,16 @@ class PaintDryDisplay:
         )
 
         # Live line — the one place we use a real accent color (cyan).
-        # The cursor glyph is solid cyan, the text is plain bright_white
-        # for legibility against the dark background.
+        # The cursor glyph is solid cyan, the text is plain bright_white.
+        # overflow="fold" forces rich to wrap long lines at panel width
+        # instead of truncating them. The panel will grow vertically as
+        # needed to fit a long bonsai line.
         if self.live_line:
-            live_text = Text()
+            live_text = Text(no_wrap=False, overflow="fold")
             live_text.append("▌ ", style="bright_cyan")
             live_text.append(self.live_line, style="bright_white")
         else:
-            live_text = Text("▌ ", style="grey39")
+            live_text = Text("▌ ", style="grey39", overflow="fold")
         live_panel = Panel(
             live_text,
             border_style="grey39",
@@ -108,10 +110,11 @@ class PaintDryDisplay:
         )
 
         # History panel — newest at top, older below. All dimmed; only
-        # item headers get a slight color lift to mark sections.
+        # item headers get a slight color lift to mark sections. Wrap
+        # long history lines instead of truncating them.
         history_lines = list(self.history)[-_VISIBLE_HISTORY_LINES:]
         history_lines.reverse()
-        history_text = Text()
+        history_text = Text(no_wrap=False, overflow="fold")
         for i, (kind, text) in enumerate(history_lines):
             if i > 0:
                 history_text.append("\n")

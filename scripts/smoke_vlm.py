@@ -96,6 +96,8 @@ def main():
 
     t0 = time.time()
     narrator_stats = None
+    predictions: list = []
+    interrupted = False
     with sink_cm as sink:
         narrator = (
             ThinkingNarrator(
@@ -106,16 +108,35 @@ def main():
             if narrator_enabled
             else None
         )
-        predictions = grade_all_items(
-            subset, _SCANS_DIR, config,
-            template_path=_TEMPLATE,
-            progress_callback=_progress,
-            narrator=narrator,
-            sink=sink,
-        )
+        try:
+            predictions = grade_all_items(
+                subset, _SCANS_DIR, config,
+                template_path=_TEMPLATE,
+                progress_callback=_progress,
+                narrator=narrator,
+                sink=sink,
+            )
+        except KeyboardInterrupt:
+            interrupted = True
+            print(
+                f"\n\n[interrupted] Caught Ctrl-C — sent close to OMLX, "
+                f"completed {len(predictions)} of {len(subset)} items.",
+                file=sys.stderr,
+            )
         if narrator is not None:
             narrator_stats = narrator.stats()
     elapsed = time.time() - t0
+
+    if interrupted and not predictions:
+        print(
+            "\nNo items completed before interrupt. Exiting without report.",
+            file=sys.stderr,
+        )
+        return 130  # standard exit code for SIGINT
+
+    # Trim subset to whatever actually completed (so the report aligns)
+    if interrupted:
+        subset = subset[: len(predictions)]
 
     print(f"\nInference: {elapsed:.1f}s ({elapsed / len(subset):.1f}s/item)")
 
@@ -162,6 +183,8 @@ def main():
             drop_rate = total_drops / narrator_stats['dispatches_total']
             print(f"  drop rate:          {drop_rate:.1%}")
 
+    return 130 if interrupted else 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main() or 0)
