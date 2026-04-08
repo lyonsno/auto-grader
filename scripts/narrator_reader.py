@@ -217,6 +217,18 @@ _LIVE_BASE_SAT = 0.80              # bumped from 0.62 — the live field
                                     # this restores warm pop without
                                     # crossing into neon territory
 _LIVE_BASE_VAL = 0.95              # bright paper base
+# When a streaming dispatch finishes (on_commit), the live field
+# stops updating but stays visible as the "frozen" line until the
+# next dispatch starts. The settled state has slightly muted sat/val
+# (0.70 / 0.85 multipliers) so it reads as past tense. Previously
+# this transition was a step function — the bright "just-finished"
+# pulse only existed for one frame. The fade lets the just-arrived
+# line LINGER in its bright state and then slowly relax into the
+# settled state, so the punch of completing a dispatch is something
+# you can actually see and enjoy.
+_LIVE_FREEZE_FADE_S = 2.5
+_LIVE_FROZEN_SAT_MUL = 0.70
+_LIVE_FROZEN_VAL_MUL = 0.85
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
@@ -380,6 +392,7 @@ def _render_live_undulating(
     wrap_width: int | None,
     is_active: bool,
     char_offset: int = 0,
+    freeze_age_s: float | None = None,
 ) -> Text:
     """Render the live line with per-character undulating warm colors
     (yellow / orange / red) AND a shimmer overlay on top.
@@ -396,6 +409,13 @@ def _render_live_undulating(
     character's phase is computed from its GLOBAL position in the
     full unfolded content, not its visible index, so the colors
     don't jump when a character falls off the front.
+
+    freeze_age_s: when the line is frozen (is_active=False), this is
+    seconds since freezing started. The renderer linearly interpolates
+    saturation and value multipliers from 1.0 (fully bright, just
+    finished streaming) toward _LIVE_FROZEN_SAT_MUL / _LIVE_FROZEN_VAL_MUL
+    (settled past tense) over _LIVE_FREEZE_FADE_S. None when the line
+    is actively streaming or there's no recorded freeze timestamp.
     """
     if not content:
         return text_obj
@@ -417,9 +437,16 @@ def _render_live_undulating(
             shimmer_phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
         )
 
-    # Frozen state has slightly muted colors so it reads as "settled"
-    sat_mul = 1.0 if is_active else 0.7
-    val_mul = 1.0 if is_active else 0.85
+    # Sat/val multipliers fade smoothly from active brightness toward
+    # the settled past-tense state over _LIVE_FREEZE_FADE_S after the
+    # streaming dispatch finishes. While streaming, both stay at 1.0.
+    if is_active or freeze_age_s is None:
+        sat_mul = 1.0
+        val_mul = 1.0
+    else:
+        fade = max(0.0, min(1.0, freeze_age_s / _LIVE_FREEZE_FADE_S))
+        sat_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_SAT_MUL)
+        val_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_VAL_MUL)
 
     for i, ch in enumerate(content):
         # Per-character undulating hue. Use the GLOBAL position
@@ -501,6 +528,12 @@ class PaintDryDisplay:
         # else just the cursor glyph.
         self.streaming_line: str = ""
         self.frozen_line: str = ""
+        # Timestamp at which the most recent dispatch finished streaming.
+        # Used to drive the slow fade from "just-arrived bright" to
+        # "settled past tense" colors over _LIVE_FREEZE_FADE_S seconds
+        # so the punch of completing a dispatch is visible. None when
+        # nothing has been frozen yet.
+        self._freeze_started_at: float | None = None
 
         # History entries are 3-tuples (kind, text, parity):
         #   kind in {"line", "header", "topic"}
@@ -749,12 +782,20 @@ class PaintDryDisplay:
             live_text = Text(no_wrap=False, overflow="fold")
             cursor_style = "bright_cyan" if is_active else "grey50"
             live_text.append("▌ ", style=cursor_style)
+            # Compute freeze age for the renderer's fade. Only meaningful
+            # when not actively streaming and we have a recorded freeze
+            # timestamp; otherwise the renderer treats sat/val as fully
+            # bright.
+            freeze_age_s = None
+            if not is_active and self._freeze_started_at is not None:
+                freeze_age_s = time.monotonic() - self._freeze_started_at
             _render_live_undulating(
                 live_text, displayed_live,
                 indent_width=2,  # cursor glyph "▌ "
                 wrap_width=wrap_width,
                 is_active=is_active,
                 char_offset=live_char_offset,
+                freeze_age_s=freeze_age_s,
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
@@ -1018,6 +1059,10 @@ class PaintDryDisplay:
             )
             self._line_parity = 1 - self._line_parity
             self.stat_emitted += 1
+            # Mark the start of the freeze fade — only when there was
+            # actual content to freeze. Empty commits don't restart
+            # the fade clock.
+            self._freeze_started_at = time.monotonic()
         self.frozen_line = self.streaming_line
         self.streaming_line = ""
 
