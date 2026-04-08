@@ -195,36 +195,33 @@ class ThinkingNarrator:
             self._buffer = ""
         logger.info("Narrator session stopped")
 
-    def stop_and_summarize(self) -> None:
-        """End the narration session and produce a collapsed summary.
+    def stop_and_summarize(
+        self,
+        prediction: Any = None,
+        item: Any = None,
+        template_question: dict | None = None,
+    ) -> None:
+        """End the narration session and produce a per-item after-action.
 
-        Fires one final call to bonsai asking for a concise wrap-up of
-        what the grader thought about. Result is delivered via
-        sink.write_topic.
+        When prediction + item are provided, fires a synchronous bonsai
+        call with the full verdict context (model score, professor
+        score, both reasonings, expected answer) and asks for a
+        matter-of-fact comparative line plus an optional arch coda.
+        Result is delivered via sink.write_topic.
         """
         with self._lock:
             self._active = False
-            remaining_buffer = self._buffer
             self._buffer = ""
             if self._thinking_start > 0:
                 elapsed = time.monotonic() - self._thinking_start
             else:
                 elapsed = 0.0
-            messages = list(self._messages)
 
         if elapsed < 1.0:
             return
 
-        # If no live summaries were produced, feed the raw thinking buffer
-        # directly so the model has something to summarize.
-        if len(messages) < 3 and remaining_buffer:
-            messages.append({
-                "role": "user",
-                "content": f"Current reasoning excerpt:\n\n{remaining_buffer}",
-            })
-
         # Run synchronously so we don't race the next item's start.
-        self._produce_collapsed_summary(messages, elapsed)
+        self._produce_after_action(elapsed, prediction, item, template_question)
 
     def wrap_up(
         self,
@@ -289,27 +286,109 @@ class ThinkingNarrator:
         except Exception:
             logger.exception("Wrap-up failed")
 
-    def _produce_collapsed_summary(self, messages: list[dict], elapsed: float) -> None:
+    def _produce_after_action(
+        self,
+        elapsed: float,
+        prediction: Any,
+        item: Any,
+        template_question: dict | None,
+    ) -> None:
+        """Produce a per-item after-action line: factual two-part comparison
+        of grader vs professor with brief reasoning, plus an optional
+        dry/arch coda from bonsai if it can fit one in."""
         try:
-            messages = list(messages)
-            messages.append({
-                "role": "user",
-                "content": (
-                    "The grader has finished thinking about this question. "
-                    "Write a single short phrase (5-10 words, no participle "
-                    "needed) summarizing WHAT it was working out overall. "
-                    "Like a section heading. Examples: 'density calculation "
-                    "for water displacement', 'limiting reagent for ammonia "
-                    "synthesis', 'Lewis structure resonance forms'. "
-                    "Output ONLY the phrase."
-                ),
-            })
-            topic = self._chat_completion(messages, max_tokens=25)
-            if topic:
-                logger.info("Thinking topic: %s", topic)
-                self._sink.write_topic(f"Thought for {elapsed:.0f}s · {topic}")
+            # Fall back to a bare timing line if we don't have the data
+            if prediction is None or item is None:
+                self._sink.write_topic(f"{elapsed:.0f}s elapsed")
+                return
+
+            # Build the structured verdict context for bonsai
+            qprompt = ""
+            expected = ""
+            if template_question:
+                if "prompt" in template_question:
+                    qprompt = (
+                        str(template_question["prompt"])
+                        .strip()
+                        .replace("\n", " ")[:160]
+                    )
+                if "correct" in template_question:
+                    correct = template_question["correct"]
+                    if isinstance(correct, dict):
+                        if "value" in correct:
+                            expected = str(correct["value"])
+                        elif "expression" in correct:
+                            expected = f"expr: {correct['expression']}"
+                    else:
+                        expected = str(correct)
+
+            verdict = (
+                "MATCHED"
+                if prediction.model_score == item.professor_score
+                else (
+                    "GRADER OVERSHOT"
+                    if prediction.model_score > item.professor_score
+                    else "GRADER UNDERSHOT"
+                )
+            )
+            payload = (
+                f"The grader just rendered a verdict on question "
+                f"{item.question_id}. Here's the after-action:\n\n"
+                f"  Question type: {item.answer_type}, max {item.max_points} pts\n"
+            )
+            if qprompt:
+                payload += f"  Question prompt: {qprompt}\n"
+            if expected:
+                payload += f"  Expected answer: {expected}\n"
+            payload += (
+                f"  Student wrote: \"{item.student_answer}\"\n"
+                f"  Grader read: \"{prediction.model_read}\"\n"
+                f"  Grader awarded: {prediction.model_score} pts\n"
+                f"  Grader reasoning: {prediction.model_reasoning[:300]}\n"
+                f"  Professor awarded: {item.professor_score} pts "
+                f"(mark: {item.professor_mark})\n"
+                f"  Professor's note: \"{item.notes}\"\n"
+                f"  Verdict: {verdict}\n\n"
+                f"Write ONE concise after-action line in this format:\n"
+                f'  "Grader: <score> (<one-clause reason>). '
+                f'Prof: <score> (<one-clause reason>). · '
+                f'<optional dry/arch one-line coda>"\n\n'
+                f"Examples:\n"
+                f'  "Grader: 2/2 (matched on density via m/V). '
+                f"Prof: 2/2 (clean check). · "
+                f'Even the 1-bit kid called this one."\n'
+                f'  "Grader: 0/2 (refused credit on consistent-with-wrong-'
+                f"premise mol calc). Prof: 2/2 (charitable). · "
+                f'Grader still missing the consistency rule, ouch."\n'
+                f'  "Grader: 1/2 (split partial on ozone Lewis). '
+                f"Prof: 1/2 (matched). · "
+                f'Both judges seeing one resonance form, neither catching the second."\n\n'
+                f"Be matter-of-fact in the score+reason portion. "
+                f"The coda is optional but encouraged — dry, arch, "
+                f"sportscaster post-play tone. Output ONE line only, "
+                f"no preamble, no quotes around your output."
+            )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a chemistry-grading sports commentator "
+                        "delivering a per-question after-action line. "
+                        "Matter-of-fact in the comparison, dry/arch in "
+                        "the optional coda. ONE line only."
+                    ),
+                },
+                {"role": "user", "content": payload},
+            ]
+            text = self._chat_completion(
+                messages, max_tokens=120, temperature=0.85
+            )
+            if text:
+                logger.info("After-action: %s", text)
+                self._sink.write_topic(f"{elapsed:.0f}s · {text}")
         except Exception:
-            logger.exception("Failed to produce collapsed summary")
+            logger.exception("Failed to produce after-action summary")
 
     def feed(self, token: str) -> None:
         """Feed a reasoning token. May trigger an async narrator call."""
