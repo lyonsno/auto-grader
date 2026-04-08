@@ -427,6 +427,13 @@ _EXAM_PDF_MAP = {
     "27-blue-2023": "27 blue 2023.pdf",
     "34-blue": "34 blue.pdf",
     "39-blue": "39 blue_Redacted 1.pdf",
+    # 39-blue-redacted is the FERPA-name-redacted PDF with grading marks
+    # ALSO removed by hand. This is currently the only contamination-free
+    # exam in the eval set; everything else still has the prof's
+    # checkmarks and margin scores leaking signal into the grader. Use
+    # this exam_id for any experiment whose accuracy claim is meant to
+    # be trusted. See the contamination spike on 2026-04-08 for context.
+    "39-blue-redacted": "39 blue_Redacted_grading_marks_removed.pdf",
 }
 
 
