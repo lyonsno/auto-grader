@@ -168,10 +168,19 @@ class NarratorSink:
                 self._fallback.flush()
             self._live_buffer = ""
 
-    def write_topic(self, text: str) -> None:
-        """Write the per-item collapsed 'Thought for Xs · topic' line."""
+    def write_topic(self, text: str, verdict: str | None = None) -> None:
+        """Write the per-item collapsed 'Thought for Xs · topic' line.
+
+        verdict is one of "match", "overshoot", "undershoot", or None
+        (when unknown). The reader uses it to color the topic line —
+        cool sage for match, warm coral for overshoot, warm amber for
+        undershoot, dusty plum for unknown.
+        """
         with self._lock:
-            self._emit({"type": "topic", "text": text})
+            msg = {"type": "topic", "text": text}
+            if verdict is not None:
+                msg["verdict"] = verdict
+            self._emit(msg)
             if self._txt_file is not None:
                 self._txt_file.write(f"  -> {text}\n")
             if not self.config.spawn_terminal:

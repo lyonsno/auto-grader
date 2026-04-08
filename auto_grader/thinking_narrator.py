@@ -426,15 +426,17 @@ class ThinkingNarrator:
                     else:
                         expected = str(correct)
 
-            verdict = (
-                "MATCHED"
-                if prediction.model_score == item.professor_score
-                else (
-                    "GRADER OVERSHOT"
-                    if prediction.model_score > item.professor_score
-                    else "GRADER UNDERSHOT"
-                )
-            )
+            # Verdict drives both the prompt context (which examples to
+            # encourage) and the topic line color in the reader.
+            if prediction.model_score == item.professor_score:
+                verdict = "MATCHED"
+                verdict_short = "match"
+            elif prediction.model_score > item.professor_score:
+                verdict = "GRADER OVERSHOT"
+                verdict_short = "overshoot"
+            else:
+                verdict = "GRADER UNDERSHOT"
+                verdict_short = "undershoot"
             payload = (
                 f"The grader just rendered a verdict on question "
                 f"{item.question_id}. Here's the after-action:\n\n"
@@ -509,7 +511,10 @@ class ThinkingNarrator:
             )
             if text:
                 logger.info("After-action: %s", text)
-                self._sink.write_topic(f"{elapsed:.0f}s · {text}")
+                self._sink.write_topic(
+                    f"{elapsed:.0f}s · {text}",
+                    verdict=verdict_short,
+                )
         except Exception:
             logger.exception("Failed to produce after-action summary")
 

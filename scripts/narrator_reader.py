@@ -82,13 +82,20 @@ _BASE_RGB = {
     "line_alt": (230, 150, 175), # softer peach-pink — less aggressive
                                   # than the old (225,140,170) without
                                   # losing alternation visibility
-    "topic": (170, 115, 145),    # dusty plum — replaces sea green so
-                                  # the after-action belongs to the
-                                  # warm family with everything else
+    "topic": (170, 115, 145),    # dusty plum — fallback when verdict is
+                                  # unknown / no prediction data
     "header": (200, 110, 30),    # orange3 — unchanged, the warm anchor
     "live": (240, 240, 248),     # bright off-white for the live field,
                                   # very slight cool cast so warm shimmer
                                   # peak pops against it
+    # Topic verdict variants — chosen so the topic line carries
+    # semantic color (cool sage = matched, warm coral = grader was too
+    # generous, warm amber = grader was too strict). Gives the panel a
+    # splash of cool relief that feels intentional because it encodes
+    # the actual grader-vs-prof agreement at a glance.
+    "topic_match": (110, 165, 125),       # soft sage — cool, confident
+    "topic_overshoot": (240, 145, 85),    # warm coral — too generous
+    "topic_undershoot": (220, 165, 85),   # warm amber — too strict
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
@@ -99,6 +106,9 @@ _SHIMMER_KIND_INTENSITY = {
     "line": 0.45,        # quiet pulse on the body
     "line_alt": 0.45,    # match line intensity for the alternate color
     "topic": 1.00,
+    "topic_match": 1.00,        # match topic intensity for verdict variants
+    "topic_overshoot": 1.00,
+    "topic_undershoot": 1.00,
     "header": 1.40,      # cranked — section markers pop
     "live": 0.55,        # subtle amplitude, but with vivid peak (below)
 }
@@ -111,7 +121,13 @@ _SHIMMER_KIND_PEAK_RGB = {
                               # as warm gold rather than fire-engine
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
-_SHIMMER_FLOORED_KINDS = frozenset({"header", "topic"})
+_SHIMMER_FLOORED_KINDS = frozenset({
+    "header",
+    "topic",
+    "topic_match",
+    "topic_overshoot",
+    "topic_undershoot",
+})
 
 # Live panel reserves a fixed vertical footprint so it doesn't jitter
 # the layout when bonsai produces a long line that wraps. The panel
@@ -634,6 +650,17 @@ class PaintDryDisplay:
             elif kind == "topic":
                 indent = "  · "
                 history_text.append(indent, style="grey50")
+                # Pick the topic color variant based on the stored
+                # verdict (third tuple slot, named "parity" for line
+                # entries but reused as the verdict string for topic
+                # entries). Cool sage for matches, warm coral for
+                # grader-overshot, warm amber for grader-undershot,
+                # plain plum fallback when verdict is unknown.
+                topic_kind = {
+                    "match": "topic_match",
+                    "overshoot": "topic_overshoot",
+                    "undershoot": "topic_undershoot",
+                }.get(parity, "topic")
                 # Pull out the elapsed-time prefix and color it as a
                 # punchy warm accent (bold orange3 — same warm as the
                 # post-game border and header base) so it pops out
@@ -645,7 +672,7 @@ class PaintDryDisplay:
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
-                        history_text, rest, "topic",
+                        history_text, rest, topic_kind,
                         layer_index=i,
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
@@ -653,7 +680,7 @@ class PaintDryDisplay:
                     )
                 else:
                     _apply_shimmer(
-                        history_text, text, "topic",
+                        history_text, text, topic_kind,
                         layer_index=i,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
@@ -792,10 +819,13 @@ class PaintDryDisplay:
         """Final post-game commentary from bonsai."""
         self.wrap_up_text = text
 
-    def on_topic(self, text: str) -> None:
+    def on_topic(self, text: str, verdict: str | None = None) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
         # buffers — frozen_line keeps showing the last bonsai line.
-        self.history.append(("topic", text, None))
+        # The verdict ("match" / "overshoot" / "undershoot" / None)
+        # is stored in the third tuple slot so the renderer can pick
+        # the right color variant for the topic line.
+        self.history.append(("topic", text, verdict))
 
 
 def main() -> int:
@@ -876,7 +906,10 @@ def main() -> int:
                     elif msg_type == "rollback_live":
                         display.on_rollback_live()
                     elif msg_type == "topic":
-                        display.on_topic(msg.get("text", ""))
+                        display.on_topic(
+                            msg.get("text", ""),
+                            verdict=msg.get("verdict"),
+                        )
                     elif msg_type == "drop":
                         display.on_drop(
                             msg.get("reason", "unknown"),
