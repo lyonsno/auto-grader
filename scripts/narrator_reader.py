@@ -1042,7 +1042,19 @@ def main() -> int:
         print(f"fifo not found: {fifo_path}", file=sys.stderr)
         return 2
 
-    console = Console()
+    # Force truecolor mode. The narrator window is spawned via
+    # `tell application "Terminal" to do script` which opens Apple
+    # Terminal.app, and Terminal.app doesn't set COLORTERM=truecolor
+    # on the spawned shell. Without an explicit color_system, Rich
+    # falls back to 8/16-color quantization, which collapses the
+    # sumi-e palette (persimmon, indigo, celadon, vermilion, ochre)
+    # down to ANSI red/blue/green/red/yellow buckets — and bold
+    # characters at the shimmer head then remap to "bright" ANSI
+    # variants, which Terminal.app renders as vivid neon magenta /
+    # cyan blocks. Apple Terminal.app on modern macOS does support
+    # 24-bit color, it just doesn't advertise it; forcing truecolor
+    # makes Rich emit raw 24-bit escapes that Terminal.app honors.
+    console = Console(color_system="truecolor", force_terminal=True)
     display = PaintDryDisplay(console=console)
 
     # Open the fifo for reading. This blocks until the writer connects.
