@@ -436,7 +436,7 @@ class PaintDryDisplay:
 
     def __init__(self, console: Console | None = None):
         self._console = console
-        self.title = "PROJECT PAINT DRY"
+        self.title = "PROJECT PAINT DRY · sumi-e"
         self.subtitle = "bonsai narrator · live"
 
         # Sticky live: two buffers. streaming_line is the in-progress
