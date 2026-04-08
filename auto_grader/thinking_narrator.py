@@ -453,6 +453,17 @@ class ThinkingNarrator:
                 f"(mark: {item.professor_mark})\n"
                 f"  Professor's note: \"{item.notes}\"\n"
                 f"  Verdict: {verdict}\n\n"
+                f"CRITICAL SEMANTICS: The grader and professor are JUDGES "
+                f"who score the STUDENT. When both judges give a low score "
+                f"(e.g. 0/4) they are AGREEING TO DOCK the student for "
+                f"making an error — NOT failing themselves. Never write "
+                f"'both judges missed' or 'both judges failed' when the "
+                f"score is low. Low score from both = STUDENT made the "
+                f"mistake, JUDGES correctly caught it. High score from "
+                f"both = student got it right and judges agreed to "
+                f"award credit. The judges only 'miss' something if "
+                f"they DISAGREE with each other (verdict = OVERSHOT or "
+                f"UNDERSHOT).\n\n"
                 f"Write ONE concise after-action line in this format:\n"
                 f'  "Grader: <score> (<one-clause reason>). '
                 f'Prof: <score> (<one-clause reason>). · '
@@ -461,12 +472,20 @@ class ThinkingNarrator:
                 f'  "Grader: 2/2 (matched on density via m/V). '
                 f"Prof: 2/2 (clean check). · "
                 f'Even the 1-bit kid called this one."\n'
+                f'  "Grader: 0/4 (caught the wrong format — student wrote '
+                f'molecular instead of net ionic). Prof: 0/4 (same call). '
+                f'· Both judges agreeing the student earned the zero, not '
+                f'a tough draw at all."\n'
                 f'  "Grader: 0/2 (refused credit on consistent-with-wrong-'
                 f"premise mol calc). Prof: 2/2 (charitable). · "
                 f'Grader still missing the consistency rule, ouch."\n'
                 f'  "Grader: 1/2 (split partial on ozone Lewis). '
                 f"Prof: 1/2 (matched). · "
-                f'Both judges seeing one resonance form, neither catching the second."\n\n'
+                f'Both judges spotting one resonance form, neither catching the second."\n\n'
+                f"In the coda, when both judges agree on a low score, "
+                f"phrase it as 'judges agreeing the student earned X' "
+                f"or 'student plainly missed Y, judges in lockstep' — "
+                f"NEVER 'both judges missed' on low scores.\n\n"
                 f"Be matter-of-fact in the score+reason portion. "
                 f"The coda is optional but encouraged — dry, arch, "
                 f"sportscaster post-play tone. Output ONE line only, "
