@@ -237,6 +237,21 @@ _LIVE_BASE_SAT = 0.80              # bumped from 0.62 — the live field
                                     # this restores warm pop without
                                     # crossing into neon territory
 _LIVE_BASE_VAL = 0.95              # bright paper base
+# Per-hue luminance compensation for the live undulation. At constant
+# HSV V, pure red and pure yellow have very different perceived
+# brightness (BT.709 luminance weights yellow ~4× higher than red),
+# so the per-character hue undulation across the red-orange / amber
+# range reads as a luminance flicker — your eye keeps trying to track
+# the brightness change instead of just reading the text. We
+# compensate by scaling V inversely with the per-char perceived
+# luminance, normalized against the luminance at the hue center.
+# Characters at the bright (amber/yellow) end of the swing get V
+# dropped; characters at the dark (red) end stay at full V. Strength
+# blends toward full equalization: 0.0 = no correction (raw HSV),
+# 1.0 = fully flat perceived luminance. We use 0.65 — enough to
+# kill the "darker red, lighter yellow" harshness without flattening
+# the hue motion into a static orange band.
+_LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
 # next dispatch starts. The settled state has slightly muted sat/val
@@ -468,6 +483,15 @@ def _render_live_undulating(
         sat_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_SAT_MUL)
         val_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_VAL_MUL)
 
+    # Reference luminance: the BT.709 perceived brightness at the hue
+    # CENTER, computed at the current saturation. Used as the target
+    # that all per-char luminances are scaled toward, so the hue
+    # undulation no longer reads as a brightness flicker. Computed
+    # once per frame outside the per-char loop.
+    s_for_ref = _LIVE_BASE_SAT * sat_mul
+    ref_r, ref_g, ref_b = _hsv_to_rgb(_LIVE_HUE_CENTER_DEG, s_for_ref, 1.0)
+    ref_luminance = 0.2126 * ref_r + 0.7152 * ref_g + 0.0722 * ref_b
+
     for i, ch in enumerate(content):
         # Per-character undulating hue. Use the GLOBAL position
         # (visible index + char_offset) so the phase pattern stays
@@ -480,6 +504,22 @@ def _render_live_undulating(
         h = _LIVE_HUE_CENTER_DEG + _LIVE_HUE_RANGE_DEG * math.sin(char_phase)
         s = _LIVE_BASE_SAT * sat_mul
         v = _LIVE_BASE_VAL * val_mul
+
+        # Per-hue luminance compensation. At constant V, BT.709 weights
+        # mean amber/yellow chars are perceived ~3-4× brighter than
+        # red chars, which makes the hue undulation read as a luminance
+        # flicker that resists passive reading. Scale V inversely with
+        # the per-char perceived luminance, blended toward neutral by
+        # _LIVE_LUMINANCE_CORRECTION_STRENGTH. The result is the same
+        # hue motion at roughly the same perceived brightness.
+        test_r, test_g, test_b = _hsv_to_rgb(h, s, 1.0)
+        test_luminance = (
+            0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
+        )
+        if test_luminance > 1:
+            raw_correction = ref_luminance / test_luminance
+            correction = 1.0 + (raw_correction - 1.0) * _LIVE_LUMINANCE_CORRECTION_STRENGTH
+            v = max(0.0, min(1.0, v * correction))
 
         # Shimmer overlay: brighten and de-saturate at the head
         if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
