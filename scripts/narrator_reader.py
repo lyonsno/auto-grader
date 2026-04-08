@@ -70,13 +70,22 @@ _SHIMMER_LAYER_OFFSET = -0.04  # negative = wave appears to move downward
 # so the structural markers and verdict lines never go fully static.
 _SHIMMER_FLOOR_RECENCY = 0.15  # 15% recency for floored kinds
 
-# Base RGB colors per kind (for interpolation toward the shimmer peak)
+# Base RGB colors per kind (for interpolation toward the shimmer peak).
+# All anchored in a "sunset" warm-rose-amber family — the eye sees a
+# single coherent gradient from gold (live) through orange (headers)
+# to dusty plum (after-action) instead of warm-things-and-also-some-
+# accidentally-cool-things. The cyan cursor stays as the only true
+# cool element, making it read as a deliberate spark.
 _BASE_RGB = {
-    "line": (190, 165, 195),     # soft mauve body — pinkish, distinct
-    "line_alt": (225, 140, 170), # alternating warmer pink — punchier,
-                                  # higher saturation, slight coral lean
-    "topic": (110, 150, 110),    # dark_sea_green-ish
-    "header": (200, 110, 30),    # orange3-ish
+    "line": (205, 160, 185),     # warm rose mauve — pulled from old
+                                  # cooler mauve (190,165,195) toward red
+    "line_alt": (230, 150, 175), # softer peach-pink — less aggressive
+                                  # than the old (225,140,170) without
+                                  # losing alternation visibility
+    "topic": (170, 115, 145),    # dusty plum — replaces sea green so
+                                  # the after-action belongs to the
+                                  # warm family with everything else
+    "header": (200, 110, 30),    # orange3 — unchanged, the warm anchor
     "live": (240, 240, 248),     # bright off-white for the live field,
                                   # very slight cool cast so warm shimmer
                                   # peak pops against it
@@ -96,21 +105,36 @@ _SHIMMER_KIND_INTENSITY = {
 # Per-kind override of the shimmer peak color. Lives that aren't here
 # fall through to the global _SHIMMER_PEAK_RGB.
 _SHIMMER_KIND_PEAK_RGB = {
-    "live": (255, 165, 40),   # vivid orange-amber for the live shimmer
+    "live": (255, 180, 80),   # bright amber for the live shimmer head —
+                              # slightly less red than before, brighter
+                              # at the peak, so the heat-flicker reads
+                              # as warm gold rather than fire-engine
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({"header", "topic"})
 
+# Live panel reserves a fixed vertical footprint so it doesn't jitter
+# the layout when bonsai produces a long line that wraps. The panel
+# always shows _LIVE_PANEL_CONTENT_LINES rows of content (plus the
+# top + bottom borders). When bonsai's output is longer than will
+# fit in that area, we tail-truncate (keep the most recent chars).
+_LIVE_PANEL_CONTENT_LINES = 3
+
 # Live-line undulation parameters — each character on the live line
-# gets a per-position, per-time hue from a yellow→orange→red palette.
+# gets a per-position, per-time hue from a warm orange-amber palette.
 # Adjacent characters have slightly different hues (per-char phase
 # offset) and the whole field undulates over a slow cycle.
+# Pulled toward orange (away from yellow) and slightly desaturated
+# from the previous values to harmonize with the rest of the sunset
+# palette without losing fire feel.
 _LIVE_UNDULATION_CYCLE_S = 3.5    # full hue cycle period
-_LIVE_HUE_CENTER_DEG = 32          # center of the yellow-orange-red band
-_LIVE_HUE_RANGE_DEG = 24           # +/- swing → 8°-56°, red-orange to yellow
+_LIVE_HUE_CENTER_DEG = 26          # center pulled toward orange (was 32)
+_LIVE_HUE_RANGE_DEG = 22           # swing → 4°-48°, red-orange to amber
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
-_LIVE_BASE_SAT = 0.85              # base saturation
-_LIVE_BASE_VAL = 0.92              # base value (brightness)
+_LIVE_BASE_SAT = 0.78              # slightly less saturated (was 0.85)
+                                    # — pastel-er, more harmonious, less neon
+_LIVE_BASE_VAL = 0.94              # slightly brighter base (was 0.92)
+                                    # to compensate for the lower sat
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Warm yellow-orange for a fiery / ember
 # aesthetic. Headers brighten toward gold, lines glow warm-pink,
@@ -259,16 +283,23 @@ def _render_live_undulating(
     indent_width: int,
     wrap_width: int | None,
     is_active: bool,
+    char_offset: int = 0,
 ) -> Text:
     """Render the live line with per-character undulating warm colors
     (yellow / orange / red) AND a shimmer overlay on top.
 
     Each character has its own hue computed from time + char position,
     so adjacent characters land at slightly different points in the
-    yellow-orange-red palette and the whole field undulates over a
-    slow cycle. The shimmer head brightens characters near it and
-    pushes their saturation down (toward white) for a heat-flicker
-    feel.
+    palette and the whole field undulates over a slow cycle. The
+    shimmer head brightens characters near it and pushes their
+    saturation down (toward white) for a heat-flicker feel.
+
+    char_offset: number of characters that were tail-truncated off
+    the front of `content` before passing in. Used to keep the
+    per-character undulation phase stable across truncation — each
+    character's phase is computed from its GLOBAL position in the
+    full unfolded content, not its visible index, so the colors
+    don't jump when a character falls off the front.
     """
     if not content:
         return text_obj
@@ -295,8 +326,14 @@ def _render_live_undulating(
     val_mul = 1.0 if is_active else 0.85
 
     for i, ch in enumerate(content):
-        # Per-character undulating hue
-        char_phase = undulation_phase_base + i * _LIVE_PER_CHAR_PHASE_OFFSET
+        # Per-character undulating hue. Use the GLOBAL position
+        # (visible index + char_offset) so the phase pattern stays
+        # stable across truncation — characters don't change color
+        # as the front of the buffer falls off.
+        global_i = char_offset + i
+        char_phase = (
+            undulation_phase_base + global_i * _LIVE_PER_CHAR_PHASE_OFFSET
+        )
         h = _LIVE_HUE_CENTER_DEG + _LIVE_HUE_RANGE_DEG * math.sin(char_phase)
         s = _LIVE_BASE_SAT * sat_mul
         v = _LIVE_BASE_VAL * val_mul
@@ -504,6 +541,27 @@ class PaintDryDisplay:
         displayed_live = self.streaming_line or self.frozen_line
         is_active = bool(self.streaming_line)
 
+        # Tail-truncate the live content so it always fits in
+        # _LIVE_PANEL_CONTENT_LINES of visual rows. The panel itself
+        # has a fixed height so the layout doesn't jitter when bonsai
+        # produces a long line that wraps. We track char_offset and
+        # pass it to the undulating renderer so the per-character
+        # color phase stays stable across truncation.
+        live_char_offset = 0
+        if displayed_live and wrap_width and wrap_width > 4:
+            # Reserve the cursor glyph (2 cols) on the first row only.
+            # Total visible chars = first row width + (N-1) * full width
+            # Be conservative: use full rows for budget so we don't
+            # over-pack and get a 4th row.
+            live_max_chars = (
+                _LIVE_PANEL_CONTENT_LINES * wrap_width
+            ) - 6  # safety margin
+            if len(displayed_live) > live_max_chars:
+                # Drop chars from the front, mark with leading ellipsis.
+                drop = len(displayed_live) - live_max_chars + 1
+                live_char_offset = drop
+                displayed_live = "…" + displayed_live[drop:]
+
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
             cursor_style = "bright_cyan" if is_active else "grey50"
@@ -513,6 +571,7 @@ class PaintDryDisplay:
                 indent_width=2,  # cursor glyph "▌ "
                 wrap_width=wrap_width,
                 is_active=is_active,
+                char_offset=live_char_offset,
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
@@ -522,6 +581,10 @@ class PaintDryDisplay:
             padding=(0, 1),
             title="[grey50]live[/grey50]",
             title_align="left",
+            # Fixed height: top border + content + bottom border.
+            # Locks the live panel's vertical footprint so the layout
+            # doesn't jitter when bonsai produces a long line.
+            height=_LIVE_PANEL_CONTENT_LINES + 2,
         )
 
         # History panel — items grouped by header. Each item is a
