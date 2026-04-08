@@ -53,6 +53,12 @@ class Prediction:
     model_read: str  # what model thinks student wrote
     raw_assistant: str = ""  # full assistant content string before JSON parse
     raw_reasoning: str = ""  # full reasoning_content stream (verbatim <think>)
+    # Upstream-dependency forcing fields. The grader is required to fill
+    # these in BEFORE committing to a score; their presence in the schema
+    # is the structural lever for the consistency-rule failure mode that
+    # prompt-only nudges did not move on Qwen3p5-35B-A3B.
+    upstream_dependency: str = "none"  # e.g. "5(a)" or "none"
+    if_dependent_then_consistent: bool | None = None  # null when no dependency
 
 
 @dataclass(frozen=True)

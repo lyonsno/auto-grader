@@ -91,6 +91,8 @@ class _PredictionWriter:
             "model_confidence": pred.model_confidence,
             "model_read": pred.model_read,
             "model_reasoning": pred.model_reasoning,
+            "upstream_dependency": pred.upstream_dependency,
+            "if_dependent_then_consistent": pred.if_dependent_then_consistent,
             "raw_assistant": pred.raw_assistant,
             "raw_reasoning": pred.raw_reasoning,
         }
