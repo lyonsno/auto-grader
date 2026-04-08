@@ -88,37 +88,37 @@ _SHIMMER_LAYER_OFFSET = -0.04  # negative = wave appears to move downward
 _SHIMMER_FLOOR_RECENCY = 0.15  # 15% recency for floored kinds
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
-# Sumi-e palette: ink-wash bone whites for the body, persimmon (柿色)
-# for the warm headers, indigo (藍色) for the cool [item N/M] marker,
-# celadon (青磁) / vermilion (朱色) / ochre (黄土) for the verdict
-# variants. The whole panel reads like a scroll painting — neutral
-# ink narration, structural strokes in persimmon and indigo, and
-# small splashes of garden color where the grader's verdict lands.
+# Sumi-e palette: a Japanese garden floor in two desaturated rows
+# (sage moss + dust earth), with persimmon (柿色) headers, indigo
+# (藍色) [item N/M] markers, and bright garden colors — celadon (青磁),
+# vermilion (朱色), ochre (黄土) — landing as full-saturation accents
+# on verdict topics. The narration alternation now carries the
+# garden palette structurally (instead of bone-on-bone, which was
+# too subtle to read), so celadon/vermilion/ochre exist on screen
+# regardless of which verdicts the grader produces. Bone survives
+# as the live-field background, the unknown-verdict topic fallback,
+# and the global shimmer-peak highlight color.
 _BASE_RGB = {
-    "line": (220, 205, 180),     # warm bone — ink-wash narration on
-                                  # the warmer of the two alternating
-                                  # rows; reads as aged rice paper
-    "line_alt": (200, 200, 195), # cool bone — slightly desaturated
-                                  # cousin so the alternation has real
-                                  # luminance/temperature contrast
-    "topic": (140, 145, 165),    # slate ink wash — fallback when no
-                                  # verdict / unknown grader-vs-prof
+    "line": (135, 160, 145),     # muted celadon — sage moss row,
+                                  # desaturated cousin of topic_match
+                                  # so the verdict variant still pops
+    "line_alt": (175, 160, 130), # muted ochre — dust earth row,
+                                  # desaturated cousin of topic_undershoot
+    "topic": (220, 205, 180),    # warm bone — fallback when verdict is
+                                  # unknown / no prediction data. Bone's
+                                  # structural home outside the live field
     "header": (200, 90, 45),     # persimmon (柿色) — the lacquer-red
-                                  # warm anchor, replaces the old
-                                  # generic orange3
+                                  # warm anchor of the painting
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
-                                       # of the painting; deeper and
-                                       # more saturated than the old
-                                       # steel blue so it reads as
-                                       # ink, not sky
+                                       # of the painting
     "live": (245, 240, 225),     # rice paper — warm off-white for the
-                                  # live field, the brightest surface
-                                  # in the composition
-    # Topic verdict variants — sumi-e garden colors. Celadon for
-    # the matched topics (the calm, settled green of glazed pottery),
-    # vermilion for grader-overshot (a bold seal-stamp warning),
-    # ochre for grader-undershot (earth tone, slightly muted).
+                                  # live field, the brightest bone
+                                  # surface in the composition
+    # Topic verdict variants — full-saturation garden colors. The
+    # narration rows above use desaturated cousins of these, so the
+    # eye reads "muted family below, vivid accent here" and the
+    # verdict still encodes meaning at a glance.
     "topic_match": (125, 170, 140),       # celadon (青磁) — calm match
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
@@ -129,8 +129,12 @@ _BASE_RGB = {
 # subtle pulse). Topics stay at default. Live gets a subtle amplitude
 # but bright peak color override below.
 _SHIMMER_KIND_INTENSITY = {
-    "line": 0.75,        # bumped from 0.45 so the coupled-phase orbit
-    "line_alt": 0.75,    # actually reads on regular narrator lines
+    "line": 1.10,        # bumped from 0.75 — narration rows now travel
+    "line_alt": 1.10,    # within their hue family (celadon → glazed,
+                          # ochre → fired) which is a much wider color
+                          # delta than bone → cream, so the coupled-
+                          # oscillator phase ripple between layers is
+                          # actually visible across the stack
     "topic": 1.00,
     "topic_match": 1.00,        # match topic intensity for verdict variants
     "topic_overshoot": 1.00,
@@ -142,17 +146,32 @@ _SHIMMER_KIND_INTENSITY = {
 # Per-kind override of the shimmer peak color. Lives that aren't here
 # fall through to the global _SHIMMER_PEAK_RGB.
 _SHIMMER_KIND_PEAK_RGB = {
-    "live": (235, 150, 85),   # persimmon ember — the live shimmer head
-                              # glows the same lacquer-red as the
-                              # headers instead of hot amber, keeping
-                              # the warm axis of the painting unified
-    # The [item N/M] index marker shimmers from indigo toward a pale
-    # rain-blue (the sky behind a wash painting after the storm
-    # clears), NOT toward the global warm peak. This keeps the cool
-    # gradient of the index marker running in parallel with the warm
-    # gradient on the rest of the header — both shimmer in unison,
-    # but the index stays cool the whole cycle.
-    "header_index": (185, 210, 240),   # rain-cleared sky blue
+    # In-family peaks: every kind brightens within its own hue
+    # family, so the shimmer wave reads as ink glistening (a single
+    # hue getting brighter and back) rather than crossing through
+    # off-palette midpoints toward a generic cream highlight. This
+    # also avoids the persimmon→cream interpolation midpoint, which
+    # passes through peachy pink and visually breaks the sumi-e
+    # restraint when the wave is on a header.
+    "live": (235, 150, 85),       # persimmon ember — live field warms
+                                   # toward the same lacquer-red as the
+                                   # headers as the wave passes
+    "header": (250, 145, 85),     # fired persimmon — bright lacquer
+                                   # in-family brightening
+    "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
+                                       # brightens toward the pale sky
+                                       # after a storm wash painting
+    "line": (175, 215, 180),      # glazed celadon — sage moss row
+                                   # brightens toward kiln-glaze green
+    "line_alt": (225, 200, 150),  # fired ochre — dust earth row
+                                   # brightens toward kiln-fired earth
+    "topic_match": (170, 215, 180),     # glazed celadon (matches the
+                                         # glazed-celadon line peak so
+                                         # the verdict reads as the
+                                         # row's own family lighting up)
+    "topic_overshoot": (250, 140, 105), # fired vermilion — bright
+                                         # lacquer warning
+    "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({
