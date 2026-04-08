@@ -57,6 +57,8 @@ class PaintDryDisplay:
         self.stat_emitted = 0
         self.stat_dropped_dedup = 0
         self.stat_dropped_empty = 0
+        # End-of-run wrap-up (color commentary)
+        self.wrap_up_text: str = ""
 
     def render(self) -> Group:
         # All chrome uses muted greys. The single accent color is cyan,
@@ -144,6 +146,22 @@ class PaintDryDisplay:
             title_align="left",
         )
 
+        if self.wrap_up_text:
+            wrap_text = Text(
+                self.wrap_up_text,
+                style="bright_white",
+                no_wrap=False,
+                overflow="fold",
+            )
+            wrap_panel = Panel(
+                wrap_text,
+                border_style="orange3",
+                padding=(0, 1),
+                title="[bold orange3]post-game[/bold orange3]",
+                title_align="left",
+            )
+            return Group(header, live_panel, history_panel, wrap_panel)
+
         return Group(header, live_panel, history_panel)
 
     # -- mutators ----------------------------------------------------------
@@ -170,6 +188,17 @@ class PaintDryDisplay:
             self.stat_dropped_dedup += 1
         elif reason == "empty":
             self.stat_dropped_empty += 1
+
+    def on_rollback_live(self) -> None:
+        """Discard the in-flight live line without committing.
+
+        Used when a streaming summary gets dedup-rejected after the fact.
+        The user briefly saw the typewriter, now it clears."""
+        self.live_line = ""
+
+    def on_wrap_up(self, text: str) -> None:
+        """Final post-game commentary from bonsai."""
+        self.wrap_up_text = text
 
     def on_topic(self, text: str) -> None:
         # Commit any in-flight live line first
@@ -200,7 +229,7 @@ def main() -> int:
         with Live(
             display.render(),
             console=console,
-            refresh_per_second=20,
+            refresh_per_second=30,
             screen=False,
             auto_refresh=False,
         ) as live:
@@ -228,6 +257,8 @@ def main() -> int:
                         display.on_delta(msg.get("text", ""))
                     elif msg_type == "commit":
                         display.on_commit()
+                    elif msg_type == "rollback_live":
+                        display.on_rollback_live()
                     elif msg_type == "topic":
                         display.on_topic(msg.get("text", ""))
                     elif msg_type == "drop":
@@ -235,6 +266,8 @@ def main() -> int:
                             msg.get("reason", "unknown"),
                             msg.get("text", ""),
                         )
+                    elif msg_type == "wrap_up":
+                        display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
                         live.update(display.render(), refresh=True)
                         # Wait for keypress before exiting so the user

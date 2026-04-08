@@ -226,6 +226,69 @@ class ThinkingNarrator:
         # Run synchronously so we don't race the next item's start.
         self._produce_collapsed_summary(messages, elapsed)
 
+    def wrap_up(
+        self,
+        report: Any,
+        model_name: str,
+        item_count: int,
+        elapsed_seconds: float,
+    ) -> None:
+        """End-of-run color commentary on the whole eval.
+
+        Bonsai is fed the final eval report numbers and produces a
+        2-4 sentence sportscaster wrap-up with arch tone. Result lands
+        in the sink as a wrap_up event so the rich display can show
+        it prominently before the user closes the window.
+        """
+        try:
+            per_type_lines = "\n".join(
+                f"  {atype}: {acc:.0%}"
+                for atype, acc in sorted(
+                    report.per_answer_type_exact.items()
+                )
+            )
+            payload = (
+                f"You are calling the final wrap-up for a chemistry "
+                f"grading match. Here are the numbers:\n\n"
+                f"  Grader (model): {model_name}\n"
+                f"  Items scored: {report.total_scored}\n"
+                f"  Wall clock: {elapsed_seconds:.0f} seconds\n"
+                f"  Exact accuracy: {report.overall_exact_accuracy:.0%}\n"
+                f"  Within +/- 1 pt: {report.overall_tolerance_accuracy:.0%}\n"
+                f"  False positives (grader too generous): "
+                f"{report.false_positives}\n"
+                f"  False negatives (grader too strict): "
+                f"{report.false_negatives}\n"
+                f"  Per answer type (exact):\n{per_type_lines}\n\n"
+                f"Write a 2-4 sentence wrap-up. Sportscaster voice. "
+                f"Arch tone — a little dry, a little opinionated, allowed "
+                f"to be sharp about the grader's weaknesses while crediting "
+                f"its strengths. Reference the SPECIFIC numbers above. "
+                f"Use full sentences (not present participle this time — "
+                f"this is the post-game show). No preamble, no bullet "
+                f"points, just the commentary itself."
+            )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a chemistry-grading sports commentator "
+                        "delivering a post-game wrap-up. Dry, arch, willing "
+                        "to call out weaknesses, willing to credit "
+                        "strengths. 2-4 full sentences. No preamble."
+                    ),
+                },
+                {"role": "user", "content": payload},
+            ]
+            text = self._chat_completion(
+                messages, max_tokens=250, temperature=0.85
+            )
+            if text:
+                self._sink.write_wrap_up(text)
+        except Exception:
+            logger.exception("Wrap-up failed")
+
     def _produce_collapsed_summary(self, messages: list[dict], elapsed: float) -> None:
         try:
             messages = list(messages)
@@ -316,22 +379,29 @@ class ThinkingNarrator:
                 )
                 messages = list(self._messages)
 
-            # Buffer bonsai's tokens locally first so we can dedup BEFORE
-            # streaming to the sink. If the line is too similar to a prior
-            # summary, we throw it away without showing it to the user.
-            buffered: list[str] = []
+            # Stream tokens DIRECTLY to the sink as they arrive — this gives
+            # the user the typewriter effect on the live row. We accumulate
+            # the full text in parallel for the post-stream dedup check.
+            # If the dedup catches it, we rollback_live (clear the live row)
+            # and emit a drop event. The user briefly sees the typed-out line
+            # before it gets rolled back, which actually communicates "the
+            # narrator tried this and rejected it" nicely.
+            captured = []
 
-            def _capture(delta: str) -> None:
-                buffered.append(delta)
+            def _stream_to_sink(delta: str) -> None:
+                captured.append(delta)
+                self._sink.write_delta(delta)
 
-            full = self._chat_completion_stream(messages, on_delta=_capture)
+            full = self._chat_completion_stream(
+                messages, on_delta=_stream_to_sink
+            )
             full = full.strip()
 
             if not full:
                 with self._stats_lock:
                     self._stat_drops_empty += 1
+                self._sink.rollback_live()
                 self._sink.write_drop("empty", "")
-                # Roll back the user message we added
                 with self._lock:
                     if self._messages and self._messages[-1]["role"] == "user":
                         self._messages.pop()
@@ -344,17 +414,15 @@ class ThinkingNarrator:
             ):
                 with self._stats_lock:
                     self._stat_drops_dedup += 1
+                self._sink.rollback_live()
                 self._sink.write_drop("dedup", full)
                 logger.info("Narrator: dropped repetitive summary: %s", full)
-                # Roll back the user message we added so history stays clean
                 with self._lock:
                     if self._messages and self._messages[-1]["role"] == "user":
                         self._messages.pop()
                 return
 
-            # Accept — stream the buffered text to the sink as one fast pass
-            for delta in buffered:
-                self._sink.write_delta(delta)
+            # Accept — commit the live line to history
             self._sink.commit_live()
 
             with self._lock:

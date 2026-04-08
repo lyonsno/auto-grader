@@ -123,6 +123,28 @@ def main():
                 f"completed {len(predictions)} of {len(subset)} items.",
                 file=sys.stderr,
             )
+
+        # End-of-run wrap-up commentary from bonsai. Only fire if we have
+        # at least one prediction and we weren't interrupted (Ctrl-C while
+        # bonsai is working would be annoying).
+        elapsed_for_wrap = time.time() - t0
+        if (
+            narrator is not None
+            and predictions
+            and not interrupted
+        ):
+            try:
+                wrap_subset = subset[: len(predictions)]
+                wrap_report = score_predictions(wrap_subset, predictions)
+                narrator.wrap_up(
+                    wrap_report,
+                    model_name=config.model,
+                    item_count=len(predictions),
+                    elapsed_seconds=elapsed_for_wrap,
+                )
+            except Exception as e:
+                print(f"[wrap_up failed] {e}", file=sys.stderr)
+
         if narrator is not None:
             narrator_stats = narrator.stats()
     elapsed = time.time() - t0

@@ -192,6 +192,32 @@ class NarratorSink:
                 self._fallback.write(f"  [drop:{reason}] {text}\n")
                 self._fallback.flush()
 
+    def rollback_live(self) -> None:
+        """Discard the in-flight live line without committing it to history.
+
+        Used when a dispatched line is going to be dropped (dedup) — we
+        still want the user to have seen the typewriter effect, but the
+        line should not commit to history. The reader clears the live row.
+        """
+        with self._lock:
+            self._emit({"type": "rollback_live"})
+            self._live_buffer = ""
+            if not self.config.spawn_terminal:
+                # Stderr fallback can't unwrite chars; just newline so the
+                # next output starts fresh.
+                self._fallback.write("\n")
+                self._fallback.flush()
+
+    def write_wrap_up(self, text: str) -> None:
+        """Final color-commentary line at the end of the run."""
+        with self._lock:
+            self._emit({"type": "wrap_up", "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"\n=== WRAP-UP ===\n{text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"\n=== WRAP-UP ===\n{text}\n")
+                self._fallback.flush()
+
     # -- internals ---------------------------------------------------------
 
     def _emit(self, msg: dict) -> None:
