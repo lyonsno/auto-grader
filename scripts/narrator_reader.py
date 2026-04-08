@@ -93,11 +93,14 @@ _BASE_RGB = {
     "topic": (170, 115, 145),    # dusty plum — fallback when verdict is
                                   # unknown / no prediction data
     "header": (200, 110, 30),    # orange3 — unchanged, the warm anchor
-    "header_index": (110, 145, 175),  # cool steel blue — the [item N/M]
+    "header_index": (105, 140, 195),  # cool steel blue — the [item N/M]
                                        # marker gets always-on cool accent
                                        # so the panel has a structural cool
                                        # note that doesn't compete with the
-                                       # status-encoded topic verdict colors
+                                       # status-encoded topic verdict colors.
+                                       # Bumped slightly bluer (B 175 -> 195)
+                                       # so the cool reads clearly even when
+                                       # the shimmer is sweeping across.
     "live": (240, 240, 248),     # bright off-white for the live field,
                                   # very slight cool cast so warm shimmer
                                   # peak pops against it
@@ -133,6 +136,14 @@ _SHIMMER_KIND_PEAK_RGB = {
                               # slightly less red than before, brighter
                               # at the peak, so the heat-flicker reads
                               # as warm gold rather than fire-engine
+    # The [item N/M] index marker shimmers from steel blue toward an
+    # icy pale blue, NOT toward the global warm gold peak. This gives
+    # the index marker its own coherent cool gradient that runs in
+    # parallel with the warm gradient on the rest of the header —
+    # both shimmer in unison, but the index stays cool the whole cycle
+    # instead of getting washed out toward gold every time the head
+    # passes over it.
+    "header_index": (200, 230, 255),   # icy pale blue
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({
@@ -580,11 +591,12 @@ class PaintDryDisplay:
 
         # Header — title + running stats. Muted, single line.
         # The subtitle is in cool steel blue — always-on cool note in
-        # the top chrome to balance the warm field below.
+        # the top chrome to balance the warm field below. Same color
+        # family as the [item N/M] index markers in the history panel.
         header_text = Text()
         header_text.append(self.title, style="bold bright_white")
         header_text.append("   ", style="dim")
-        header_text.append(self.subtitle, style="#6e91af")
+        header_text.append(self.subtitle, style="#698cc3")
         header_text.append("   ", style="dim")
         header_text.append(
             f"emitted={self.stat_emitted}",
