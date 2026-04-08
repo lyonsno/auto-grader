@@ -65,16 +65,25 @@ class ServerConfig:
     raising temperature toward 0.8-1.0 while keeping presence_penalty
     at 0. We do NOT raise presence_penalty for structured output.
 
-    max_tokens bumped from 2048 to 4096 to give the reasoning phase
-    more headroom; thinking-mode generations can easily consume
-    1500-2500 tokens of reasoning_content before the answer phase
-    starts.
+    max_tokens=16384 is intentionally generous. Picking an intermediate
+    value (e.g. 4096) is the worst of all worlds: too low to reliably
+    accommodate the longest legitimate reasoning we have observed (fr-5b
+    was ~30K chars ≈ 7-8K tokens of reasoning_content), too high to
+    "fail fast" on a runaway loop. The cost of setting max_tokens high
+    is asymmetric — it is only paid when the model actually uses the
+    budget — so a high ceiling catches the long-reasoning case without
+    penalizing short-reasoning items. 16384 gives comfortable headroom
+    above the worst observed legitimate reasoning while still being a
+    finite safety net for true infinite loops. The optimization target
+    is "every item gets a definitive answer"; per-item wall clock up
+    to 3-4 minutes on the hardest items is acceptable for a 12-item
+    curated test set.
     """
 
     base_url: str  # e.g. "http://192.168.68.128:8001"
     api_key: str = "1234"
     model: str = "qwen3p5-35B-A3B"
-    max_tokens: int = 4096
+    max_tokens: int = 16384
     temperature: float = 0.6
     top_p: float = 0.95
     top_k: int = 20
