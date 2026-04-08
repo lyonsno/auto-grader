@@ -85,7 +85,12 @@ _SHIMMER_LAYER_OFFSET = -0.04  # negative = wave appears to move downward
                               # now span more layers.
 # Headers and topics retain a faint shimmer FLOOR even past _SHIMMER_MAX_LAYERS,
 # so the structural markers and verdict lines never go fully static.
-_SHIMMER_FLOOR_RECENCY = 0.15  # 15% recency for floored kinds
+_SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
+                                # topics had decayed too much past the
+                                # dimming horizon to read as alive; this
+                                # keeps the structural pulse visible all
+                                # the way down the stack instead of just
+                                # on the most recent few items
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
 # Sumi-e palette: a Japanese garden floor in two desaturated rows
@@ -127,6 +132,12 @@ _BASE_RGB = {
     "topic_match": (125, 170, 140),       # celadon (青磁) — calm match
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
+    # Header dash — vermilion stroke at the start of every item header.
+    # Gives vermilion a STRUCTURAL home (was the only verdict color
+    # appearing purely as a verdict indicator) and pulses in sync with
+    # the rest of the header so the painting reads as one stroke per
+    # item: vermilion dash → indigo index → persimmon title.
+    "header_dash": (210, 90, 65),
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
@@ -134,18 +145,18 @@ _BASE_RGB = {
 # subtle pulse). Topics stay at default. Live gets a subtle amplitude
 # but bright peak color override below.
 _SHIMMER_KIND_INTENSITY = {
-    "line": 1.10,        # bumped from 0.75 — narration rows now travel
-    "line_alt": 1.10,    # within their hue family (celadon → glazed,
-                          # ochre → fired) which is a much wider color
-                          # delta than bone → cream, so the coupled-
-                          # oscillator phase ripple between layers is
-                          # actually visible across the stack
+    "line": 1.30,        # bumped from 1.10 — body rows still wave too
+    "line_alt": 1.30,    # faintly to feel alive; this gives the
+                          # coupled-oscillator phase ripple more
+                          # presence on the largest visual surface
     "topic": 1.00,
     "topic_match": 1.00,        # match topic intensity for verdict variants
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
     "header": 1.40,      # cranked — section markers pop
     "header_index": 1.40,        # match header intensity for the cool index
+    "header_dash": 1.40,         # match header intensity — the dash is
+                                  # part of the same structural stroke
     "live": 0.55,        # subtle amplitude, but with vivid peak (below)
 }
 # Per-kind override of the shimmer peak color. Lives that aren't here
@@ -178,11 +189,20 @@ _SHIMMER_KIND_PEAK_RGB = {
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
+    "header_dash": (250, 140, 105),      # fired vermilion — the dash
+                                          # brightens toward the same
+                                          # bright lacquer that the
+                                          # topic_overshoot verdict uses,
+                                          # so vermilion has one
+                                          # consistent identity across
+                                          # both its structural and
+                                          # indicator surfaces
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({
     "header",
     "header_index",
+    "header_dash",
     "topic",
     "topic_match",
     "topic_overshoot",
@@ -856,7 +876,18 @@ class PaintDryDisplay:
 
             if kind == "header":
                 indent = "─ "
-                history_text.append(indent, style="grey39")
+                # The leading `─ ` dash now pulses in vermilion as a
+                # "header_dash" kind, sharing the same layer phase and
+                # cycle as the rest of the header so the dash + index +
+                # title read as a single coordinated stroke. Indent
+                # width is 0 here because the dash IS the leading edge.
+                _apply_shimmer(
+                    history_text, indent, "header_dash",
+                    layer_index=i,
+                    indent_width=0,
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                )
                 # Split the [item N/M] index marker from the rest of
                 # the title so the index can be rendered in cool steel
                 # blue (always-on cool accent) while the rest stays in
