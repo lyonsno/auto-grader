@@ -107,8 +107,13 @@ _BASE_RGB = {
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
-    "header": (200, 90, 45),     # persimmon (柿色) — the lacquer-red
-                                  # warm anchor of the painting
+    "header": (228, 100, 50),    # persimmon (柿色) — vivid lacquer red,
+                                  # the warm anchor of the painting.
+                                  # Brighter than the muted version we
+                                  # started with: real torii-gate /
+                                  # tea-ceremony lacquer is bold, not
+                                  # apologetic, and the cool indigo
+                                  # axis was visually outweighing it
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
@@ -153,11 +158,12 @@ _SHIMMER_KIND_PEAK_RGB = {
     # also avoids the persimmon→cream interpolation midpoint, which
     # passes through peachy pink and visually breaks the sumi-e
     # restraint when the wave is on a header.
-    "live": (235, 150, 85),       # persimmon ember — live field warms
+    "live": (245, 155, 80),       # persimmon ember — live field warms
                                    # toward the same lacquer-red as the
                                    # headers as the wave passes
-    "header": (250, 145, 85),     # fired persimmon — bright lacquer
-                                   # in-family brightening
+    "header": (255, 165, 95),     # fired persimmon — bright lacquer
+                                   # in-family brightening, pushed to
+                                   # match the brighter base
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
@@ -199,11 +205,17 @@ _LIVE_PANEL_CONTENT_LINES = 3
 # palette without losing fire feel.
 _LIVE_UNDULATION_CYCLE_S = 3.5    # full hue cycle period
 _LIVE_HUE_CENTER_DEG = 18          # pulled toward persimmon red-orange
-_LIVE_HUE_RANGE_DEG = 18           # tighter swing → 0°-36°, all in the
-                                    # persimmon / vermilion family
+_LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
+                                    # more travel through the persimmon
+                                    # / vermilion family so the per-char
+                                    # undulation is actually visible
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
-_LIVE_BASE_SAT = 0.62              # softer, more washed — sumi-e
-                                    # restraint, no neon embers
+_LIVE_BASE_SAT = 0.80              # bumped from 0.62 — the live field
+                                    # was washing out into static beige
+                                    # because the saturation was too low
+                                    # for the eye to read the undulation;
+                                    # this restores warm pop without
+                                    # crossing into neon territory
 _LIVE_BASE_VAL = 0.95              # bright paper base
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
@@ -863,7 +875,7 @@ class PaintDryDisplay:
                 m = _TIME_PREFIX_RE.match(text)
                 if m:
                     time_prefix, rest = m.group(1), m.group(2)
-                    history_text.append(time_prefix, style="bold #c8582d")
+                    history_text.append(time_prefix, style="bold #d86324")
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
@@ -947,9 +959,9 @@ class PaintDryDisplay:
             )
             wrap_panel = Panel(
                 wrap_text,
-                border_style="#c8582d",
+                border_style="#d86324",
                 padding=(0, 1),
-                title="[bold #c8582d]post-game[/bold #c8582d]",
+                title="[bold #d86324]post-game[/bold #d86324]",
                 title_align="left",
             )
         elif self.wrap_up_pending:
