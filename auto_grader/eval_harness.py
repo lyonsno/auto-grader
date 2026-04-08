@@ -21,7 +21,16 @@ import yaml
 
 @dataclass(frozen=True)
 class EvalItem:
-    """One ground truth item from the professor-annotated eval dataset."""
+    """One ground truth item from the professor-annotated eval dataset.
+
+    `professor_score` is the historical record — what the prof actually
+    wrote on the page. `corrected_score` is the post-investigation
+    truth, populated only when human review has determined the prof
+    made a grading error (in either direction). When `corrected_score`
+    is not None, the eval harness uses it instead of `professor_score`
+    when computing accuracy. The professor_score field is preserved
+    for traceability — we never silently rewrite history.
+    """
 
     exam_id: str
     question_id: str
@@ -32,6 +41,21 @@ class EvalItem:
     professor_mark: str  # check | x | partial | unclear
     student_answer: str
     notes: str
+    corrected_score: float | None = None
+    correction_reason: str = ""
+
+    @property
+    def truth_score(self) -> float:
+        """The score we believe is correct after any human investigation.
+
+        Falls back to professor_score when no correction has been
+        recorded. Use this everywhere accuracy is being measured.
+        """
+        return (
+            self.corrected_score
+            if self.corrected_score is not None
+            else self.professor_score
+        )
 
 
 @dataclass(frozen=True)
@@ -107,6 +131,10 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
     for exam in data["exams"]:
         exam_id = exam["exam_id"]
         for raw in exam["items"]:
+            corrected_raw = raw.get("corrected_score")
+            corrected = (
+                float(corrected_raw) if corrected_raw is not None else None
+            )
             items.append(
                 EvalItem(
                     exam_id=exam_id,
@@ -118,6 +146,8 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
                     professor_mark=raw["professor_mark"],
                     student_answer=raw["student_answer"],
                     notes=raw["notes"],
+                    corrected_score=corrected,
+                    correction_reason=raw.get("correction_reason", ""),
                 )
             )
     return items
@@ -176,23 +206,28 @@ def score_predictions(
     for item in scored_items:
         pred = pred_map[(item.exam_id, item.question_id)]
 
-        exact = pred.model_score == item.professor_score
-        within_tolerance = abs(pred.model_score - item.professor_score) <= 1.0
+        # Use truth_score (corrected if present, professor_score otherwise)
+        # so that human-investigated grading errors don't penalize the
+        # grader. The professor_score field is preserved as historical
+        # record but not used for accuracy.
+        truth = item.truth_score
+        exact = pred.model_score == truth
+        within_tolerance = abs(pred.model_score - truth) <= 1.0
 
         if exact:
             exact_matches += 1
         if within_tolerance:
             tolerance_matches += 1
 
-        # False positive: model gives more credit than professor
-        if pred.model_score > item.professor_score:
+        # False positive: model gives more credit than truth
+        if pred.model_score > truth:
             false_positives += 1
-        # False negative: model gives less credit than professor
-        if pred.model_score < item.professor_score:
+        # False negative: model gives less credit than truth
+        if pred.model_score < truth:
             false_negatives += 1
 
         total_points_possible += item.max_points
-        total_points_professor += item.professor_score
+        total_points_professor += truth
 
         # Per-type tracking
         atype = item.answer_type
