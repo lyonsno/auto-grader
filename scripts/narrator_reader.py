@@ -59,66 +59,85 @@ class PaintDryDisplay:
         self.stat_dropped_empty = 0
 
     def render(self) -> Group:
-        # Header panel — title + running stats
+        # All chrome uses muted greys. The single accent color is cyan,
+        # reserved for the live cursor and live text. Structural colors
+        # (yellow for item headers, green for topics, red for drops) are
+        # used only on dim/desaturated variants.
+
+        # Header — title + running stats. Muted, single line.
         header_text = Text()
-        header_text.append(self.title, style="bold magenta")
-        header_text.append("  ·  ", style="dim")
-        header_text.append(self.subtitle, style="dim cyan")
-        header_text.append("   |   ", style="dim")
-        header_text.append(f"emitted={self.stat_emitted} ", style="green")
+        header_text.append(self.title, style="bold bright_white")
+        header_text.append("   ", style="dim")
+        header_text.append(self.subtitle, style="grey50")
+        header_text.append("   ", style="dim")
         header_text.append(
-            f"dedup={self.stat_dropped_dedup} ", style="yellow"
+            f"emitted={self.stat_emitted}",
+            style="green4" if self.stat_emitted > 0 else "grey50",
         )
+        header_text.append("  ", style="dim")
         header_text.append(
-            f"empty={self.stat_dropped_empty}", style="red"
+            f"dedup={self.stat_dropped_dedup}",
+            style="yellow4" if self.stat_dropped_dedup > 0 else "grey50",
+        )
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"empty={self.stat_dropped_empty}",
+            style="red3" if self.stat_dropped_empty > 0 else "grey50",
         )
         header = Panel(
             Align.left(header_text),
-            border_style="magenta",
+            border_style="grey39",
             padding=(0, 1),
         )
 
-        # Live line — bright cyan with leading cursor glyph
+        # Live line — the one place we use a real accent color (cyan).
+        # The cursor glyph is solid cyan, the text is plain bright_white
+        # for legibility against the dark background.
         if self.live_line:
             live_text = Text()
-            live_text.append("▍ ", style="bold cyan blink")
-            live_text.append(self.live_line, style="bold white")
+            live_text.append("▌ ", style="bright_cyan")
+            live_text.append(self.live_line, style="bright_white")
         else:
-            live_text = Text("▍ ", style="dim cyan")
+            live_text = Text("▌ ", style="grey39")
         live_panel = Panel(
             live_text,
-            border_style="cyan",
+            border_style="grey39",
             padding=(0, 1),
-            title="[bold cyan]live[/bold cyan]",
+            title="[grey50]live[/grey50]",
             title_align="left",
         )
 
-        # History panel — most recent first (top), older below
+        # History panel — newest at top, older below. All dimmed; only
+        # item headers get a slight color lift to mark sections.
         history_lines = list(self.history)[-_VISIBLE_HISTORY_LINES:]
-        history_lines.reverse()  # newest at top of panel
+        history_lines.reverse()
         history_text = Text()
         for i, (kind, text) in enumerate(history_lines):
             if i > 0:
                 history_text.append("\n")
             if kind == "header":
-                history_text.append(text, style="bold yellow")
+                # Section marker — slight amber, not blazing yellow
+                history_text.append("─ ", style="grey39")
+                history_text.append(text, style="bold orange3")
             elif kind == "topic":
-                history_text.append("  → ", style="dim green")
-                history_text.append(text, style="green")
+                history_text.append("  · ", style="grey50")
+                history_text.append(text, style="dark_sea_green4")
             elif kind == "drop":
-                history_text.append("  ✗ ", style="dim red")
-                history_text.append(text, style="dim red strike")
+                history_text.append("  ✗ ", style="grey39")
+                history_text.append(text, style="grey39 strike")
             else:
-                history_text.append("  ", style="dim")
-                history_text.append(text, style="white")
+                history_text.append("    ", style="dim")
+                history_text.append(text, style="grey85")
         if not history_lines:
-            history_text = Text("(waiting for first commit...)", style="dim")
+            history_text = Text(
+                "(waiting for first summary...)", style="grey39"
+            )
 
         history_panel = Panel(
             history_text,
-            border_style="dim",
+            border_style="grey39",
             padding=(0, 1),
-            title="[dim]history[/dim]",
+            title="[grey50]history[/grey50]",
             title_align="left",
         )
 

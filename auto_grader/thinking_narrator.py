@@ -85,14 +85,15 @@ LEWIS STRUCTURE:
 """
 
 
-# Chunking parameters — VLM reasoning streams are longer than
-# command-pathway thinking, so larger chunks and a hard cap on dispatches
-# per item to prevent repetitive narration when the VLM thinks in circles.
-_TARGET_CHUNK_TOKENS = 500
-_MIN_INTERVAL_S = 6.0      # minimum seconds between narrator calls
-_MAX_INTERVAL_S = 18.0     # dispatch even with few tokens after this long
+# Chunking parameters — denser than spoke's defaults so we get a real
+# play-by-play feel. The dedup + grounding fix means we can dispatch more
+# often without repetitive output. For a 30s VLM reasoning stream we want
+# ~4-5 narrator lines, not 1-2.
+_TARGET_CHUNK_TOKENS = 200
+_MIN_INTERVAL_S = 3.0      # minimum seconds between narrator calls
+_MAX_INTERVAL_S = 8.0      # dispatch even with few tokens after this long
 _MAX_TOKENS = 50           # generation budget for each summary
-_MAX_DISPATCHES_PER_ITEM = 8  # hard cap to prevent narrator spam
+_MAX_DISPATCHES_PER_ITEM = 12  # hard cap (loose — dedup is the real limit)
 _SIMILARITY_THRESHOLD = 0.55  # reject lines that overlap > this with prior
 
 
