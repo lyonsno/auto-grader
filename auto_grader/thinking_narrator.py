@@ -374,7 +374,10 @@ class ThinkingNarrator:
                 f"its strengths. Reference the SPECIFIC numbers above. "
                 f"Use full sentences (not present participle this time — "
                 f"this is the post-game show). No preamble, no bullet "
-                f"points, just the commentary itself."
+                f"points, no 'Thinking Process:' planning, no drafting "
+                f"or self-critique — output ONLY the final commentary "
+                f"prose itself.\n\n"
+                f"/no_think"
             )
 
             messages = [
@@ -384,30 +387,42 @@ class ThinkingNarrator:
                         "You are a chemistry-grading sports commentator "
                         "delivering a post-game wrap-up. Dry, arch, willing "
                         "to call out weaknesses, willing to credit "
-                        "strengths. 2-4 full sentences. No preamble."
+                        "strengths. 2-4 full sentences. No preamble. "
+                        "DO NOT show any planning, reasoning, drafting, or "
+                        "'Thinking Process:' sections — output only the "
+                        "final commentary prose. Your entire response must "
+                        "BE the wrap-up itself, nothing else."
                     ),
                 },
                 {"role": "user", "content": payload},
             ]
-            # Wrap-up runs on the grader endpoint with a bigger token
-            # budget (Qwen-class graders emit <think>...</think> that eats
-            # the budget before the prose) and a longer timeout (cold
-            # weights, possible queue from final grading items finishing).
+            # Wrap-up runs on the grader endpoint with a generous token
+            # budget. Qwen-class thinking-mode graders can spend
+            # thousands of tokens on internal planning before producing
+            # the final prose, and `<think>` tagging is unreliable
+            # (observed 2026-04-08: a 3823-char wrap-up consisting
+            # entirely of plain-markdown "Thinking Process:" planning
+            # with no `<think>` tags and no actual prose at the end —
+            # the model never reached its final output because it ran
+            # out of budget mid-draft). 16k gives the model room to
+            # both think AND finish writing the actual commentary, so
+            # the strip pass downstream has something real to extract.
             text = self._chat_completion(
                 messages,
-                max_tokens=1024,
+                max_tokens=16384,
                 temperature=0.85,
                 base_url=self._wrap_up_base_url,
                 model=self._wrap_up_model,
                 api_key=self._wrap_up_api_key,
                 timeout=120,
             )
-            # Strip any leaked reasoning/thinking spans before storing.
-            text = re.sub(
-                r"<think>.*?</think>", "", text, flags=re.DOTALL
-            ).strip()
+            text = _strip_reasoning_preamble(text)
             if text:
                 self._sink.write_wrap_up(text)
+            else:
+                logger.warning(
+                    "Wrap-up text was empty after stripping reasoning preamble; skipping"
+                )
         except Exception:
             logger.exception("Wrap-up failed")
 
@@ -527,13 +542,47 @@ class ThinkingNarrator:
                 },
                 {"role": "user", "content": payload},
             ]
-            text = self._chat_completion(
-                messages, max_tokens=120, temperature=0.85
-            )
+            # max_tokens 120 → 256: 120 was tight enough that any
+            # preamble could push the actual after-action line off the
+            # end of the budget. timeout 15 → 60: this call runs
+            # immediately after the per-line bonsai pipeline has just
+            # been thrashed, so the server can be under transient load
+            # and a 15s timeout produces silent ConnectionResetError /
+            # TimeoutError (swallowed by the broad except below). 60s
+            # gives the bonsai server room to drain and respond.
+            text = ""
+            try:
+                text = self._chat_completion(
+                    messages,
+                    max_tokens=256,
+                    temperature=0.85,
+                    timeout=60,
+                )
+            except Exception:
+                logger.exception(
+                    "After-action chat call failed for %s/%s",
+                    item.exam_id, item.question_id,
+                )
             if text:
                 logger.info("After-action: %s", text)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · {text}",
+                    verdict=verdict_short,
+                )
+            else:
+                # Fallback: bonsai returned empty or raised. Always
+                # emit SOMETHING so the user can see the item finished
+                # and how long it took, even when the verdict line
+                # couldn't be generated. Without this, the item
+                # silently has no topic at all and the run looks
+                # broken — which is exactly what hid the item-3
+                # failure mode in the wild.
+                logger.warning(
+                    "After-action empty for %s/%s — emitting bare timing fallback",
+                    item.exam_id, item.question_id,
+                )
+                self._sink.write_topic(
+                    f"{elapsed:.0f}s · (after-action unavailable)",
                     verdict=verdict_short,
                 )
         except Exception:
@@ -703,6 +752,7 @@ class ThinkingNarrator:
         top_k: int = 20,
         min_p: float = 0.002,
         repetition_penalty: float = 1.001,
+        presence_penalty: float = 1.0,
         base_url: str | None = None,
         model: str | None = None,
         api_key: str | None = None,
@@ -733,6 +783,7 @@ class ThinkingNarrator:
             "top_k": top_k,
             "min_p": min_p,
             "repetition_penalty": repetition_penalty,
+            "presence_penalty": presence_penalty,
             "stream": False,
         }
         headers = {"Content-Type": "application/json"}
@@ -781,6 +832,7 @@ class ThinkingNarrator:
         top_k: int = 20,
         min_p: float = 0.002,
         repetition_penalty: float = 1.001,
+        presence_penalty: float = 1.0,
         max_chars: int = 350,
         max_seconds: float = 20.0,
     ) -> str:
@@ -816,6 +868,7 @@ class ThinkingNarrator:
             "top_k": top_k,
             "min_p": min_p,
             "repetition_penalty": repetition_penalty,
+            "presence_penalty": presence_penalty,
             "stream": True,
         }
         headers = {"Content-Type": "application/json"}
