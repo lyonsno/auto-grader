@@ -11,7 +11,10 @@ import sys
 import time
 from pathlib import Path
 
+from contextlib import nullcontext
+
 from auto_grader.eval_harness import load_ground_truth, score_predictions
+from auto_grader.narrator import BonsaiNarrator
 from auto_grader.vlm_inference import ServerConfig, grade_all_items
 
 
@@ -42,6 +45,11 @@ def main():
     parser.add_argument("--base-url", default="http://192.168.68.128:8001")
     parser.add_argument("--all", action="store_true",
                         help="Grade all items (overrides --items)")
+    parser.add_argument("--narrate", action="store_true",
+                        help="Stream Project Paint Dry bonsai narration to stderr")
+    parser.add_argument("--narrator-url", default="http://localhost:8001",
+                        help="Bonsai narrator OMLX server URL")
+    parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
     args = parser.parse_args()
 
     gt = load_ground_truth(_GROUND_TRUTH)
@@ -58,12 +66,23 @@ def main():
     print(f"Scans: {_SCANS_DIR}")
     print()
 
-    t0 = time.time()
-    predictions = grade_all_items(
-        subset, _SCANS_DIR, config,
-        template_path=_TEMPLATE,
-        progress_callback=_progress,
+    narrator_cm = (
+        BonsaiNarrator(
+            base_url=args.narrator_url,
+            model=args.narrator_model,
+        )
+        if args.narrate
+        else nullcontext()
     )
+
+    t0 = time.time()
+    with narrator_cm as narrator:
+        predictions = grade_all_items(
+            subset, _SCANS_DIR, config,
+            template_path=_TEMPLATE,
+            progress_callback=_progress,
+            narrator=narrator if args.narrate else None,
+        )
     elapsed = time.time() - t0
 
     print(f"\nInference: {elapsed:.1f}s ({elapsed / len(subset):.1f}s/item)")
