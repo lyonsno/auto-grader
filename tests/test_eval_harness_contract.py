@@ -22,7 +22,7 @@ _GROUND_TRUTH_PATH = _EVAL_DIR / "ground_truth.yaml"
 
 
 def _make_perfect_predictions(ground_truth: list) -> list:
-    """Return predictions that exactly match professor scores."""
+    """Return predictions that exactly match the scoring truth."""
     from auto_grader.eval_harness import Prediction
 
     preds = []
@@ -31,9 +31,9 @@ def _make_perfect_predictions(ground_truth: list) -> list:
             Prediction(
                 exam_id=item.exam_id,
                 question_id=item.question_id,
-                model_score=item.professor_score,
+                model_score=item.truth_score,
                 model_confidence=1.0,
-                model_reasoning="matches professor",
+                model_reasoning="matches scoring truth",
                 model_read=item.student_answer,
             )
         )
@@ -185,7 +185,7 @@ class TestLoadGroundTruth(unittest.TestCase):
 
 
 class TestScorePerfectPredictions(unittest.TestCase):
-    """When model scores exactly match professor scores, accuracy must be 1.0."""
+    """When model scores exactly match scoring truth, accuracy must be 1.0."""
 
     @classmethod
     def setUpClass(cls):
@@ -240,6 +240,24 @@ class TestScorePerfectPredictions(unittest.TestCase):
     def test_unclear_count_tracked(self):
         """Report must separately track how many unclear items were excluded."""
         self.assertGreater(self.report.unclear_excluded, 0)
+
+    def test_corrected_score_item_uses_truth_score(self):
+        """Corrected items must score against corrected truth, not history."""
+        corrected_items = [
+            item for item in self.ground_truth if item.corrected_score is not None
+        ]
+        self.assertGreater(
+            len(corrected_items), 0, "Sanity: expected at least one corrected item"
+        )
+        item = corrected_items[0]
+        self.assertNotEqual(item.professor_score, item.truth_score)
+
+        matched = next(
+            pred
+            for pred in self.predictions
+            if pred.exam_id == item.exam_id and pred.question_id == item.question_id
+        )
+        self.assertEqual(matched.model_score, item.truth_score)
 
 
 # ---------------------------------------------------------------------------
