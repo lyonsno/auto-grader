@@ -429,7 +429,11 @@ def grade_all_items(
         predictions.append(pred)
 
         if narrator is not None:
-            narrator.stop_and_summarize()
+            narrator.stop_and_summarize(
+                prediction=pred,
+                item=item,
+                template_question=tq,
+            )
 
         if progress_callback:
             progress_callback(i + 1, len(ground_truth), item, pred)
