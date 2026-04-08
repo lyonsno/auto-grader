@@ -178,6 +178,20 @@ class NarratorSink:
                 self._fallback.write(f"  -> {text}\n")
                 self._fallback.flush()
 
+    def write_drop(self, reason: str, text: str) -> None:
+        """Record a dropped summary (dedup, empty, etc.) for observability.
+
+        Drops appear in the JSONL log with their reason + the dropped text,
+        and surface as faint lines in the rich display so the user can see
+        the narrator was working but the line was rejected. They are NOT
+        written to the .txt transcript (which is the canonical accepted feed).
+        """
+        with self._lock:
+            self._emit({"type": "drop", "reason": reason, "text": text})
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  [drop:{reason}] {text}\n")
+                self._fallback.flush()
+
     # -- internals ---------------------------------------------------------
 
     def _emit(self, msg: dict) -> None:
