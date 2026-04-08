@@ -296,8 +296,10 @@ def main():
             )
 
         # End-of-run wrap-up commentary from bonsai. Only fire if we have
-        # at least one prediction and we weren't interrupted (Ctrl-C while
-        # bonsai is working would be annoying).
+        # at least one prediction and we weren't interrupted during
+        # grading. Wrap-up itself is also interruptible via Ctrl-C —
+        # if the user bails out of the wrap-up call, we skip it and
+        # still print the eval report and tear down the sink cleanly.
         elapsed_for_wrap = time.time() - t0
         if (
             narrator is not None
@@ -312,6 +314,11 @@ def main():
                     model_name=config.model,
                     item_count=len(predictions),
                     elapsed_seconds=elapsed_for_wrap,
+                )
+            except KeyboardInterrupt:
+                print(
+                    "\n[wrap_up interrupted] skipped post-game commentary.",
+                    file=sys.stderr,
                 )
             except Exception as e:
                 print(f"[wrap_up failed] {e}", file=sys.stderr)
