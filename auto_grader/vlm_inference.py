@@ -294,11 +294,13 @@ def grade_all_items(
     config: ServerConfig,
     template_path: Path | None = None,
     progress_callback: Any = None,
+    narrator: Any = None,
 ) -> list[Prediction]:
     """Grade all ground truth items against VLM, returning predictions.
 
     Caches page images to avoid re-extracting the same page for multiple
-    questions on that page.
+    questions on that page. If a narrator is provided, drops a
+    NarratorEvent for each item after scoring.
     """
     template_questions = (
         load_template_questions(template_path) if template_path else {}
@@ -324,5 +326,17 @@ def grade_all_items(
 
         if progress_callback:
             progress_callback(i + 1, len(ground_truth), item, pred)
+
+        if narrator is not None:
+            from auto_grader.narrator import NarratorEvent
+
+            narrator.narrate(
+                NarratorEvent(
+                    item=item,
+                    prediction=pred,
+                    item_index=i + 1,
+                    total_items=len(ground_truth),
+                )
+            )
 
     return predictions
