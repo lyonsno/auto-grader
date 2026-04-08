@@ -25,35 +25,61 @@ class ServerConfig:
     """Connection config for an OpenAI-compatible VLM server.
 
     Sampling defaults follow Alibaba's official recommendations for
-    Qwen3.5 thinking-mode general/reasoning tasks:
-        temperature=1.0, top_p=0.95, top_k=20, min_p=0.0,
-        presence_penalty=1.5, repetition_penalty=1.0
+    Qwen3.5 *thinking-mode coding* tasks (the "precise coding tasks
+    e.g. WebDev" row of the model card sampling table):
 
-    Source: Qwen3.5 model card sampling parameters table.
+        temperature=0.6, top_p=0.95, top_k=20, min_p=0.0,
+        presence_penalty=0.0, repetition_penalty=1.0
 
-    Why these matter for our task: prior to 2026-04-08 we ran with
-    temperature=0.1 and presence_penalty=0 (i.e. essentially
-    deterministic, no anti-repetition pressure). We observed Qwen
-    reasoning loops of 200+ seconds on items like fr-5b and fr-12a
-    where the model would pick a sub-strategy early, fail to escape
-    it, and chew on the same reasoning line until the token budget
-    ran out. Both halves of the problem trace directly to those two
-    params: low temperature collapses exploration, zero presence
-    penalty removes the anti-repetition gradient.
+    Why coding-mode and not general-mode: our task is thinking-mode
+    reasoning with **structured JSON output**, which is structurally
+    closer to coding than to free-form prose. The thinking-mode
+    *general* row recommends presence_penalty=1.5, but JSON output is
+    highly repetitive (`{`, `"`, `}`, field names) and presence
+    penalty actively fights against valid JSON emission. Confirmed
+    empirically on 2026-04-08 16:43: with presence_penalty=1.5 the
+    model emitted ~160 coherent reasoning_content tokens (squinting
+    at handwriting, doing the actual division 95/13.6, considering
+    misprints) and then the stream closed without ever producing a
+    content delta. Reasoning prose was fine, JSON emission was
+    blocked. Switching to the coding preset with presence_penalty=0
+    fixes the structured-output phase without giving up the
+    exploration that the original temperature=0.1 was missing.
 
-    Alibaba's recommended values are roughly the opposite of what
-    we were using and are tuned for exactly this failure mode.
+    History of regimes tried:
+
+      1. temperature=0.1, presence_penalty=0 (pre-2026-04-08): caused
+         repetitive 200+ second reasoning loops on items like fr-5b.
+         Low temperature collapsed exploration, no anti-repetition
+         gradient meant the model could chew on the same loop forever.
+      2. temperature=1.0, presence_penalty=1.5 (Alibaba thinking-mode
+         general, tried 2026-04-08 16:43): reasoning prose was clean
+         and grounded, but JSON output was blocked entirely. Empty
+         content, parser fail on every item.
+      3. temperature=0.6, presence_penalty=0 (current — Alibaba
+         thinking-mode coding): the right combination for our task
+         shape. 6x more exploration than (1) so reasoning loops
+         should dissolve, no presence penalty fighting JSON emission.
+
+    If (3) still produces repetitive reasoning, the next move is
+    raising temperature toward 0.8-1.0 while keeping presence_penalty
+    at 0. We do NOT raise presence_penalty for structured output.
+
+    max_tokens bumped from 2048 to 4096 to give the reasoning phase
+    more headroom; thinking-mode generations can easily consume
+    1500-2500 tokens of reasoning_content before the answer phase
+    starts.
     """
 
     base_url: str  # e.g. "http://192.168.68.128:8001"
     api_key: str = "1234"
     model: str = "qwen3p5-35B-A3B"
-    max_tokens: int = 2048
-    temperature: float = 1.0
+    max_tokens: int = 4096
+    temperature: float = 0.6
     top_p: float = 0.95
     top_k: int = 20
     min_p: float = 0.0
-    presence_penalty: float = 1.5
+    presence_penalty: float = 0.0
     repetition_penalty: float = 1.0
 
 
