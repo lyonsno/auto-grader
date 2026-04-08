@@ -247,18 +247,18 @@ def main():
 
     if narrator_stats is not None:
         print(f"\nNarrator stats:")
-        print(f"  items started:      {narrator_stats['items_started']}")
-        print(f"  dispatches total:   {narrator_stats['dispatches_total']}")
-        print(f"  summaries emitted:  {narrator_stats['summaries_emitted']}")
-        print(f"  drops (dedup):      {narrator_stats['drops_dedup']}")
-        print(f"  drops (empty):      {narrator_stats['drops_empty']}")
-        print(f"  items hit cap:      {narrator_stats['drops_cap']}")
+        print(f"  items started:        {narrator_stats['items_started']}")
+        print(f"  dispatches total:     {narrator_stats['dispatches_total']}")
+        print(f"  summaries emitted:    {narrator_stats['summaries_emitted']}")
+        print(f"  drops (dedup):        {narrator_stats['drops_dedup']}")
+        print(f"  drops (empty):        {narrator_stats['drops_empty']}")
+        print(f"  max disp / one item:  {narrator_stats['max_dispatches_one_item']}")
         total_drops = (
             narrator_stats['drops_dedup'] + narrator_stats['drops_empty']
         )
         if narrator_stats['dispatches_total']:
             drop_rate = total_drops / narrator_stats['dispatches_total']
-            print(f"  drop rate:          {drop_rate:.1%}")
+            print(f"  drop rate:            {drop_rate:.1%}")
 
     return 130 if interrupted else 0
 

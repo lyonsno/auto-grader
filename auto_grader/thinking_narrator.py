@@ -132,7 +132,6 @@ _TARGET_CHUNK_TOKENS = 200
 _MIN_INTERVAL_S = 3.0      # minimum seconds between narrator calls
 _MAX_INTERVAL_S = 8.0      # dispatch even with few tokens after this long
 _MAX_TOKENS = 50           # generation budget for each summary
-_MAX_DISPATCHES_PER_ITEM = 12  # hard cap (loose — dedup is the real limit)
 _SIMILARITY_THRESHOLD = 0.70  # reject lines that overlap > this with prior
 
 # Stop words filtered out before computing similarity. Without this, two
@@ -188,7 +187,6 @@ class ThinkingNarrator:
         self._active = False
         self._thinking_start = 0.0
         self._pending_dispatch = False
-        self._dispatch_count = 0  # per-item dispatch counter
         self._prior_summaries: list[str] = []  # for dedup
 
         # Lifetime stats (across all items)
@@ -197,8 +195,9 @@ class ThinkingNarrator:
         self._stat_summaries_emitted = 0
         self._stat_drops_dedup = 0
         self._stat_drops_empty = 0
-        self._stat_drops_cap = 0  # incremented by feed() when cap hit
         self._stat_items_started = 0
+        self._stat_max_dispatches_one_item = 0  # max dispatches seen on a single item
+        self._cur_item_dispatches = 0
 
     def stats(self) -> dict:
         """Snapshot of lifetime narrator stats across all items."""
@@ -209,7 +208,7 @@ class ThinkingNarrator:
                 "summaries_emitted": self._stat_summaries_emitted,
                 "drops_dedup": self._stat_drops_dedup,
                 "drops_empty": self._stat_drops_empty,
-                "drops_cap": self._stat_drops_cap,
+                "max_dispatches_one_item": self._stat_max_dispatches_one_item,
             }
 
     def start(self, item_header: str | None = None) -> None:
@@ -236,10 +235,13 @@ class ThinkingNarrator:
             ]
             self._active = True
             self._pending_dispatch = False
-            self._dispatch_count = 0
             self._prior_summaries = []
-            self._cap_hit_this_item = False
         with self._stats_lock:
+            # Roll the previous item's dispatch count into the lifetime
+            # max-seen stat, then reset for the new item.
+            if self._cur_item_dispatches > self._stat_max_dispatches_one_item:
+                self._stat_max_dispatches_one_item = self._cur_item_dispatches
+            self._cur_item_dispatches = 0
             self._stat_items_started += 1
         logger.info("Narrator session started")
 
@@ -445,7 +447,13 @@ class ThinkingNarrator:
             logger.exception("Failed to produce after-action summary")
 
     def feed(self, token: str) -> None:
-        """Feed a reasoning token. May trigger an async narrator call."""
+        """Feed a reasoning token. May trigger an async narrator call.
+
+        No hard cap on dispatches per item — if the grader thinks for
+        a long time, bonsai keeps narrating. The dedup similarity check
+        is the real limit on repetition; capping dispatches just hides
+        legitimately interesting long thinking.
+        """
         with self._lock:
             if not self._active:
                 return
@@ -455,15 +463,6 @@ class ThinkingNarrator:
             now = time.monotonic()
             elapsed = now - self._last_dispatch
             tokens = _rough_token_count(self._buffer)
-
-            # Hard cap on dispatches per item — count items-where-cap-hit
-            # exactly once per item, not once per feed() call.
-            if self._dispatch_count >= _MAX_DISPATCHES_PER_ITEM:
-                if not self._cap_hit_this_item:
-                    self._cap_hit_this_item = True
-                    with self._stats_lock:
-                        self._stat_drops_cap += 1
-                return
 
             enough_tokens = (
                 tokens >= _TARGET_CHUNK_TOKENS and elapsed >= _MIN_INTERVAL_S
@@ -480,7 +479,8 @@ class ThinkingNarrator:
             self._buffer = ""
             self._last_dispatch = now
             self._pending_dispatch = True
-            self._dispatch_count += 1
+        with self._stats_lock:
+            self._cur_item_dispatches += 1
 
         t = threading.Thread(target=self._dispatch, args=(chunk,), daemon=True)
         t.start()
