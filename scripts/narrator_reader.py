@@ -454,11 +454,21 @@ class PaintDryDisplay:
         and within each group keep entries in chronological order so
         the header sits ABOVE its narrator lines and topic.
 
+        Then fill the visible budget by priority:
+          1. All headers and topics (ESSENTIAL — structural anchors).
+             These never get dropped while the deque has them.
+          2. Narrator lines, newest first (OPTIONAL — disposable middle).
+             Filled into whatever budget is left after essentials.
+
+        This means a long-thinking item with 30+ narrator lines doesn't
+        push older items' headers and topics off the display — only
+        narrator lines drop. The user can always see "this is the item,
+        here's the verdict" for every visible item; the play-by-play
+        between them is the part that compresses.
+
         Returns a list of (entry, is_most_recent) tuples in display
-        order, capped to _VISIBLE_HISTORY_LINES. is_most_recent is
-        True for exactly the entry at the back of the deque (the
-        most-recently-committed thing), so callers can give it a
-        faster shimmer cycle for visual contrast.
+        order. is_most_recent is True for exactly the entry at the
+        back of the deque (the most-recently-committed thing).
         """
         history_list = list(self.history)
         if not history_list:
@@ -466,7 +476,7 @@ class PaintDryDisplay:
         most_recent_idx = len(history_list) - 1
 
         # Forward-iterate, grouping at header boundaries, tracking
-        # original deque indices so we can identify the most-recent.
+        # original deque indices.
         groups: list[list[tuple[tuple, int]]] = []
         current_group: list[tuple[tuple, int]] = []
         for idx, entry in enumerate(history_list):
@@ -483,12 +493,48 @@ class PaintDryDisplay:
         # their natural (commit) order so header > lines > topic
         groups.reverse()
 
-        display: list[tuple[tuple, bool]] = []
+        # Flat list of (entry, deque_idx) in display order (top-down)
+        flat: list[tuple[tuple, int]] = []
         for group in groups:
-            for entry, idx in group:
+            flat.extend(group)
+
+        # Two-pass priority fill:
+        #   1. Essentials (headers + topics) — keep newest-first up to budget
+        #   2. Narrator lines — keep newest-first to fill what's left
+        budget = _VISIBLE_HISTORY_LINES
+        keep_positions: set[int] = set()
+
+        # Pass 1: essentials in display order (newest items first since
+        # we already reversed groups). If we'd overflow, oldest items'
+        # essentials drop first — but the deque cap should make this
+        # rare in practice.
+        for pos, (entry, _idx) in enumerate(flat):
+            if entry[0] in ("header", "topic"):
+                if len(keep_positions) >= budget:
+                    break
+                keep_positions.add(pos)
+
+        # Pass 2: narrator lines, sorted by RECENCY (highest deque idx
+        # first), to fill the remaining budget. This drops oldest
+        # narrator lines first when an item produces more lines than
+        # the budget can hold.
+        optionals = [
+            (pos, entry, idx)
+            for pos, (entry, idx) in enumerate(flat)
+            if entry[0] not in ("header", "topic")
+        ]
+        optionals.sort(key=lambda t: -t[2])  # newest first
+
+        for pos, _entry, _idx in optionals:
+            if len(keep_positions) >= budget:
+                break
+            keep_positions.add(pos)
+
+        # Build the final list in original (top-to-bottom) display order
+        display: list[tuple[tuple, bool]] = []
+        for pos, (entry, idx) in enumerate(flat):
+            if pos in keep_positions:
                 display.append((entry, idx == most_recent_idx))
-                if len(display) >= _VISIBLE_HISTORY_LINES:
-                    return display
         return display
 
     def _compute_wrap_width(self) -> int | None:
