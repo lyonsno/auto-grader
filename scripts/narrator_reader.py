@@ -43,56 +43,106 @@ from rich.text import Text
 _MAX_HISTORY_LINES = 60  # cap so we don't grow unbounded
 _VISIBLE_HISTORY_LINES = 20  # how many to actually render
 
-# Shimmer parameters — slow chyron sweep across the most recent committed
-# line and each item header. The shimmer head is the brightest point
-# (chyron leading character) and trails into a less-saturated pastel.
+# Shimmer parameters — slow chyron sweep across the top N history lines.
+# Each layer has a fixed phase offset relative to the one above it (so
+# they're in stable orbit, not drifting), and intensity decays with
+# layer position so older lines pulse dimmer than newer ones.
 _SHIMMER_CYCLE_S = 1.8
-_SHIMMER_WIDTH = 12  # how many characters wide the shimmer trail is
+_SHIMMER_WIDTH = 12          # how many characters wide the shimmer trail is
+_SHIMMER_MAX_LAYERS = 6      # apply shimmer to the top N visible lines
+_SHIMMER_LAYER_OFFSET = -0.06  # negative = wave appears to move downward
+                              # through layers (top leads, lower lags)
+
+# Base RGB colors per kind (for interpolation toward the shimmer peak)
+_BASE_RGB = {
+    "line": (185, 185, 185),    # soft grey body
+    "topic": (110, 150, 110),   # dark_sea_green-ish
+    "header": (200, 110, 30),   # orange3-ish
+}
+# Shimmer peak — what each character's color is interpolated toward
+# at the shimmer head (white-bright, slightly cooled)
+_SHIMMER_PEAK_RGB = (250, 252, 255)
 
 
-def _shimmer_style_for_distance(distance: float) -> str:
-    """Pick a per-character style based on distance from the shimmer head.
-
-    distance=0 is the chyron leading character (brightest), distance grows
-    as we move backward along the trail; once past _SHIMMER_WIDTH the
-    character is at the base style.
-    """
-    if distance < 0:
-        # Shimmer hasn't reached this character yet
-        return ""
-    if distance < 1:
-        return "bold bright_white"
-    if distance < 3:
-        return "bright_white"
-    if distance < 6:
-        return "light_cyan1"
-    if distance < 9:
-        return "light_steel_blue1"
-    if distance < _SHIMMER_WIDTH:
-        return "grey85"
-    return ""
+def _interp_rgb(
+    base: tuple[int, int, int],
+    peak: tuple[int, int, int],
+    t: float,
+) -> tuple[int, int, int]:
+    """Linear interpolate from base toward peak by t in [0, 1]."""
+    t = max(0.0, min(1.0, t))
+    return (
+        int(base[0] + (peak[0] - base[0]) * t),
+        int(base[1] + (peak[1] - base[1]) * t),
+        int(base[2] + (peak[2] - base[2]) * t),
+    )
 
 
-def _apply_shimmer(text_obj: Text, content: str, base_style: str) -> Text:
-    """Append `content` to text_obj with a moving shimmer overlay.
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
-    The shimmer head sweeps left-to-right across the content over
-    _SHIMMER_CYCLE_S seconds. Characters not currently within the
-    shimmer trail get base_style.
+
+def _apply_shimmer(
+    text_obj: Text,
+    content: str,
+    kind: str,
+    layer_index: int,
+) -> Text:
+    """Append content to text_obj with a moving shimmer overlay.
+
+    layer_index: 0 is the topmost (newest) line — full shimmer intensity
+    and full chyron bold on the head. Each successive layer is dimmer
+    (recency decay) and slightly phase-offset (each layer trails the one
+    above by _SHIMMER_LAYER_OFFSET of a cycle, so the wave appears to
+    ripple downward through the stack).
+
+    Past _SHIMMER_MAX_LAYERS the line is rendered static at base color.
     """
     if not content:
         return text_obj
 
+    base_rgb = _BASE_RGB.get(kind, _BASE_RGB["line"])
+
+    # Recency dimming — top is full, fades to zero at MAX_LAYERS
+    if layer_index >= _SHIMMER_MAX_LAYERS:
+        text_obj.append(content, style=_rgb_to_hex(base_rgb))
+        return text_obj
+
+    layer_recency = 1.0 - (layer_index / _SHIMMER_MAX_LAYERS)
+
+    # Per-layer phase offset — each layer is shifted relative to the
+    # one above by _SHIMMER_LAYER_OFFSET (negative = lags, so the wave
+    # appears to flow downward through the stack)
+    layer_phase_offset = (layer_index * _SHIMMER_LAYER_OFFSET) % 1.0
+
     now = time.monotonic()
-    phase = (now % _SHIMMER_CYCLE_S) / _SHIMMER_CYCLE_S  # 0..1
-    # Head sweeps from -_SHIMMER_WIDTH to len(content) so the trail
+    base_phase = (now % _SHIMMER_CYCLE_S) / _SHIMMER_CYCLE_S
+    phase = (base_phase + layer_phase_offset) % 1.0
+
+    # Head sweeps from -_SHIMMER_WIDTH to len(content), so the trail
     # enters from the left and exits off the right.
     head = phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
 
     for i, ch in enumerate(content):
         distance = head - i
-        shimmer_style = _shimmer_style_for_distance(distance)
-        text_obj.append(ch, style=shimmer_style or base_style)
+        if distance < 0 or distance > _SHIMMER_WIDTH:
+            # Outside the shimmer trail at this moment — base color
+            color_rgb = base_rgb
+            bold_head = False
+        else:
+            # Triangular falloff: head is brightest, far end is base
+            raw_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+            intensity = raw_intensity * layer_recency
+            color_rgb = _interp_rgb(base_rgb, _SHIMMER_PEAK_RGB, intensity)
+            # Bold the chyron leading character — only on the topmost
+            # layer and only at the very head of the sweep
+            bold_head = (layer_index == 0 and -0.5 <= distance < 1.5)
+
+        style = _rgb_to_hex(color_rgb)
+        if bold_head:
+            style = f"bold {style}"
+        text_obj.append(ch, style=style)
+
     return text_obj
 
 
@@ -167,42 +217,33 @@ class PaintDryDisplay:
             title_align="left",
         )
 
-        # History panel — newest at top, older below. The TOPMOST line
-        # (whatever kind) gets a chyron shimmer, AND every "header" entry
-        # gets a shimmer regardless of position. Other entries are static.
+        # History panel — newest at top, older below. Each visible line
+        # gets a shimmer pass with intensity decaying by layer position
+        # (top is brightest, fades to static at _SHIMMER_MAX_LAYERS).
+        # Each layer is also slightly phase-offset so the sweep ripples
+        # downward through the stack rather than all pulsing in lockstep.
+        # Drops never shimmer — they're rejected, they should stay quiet.
         history_lines = list(self.history)[-_VISIBLE_HISTORY_LINES:]
         history_lines.reverse()
         history_text = Text(no_wrap=False, overflow="fold")
         for i, (kind, text) in enumerate(history_lines):
             if i > 0:
                 history_text.append("\n")
-            is_top = (i == 0)
-            apply_shimmer_here = is_top or kind == "header"
 
             if kind == "header":
                 history_text.append("─ ", style="grey39")
-                base_style = "bold orange3"
-                if apply_shimmer_here:
-                    _apply_shimmer(history_text, text, base_style)
-                else:
-                    history_text.append(text, style=base_style)
+                _apply_shimmer(history_text, text, "header", layer_index=i)
             elif kind == "topic":
                 history_text.append("  · ", style="grey50")
-                base_style = "dark_sea_green4"
-                if apply_shimmer_here:
-                    _apply_shimmer(history_text, text, base_style)
-                else:
-                    history_text.append(text, style=base_style)
+                _apply_shimmer(history_text, text, "topic", layer_index=i)
             elif kind == "drop":
+                # Drops stay static and dim regardless of layer
                 history_text.append("  ✗ ", style="grey39")
                 history_text.append(text, style="grey39 strike")
             else:
                 history_text.append("    ", style="dim")
-                base_style = "grey85"
-                if apply_shimmer_here:
-                    _apply_shimmer(history_text, text, base_style)
-                else:
-                    history_text.append(text, style=base_style)
+                _apply_shimmer(history_text, text, "line", layer_index=i)
+
         if not history_lines:
             history_text = Text(
                 "(waiting for first summary...)", style="grey39"
