@@ -263,7 +263,14 @@ class NarratorSink:
         return fifo
 
     def _spawn_terminal_window(self, fifo: Path) -> None:
-        """Open a Terminal.app window running the rich reader script.
+        """Open a WezTerm window running the rich reader script.
+
+        Spawns a new window in the existing WezTerm instance via
+        `wezterm cli spawn --new-window`. WezTerm supports 24-bit
+        color escape codes (`\\e[38;2;R;G;B m`); Apple Terminal.app
+        does not, and previously misparsed truecolor escapes as
+        256-color palette indices, producing neon magenta/cyan
+        artifacts in place of the narrator's actual palette.
 
         Sidesteps shell-quoting hell by writing a real shell script to disk.
         """
@@ -290,22 +297,20 @@ class NarratorSink:
         runner.chmod(0o755)
         self._owns_tmpdir = fifo.parent
 
-        script = f'tell application "Terminal" to do script "{runner}"'
         try:
             subprocess.run(
-                ["osascript", "-e", script],
+                [
+                    "wezterm", "cli", "spawn", "--new-window",
+                    "--", str(runner),
+                ],
                 check=True,
                 capture_output=True,
                 text=True,
             )
-            subprocess.run(
-                ["osascript", "-e", 'tell application "Terminal" to activate'],
-                check=False,
-                capture_output=True,
-            )
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             stderr = getattr(e, "stderr", "") or ""
             raise RuntimeError(
-                f"Could not spawn Terminal.app window for narrator: {e}\n"
-                f"stderr: {stderr}"
+                f"Could not spawn WezTerm window for narrator: {e}\n"
+                f"stderr: {stderr}\n"
+                f"(requires `wezterm` on PATH and a running WezTerm instance)"
             )

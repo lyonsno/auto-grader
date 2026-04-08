@@ -1042,24 +1042,16 @@ def main() -> int:
         print(f"fifo not found: {fifo_path}", file=sys.stderr)
         return 2
 
-    # Force 256-color mode. The narrator window is spawned via
-    # `tell application "Terminal" to do script`, which opens Apple
-    # Terminal.app — and Apple Terminal.app does NOT support 24-bit
-    # color (it never has, and Apple has not added support across
-    # multiple macOS releases). When Rich emits a truecolor escape
-    # like `\e[38;2;200;90;45m` (RGB 200,90,45), Terminal.app fails
-    # to recognize the `2` subparam, falls back to parsing it as
-    # `\e[38;5;200m`, and renders xterm-256 palette index 200 —
-    # which happens to be bright magenta. Every truecolor emission
-    # gets remapped to a wildly wrong palette entry, producing the
-    # neon magenta / cyan / blue blocks instead of the sumi-e
-    # palette. Forcing 256-color mode makes Rich quantize the hex
-    # values to the nearest xterm-256 cell and emit `\e[38;5;N m`
-    # codes that Terminal.app actually parses correctly. The sumi-e
-    # palette is slightly less precise under quantization but the
-    # nearest 256 cells preserve the persimmon / indigo / celadon
-    # character of the design.
-    console = Console(color_system="256", force_terminal=True)
+    # Force truecolor mode. The narrator window is spawned by the
+    # narrator sink into a fresh WezTerm window, which supports
+    # 24-bit color escape codes — required for the sumi-e palette
+    # to render with the precision the design assumes (smooth
+    # shimmer interpolation across 12+ unique cells per char,
+    # distinguishable persimmon vs orange3, indigo vs steel blue,
+    # etc.). Without `force_terminal`, Rich would auto-detect
+    # `is_terminal=False` on a piped/spawned process and fall back
+    # to no-color output.
+    console = Console(color_system="truecolor", force_terminal=True)
     display = PaintDryDisplay(console=console)
 
     # Open the fifo for reading. This blocks until the writer connects.
