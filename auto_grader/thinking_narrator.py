@@ -143,7 +143,11 @@ REASONING-STYLE / META:
 _TARGET_CHUNK_TOKENS = 200
 _MIN_INTERVAL_S = 3.0      # minimum seconds between narrator calls
 _MAX_INTERVAL_S = 8.0      # dispatch even with few tokens after this long
-_MAX_TOKENS = 50           # generation budget for each summary
+_MAX_TOKENS = 200          # generation budget for each summary
+                           # (was 50, bumped 2026-04-08 to give the
+                           # sumi-e first-person voice room without
+                           # being a ceiling under the streaming
+                           # client-side max_chars/max_seconds guards)
 _SIMILARITY_THRESHOLD = 0.55  # reject lines that overlap > this with prior
                               # (tightened from 0.70 to catch thematic
                               # paraphrases — bonsai loops generate lines
@@ -693,10 +697,12 @@ class ThinkingNarrator:
         self,
         messages: list[dict],
         *,
-        temperature: float = 0.85,
+        temperature: float = 0.6,
         max_tokens: int = _MAX_TOKENS,
-        top_p: float = 0.95,
+        top_p: float = 0.8,
         top_k: int = 20,
+        min_p: float = 0.002,
+        repetition_penalty: float = 1.001,
         base_url: str | None = None,
         model: str | None = None,
         api_key: str | None = None,
@@ -704,7 +710,17 @@ class ThinkingNarrator:
     ) -> str:
         """Synchronous (non-streaming) call. Used for the collapsed
         per-item summary at the end of each item, and (with overrides)
-        for the end-of-run wrap-up against the grader server."""
+        for the end-of-run wrap-up against the grader server.
+
+        Defaults are tuned for bonsai (the live narrator model). The
+        wrap-up call routes through this function with explicit
+        overrides for base_url/model/api_key/temperature/max_tokens
+        to hit the grader server instead; min_p and repetition_penalty
+        leak through with bonsai values, but the deviations from
+        Qwen's expected defaults (min_p=0, repetition_penalty=1.0)
+        are minimal (0.002 and 1.001 respectively) and not worth
+        adding more override surface for.
+        """
         eff_base = (base_url or self._base_url).rstrip("/")
         eff_model = model or self._model
         eff_api_key = api_key if api_key is not None else self._api_key
@@ -715,6 +731,8 @@ class ThinkingNarrator:
             "temperature": temperature,
             "top_p": top_p,
             "top_k": top_k,
+            "min_p": min_p,
+            "repetition_penalty": repetition_penalty,
             "stream": False,
         }
         headers = {"Content-Type": "application/json"}
@@ -757,10 +775,12 @@ class ThinkingNarrator:
         messages: list[dict],
         on_delta: Callable[[str], None],
         *,
-        temperature: float = 0.7,
+        temperature: float = 0.6,
         max_tokens: int = _MAX_TOKENS,
-        top_p: float = 0.95,
+        top_p: float = 0.8,
         top_k: int = 20,
+        min_p: float = 0.002,
+        repetition_penalty: float = 1.001,
         max_chars: int = 350,
         max_seconds: float = 20.0,
     ) -> str:
@@ -794,6 +814,8 @@ class ThinkingNarrator:
             "temperature": temperature,
             "top_p": top_p,
             "top_k": top_k,
+            "min_p": min_p,
+            "repetition_penalty": repetition_penalty,
             "stream": True,
         }
         headers = {"Content-Type": "application/json"}
