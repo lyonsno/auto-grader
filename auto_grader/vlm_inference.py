@@ -270,12 +270,13 @@ def grade_single_item(
 
     last_err = None
     content = ""
+    reasoning = ""
     for attempt in range(3):
         try:
             req = _build_request()
             resp = urllib.request.urlopen(req, timeout=600)
             try:
-                content = _consume_streaming_response(
+                content, reasoning = _consume_streaming_response(
                     resp, on_reasoning_delta
                 )
             except KeyboardInterrupt:
@@ -314,17 +315,27 @@ def grade_single_item(
         model_confidence=float(parsed.get("model_confidence", 0.5)),
         model_reasoning=str(parsed.get("model_reasoning", "")),
         model_read=str(parsed.get("model_read", "")),
+        raw_assistant=content,
+        raw_reasoning=reasoning,
     )
 
 
-def _consume_streaming_response(resp, on_reasoning_delta) -> str:
+def _consume_streaming_response(
+    resp, on_reasoning_delta
+) -> tuple[str, str]:
     """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
-    through the callback as they arrive (when provided); returns the
-    assistant content (the JSON response) for parsing.
+    through the callback as they arrive (when provided); returns
+    (assistant_content, reasoning_content) for parsing AND for the
+    post-hoc critic pass.
+
+    The reasoning trace is the verbatim <think> span — much longer than
+    the curated model_reasoning field in the parsed JSON, and the only
+    place where consistency-rule violations are observable.
 
     SIGINT propagates through the iterator naturally — Python checks for
     signals between chunk reads, so Ctrl-C interrupts within ~one chunk."""
     content_full = ""
+    reasoning_full = ""
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line.startswith("data:"):
@@ -337,18 +348,21 @@ def _consume_streaming_response(resp, on_reasoning_delta) -> str:
         except json.JSONDecodeError:
             continue
         delta = chunk.get("choices", [{}])[0].get("delta", {})
-        # Reasoning tokens — pump to narrator if wired
+        # Reasoning tokens — accumulate for the critic, and pump to
+        # narrator if wired.
         rc_delta = delta.get("reasoning_content", "")
-        if rc_delta and on_reasoning_delta is not None:
-            try:
-                on_reasoning_delta(rc_delta)
-            except Exception:
-                pass
+        if rc_delta:
+            reasoning_full += rc_delta
+            if on_reasoning_delta is not None:
+                try:
+                    on_reasoning_delta(rc_delta)
+                except Exception:
+                    pass
         # Final assistant content — accumulate for parsing
         c_delta = delta.get("content", "")
         if c_delta:
             content_full += c_delta
-    return content_full
+    return content_full, reasoning_full
 
 
 # ---------------------------------------------------------------------------

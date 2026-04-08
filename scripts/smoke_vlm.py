@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -14,7 +15,12 @@ from pathlib import Path
 from contextlib import nullcontext
 from datetime import datetime
 
-from auto_grader.eval_harness import load_ground_truth, score_predictions
+from auto_grader.eval_harness import (
+    EvalItem,
+    Prediction,
+    load_ground_truth,
+    score_predictions,
+)
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
 from auto_grader.vlm_inference import ServerConfig, grade_all_items
@@ -37,6 +43,80 @@ def _progress(i: int, total: int, item, pred):
         f"prof={item.professor_score}/{item.max_points} "
         f"model={pred.model_score} conf={pred.model_confidence:.2f} [{mark}]"
     )
+
+
+class _PredictionWriter:
+    """Append-only JSONL writer for grader predictions.
+
+    One JSON object per line, written as each item finishes so an
+    interrupt or crash mid-run still leaves a usable partial file. The
+    object includes the parsed Prediction fields plus the verbatim
+    reasoning trace for the post-hoc critic pass, and per-item ground
+    truth so the file is self-contained for offline analysis.
+    """
+
+    def __init__(self, path: Path, *, model: str, run_dir: Path):
+        self.path = path
+        self._model = model
+        self._run_dir = run_dir
+        self._fh = None
+        self._count = 0
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self.path, "w", buffering=1)  # line-buffered
+        # Header line — distinguishable by absence of "exam_id".
+        header = {
+            "type": "header",
+            "model": self._model,
+            "run_dir": str(self._run_dir),
+            "started": datetime.now().isoformat(timespec="seconds"),
+        }
+        self._fh.write(json.dumps(header) + "\n")
+        return self
+
+    def write_one(self, item: EvalItem, pred: Prediction) -> None:
+        if self._fh is None:
+            return
+        record = {
+            "type": "prediction",
+            "exam_id": pred.exam_id,
+            "question_id": pred.question_id,
+            "answer_type": item.answer_type,
+            "max_points": item.max_points,
+            "professor_score": item.professor_score,
+            "professor_mark": item.professor_mark,
+            "student_answer": item.student_answer,
+            "model_score": pred.model_score,
+            "model_confidence": pred.model_confidence,
+            "model_read": pred.model_read,
+            "model_reasoning": pred.model_reasoning,
+            "raw_assistant": pred.raw_assistant,
+            "raw_reasoning": pred.raw_reasoning,
+        }
+        self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._count += 1
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._fh is not None:
+            try:
+                self._fh.write(
+                    json.dumps(
+                        {
+                            "type": "footer",
+                            "ended": datetime.now().isoformat(
+                                timespec="seconds"
+                            ),
+                            "count": self._count,
+                            "interrupted": exc_type is KeyboardInterrupt,
+                        }
+                    )
+                    + "\n"
+                )
+            finally:
+                self._fh.close()
+                self._fh = None
+        return False  # never swallow exceptions
 
 
 def main():
@@ -144,31 +224,50 @@ def main():
 
     narrator_enabled = args.narrate or args.narrate_stderr
 
+    # Run dir is always created (even without narrator) so predictions
+    # persist for the post-hoc critic and cross-run comparison reports.
+    if args.run_dir:
+        run_dir = Path(args.run_dir)
+    else:
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe_model = config.model.replace("/", "_")
+        run_dir = (
+            Path(__file__).resolve().parent.parent
+            / "runs" / f"{ts}-{safe_model}"
+        )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Run dir: {run_dir}")
+
     if narrator_enabled:
-        if args.run_dir:
-            run_dir = Path(args.run_dir)
-        else:
-            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-            safe_model = config.model.replace("/", "_")
-            run_dir = (
-                Path(__file__).resolve().parent.parent
-                / "runs" / f"{ts}-{safe_model}"
-            )
         sink_config = SinkConfig(
             spawn_terminal=args.narrate,
             log_dir=run_dir,
             fallback_stream=sys.stderr,
         )
         sink_cm = NarratorSink(sink_config)
-        print(f"Narrator log dir: {run_dir}")
     else:
         sink_cm = nullcontext()
+
+    predictions_path = run_dir / "predictions.jsonl"
+    pred_writer_cm = _PredictionWriter(
+        predictions_path, model=config.model, run_dir=run_dir
+    )
 
     t0 = time.time()
     narrator_stats = None
     predictions: list = []
     interrupted = False
-    with sink_cm as sink:
+    with sink_cm as sink, pred_writer_cm as pred_writer:
+        # Wrap the progress callback so each completed prediction is
+        # written to predictions.jsonl as it lands. Crash-safe: an
+        # interrupt mid-loop still leaves the partial file usable.
+        def _on_item(i, total, item, pred):
+            try:
+                pred_writer.write_one(item, pred)
+            except Exception as e:
+                print(f"[predictions.jsonl write failed] {e}", file=sys.stderr)
+            _progress(i, total, item, pred)
+
         narrator = (
             ThinkingNarrator(
                 sink,
@@ -184,7 +283,7 @@ def main():
             predictions = grade_all_items(
                 subset, _SCANS_DIR, config,
                 template_path=_TEMPLATE,
-                progress_callback=_progress,
+                progress_callback=_on_item,
                 narrator=narrator,
                 sink=sink,
             )
