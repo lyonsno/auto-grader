@@ -23,7 +23,11 @@ from auto_grader.eval_harness import (
 )
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
-from auto_grader.vlm_inference import ServerConfig, grade_all_items
+from auto_grader.vlm_inference import (
+    ServerConfig,
+    apply_model_sampling_preset,
+    grade_all_items,
+)
 
 
 _GROUND_TRUTH = Path(__file__).resolve().parent.parent / "eval" / "ground_truth.yaml"
@@ -245,10 +249,19 @@ def main():
         base_url=args.base_url,
         model=args.model,
     )
+    # Apply per-model sampling preset (Qwen coding-mode, Gemma official,
+    # etc.) so the right vendor-recommended params are sent without the
+    # operator having to remember them at command-line time.
+    config = apply_model_sampling_preset(config)
 
     print(f"Model: {config.model}")
     print(f"Items: {len(subset)} of {len(gt)}")
     print(f"Server: {config.base_url}")
+    print(
+        f"Sampling: temp={config.temperature} top_p={config.top_p} "
+        f"top_k={config.top_k} min_p={config.min_p} "
+        f"presence={config.presence_penalty} rep={config.repetition_penalty}"
+    )
     print(f"Scans: {_SCANS_DIR}")
     print()
 
