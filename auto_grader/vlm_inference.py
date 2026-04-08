@@ -22,13 +22,39 @@ from auto_grader.eval_harness import EvalItem, Prediction
 
 @dataclass
 class ServerConfig:
-    """Connection config for an OpenAI-compatible VLM server."""
+    """Connection config for an OpenAI-compatible VLM server.
+
+    Sampling defaults follow Alibaba's official recommendations for
+    Qwen3.5 thinking-mode general/reasoning tasks:
+        temperature=1.0, top_p=0.95, top_k=20, min_p=0.0,
+        presence_penalty=1.5, repetition_penalty=1.0
+
+    Source: Qwen3.5 model card sampling parameters table.
+
+    Why these matter for our task: prior to 2026-04-08 we ran with
+    temperature=0.1 and presence_penalty=0 (i.e. essentially
+    deterministic, no anti-repetition pressure). We observed Qwen
+    reasoning loops of 200+ seconds on items like fr-5b and fr-12a
+    where the model would pick a sub-strategy early, fail to escape
+    it, and chew on the same reasoning line until the token budget
+    ran out. Both halves of the problem trace directly to those two
+    params: low temperature collapses exploration, zero presence
+    penalty removes the anti-repetition gradient.
+
+    Alibaba's recommended values are roughly the opposite of what
+    we were using and are tuned for exactly this failure mode.
+    """
 
     base_url: str  # e.g. "http://192.168.68.128:8001"
     api_key: str = "1234"
     model: str = "qwen3p5-35B-A3B"
     max_tokens: int = 2048
-    temperature: float = 0.1
+    temperature: float = 1.0
+    top_p: float = 0.95
+    top_k: int = 20
+    min_p: float = 0.0
+    presence_penalty: float = 1.5
+    repetition_penalty: float = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +298,11 @@ def grade_single_item(
         ],
         "max_tokens": config.max_tokens,
         "temperature": config.temperature,
+        "top_p": config.top_p,
+        "top_k": config.top_k,
+        "min_p": config.min_p,
+        "presence_penalty": config.presence_penalty,
+        "repetition_penalty": config.repetition_penalty,
         "stream": True,
     }
 
