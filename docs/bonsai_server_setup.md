@@ -65,7 +65,8 @@ machine, different setup.)
   --model-type lm \
   --port 8001 \
   --host 127.0.0.1 \
-  --served-model-name Bonsai-8B-mlx-1bit
+  --served-model-name Bonsai-8B-mlx-1bit \
+  --prompt-cache-size 3
 ```
 
 Notes on the flags:
@@ -81,8 +82,24 @@ Notes on the flags:
   `/v1/models` and accepted in request `model:` fields. It must
   match `_DEFAULT_NARRATOR_MODEL` in `thinking_narrator.py`
   (currently `Bonsai-8B-mlx-1bit`).
+- `--prompt-cache-size 3` caps the prompt-KV LRU at 3 entries
+  (default is 10). The narrator's dispatch pattern is many short
+  calls per grading item with per-call user content that varies
+  enough that we never hit a fully-cached prompt — only the
+  system-prompt prefix gets meaningful reuse, plus maybe one
+  in-flight session. Three entries is plenty for that and frees
+  up memory we'd otherwise hoard for prompt prefixes we'll never
+  see again. **Lower this if you observe memory pressure on the
+  local box; raise it only if you start seeing the same prompts
+  repeatedly across calls (you won't).** The sibling knob
+  `--max-bytes` is the byte-budget version of the same cache and
+  can be used in addition to (or instead of) `--prompt-cache-size`
+  if you want a hard byte ceiling rather than a count ceiling. We
+  use the count form because it's predictable for a small number
+  of always-changing prompts.
 
-To run as a backgrounded process and capture logs:
+To run as a backgrounded process and capture logs (recommended —
+note the `disown` so the server survives the parent shell exiting):
 
 ```sh
 ~/.local/bin/mlx-openai-server launch \
@@ -91,8 +108,17 @@ To run as a backgrounded process and capture logs:
   --port 8001 \
   --host 127.0.0.1 \
   --served-model-name Bonsai-8B-mlx-1bit \
+  --prompt-cache-size 3 \
   > /tmp/bonsai-server.log 2>&1 &
+disown
 ```
+
+Without `disown`, when the parent shell (or the tool that spawned
+it) exits, bonsai will get killed if `huponexit` is set. We've
+been bitten by this once already during the 2026-04-08 session —
+the bonsai server we'd just started was reaped along with its
+parent shell and the next narrator dispatch failed with
+`Connection refused`.
 
 ## How to verify it's up
 
