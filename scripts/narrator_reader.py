@@ -69,19 +69,30 @@ _SHIMMER_FLOOR_RECENCY = 0.15  # 15% recency for floored kinds
 # Base RGB colors per kind (for interpolation toward the shimmer peak)
 _BASE_RGB = {
     "line": (190, 165, 195),     # soft mauve body — pinkish, distinct
-    "line_alt": (210, 160, 175), # alternating warmer pink (more red, less blue)
+    "line_alt": (225, 140, 170), # alternating warmer pink — punchier,
+                                  # higher saturation, slight coral lean
     "topic": (110, 150, 110),    # dark_sea_green-ish
     "header": (200, 110, 30),    # orange3-ish
+    "live": (240, 240, 248),     # bright off-white for the live field,
+                                  # very slight cool cast so warm shimmer
+                                  # peak pops against it
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
 # lines get toned down so they're present but quiet (pinkish glow,
-# subtle pulse). Topics stay at default.
+# subtle pulse). Topics stay at default. Live gets a subtle amplitude
+# but bright peak color override below.
 _SHIMMER_KIND_INTENSITY = {
     "line": 0.45,        # quiet pulse on the body
     "line_alt": 0.45,    # match line intensity for the alternate color
     "topic": 1.00,
     "header": 1.40,      # cranked — section markers pop
+    "live": 0.55,        # subtle amplitude, but with vivid peak (below)
+}
+# Per-kind override of the shimmer peak color. Lives that aren't here
+# fall through to the global _SHIMMER_PEAK_RGB.
+_SHIMMER_KIND_PEAK_RGB = {
+    "live": (255, 165, 40),   # vivid orange-amber for the live shimmer
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({"header", "topic"})
@@ -145,6 +156,7 @@ def _apply_shimmer(
         return text_obj
 
     base_rgb = _BASE_RGB.get(kind, _BASE_RGB["line"])
+    peak_rgb = _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB)
     kind_intensity = _SHIMMER_KIND_INTENSITY.get(kind, 1.0)
 
     # Recency dimming — top is full, fades to zero at MAX_LAYERS.
@@ -181,7 +193,8 @@ def _apply_shimmer(
             visual_col = absolute_col % wrap_width
             distance = head - visual_col
             _append_shimmer_char(
-                text_obj, ch, distance, base_rgb, layer_recency, layer_index
+                text_obj, ch, distance, base_rgb, peak_rgb,
+                layer_recency, layer_index
             )
     else:
         # Fallback character-index sweep (when no wrap_width given)
@@ -189,7 +202,8 @@ def _apply_shimmer(
         for i, ch in enumerate(content):
             distance = head - i
             _append_shimmer_char(
-                text_obj, ch, distance, base_rgb, layer_recency, layer_index
+                text_obj, ch, distance, base_rgb, peak_rgb,
+                layer_recency, layer_index
             )
 
     return text_obj
@@ -200,18 +214,20 @@ def _append_shimmer_char(
     ch: str,
     distance: float,
     base_rgb: tuple[int, int, int],
+    peak_rgb: tuple[int, int, int],
     layer_recency: float,
     layer_index: int,
 ) -> None:
     """Append one shimmered character with the right style based on
-    its distance from the shimmer head."""
+    its distance from the shimmer head. peak_rgb may be a per-kind
+    override (e.g. orange for live) or the global yellow peak."""
     if distance < 0 or distance > _SHIMMER_WIDTH:
         color_rgb = base_rgb
         bold_head = False
     else:
         raw_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
         intensity = raw_intensity * layer_recency
-        color_rgb = _interp_rgb(base_rgb, _SHIMMER_PEAK_RGB, intensity)
+        color_rgb = _interp_rgb(base_rgb, peak_rgb, intensity)
         bold_head = (layer_index == 0 and -0.5 <= distance < 1.5)
     style = _rgb_to_hex(color_rgb)
     if bold_head:
@@ -263,6 +279,41 @@ class PaintDryDisplay:
     def __rich__(self) -> Group:
         return self.render()
 
+    def _build_display_entries(self) -> list:
+        """Group history into items, reverse so newest item is first,
+        and within each group keep entries in chronological order so
+        the header sits ABOVE its narrator lines and topic.
+
+        Returns a flat list of entries in display order, capped to
+        _VISIBLE_HISTORY_LINES.
+        """
+        history_list = list(self.history)
+
+        # Forward-iterate, grouping at header boundaries
+        groups: list[list] = []
+        current_group: list = []
+        for entry in history_list:
+            if entry[0] == "header":
+                if current_group:
+                    groups.append(current_group)
+                current_group = [entry]
+            else:
+                current_group.append(entry)
+        if current_group:
+            groups.append(current_group)
+
+        # Newest item on top, but entries within each group stay in
+        # their natural (commit) order so header > lines > topic
+        groups.reverse()
+
+        display: list = []
+        for group in groups:
+            for entry in group:
+                display.append(entry)
+                if len(display) >= _VISIBLE_HISTORY_LINES:
+                    return display
+        return display
+
     def _compute_wrap_width(self) -> int | None:
         """Approximate visual width at which the history panel wraps.
 
@@ -284,6 +335,10 @@ class PaintDryDisplay:
         # reserved for the live cursor and live text. Structural colors
         # (yellow for item headers, green for topics, red for drops) are
         # used only on dim/desaturated variants.
+
+        # Compute the wrap width once — used by both the live panel
+        # shimmer and the history panel shimmer.
+        wrap_width = self._compute_wrap_width()
 
         # Header — title + running stats. Muted, single line.
         header_text = Text()
@@ -317,15 +372,24 @@ class PaintDryDisplay:
         # start). Cursor glyph is bright cyan when actively streaming,
         # grey50 when only the frozen line is showing — subtle visual
         # cue that the field is settled vs. live.
+        #
+        # The displayed text gets a subtle yellow/orange shimmer
+        # overlay (via _apply_shimmer with kind="live") so the live
+        # field feels alive even between deltas. Subtle amplitude,
+        # vivid peak (orange-amber).
         displayed_live = self.streaming_line or self.frozen_line
         is_active = bool(self.streaming_line)
 
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
             cursor_style = "bright_cyan" if is_active else "grey50"
-            text_style = "bright_white" if is_active else "grey85"
             live_text.append("▌ ", style=cursor_style)
-            live_text.append(displayed_live, style=text_style)
+            _apply_shimmer(
+                live_text, displayed_live, "live",
+                layer_index=0,
+                indent_width=2,  # cursor glyph "▌ "
+                wrap_width=wrap_width,
+            )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
         live_panel = Panel(
@@ -336,24 +400,26 @@ class PaintDryDisplay:
             title_align="left",
         )
 
-        # History panel — newest at top, older below. Each visible line
-        # gets a shimmer pass with intensity decaying by layer position
-        # (top is brightest, fades to static at _SHIMMER_MAX_LAYERS).
-        # Each layer is also slightly phase-offset so the sweep ripples
-        # downward through the stack rather than all pulsing in lockstep.
-        # Drops never shimmer — they're rejected, they should stay quiet.
+        # History panel — items grouped by header. Each item is a
+        # group: header at the top, then narrator lines in chronological
+        # order beneath it, then the topic at the bottom. Groups are
+        # rendered newest-first, so the current item sits at the top
+        # of the panel and older items sink below as new items start.
+        #
+        # Within each group entries are in their natural (commit) order,
+        # so the header always sits ABOVE its own narrator lines.
+        #
+        # Layer index for shimmer is visual position (0 = topmost),
+        # so the current item's header gets the brightest shimmer and
+        # fades downward through the visible layers.
         #
         # Wrap-aware shimmer: when a long line wraps inside the panel
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
-        # the wrap — appears as a vertical bar sweeping all rows of a
-        # wrapped line in unison.
-        wrap_width = self._compute_wrap_width()
-
-        history_lines = list(self.history)[-_VISIBLE_HISTORY_LINES:]
-        history_lines.reverse()
+        # the wrap.
+        display_entries = self._build_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
-        for i, entry in enumerate(history_lines):
+        for i, entry in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
@@ -410,7 +476,7 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                 )
 
-        if not history_lines:
+        if not display_entries:
             history_text = Text(
                 "(waiting for first summary...)", style="grey39"
             )
