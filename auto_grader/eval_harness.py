@@ -36,7 +36,14 @@ class EvalItem:
 
 @dataclass(frozen=True)
 class Prediction:
-    """Model output for one eval item."""
+    """Model output for one eval item.
+
+    raw_assistant and raw_reasoning preserve the unparsed grader output so
+    a downstream critic pass can read the verbatim <think> trace where
+    consistency-rule violations actually live (the curated model_reasoning
+    field is too short to capture them). Both default to empty string for
+    backward compatibility with predictions constructed in tests.
+    """
 
     exam_id: str
     question_id: str
@@ -44,6 +51,8 @@ class Prediction:
     model_confidence: float  # 0-1
     model_reasoning: str
     model_read: str  # what model thinks student wrote
+    raw_assistant: str = ""  # full assistant content string before JSON parse
+    raw_reasoning: str = ""  # full reasoning_content stream (verbatim <think>)
 
 
 @dataclass(frozen=True)
