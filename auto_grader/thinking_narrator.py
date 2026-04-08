@@ -706,8 +706,24 @@ class ThinkingNarrator:
             method="POST",
         )
         t0 = time.monotonic()
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # Open the response separately so we can close the socket
+        # explicitly on KeyboardInterrupt — that tells the OMLX
+        # server to abort generation instead of running it to
+        # completion in the background.
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        try:
             result = json.loads(resp.read().decode())
+        except KeyboardInterrupt:
+            try:
+                resp.close()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
         elapsed = time.monotonic() - t0
         logger.info(
             "Narrator call: %.2fs, %d messages", elapsed, len(messages)
