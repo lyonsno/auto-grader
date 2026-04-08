@@ -80,8 +80,10 @@ def main():
     # Curated tricky test set — known failure-mode probes
     _TRICKY_PICKS = [
         ("15-blue", "fr-1"),    # easy warmup (numeric, density)
+        ("15-blue", "fr-3"),    # FORMAT: full molecular vs net ionic, prof 0/4
         ("15-blue", "fr-5b"),   # CHARITY: consistent-with-wrong-premise
         ("15-blue", "fr-10a"),  # PARTIAL: prof gave 1.5/3 fractional
+        ("15-blue", "fr-11a"),  # ELECTRON CONFIG: orbital boxes, visual
         ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
     ]
 
