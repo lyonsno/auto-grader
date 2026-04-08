@@ -146,7 +146,15 @@ def main():
     parser.add_argument("--model", default="qwen3p5-35B-A3B")
     parser.add_argument("--items", type=int, default=8,
                         help="Number of items to grade (from first exam)")
-    parser.add_argument("--base-url", default="http://192.168.68.128:8001")
+    parser.add_argument(
+        "--base-url",
+        default="http://macbook-pro-2.local:8001",
+        help=(
+            "OpenAI-compatible grader server. Defaults to mDNS so it "
+            "follows the M4 Max's current LAN IP across DHCP renewals "
+            "instead of pinning a stale dotted-quad."
+        ),
+    )
     parser.add_argument("--all", action="store_true",
                         help="Grade all items (overrides --items)")
     parser.add_argument(

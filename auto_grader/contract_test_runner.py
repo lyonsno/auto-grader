@@ -14,6 +14,7 @@ _ALWAYS_ON_SUITES = (
     "tests.test_contract_test_runner",
     "tests.test_template_schema_contract",
     "tests.test_eval_harness_contract",
+    "tests.test_shimmer_phases",
     "test_unittest_discovery_contract",
 )
 _POSTGRES_SUITES = (
