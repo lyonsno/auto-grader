@@ -49,8 +49,8 @@ from rich.text import Text
 _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 
 
-_MAX_HISTORY_LINES = 60  # cap so we don't grow unbounded
-_VISIBLE_HISTORY_LINES = 20  # how many to actually render
+_MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
+_VISIBLE_HISTORY_LINES = 30  # how many to actually render
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
