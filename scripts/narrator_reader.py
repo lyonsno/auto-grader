@@ -26,6 +26,7 @@ below live), pushing older lines down.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -55,7 +56,10 @@ _VISIBLE_HISTORY_LINES = 20  # how many to actually render
 # Each layer has a fixed phase offset relative to the one above it (so
 # they're in stable orbit, not drifting), and intensity decays with
 # layer position so older lines pulse dimmer than newer ones.
-_SHIMMER_CYCLE_S = 1.8
+_SHIMMER_DEFAULT_CYCLE_S = 2.7  # slowed 50% from prior 1.8 — most lines pulse calmly
+_SHIMMER_RECENT_CYCLE_S = 1.2   # most-recently-committed line pulses 50% faster
+                                 # than the original 1.8 — strong contrast against
+                                 # the slowed default
 _SHIMMER_WIDTH = 12          # how many characters wide the shimmer trail is
 _SHIMMER_MAX_LAYERS = 16     # apply full-recency shimmer to the top N lines
 _SHIMMER_LAYER_OFFSET = -0.04  # negative = wave appears to move downward
@@ -96,6 +100,17 @@ _SHIMMER_KIND_PEAK_RGB = {
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({"header", "topic"})
+
+# Live-line undulation parameters — each character on the live line
+# gets a per-position, per-time hue from a yellow→orange→red palette.
+# Adjacent characters have slightly different hues (per-char phase
+# offset) and the whole field undulates over a slow cycle.
+_LIVE_UNDULATION_CYCLE_S = 3.5    # full hue cycle period
+_LIVE_HUE_CENTER_DEG = 32          # center of the yellow-orange-red band
+_LIVE_HUE_RANGE_DEG = 24           # +/- swing → 8°-56°, red-orange to yellow
+_LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
+_LIVE_BASE_SAT = 0.85              # base saturation
+_LIVE_BASE_VAL = 0.92              # base value (brightness)
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Warm yellow-orange for a fiery / ember
 # aesthetic. Headers brighten toward gold, lines glow warm-pink,
@@ -121,6 +136,33 @@ def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
 
+def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
+    """Convert HSV (h in degrees, s/v in [0, 1]) to 8-bit RGB."""
+    h = h % 360
+    h_sector = int(h / 60) % 6
+    f = (h / 60) - int(h / 60)
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    if h_sector == 0:
+        r, g, b = v, t, p
+    elif h_sector == 1:
+        r, g, b = q, v, p
+    elif h_sector == 2:
+        r, g, b = p, v, t
+    elif h_sector == 3:
+        r, g, b = p, q, v
+    elif h_sector == 4:
+        r, g, b = t, p, v
+    else:
+        r, g, b = v, p, q
+    return (
+        max(0, min(255, int(r * 255))),
+        max(0, min(255, int(g * 255))),
+        max(0, min(255, int(b * 255))),
+    )
+
+
 def _apply_shimmer(
     text_obj: Text,
     content: str,
@@ -128,6 +170,7 @@ def _apply_shimmer(
     layer_index: int,
     indent_width: int = 0,
     wrap_width: int | None = None,
+    cycle_s: float | None = None,
 ) -> Text:
     """Append content to text_obj with a moving shimmer overlay.
 
@@ -179,8 +222,9 @@ def _apply_shimmer(
     phase_layer = min(layer_index, _SHIMMER_MAX_LAYERS - 1)
     layer_phase_offset = (phase_layer * _SHIMMER_LAYER_OFFSET) % 1.0
 
+    cycle = cycle_s if cycle_s is not None else _SHIMMER_DEFAULT_CYCLE_S
     now = time.monotonic()
-    base_phase = (now % _SHIMMER_CYCLE_S) / _SHIMMER_CYCLE_S
+    base_phase = (now % cycle) / cycle
     phase = (base_phase + layer_phase_offset) % 1.0
 
     if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
@@ -205,6 +249,79 @@ def _apply_shimmer(
                 text_obj, ch, distance, base_rgb, peak_rgb,
                 layer_recency, layer_index
             )
+
+    return text_obj
+
+
+def _render_live_undulating(
+    text_obj: Text,
+    content: str,
+    indent_width: int,
+    wrap_width: int | None,
+    is_active: bool,
+) -> Text:
+    """Render the live line with per-character undulating warm colors
+    (yellow / orange / red) AND a shimmer overlay on top.
+
+    Each character has its own hue computed from time + char position,
+    so adjacent characters land at slightly different points in the
+    yellow-orange-red palette and the whole field undulates over a
+    slow cycle. The shimmer head brightens characters near it and
+    pushes their saturation down (toward white) for a heat-flicker
+    feel.
+    """
+    if not content:
+        return text_obj
+
+    now = time.monotonic()
+    undulation_phase_base = now * (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
+
+    # Shimmer head — uses the recent cycle so the live field moves
+    # at the same pace as the most recent line in history (the
+    # other "live-feeling" element).
+    cycle = _SHIMMER_RECENT_CYCLE_S
+    shimmer_phase = (now % cycle) / cycle
+    if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
+        shimmer_head = (
+            shimmer_phase * (wrap_width + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        )
+    else:
+        shimmer_head = (
+            shimmer_phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        )
+
+    # Frozen state has slightly muted colors so it reads as "settled"
+    sat_mul = 1.0 if is_active else 0.7
+    val_mul = 1.0 if is_active else 0.85
+
+    for i, ch in enumerate(content):
+        # Per-character undulating hue
+        char_phase = undulation_phase_base + i * _LIVE_PER_CHAR_PHASE_OFFSET
+        h = _LIVE_HUE_CENTER_DEG + _LIVE_HUE_RANGE_DEG * math.sin(char_phase)
+        s = _LIVE_BASE_SAT * sat_mul
+        v = _LIVE_BASE_VAL * val_mul
+
+        # Shimmer overlay: brighten and de-saturate at the head
+        if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
+            visual_col = (indent_width + i) % wrap_width
+            distance = shimmer_head - visual_col
+        else:
+            distance = shimmer_head - i
+
+        bold_head = False
+        if 0 <= distance < _SHIMMER_WIDTH:
+            shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+            # Push toward white-hot at the head (boost V, drop S)
+            v = min(1.0, v + 0.08 * shimmer_intensity)
+            s = max(0.0, s - 0.40 * shimmer_intensity)
+            if -0.5 <= distance < 1.5:
+                bold_head = is_active
+
+        r, g, b = _hsv_to_rgb(h, s, v)
+        style = f"#{r:02x}{g:02x}{b:02x}"
+        if bold_head:
+            style = f"bold {style}"
+        text_obj.append(ch, style=style)
 
     return text_obj
 
@@ -279,26 +396,33 @@ class PaintDryDisplay:
     def __rich__(self) -> Group:
         return self.render()
 
-    def _build_display_entries(self) -> list:
+    def _build_display_entries(self) -> list[tuple[tuple, bool]]:
         """Group history into items, reverse so newest item is first,
         and within each group keep entries in chronological order so
         the header sits ABOVE its narrator lines and topic.
 
-        Returns a flat list of entries in display order, capped to
-        _VISIBLE_HISTORY_LINES.
+        Returns a list of (entry, is_most_recent) tuples in display
+        order, capped to _VISIBLE_HISTORY_LINES. is_most_recent is
+        True for exactly the entry at the back of the deque (the
+        most-recently-committed thing), so callers can give it a
+        faster shimmer cycle for visual contrast.
         """
         history_list = list(self.history)
+        if not history_list:
+            return []
+        most_recent_idx = len(history_list) - 1
 
-        # Forward-iterate, grouping at header boundaries
-        groups: list[list] = []
-        current_group: list = []
-        for entry in history_list:
+        # Forward-iterate, grouping at header boundaries, tracking
+        # original deque indices so we can identify the most-recent.
+        groups: list[list[tuple[tuple, int]]] = []
+        current_group: list[tuple[tuple, int]] = []
+        for idx, entry in enumerate(history_list):
             if entry[0] == "header":
                 if current_group:
                     groups.append(current_group)
-                current_group = [entry]
+                current_group = [(entry, idx)]
             else:
-                current_group.append(entry)
+                current_group.append((entry, idx))
         if current_group:
             groups.append(current_group)
 
@@ -306,10 +430,10 @@ class PaintDryDisplay:
         # their natural (commit) order so header > lines > topic
         groups.reverse()
 
-        display: list = []
+        display: list[tuple[tuple, bool]] = []
         for group in groups:
-            for entry in group:
-                display.append(entry)
+            for entry, idx in group:
+                display.append((entry, idx == most_recent_idx))
                 if len(display) >= _VISIBLE_HISTORY_LINES:
                     return display
         return display
@@ -384,11 +508,11 @@ class PaintDryDisplay:
             live_text = Text(no_wrap=False, overflow="fold")
             cursor_style = "bright_cyan" if is_active else "grey50"
             live_text.append("▌ ", style=cursor_style)
-            _apply_shimmer(
-                live_text, displayed_live, "live",
-                layer_index=0,
+            _render_live_undulating(
+                live_text, displayed_live,
                 indent_width=2,  # cursor glyph "▌ "
                 wrap_width=wrap_width,
+                is_active=is_active,
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
@@ -419,12 +543,20 @@ class PaintDryDisplay:
         # the wrap.
         display_entries = self._build_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
-        for i, entry in enumerate(display_entries):
+        for i, (entry, is_most_recent) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
             if i > 0:
                 history_text.append("\n")
+
+            # Most-recently-committed entry pulses on the FAST cycle;
+            # everything else uses the slowed default. Strong contrast.
+            entry_cycle = (
+                _SHIMMER_RECENT_CYCLE_S
+                if is_most_recent
+                else _SHIMMER_DEFAULT_CYCLE_S
+            )
 
             if kind == "header":
                 indent = "─ "
@@ -434,6 +566,7 @@ class PaintDryDisplay:
                     layer_index=i,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
                 )
             elif kind == "topic":
                 indent = "  · "
@@ -453,6 +586,7 @@ class PaintDryDisplay:
                         layer_index=i,
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
+                        cycle_s=entry_cycle,
                     )
                 else:
                     _apply_shimmer(
@@ -460,6 +594,7 @@ class PaintDryDisplay:
                         layer_index=i,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
+                        cycle_s=entry_cycle,
                     )
             else:
                 indent = "    "
@@ -474,6 +609,7 @@ class PaintDryDisplay:
                     layer_index=i,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
                 )
 
         if not display_entries:

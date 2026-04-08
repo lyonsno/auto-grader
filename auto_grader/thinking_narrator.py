@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import urllib.request
@@ -170,12 +171,28 @@ class ThinkingNarrator:
         base_url: str = "http://localhost:8001",
         model: str = _DEFAULT_NARRATOR_MODEL,
         api_key: str = "1234",
+        wrap_up_base_url: str | None = None,
+        wrap_up_model: str | None = None,
+        wrap_up_api_key: str | None = None,
     ):
         self._sink = sink
 
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._api_key = api_key
+
+        # Wrap-up uses a separate endpoint/model. By default it falls back
+        # to the narrator's own server (preserving old behavior), but in
+        # practice the harness points it at the grader server because the
+        # grader model is free by the time wrap-up fires and can produce a
+        # more grounded post-game read than the small narrator model.
+        self._wrap_up_base_url = (
+            wrap_up_base_url.rstrip("/") if wrap_up_base_url else self._base_url
+        )
+        self._wrap_up_model = wrap_up_model or self._model
+        self._wrap_up_api_key = (
+            wrap_up_api_key if wrap_up_api_key is not None else self._api_key
+        )
 
         # State (guarded by _lock)
         self._lock = threading.Lock()
@@ -334,9 +351,23 @@ class ThinkingNarrator:
                 },
                 {"role": "user", "content": payload},
             ]
+            # Wrap-up runs on the grader endpoint with a bigger token
+            # budget (Qwen-class graders emit <think>...</think> that eats
+            # the budget before the prose) and a longer timeout (cold
+            # weights, possible queue from final grading items finishing).
             text = self._chat_completion(
-                messages, max_tokens=250, temperature=0.85
+                messages,
+                max_tokens=1024,
+                temperature=0.85,
+                base_url=self._wrap_up_base_url,
+                model=self._wrap_up_model,
+                api_key=self._wrap_up_api_key,
+                timeout=120,
             )
+            # Strip any leaked reasoning/thinking spans before storing.
+            text = re.sub(
+                r"<think>.*?</think>", "", text, flags=re.DOTALL
+            ).strip()
             if text:
                 self._sink.write_wrap_up(text)
         except Exception:
@@ -608,11 +639,19 @@ class ThinkingNarrator:
         max_tokens: int = _MAX_TOKENS,
         top_p: float = 0.95,
         top_k: int = 20,
+        base_url: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout: float = 15,
     ) -> str:
         """Synchronous (non-streaming) call. Used for the collapsed
-        per-item summary at the end of each item."""
+        per-item summary at the end of each item, and (with overrides)
+        for the end-of-run wrap-up against the grader server."""
+        eff_base = (base_url or self._base_url).rstrip("/")
+        eff_model = model or self._model
+        eff_api_key = api_key if api_key is not None else self._api_key
         body = {
-            "model": self._model,
+            "model": eff_model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -621,17 +660,17 @@ class ThinkingNarrator:
             "stream": False,
         }
         headers = {"Content-Type": "application/json"}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
+        if eff_api_key:
+            headers["Authorization"] = f"Bearer {eff_api_key}"
 
         req = urllib.request.Request(
-            f"{self._base_url}/v1/chat/completions",
+            f"{eff_base}/v1/chat/completions",
             data=json.dumps(body).encode(),
             headers=headers,
             method="POST",
         )
         t0 = time.monotonic()
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             result = json.loads(resp.read().decode())
         elapsed = time.monotonic() - t0
         logger.info(

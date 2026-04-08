@@ -71,6 +71,21 @@ def main():
     parser.add_argument("--narrator-url", default="http://localhost:8001",
                         help="Bonsai narrator OMLX server URL")
     parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
+    parser.add_argument(
+        "--wrap-up-url",
+        default=None,
+        help=(
+            "OpenAI-compatible server for the end-of-run wrap-up. "
+            "Defaults to --base-url (the grader server) since the grader "
+            "model is free by the time wrap-up fires and produces a more "
+            "grounded post-game read than the small narrator model."
+        ),
+    )
+    parser.add_argument(
+        "--wrap-up-model",
+        default=None,
+        help="Model name for the wrap-up call. Defaults to --model.",
+    )
     parser.add_argument("--run-dir", default=None,
                         help="Directory to write narrator.jsonl/.txt logs (default: runs/<ts>-<model>/)")
     args = parser.parse_args()
@@ -159,6 +174,8 @@ def main():
                 sink,
                 base_url=args.narrator_url,
                 model=args.narrator_model,
+                wrap_up_base_url=args.wrap_up_url or args.base_url,
+                wrap_up_model=args.wrap_up_model or args.model,
             )
             if narrator_enabled
             else None
