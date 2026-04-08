@@ -7,3 +7,6 @@ dist/
 
 # Real exam materials live in the private auto-grader-assets repo
 assets/
+
+# Per-run narrator transcripts and eval artifacts
+runs/

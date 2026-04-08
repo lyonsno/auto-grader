@@ -201,12 +201,19 @@ def grade_single_item(
     page_image: bytes,
     config: ServerConfig,
     template_question: dict | None = None,
+    on_reasoning_delta: Any = None,
 ) -> Prediction:
-    """Send one item to the VLM and return a Prediction."""
+    """Send one item to the VLM and return a Prediction.
+
+    If on_reasoning_delta is provided, it's called with each reasoning_content
+    token as it streams from the VLM (used by the live narrator).
+    """
     import urllib.request
 
     prompt_text = _build_grading_prompt(item, template_question)
     image_url = _image_to_data_url(page_image)
+
+    use_streaming = on_reasoning_delta is not None
 
     payload = {
         "model": config.model,
@@ -225,45 +232,46 @@ def grade_single_item(
         ],
         "max_tokens": config.max_tokens,
         "temperature": config.temperature,
+        "stream": use_streaming,
     }
 
     body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"{config.base_url}/v1/chat/completions",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.api_key}",
-        },
-    )
+
+    def _build_request():
+        return urllib.request.Request(
+            f"{config.base_url}/v1/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {config.api_key}",
+            },
+        )
 
     last_err = None
+    content = ""
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                result = json.loads(resp.read())
+            req = _build_request()
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                if use_streaming:
+                    content = _consume_streaming_response(
+                        resp, on_reasoning_delta
+                    )
+                else:
+                    result = json.loads(resp.read())
+                    content = result["choices"][0]["message"]["content"]
             break
         except (TimeoutError, OSError) as e:
             last_err = e
             if attempt < 2:
                 import time
                 time.sleep(2)
-                # Rebuild request (urllib may have consumed the body)
-                req = urllib.request.Request(
-                    f"{config.base_url}/v1/chat/completions",
-                    data=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {config.api_key}",
-                    },
-                )
     else:
         raise TimeoutError(
             f"VLM request failed after 3 attempts for "
             f"{item.exam_id}/{item.question_id}: {last_err}"
         )
 
-    content = result["choices"][0]["message"]["content"]
     parsed = _parse_vlm_response(content)
 
     return Prediction(
@@ -274,6 +282,37 @@ def grade_single_item(
         model_reasoning=str(parsed.get("model_reasoning", "")),
         model_read=str(parsed.get("model_read", "")),
     )
+
+
+def _consume_streaming_response(resp, on_reasoning_delta) -> str:
+    """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
+    through the callback as they arrive; returns the assistant content
+    (the JSON response) for parsing."""
+    content_full = ""
+    for raw_line in resp:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        delta = chunk.get("choices", [{}])[0].get("delta", {})
+        # Reasoning tokens — pump to narrator
+        rc_delta = delta.get("reasoning_content", "")
+        if rc_delta:
+            try:
+                on_reasoning_delta(rc_delta)
+            except Exception:
+                pass
+        # Final assistant content — accumulate for parsing
+        c_delta = delta.get("content", "")
+        if c_delta:
+            content_full += c_delta
+    return content_full
 
 
 # ---------------------------------------------------------------------------
@@ -295,12 +334,17 @@ def grade_all_items(
     template_path: Path | None = None,
     progress_callback: Any = None,
     narrator: Any = None,
+    sink: Any = None,
 ) -> list[Prediction]:
     """Grade all ground truth items against VLM, returning predictions.
 
     Caches page images to avoid re-extracting the same page for multiple
-    questions on that page. If a narrator is provided, drops a
-    NarratorEvent for each item after scoring.
+    questions on that page.
+
+    If a ThinkingNarrator + NarratorSink are provided, the VLM call switches
+    to streaming mode and reasoning_content tokens are pumped through the
+    narrator for live play-by-play. The sink also gets per-item header and
+    topic events.
     """
     template_questions = (
         load_template_questions(template_path) if template_path else {}
@@ -321,22 +365,57 @@ def grade_all_items(
             page_cache[cache_key] = extract_page_image(pdf_path, item.page)
 
         tq = template_questions.get(item.question_id)
-        pred = grade_single_item(item, page_cache[cache_key], config, tq)
+
+        # Per-item narrator lifecycle
+        if narrator is not None and sink is not None:
+            header = (
+                f"[item {i + 1}/{len(ground_truth)}] "
+                f"{item.exam_id}/{item.question_id} "
+                f"({item.answer_type}, {item.max_points} pts)"
+            )
+            # Build a richer context for the narrator: actual question prompt
+            # from the template + the student's answer + the professor's
+            # ground-truth score. Bonsai needs grounding or it hallucinates
+            # chemistry from the system-prompt examples.
+            narrator_context_parts = [header]
+            if tq:
+                if "prompt" in tq:
+                    qp = str(tq["prompt"]).strip().replace("\n", " ")
+                    narrator_context_parts.append(f"Question prompt: {qp[:200]}")
+                if "correct" in tq:
+                    correct = tq["correct"]
+                    if isinstance(correct, dict) and "value" in correct:
+                        narrator_context_parts.append(
+                            f"Expected answer: {correct['value']}"
+                        )
+                    elif not isinstance(correct, dict):
+                        narrator_context_parts.append(
+                            f"Expected answer: {correct}"
+                        )
+            narrator_context_parts.append(
+                f"Student wrote: \"{item.student_answer}\""
+            )
+            narrator_context_parts.append(
+                f"Professor scored: {item.professor_score}/{item.max_points} "
+                f"(mark: {item.professor_mark})"
+            )
+            narrator_context = "\n".join(narrator_context_parts)
+            sink.write_header(header)
+            narrator.start(item_header=narrator_context)
+            on_delta = narrator.feed
+        else:
+            on_delta = None
+
+        pred = grade_single_item(
+            item, page_cache[cache_key], config, tq,
+            on_reasoning_delta=on_delta,
+        )
         predictions.append(pred)
+
+        if narrator is not None:
+            narrator.stop_and_summarize()
 
         if progress_callback:
             progress_callback(i + 1, len(ground_truth), item, pred)
-
-        if narrator is not None:
-            from auto_grader.narrator import NarratorEvent
-
-            narrator.narrate(
-                NarratorEvent(
-                    item=item,
-                    prediction=pred,
-                    item_index=i + 1,
-                    total_items=len(ground_truth),
-                )
-            )
 
     return predictions
