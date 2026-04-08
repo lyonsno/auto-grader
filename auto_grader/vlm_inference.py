@@ -377,9 +377,18 @@ def _consume_streaming_response(
     place where consistency-rule violations are observable.
 
     SIGINT propagates through the iterator naturally — Python checks for
-    signals between chunk reads, so Ctrl-C interrupts within ~one chunk."""
-    content_full = ""
-    reasoning_full = ""
+    signals between chunk reads, so Ctrl-C interrupts within ~one chunk.
+
+    Accumulates content and reasoning into lists and joins at the end
+    rather than `s += chunk` in the loop. CPython has an in-place
+    optimization for the single-reference case that often makes `+=`
+    amortized O(N), but it is not guaranteed and silently degrades to
+    O(N^2) under conditions that are easy to trip (e.g. another
+    reference taken transiently for logging). For 200+ second
+    reasoning streams with thousands of deltas this matters.
+    """
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line.startswith("data:"):
@@ -396,7 +405,7 @@ def _consume_streaming_response(
         # narrator if wired.
         rc_delta = delta.get("reasoning_content", "")
         if rc_delta:
-            reasoning_full += rc_delta
+            reasoning_parts.append(rc_delta)
             if on_reasoning_delta is not None:
                 try:
                     on_reasoning_delta(rc_delta)
@@ -405,8 +414,8 @@ def _consume_streaming_response(
         # Final assistant content — accumulate for parsing
         c_delta = delta.get("content", "")
         if c_delta:
-            content_full += c_delta
-    return content_full, reasoning_full
+            content_parts.append(c_delta)
+    return "".join(content_parts), "".join(reasoning_parts)
 
 
 # ---------------------------------------------------------------------------
