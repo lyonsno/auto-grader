@@ -56,15 +56,23 @@ _SHIMMER_LAYER_OFFSET = -0.06  # negative = wave appears to move downward
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak)
 _BASE_RGB = {
-    "line": (185, 185, 185),    # soft grey body
+    "line": (190, 165, 195),    # soft mauve body — pinkish, distinct
     "topic": (110, 150, 110),   # dark_sea_green-ish
     "header": (200, 110, 30),   # orange3-ish
 }
+# Per-kind shimmer intensity multiplier — applied on top of layer_recency.
+# Headers get cranked up so section markers really pulse, while normal
+# lines get toned down so they're present but quiet (pinkish glow,
+# subtle pulse). Topics stay at default.
+_SHIMMER_KIND_INTENSITY = {
+    "line": 0.45,    # quiet pulse on the body
+    "topic": 1.00,
+    "header": 1.40,  # cranked — section markers pop
+}
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Warm yellow-orange for a fiery / ember
-# aesthetic instead of the cool near-white that read as Halloween
-# alongside the orange headers and sea-green topics. Headers brighten
-# toward gold, lines glow warm, topics briefly flash chartreuse.
+# aesthetic. Headers brighten toward gold, lines glow warm-pink,
+# topics briefly flash chartreuse as the sweep passes.
 _SHIMMER_PEAK_RGB = (255, 215, 120)
 
 
@@ -106,13 +114,14 @@ def _apply_shimmer(
         return text_obj
 
     base_rgb = _BASE_RGB.get(kind, _BASE_RGB["line"])
+    kind_intensity = _SHIMMER_KIND_INTENSITY.get(kind, 1.0)
 
     # Recency dimming — top is full, fades to zero at MAX_LAYERS
     if layer_index >= _SHIMMER_MAX_LAYERS:
         text_obj.append(content, style=_rgb_to_hex(base_rgb))
         return text_obj
 
-    layer_recency = 1.0 - (layer_index / _SHIMMER_MAX_LAYERS)
+    layer_recency = (1.0 - (layer_index / _SHIMMER_MAX_LAYERS)) * kind_intensity
 
     # Per-layer phase offset — each layer is shifted relative to the
     # one above by _SHIMMER_LAYER_OFFSET (negative = lags, so the wave
@@ -169,6 +178,10 @@ class PaintDryDisplay:
         self.stat_dropped_empty = 0
         # End-of-run wrap-up (color commentary)
         self.wrap_up_text: str = ""
+        # When True, render() shows a "press Enter to close" footer.
+        # The animation thread keeps running so the shimmer plays on
+        # while the user reads.
+        self.session_ended: bool = False
 
     def __rich__(self) -> Group:
         return self.render()
@@ -300,12 +313,18 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: header, live, history, post-game, drops
+        # Order: header, live, history, post-game, drops, [footer]
         panels = [header, live_panel, history_panel]
         if wrap_panel is not None:
             panels.append(wrap_panel)
         if drops_panel is not None:
             panels.append(drops_panel)
+        if self.session_ended:
+            footer = Text(
+                "  ▌ session ended — press Enter to close ▐",
+                style="grey50 italic",
+            )
+            panels.append(footer)
         return Group(*panels)
 
     # -- mutators ----------------------------------------------------------
@@ -441,20 +460,29 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
-                        # Let the animation tick render the final
-                        # state once more, then stop everything so
-                        # input() doesn't fight the timer.
-                        time.sleep(0.1)
+                        # Flag the display so render() shows a "press
+                        # Enter" footer. Keep the animation thread
+                        # running so the shimmer continues to play
+                        # while the user reads the final state.
+                        # Wait for stdin in a side thread.
+                        display.session_ended = True
+                        enter_event = threading.Event()
+
+                        def _wait_enter():
+                            try:
+                                sys.stdin.readline()
+                            except Exception:
+                                pass
+                            enter_event.set()
+
+                        threading.Thread(
+                            target=_wait_enter,
+                            name="paint-dry-enter-wait",
+                            daemon=True,
+                        ).start()
+                        enter_event.wait()
                         animation_stop.set()
                         anim_thread.join(timeout=0.5)
-                        live.stop()
-                        console.print(
-                            "\n[dim]session ended — press Enter to close...[/dim]"
-                        )
-                        try:
-                            input()
-                        except (EOFError, KeyboardInterrupt):
-                            pass
                         return 0
     finally:
         animation_stop.set()

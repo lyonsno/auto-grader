@@ -47,6 +47,23 @@ def main():
     parser.add_argument("--base-url", default="http://192.168.68.128:8001")
     parser.add_argument("--all", action="store_true",
                         help="Grade all items (overrides --items)")
+    parser.add_argument(
+        "--pick",
+        default=None,
+        help=(
+            "Comma-separated <exam_id>:<question_id> pairs to grade "
+            "(e.g. 15-blue:fr-1,15-blue:fr-5b). Overrides --items/--all."
+        ),
+    )
+    parser.add_argument(
+        "--tricky",
+        action="store_true",
+        help=(
+            "Grade a curated set of known-tricky items: easy warmup + "
+            "consistent-with-wrong-premise charity test + fractional "
+            "partial credit + Lewis structure partial. Overrides --items."
+        ),
+    )
     parser.add_argument("--narrate", action="store_true",
                         help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
     parser.add_argument("--narrate-stderr", action="store_true",
@@ -59,7 +76,43 @@ def main():
     args = parser.parse_args()
 
     gt = load_ground_truth(_GROUND_TRUTH)
-    subset = gt if args.all else gt[: args.items]
+
+    # Curated tricky test set — known failure-mode probes
+    _TRICKY_PICKS = [
+        ("15-blue", "fr-1"),    # easy warmup (numeric, density)
+        ("15-blue", "fr-5b"),   # CHARITY: consistent-with-wrong-premise
+        ("15-blue", "fr-10a"),  # PARTIAL: prof gave 1.5/3 fractional
+        ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
+    ]
+
+    if args.pick:
+        wanted = []
+        for token in args.pick.split(","):
+            token = token.strip()
+            if not token or ":" not in token:
+                continue
+            exam_id, qid = token.split(":", 1)
+            wanted.append((exam_id.strip(), qid.strip()))
+        gt_index = {(item.exam_id, item.question_id): item for item in gt}
+        subset = []
+        missing = []
+        for key in wanted:
+            if key in gt_index:
+                subset.append(gt_index[key])
+            else:
+                missing.append(key)
+        if missing:
+            print(
+                f"WARNING: --pick missing in ground truth: {missing}",
+                file=sys.stderr,
+            )
+    elif args.tricky:
+        gt_index = {(item.exam_id, item.question_id): item for item in gt}
+        subset = [gt_index[k] for k in _TRICKY_PICKS if k in gt_index]
+    elif args.all:
+        subset = gt
+    else:
+        subset = gt[: args.items]
 
     config = ServerConfig(
         base_url=args.base_url,
