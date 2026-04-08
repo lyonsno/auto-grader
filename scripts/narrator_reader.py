@@ -48,6 +48,14 @@ from rich.text import Text
 # Group 1: the elapsed time ("47s"), group 2: the rest after the bullet.
 _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 
+# Splits an item header into the [item N/M] index marker and the rest
+# of the title:
+#   "[item 3/6] 15-blue/fr-5b (numeric, 2.0 pts)"
+# Group 1 = "[item 3/6]", group 2 = "15-blue/fr-5b (numeric, 2.0 pts)".
+# The index marker gets the cool steel-blue accent for an always-on
+# cool note that's structural metadata, not status.
+_HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
+
 
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
 _VISIBLE_HISTORY_LINES = 30  # how many to actually render
@@ -85,6 +93,11 @@ _BASE_RGB = {
     "topic": (170, 115, 145),    # dusty plum — fallback when verdict is
                                   # unknown / no prediction data
     "header": (200, 110, 30),    # orange3 — unchanged, the warm anchor
+    "header_index": (110, 145, 175),  # cool steel blue — the [item N/M]
+                                       # marker gets always-on cool accent
+                                       # so the panel has a structural cool
+                                       # note that doesn't compete with the
+                                       # status-encoded topic verdict colors
     "live": (240, 240, 248),     # bright off-white for the live field,
                                   # very slight cool cast so warm shimmer
                                   # peak pops against it
@@ -110,6 +123,7 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
     "header": 1.40,      # cranked — section markers pop
+    "header_index": 1.40,        # match header intensity for the cool index
     "live": 0.55,        # subtle amplitude, but with vivid peak (below)
 }
 # Per-kind override of the shimmer peak color. Lives that aren't here
@@ -123,6 +137,7 @@ _SHIMMER_KIND_PEAK_RGB = {
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({
     "header",
+    "header_index",
     "topic",
     "topic_match",
     "topic_overshoot",
@@ -564,10 +579,12 @@ class PaintDryDisplay:
         wrap_width = self._compute_wrap_width()
 
         # Header — title + running stats. Muted, single line.
+        # The subtitle is in cool steel blue — always-on cool note in
+        # the top chrome to balance the warm field below.
         header_text = Text()
         header_text.append(self.title, style="bold bright_white")
         header_text.append("   ", style="dim")
-        header_text.append(self.subtitle, style="grey50")
+        header_text.append(self.subtitle, style="#6e91af")
         header_text.append("   ", style="dim")
         header_text.append(
             f"emitted={self.stat_emitted}",
@@ -686,13 +703,40 @@ class PaintDryDisplay:
             if kind == "header":
                 indent = "─ "
                 history_text.append(indent, style="grey39")
-                _apply_shimmer(
-                    history_text, text, "header",
-                    layer_index=i,
-                    indent_width=len(indent),
-                    wrap_width=wrap_width,
-                    cycle_s=entry_cycle,
-                )
+                # Split the [item N/M] index marker from the rest of
+                # the title so the index can be rendered in cool steel
+                # blue (always-on cool accent) while the rest stays in
+                # warm orange3. Both halves get the same shimmer
+                # rhythm — same layer_index, same cycle, same head
+                # position via correct indent_width — so they pulse
+                # together but pulse FROM different base colors.
+                m = _HEADER_INDEX_RE.match(text)
+                if m:
+                    index_part = m.group(1)
+                    rest_part = m.group(2)
+                    _apply_shimmer(
+                        history_text, index_part, "header_index",
+                        layer_index=i,
+                        indent_width=len(indent),
+                        wrap_width=wrap_width,
+                        cycle_s=entry_cycle,
+                    )
+                    history_text.append(" ", style="grey39")
+                    _apply_shimmer(
+                        history_text, rest_part, "header",
+                        layer_index=i,
+                        indent_width=len(indent) + len(index_part) + 1,
+                        wrap_width=wrap_width,
+                        cycle_s=entry_cycle,
+                    )
+                else:
+                    _apply_shimmer(
+                        history_text, text, "header",
+                        layer_index=i,
+                        indent_width=len(indent),
+                        wrap_width=wrap_width,
+                        cycle_s=entry_cycle,
+                    )
             elif kind == "topic":
                 indent = "  · "
                 history_text.append(indent, style="grey50")
