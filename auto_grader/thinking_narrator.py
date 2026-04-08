@@ -144,7 +144,12 @@ _TARGET_CHUNK_TOKENS = 200
 _MIN_INTERVAL_S = 3.0      # minimum seconds between narrator calls
 _MAX_INTERVAL_S = 8.0      # dispatch even with few tokens after this long
 _MAX_TOKENS = 50           # generation budget for each summary
-_SIMILARITY_THRESHOLD = 0.70  # reject lines that overlap > this with prior
+_SIMILARITY_THRESHOLD = 0.55  # reject lines that overlap > this with prior
+                              # (tightened from 0.70 to catch thematic
+                              # paraphrases — bonsai loops generate lines
+                              # with different surface words but the same
+                              # underlying observation, and 0.70 was too
+                              # generous to catch them as duplicates)
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -756,9 +761,32 @@ class ThinkingNarrator:
         max_tokens: int = _MAX_TOKENS,
         top_p: float = 0.95,
         top_k: int = 20,
+        max_chars: int = 350,
+        max_seconds: float = 20.0,
     ) -> str:
         """Streaming call. Calls on_delta(token) per content delta and
-        returns the full accumulated text."""
+        returns the full accumulated text.
+
+        Three abort conditions for runaway bonsai loops, in addition
+        to the natural [DONE] from the server:
+
+        1. max_chars — hard cap on accumulated content. OMLX doesn't
+           strictly enforce max_tokens for bonsai streams, so without
+           a client-side cap a single dispatch can run for minutes
+           producing 1000+ chars of looped phrases.
+        2. max_seconds — wallclock cap. If we've been streaming this
+           one dispatch for too long, abort regardless of length.
+        3. In-stream substring repetition. If the trailing N chars of
+           the buffer already appear earlier in the buffer, bonsai is
+           in a literal token-level loop. Bail immediately.
+
+        On any abort condition we close the response (signals OMLX
+        to stop generating server-side) and return the truncated
+        text. The dispatch path then runs the normal dedup check on
+        the truncated text — usually it'll get rejected as a dup of
+        a prior summary, since looped output tends to overlap heavily
+        with whatever bonsai already said.
+        """
         body = {
             "model": self._model,
             "messages": messages,
@@ -781,8 +809,22 @@ class ThinkingNarrator:
 
         t0 = time.monotonic()
         full = ""
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # In-stream substring repetition check params
+        loop_check_min = 70   # don't check until we have at least this many chars
+        loop_check_window = 30  # the trailing window we look for earlier — short
+                                 # enough to catch ~30-char repeating phrases like
+                                 # "if the student's answer is correct" which is
+                                 # bonsai's most common loop unit
+        abort_reason: str | None = None
+
+        resp = urllib.request.urlopen(req, timeout=30)
+        try:
             for raw_line in resp:
+                # wallclock cap
+                if time.monotonic() - t0 > max_seconds:
+                    abort_reason = "max_seconds"
+                    break
+
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line.startswith("data:"):
                     continue
@@ -804,6 +846,35 @@ class ThinkingNarrator:
                         on_delta(delta)
                     except Exception:
                         logger.exception("on_delta callback failed")
+
+                    # max_chars cap
+                    if len(full) >= max_chars:
+                        abort_reason = "max_chars"
+                        break
+
+                    # in-stream substring repetition check — only kicks
+                    # in once we have enough text. If the last N chars
+                    # already appear in the earlier portion of the
+                    # buffer, bonsai is looping.
+                    if len(full) > loop_check_min:
+                        tail = full[-loop_check_window:]
+                        earlier = full[:-loop_check_window]
+                        if tail and tail in earlier:
+                            abort_reason = "stream_loop_detected"
+                            break
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+        if abort_reason:
+            logger.info(
+                "Narrator stream aborted (%s) after %.1fs, %d chars",
+                abort_reason,
+                time.monotonic() - t0,
+                len(full),
+            )
         elapsed = time.monotonic() - t0
         logger.info(
             "Narrator stream: %.2fs, %d chars", elapsed, len(full)
