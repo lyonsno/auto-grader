@@ -148,6 +148,24 @@ _MAX_TOKENS = 200          # generation budget for each summary
                            # sumi-e first-person voice room without
                            # being a ceiling under the streaming
                            # client-side max_chars/max_seconds guards)
+_STREAM_WATCHDOG_SLOP_S = 2.0   # how long after the in-loop wallclock cap
+                                # the watchdog waits before force-closing
+                                # the response. Lets the in-loop wallclock
+                                # fire first for the normal "slow stream"
+                                # case (clean abort_reason="max_seconds"),
+                                # while still cutting off "stream completely
+                                # blocked / no bytes ever arrived" within a
+                                # bounded window.
+_DISPATCH_STUCK_TIMEOUT_S = 30.0  # if _pending_dispatch has been True for
+                                  # longer than this, the dispatch thread
+                                  # is wedged and feed() will force-clear
+                                  # the flag (with a generation bump so
+                                  # the wedged thread won't clobber the
+                                  # state of its replacement when it
+                                  # eventually unblocks). Must be larger
+                                  # than the stream's max_seconds (20) +
+                                  # watchdog slop (2) so we never trip on
+                                  # a healthy slow stream.
 _SIMILARITY_THRESHOLD = 0.55  # reject lines that overlap > this with prior
                               # (tightened from 0.70 to catch thematic
                               # paraphrases — bonsai loops generate lines
@@ -346,6 +364,18 @@ class ThinkingNarrator:
         self._active = False
         self._thinking_start = 0.0
         self._pending_dispatch = False
+        # Wall-clock time the current pending dispatch started, or None
+        # if no dispatch is in flight. Used by feed() to detect a wedged
+        # dispatch (one whose stream has hung past _DISPATCH_STUCK_TIMEOUT_S)
+        # and recover.
+        self._dispatch_started_at: float | None = None
+        # Generation counter that increments every time feed() force-clears
+        # a stuck dispatch. Each dispatch thread captures the generation it
+        # was started under and only clears the pending flag if the current
+        # generation still matches its own — so a wedged thread that
+        # eventually unblocks (via the stream watchdog) won't clobber the
+        # state of the dispatch that took its place.
+        self._dispatch_generation = 0
         self._prior_summaries: list[str] = []  # for dedup
 
         # Lifetime stats (across all items)
@@ -394,6 +424,11 @@ class ThinkingNarrator:
             ]
             self._active = True
             self._pending_dispatch = False
+            self._dispatch_started_at = None
+            # Bump generation on every item start so any leftover wedged
+            # dispatch from the previous item can't clobber the new
+            # item's state.
+            self._dispatch_generation += 1
             self._prior_summaries = []
         with self._stats_lock:
             # Roll the previous item's dispatch count into the lifetime
@@ -726,6 +761,31 @@ class ThinkingNarrator:
                 tokens >= _TARGET_CHUNK_TOKENS and elapsed >= _MIN_INTERVAL_S
             )
             time_ceiling = elapsed >= _MAX_INTERVAL_S and tokens > 0
+
+            # Stuck-dispatch recovery: if a dispatch has been "pending"
+            # for longer than _DISPATCH_STUCK_TIMEOUT_S, its thread is
+            # wedged (most likely on a stream read that's not getting
+            # bytes — the in-loop wallclock can't fire if iteration
+            # itself is blocked). Force-clear the flag and bump the
+            # generation so the wedged thread won't clobber the
+            # replacement when it eventually unblocks via the stream
+            # watchdog. Without this recovery, a single wedged dispatch
+            # silently kills the narrator for the rest of the run.
+            if (
+                self._pending_dispatch
+                and self._dispatch_started_at is not None
+                and (now - self._dispatch_started_at) > _DISPATCH_STUCK_TIMEOUT_S
+            ):
+                stuck_for = now - self._dispatch_started_at
+                logger.warning(
+                    "Narrator dispatch wedged for %.0fs — force-clearing "
+                    "pending flag and bumping generation",
+                    stuck_for,
+                )
+                self._pending_dispatch = False
+                self._dispatch_started_at = None
+                self._dispatch_generation += 1
+
             should_dispatch = (
                 (enough_tokens or time_ceiling)
                 and not self._pending_dispatch
@@ -737,13 +797,19 @@ class ThinkingNarrator:
             self._buffer = ""
             self._last_dispatch = now
             self._pending_dispatch = True
+            self._dispatch_started_at = now
+            my_generation = self._dispatch_generation
         with self._stats_lock:
             self._cur_item_dispatches += 1
 
-        t = threading.Thread(target=self._dispatch, args=(chunk,), daemon=True)
+        t = threading.Thread(
+            target=self._dispatch,
+            args=(chunk, my_generation),
+            daemon=True,
+        )
         t.start()
 
-    def _dispatch(self, chunk: str) -> None:
+    def _dispatch(self, chunk: str, my_generation: int) -> None:
         with self._stats_lock:
             self._stat_dispatches_total += 1
         try:
@@ -827,8 +893,21 @@ class ThinkingNarrator:
         except Exception:
             logger.exception("Narrator dispatch failed")
         finally:
+            # Only clear the pending flag if we're STILL the active
+            # dispatch generation. If feed() force-cleared a stuck
+            # dispatch (us) and started a replacement, the replacement
+            # owns the flag now and we must not touch it.
             with self._lock:
-                self._pending_dispatch = False
+                if self._dispatch_generation == my_generation:
+                    self._pending_dispatch = False
+                    self._dispatch_started_at = None
+                else:
+                    logger.info(
+                        "Narrator dispatch (gen %d) finished after being "
+                        "superseded by gen %d — not clearing pending flag",
+                        my_generation,
+                        self._dispatch_generation,
+                    )
 
     @staticmethod
     def _content_words(line: str) -> set[str]:
@@ -1008,7 +1087,36 @@ class ThinkingNarrator:
                                  # bonsai's most common loop unit
         abort_reason: str | None = None
 
-        resp = urllib.request.urlopen(req, timeout=30)
+        # Set the urlopen socket timeout to bound BOTH the initial
+        # response wait AND every subsequent stream read. urllib's
+        # `timeout` parameter installs a socket-level timeout that
+        # applies to all reads on the connection, so if the server
+        # accepts the request, opens the response stream, then stops
+        # sending bytes (server stalled, KV cache write blocked,
+        # model wedged on a sample, OR the bonsai box went down
+        # mid-request and TCP keepalive hasn't fired yet), the next
+        # read raises TimeoutError instead of blocking forever.
+        #
+        # Without this, the in-loop wallclock check below CAN'T fire
+        # because it only runs when the iteration body executes —
+        # which requires bytes to arrive. A single wedged stream
+        # would silently kill the entire narrator: dispatch thread
+        # blocked forever, _pending_dispatch stuck True, no further
+        # dispatches enqueued. Observed in the wild on 2026-04-08
+        # when the bonsai box was brought down mid-run.
+        #
+        # max_seconds + slop is comfortably bigger than the in-loop
+        # wallclock cap, so the in-loop check is still the primary
+        # abort path for the normal "slow but flowing" case (it
+        # produces a clean abort_reason="max_seconds" with the
+        # partial buffer intact). The socket timeout only kicks in
+        # when the iteration is fully blocked, in which case we
+        # don't have a buffer to preserve anyway.
+        resp = urllib.request.urlopen(
+            req,
+            timeout=max_seconds + _STREAM_WATCHDOG_SLOP_S,
+        )
+
         try:
             for raw_line in resp:
                 # wallclock cap
