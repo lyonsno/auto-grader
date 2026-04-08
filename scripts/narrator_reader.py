@@ -646,22 +646,6 @@ class PaintDryDisplay:
         self._shimmer_phases.advance(dt)
         self._last_phase_update_s = now
 
-        # Advance the coupled-oscillator phase state once per frame.
-        # All _apply_shimmer calls in this render pass will read from
-        # the same advanced snapshot.
-        now = time.monotonic()
-        if self._last_phase_update_s is None:
-            dt = 0.0
-        else:
-            dt = now - self._last_phase_update_s
-            # Cap dt at 1s to absorb pauses (terminal hidden, debugger
-            # break, etc.) without injecting a huge transient that
-            # would knock layers off the ideal stack.
-            if dt > 1.0:
-                dt = 1.0
-        self._shimmer_phases.advance(dt)
-        self._last_phase_update_s = now
-
         # Compute the wrap width once — used by both the live panel
         # shimmer and the history panel shimmer.
         wrap_width = self._compute_wrap_width()
