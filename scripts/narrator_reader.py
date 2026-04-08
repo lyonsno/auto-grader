@@ -79,39 +79,40 @@ _SHIMMER_LAYER_OFFSET = -0.04  # negative = wave appears to move downward
 _SHIMMER_FLOOR_RECENCY = 0.15  # 15% recency for floored kinds
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
-# All anchored in a "sunset" warm-rose-amber family — the eye sees a
-# single coherent gradient from gold (live) through orange (headers)
-# to dusty plum (after-action) instead of warm-things-and-also-some-
-# accidentally-cool-things. The cyan cursor stays as the only true
-# cool element, making it read as a deliberate spark.
+# Sumi-e palette: ink-wash bone whites for the body, persimmon (柿色)
+# for the warm headers, indigo (藍色) for the cool [item N/M] marker,
+# celadon (青磁) / vermilion (朱色) / ochre (黄土) for the verdict
+# variants. The whole panel reads like a scroll painting — neutral
+# ink narration, structural strokes in persimmon and indigo, and
+# small splashes of garden color where the grader's verdict lands.
 _BASE_RGB = {
-    "line": (205, 160, 185),     # warm rose mauve — pulled from old
-                                  # cooler mauve (190,165,195) toward red
-    "line_alt": (230, 150, 175), # softer peach-pink — less aggressive
-                                  # than the old (225,140,170) without
-                                  # losing alternation visibility
-    "topic": (170, 115, 145),    # dusty plum — fallback when verdict is
-                                  # unknown / no prediction data
-    "header": (200, 110, 30),    # orange3 — unchanged, the warm anchor
-    "header_index": (105, 140, 195),  # cool steel blue — the [item N/M]
-                                       # marker gets always-on cool accent
-                                       # so the panel has a structural cool
-                                       # note that doesn't compete with the
-                                       # status-encoded topic verdict colors.
-                                       # Bumped slightly bluer (B 175 -> 195)
-                                       # so the cool reads clearly even when
-                                       # the shimmer is sweeping across.
-    "live": (240, 240, 248),     # bright off-white for the live field,
-                                  # very slight cool cast so warm shimmer
-                                  # peak pops against it
-    # Topic verdict variants — chosen so the topic line carries
-    # semantic color (cool sage = matched, warm coral = grader was too
-    # generous, warm amber = grader was too strict). Gives the panel a
-    # splash of cool relief that feels intentional because it encodes
-    # the actual grader-vs-prof agreement at a glance.
-    "topic_match": (110, 165, 125),       # soft sage — cool, confident
-    "topic_overshoot": (240, 145, 85),    # warm coral — too generous
-    "topic_undershoot": (220, 165, 85),   # warm amber — too strict
+    "line": (220, 205, 180),     # warm bone — ink-wash narration on
+                                  # the warmer of the two alternating
+                                  # rows; reads as aged rice paper
+    "line_alt": (200, 200, 195), # cool bone — slightly desaturated
+                                  # cousin so the alternation has real
+                                  # luminance/temperature contrast
+    "topic": (140, 145, 165),    # slate ink wash — fallback when no
+                                  # verdict / unknown grader-vs-prof
+    "header": (200, 90, 45),     # persimmon (柿色) — the lacquer-red
+                                  # warm anchor, replaces the old
+                                  # generic orange3
+    "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
+                                       # marker carries the cool axis
+                                       # of the painting; deeper and
+                                       # more saturated than the old
+                                       # steel blue so it reads as
+                                       # ink, not sky
+    "live": (245, 240, 225),     # rice paper — warm off-white for the
+                                  # live field, the brightest surface
+                                  # in the composition
+    # Topic verdict variants — sumi-e garden colors. Celadon for
+    # the matched topics (the calm, settled green of glazed pottery),
+    # vermilion for grader-overshot (a bold seal-stamp warning),
+    # ochre for grader-undershot (earth tone, slightly muted).
+    "topic_match": (125, 170, 140),       # celadon (青磁) — calm match
+    "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
+    "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
@@ -132,18 +133,17 @@ _SHIMMER_KIND_INTENSITY = {
 # Per-kind override of the shimmer peak color. Lives that aren't here
 # fall through to the global _SHIMMER_PEAK_RGB.
 _SHIMMER_KIND_PEAK_RGB = {
-    "live": (255, 180, 80),   # bright amber for the live shimmer head —
-                              # slightly less red than before, brighter
-                              # at the peak, so the heat-flicker reads
-                              # as warm gold rather than fire-engine
-    # The [item N/M] index marker shimmers from steel blue toward an
-    # icy pale blue, NOT toward the global warm gold peak. This gives
-    # the index marker its own coherent cool gradient that runs in
-    # parallel with the warm gradient on the rest of the header —
-    # both shimmer in unison, but the index stays cool the whole cycle
-    # instead of getting washed out toward gold every time the head
-    # passes over it.
-    "header_index": (200, 230, 255),   # icy pale blue
+    "live": (235, 150, 85),   # persimmon ember — the live shimmer head
+                              # glows the same lacquer-red as the
+                              # headers instead of hot amber, keeping
+                              # the warm axis of the painting unified
+    # The [item N/M] index marker shimmers from indigo toward a pale
+    # rain-blue (the sky behind a wash painting after the storm
+    # clears), NOT toward the global warm peak. This keeps the cool
+    # gradient of the index marker running in parallel with the warm
+    # gradient on the rest of the header — both shimmer in unison,
+    # but the index stays cool the whole cycle.
+    "header_index": (185, 210, 240),   # rain-cleared sky blue
 }
 # Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
 _SHIMMER_FLOORED_KINDS = frozenset({
@@ -170,18 +170,18 @@ _LIVE_PANEL_CONTENT_LINES = 3
 # from the previous values to harmonize with the rest of the sunset
 # palette without losing fire feel.
 _LIVE_UNDULATION_CYCLE_S = 3.5    # full hue cycle period
-_LIVE_HUE_CENTER_DEG = 26          # center pulled toward orange (was 32)
-_LIVE_HUE_RANGE_DEG = 22           # swing → 4°-48°, red-orange to amber
+_LIVE_HUE_CENTER_DEG = 18          # pulled toward persimmon red-orange
+_LIVE_HUE_RANGE_DEG = 18           # tighter swing → 0°-36°, all in the
+                                    # persimmon / vermilion family
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
-_LIVE_BASE_SAT = 0.78              # slightly less saturated (was 0.85)
-                                    # — pastel-er, more harmonious, less neon
-_LIVE_BASE_VAL = 0.94              # slightly brighter base (was 0.92)
-                                    # to compensate for the lower sat
+_LIVE_BASE_SAT = 0.62              # softer, more washed — sumi-e
+                                    # restraint, no neon embers
+_LIVE_BASE_VAL = 0.95              # bright paper base
 # Shimmer peak — what each character's color is interpolated toward
-# at the shimmer head. Warm yellow-orange for a fiery / ember
-# aesthetic. Headers brighten toward gold, lines glow warm-pink,
-# topics briefly flash chartreuse as the sweep passes.
-_SHIMMER_PEAK_RGB = (255, 215, 120)
+# at the shimmer head. Pale moonlit gold (the highlight on a brush
+# stroke as the wash dries), so the wave reads as a quiet brightening
+# of the ink rather than a fire sweep.
+_SHIMMER_PEAK_RGB = (235, 215, 175)
 
 
 def _interp_rgb(
@@ -587,10 +587,11 @@ class PaintDryDisplay:
         return max(20, usable)
 
     def render(self) -> Group:
-        # All chrome uses muted greys. The single accent color is cyan,
-        # reserved for the live cursor and live text. Structural colors
-        # (yellow for item headers, green for topics, red for drops) are
-        # used only on dim/desaturated variants.
+        # Sumi-e palette (see _BASE_RGB block for the full notes).
+        # Borders are dimmed indigo ink so the chrome belongs to the
+        # painting instead of being neutral terminal gray. Headers
+        # carry persimmon, the [item N/M] marker carries indigo, and
+        # verdict topics carry celadon / vermilion / ochre.
 
         # Compute the wrap width once — used by both the live panel
         # shimmer and the history panel shimmer.
@@ -603,7 +604,7 @@ class PaintDryDisplay:
         header_text = Text()
         header_text.append(self.title, style="bold bright_white")
         header_text.append("   ", style="dim")
-        header_text.append(self.subtitle, style="#698cc3")
+        header_text.append(self.subtitle, style="#5a73b4")
         header_text.append("   ", style="dim")
         header_text.append(
             f"emitted={self.stat_emitted}",
@@ -621,7 +622,7 @@ class PaintDryDisplay:
         )
         header = Panel(
             Align.left(header_text),
-            border_style="grey39",
+            border_style="#3d4458",
             padding=(0, 1),
         )
 
@@ -675,7 +676,7 @@ class PaintDryDisplay:
             live_text = Text("▌ ", style="grey39", overflow="fold")
         live_panel = Panel(
             live_text,
-            border_style="grey39",
+            border_style="#3d4458",
             padding=(0, 1),
             title="[grey50]live[/grey50]",
             title_align="left",
@@ -777,7 +778,7 @@ class PaintDryDisplay:
                 m = _TIME_PREFIX_RE.match(text)
                 if m:
                     time_prefix, rest = m.group(1), m.group(2)
-                    history_text.append(time_prefix, style="bold orange3")
+                    history_text.append(time_prefix, style="bold #c8582d")
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
@@ -818,7 +819,7 @@ class PaintDryDisplay:
 
         history_panel = Panel(
             history_text,
-            border_style="grey39",
+            border_style="#3d4458",
             padding=(0, 1),
             title="[grey50]history[/grey50]",
             title_align="left",
@@ -858,9 +859,9 @@ class PaintDryDisplay:
             )
             wrap_panel = Panel(
                 wrap_text,
-                border_style="orange3",
+                border_style="#c8582d",
                 padding=(0, 1),
-                title="[bold orange3]post-game[/bold orange3]",
+                title="[bold #c8582d]post-game[/bold #c8582d]",
                 title_align="left",
             )
         elif self.wrap_up_pending:
@@ -875,7 +876,7 @@ class PaintDryDisplay:
             )
             wrap_panel = Panel(
                 wrap_text,
-                border_style="grey39",
+                border_style="#3d4458",
                 padding=(0, 1),
                 title="[grey50]post-game · pending[/grey50]",
                 title_align="left",
