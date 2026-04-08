@@ -12,9 +12,11 @@ import time
 from pathlib import Path
 
 from contextlib import nullcontext
+from datetime import datetime
 
 from auto_grader.eval_harness import load_ground_truth, score_predictions
-from auto_grader.narrator import BonsaiNarrator
+from auto_grader.narrator_sink import NarratorSink, SinkConfig
+from auto_grader.thinking_narrator import ThinkingNarrator
 from auto_grader.vlm_inference import ServerConfig, grade_all_items
 
 
@@ -46,12 +48,14 @@ def main():
     parser.add_argument("--all", action="store_true",
                         help="Grade all items (overrides --items)")
     parser.add_argument("--narrate", action="store_true",
-                        help="Stream Project Paint Dry bonsai narration to stderr")
-    parser.add_argument("--narrator-window", action="store_true",
-                        help="Spawn a Terminal.app window for the narrator stream")
+                        help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
+    parser.add_argument("--narrate-stderr", action="store_true",
+                        help="Plain-text narrator output to stderr (no Terminal window) — for dev")
     parser.add_argument("--narrator-url", default="http://localhost:8001",
                         help="Bonsai narrator OMLX server URL")
     parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
+    parser.add_argument("--run-dir", default=None,
+                        help="Directory to write narrator.jsonl/.txt logs (default: runs/<ts>-<model>/)")
     args = parser.parse_args()
 
     gt = load_ground_truth(_GROUND_TRUTH)
@@ -68,24 +72,45 @@ def main():
     print(f"Scans: {_SCANS_DIR}")
     print()
 
-    narrator_enabled = args.narrate or args.narrator_window
-    narrator_cm = (
-        BonsaiNarrator(
-            base_url=args.narrator_url,
-            model=args.narrator_model,
-            spawn_terminal=args.narrator_window,
+    narrator_enabled = args.narrate or args.narrate_stderr
+
+    if narrator_enabled:
+        if args.run_dir:
+            run_dir = Path(args.run_dir)
+        else:
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            safe_model = config.model.replace("/", "_")
+            run_dir = (
+                Path(__file__).resolve().parent.parent
+                / "runs" / f"{ts}-{safe_model}"
+            )
+        sink_config = SinkConfig(
+            spawn_terminal=args.narrate,
+            log_dir=run_dir,
+            fallback_stream=sys.stderr,
         )
-        if narrator_enabled
-        else nullcontext()
-    )
+        sink_cm = NarratorSink(sink_config)
+        print(f"Narrator log dir: {run_dir}")
+    else:
+        sink_cm = nullcontext()
 
     t0 = time.time()
-    with narrator_cm as narrator:
+    with sink_cm as sink:
+        narrator = (
+            ThinkingNarrator(
+                sink,
+                base_url=args.narrator_url,
+                model=args.narrator_model,
+            )
+            if narrator_enabled
+            else None
+        )
         predictions = grade_all_items(
             subset, _SCANS_DIR, config,
             template_path=_TEMPLATE,
             progress_callback=_progress,
-            narrator=narrator if narrator_enabled else None,
+            narrator=narrator,
+            sink=sink,
         )
     elapsed = time.time() - t0
 
