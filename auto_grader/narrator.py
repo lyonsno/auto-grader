@@ -1,8 +1,8 @@
 """Project Paint Dry — Bonsai narrator sidecar for the eval harness.
 
 A small fast model rides alongside the grader, narrating each scoring
-event in present-participle prose. Streams to stderr (or any writable
-file) so it doesn't pollute the main eval output on stdout.
+event in sportscaster present-participle prose. Streams to stderr, a
+fifo, or — most fun — its own freshly-spawned Terminal.app window.
 
 The narrator runs in its own thread with a queue. The grading loop drops
 NarratorEvents and keeps going; the narrator pulls and streams to its
@@ -13,12 +13,16 @@ never blocks.
 from __future__ import annotations
 
 import json
+import os
 import queue
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import IO
 
 from auto_grader.eval_harness import EvalItem, Prediction
@@ -35,44 +39,58 @@ class NarratorEvent:
 
 
 _NARRATOR_SYSTEM_PROMPT = """\
-You are narrating a chemistry exam grading process in real time. Each event \
-describes one question that the grader just scored. Your job: respond with \
-ONE short present-participle sentence (under 18 words) describing what just \
-happened, in a lively but factual voice. No preamble, no markdown, no lists.
+You are a SPORTS COMMENTATOR calling a chemistry exam grading match in \
+real time. The contenders: a VLM (the grader) versus the PROFESSOR \
+(ground truth). Each event tells you what the student wrote, what the \
+grader awarded, and what the professor awarded. You know the ground \
+truth — call it like a sportscaster.
+
+Your job: respond with ONE short present-participle sentence (under 22 \
+words) calling the play. Lively, punchy, opinionated. No preamble, no \
+markdown, no lists. Always present participle ("nailing", "whiffing", \
+"dodging", "matching", "overshooting"...).
 
 Examples of the voice:
-- "Reading a balanced equation for phosphorus and chlorine, awarding full marks."
-- "Catching a wrong limiting reagent on fr-5a but giving zero credit per the key."
-- "Disagreeing with the professor on fr-7c — the model thinks 180 degrees, key says 120."
-- "Watching the model give partial credit on a Lewis structure of ozone."
-- "Splitting the difference on fr-10a, awarding 1 point of 3 for partial work."
+- "Nailing the density calc — grader and professor both stamping it 2 out of 2, clean play."
+- "Whiffing on fr-5b — grader giving zero, but the prof rewarded the student's consistent work, ouch."
+- "Going too generous on fr-12b, grader awarding full marks where the prof only gave half — overshooting the rubric."
+- "Disagreeing on fr-7c, grader saying 0 but the prof checked it — possibly a ground-truth glitch."
+- "Splitting the partial credit on fr-10a, grader awarding 1 of 3 where the prof gave 1.5, close but no cigar."
+- "Reading orbital boxes off the page like a champ on fr-11a — full three points, both judges agreeing."
 
-Stay under 18 words. Present participle. Lively. Factual. One sentence only.
+Voice rules: present participle verbs, sportscaster energy, stay under \
+22 words, ONE sentence only, no preamble.
 """
 
 
 def _format_event_for_narrator(event: NarratorEvent) -> str:
     item = event.item
     pred = event.prediction
-    agreement = (
-        "matches"
-        if pred.model_score == item.professor_score
-        else (
-            "is more generous than"
-            if pred.model_score > item.professor_score
-            else "is stricter than"
+    if pred.model_score == item.professor_score:
+        verdict = "GRADER MATCHES PROFESSOR (exact agreement)"
+    elif pred.model_score > item.professor_score:
+        verdict = (
+            f"GRADER OVERSHOOTS by "
+            f"{pred.model_score - item.professor_score} pts (too generous)"
         )
-    )
+    else:
+        verdict = (
+            f"GRADER UNDERSHOOTS by "
+            f"{item.professor_score - pred.model_score} pts (too strict)"
+        )
     return (
-        f"Item {event.item_index}/{event.total_items}: "
-        f"question {item.question_id} ({item.answer_type}, "
-        f"{item.max_points} pts max). "
-        f"Student wrote: \"{item.student_answer}\". "
-        f"Model read: \"{pred.model_read}\". "
-        f"Model awarded {pred.model_score}, professor awarded "
-        f"{item.professor_score}. "
-        f"Model {agreement} the professor. "
-        f"Model reasoning: {pred.model_reasoning[:300]}"
+        f"PLAY {event.item_index} of {event.total_items}\n"
+        f"Question: {item.question_id} ({item.answer_type}, "
+        f"max {item.max_points} pts)\n"
+        f"Student wrote: \"{item.student_answer}\"\n"
+        f"Grader read: \"{pred.model_read}\"\n"
+        f"Grader awarded: {pred.model_score} pts\n"
+        f"Professor awarded: {item.professor_score} pts (GROUND TRUTH)\n"
+        f"Professor's note: \"{item.notes}\"\n"
+        f"Grader's reasoning: {pred.model_reasoning[:250]}\n"
+        f"VERDICT: {verdict}\n"
+        f"Call this play in ONE sentence, present participle, "
+        f"under 22 words."
     )
 
 
@@ -96,18 +114,76 @@ class BonsaiNarrator:
         sink: IO[str] | None = None,
         max_tokens: int = 60,
         max_queue: int = 4,
+        spawn_terminal: bool = False,
     ):
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
-        self.sink = sink if sink is not None else sys.stderr
         self.max_tokens = max_tokens
+        self._spawn_terminal = spawn_terminal
+        self._fifo_path: Path | None = None
+        self._owns_sink = False
+
+        if spawn_terminal:
+            # Open a fresh Terminal.app window tailing a fifo we own.
+            self._fifo_path = self._make_fifo()
+            self._spawn_terminal_window(self._fifo_path)
+            # Open the fifo for writing — blocks until tail -f connects.
+            self.sink = open(self._fifo_path, "w", buffering=1)
+            self._owns_sink = True
+        else:
+            self.sink = sink if sink is not None else sys.stderr
+
         self._queue: queue.Queue[NarratorEvent | None] = queue.Queue(
             maxsize=max_queue
         )
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._dropped = 0
+
+    @staticmethod
+    def _make_fifo() -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="paint-dry-"))
+        fifo = tmp / "narrator.fifo"
+        os.mkfifo(fifo)
+        return fifo
+
+    @staticmethod
+    def _spawn_terminal_window(fifo: Path) -> None:
+        """Open a Terminal.app window that tails the fifo. macOS only."""
+        # AppleScript: open new Terminal window, run a banner + tail -f.
+        # The banner clears the screen and prints the Project Paint Dry header.
+        banner = (
+            "clear; "
+            "printf '\\033[1;35m'; "
+            "echo '=========================================='; "
+            "echo '   PROJECT PAINT DRY -- bonsai narrator'; "
+            "echo '   live grading commentary'; "
+            "echo '=========================================='; "
+            "printf '\\033[0m'; "
+            "echo; "
+            f"tail -f {fifo}"
+        )
+        # Escape double quotes for AppleScript
+        escaped = banner.replace('"', '\\"')
+        script = f'tell application "Terminal" to do script "{escaped}"'
+        try:
+            subprocess.run(
+                ["osascript", "-e", script],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            # Bring Terminal forward
+            subprocess.run(
+                ["osascript", "-e", 'tell application "Terminal" to activate'],
+                check=False,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise RuntimeError(
+                f"Could not spawn Terminal.app window for narrator: {e}"
+            )
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -132,6 +208,17 @@ class BonsaiNarrator:
             pass
         if self._thread is not None:
             self._thread.join(timeout=30)
+        if self._owns_sink:
+            try:
+                self.sink.close()
+            except Exception:
+                pass
+        if self._fifo_path is not None:
+            try:
+                self._fifo_path.unlink(missing_ok=True)
+                self._fifo_path.parent.rmdir()
+            except Exception:
+                pass
 
     # -- public api --------------------------------------------------------
 

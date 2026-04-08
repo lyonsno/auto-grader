@@ -47,6 +47,8 @@ def main():
                         help="Grade all items (overrides --items)")
     parser.add_argument("--narrate", action="store_true",
                         help="Stream Project Paint Dry bonsai narration to stderr")
+    parser.add_argument("--narrator-window", action="store_true",
+                        help="Spawn a Terminal.app window for the narrator stream")
     parser.add_argument("--narrator-url", default="http://localhost:8001",
                         help="Bonsai narrator OMLX server URL")
     parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
@@ -66,12 +68,14 @@ def main():
     print(f"Scans: {_SCANS_DIR}")
     print()
 
+    narrator_enabled = args.narrate or args.narrator_window
     narrator_cm = (
         BonsaiNarrator(
             base_url=args.narrator_url,
             model=args.narrator_model,
+            spawn_terminal=args.narrator_window,
         )
-        if args.narrate
+        if narrator_enabled
         else nullcontext()
     )
 
@@ -81,7 +85,7 @@ def main():
             subset, _SCANS_DIR, config,
             template_path=_TEMPLATE,
             progress_callback=_progress,
-            narrator=narrator if args.narrate else None,
+            narrator=narrator if narrator_enabled else None,
         )
     elapsed = time.time() - t0
 
