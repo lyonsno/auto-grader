@@ -57,25 +57,34 @@ _VISIBLE_HISTORY_LINES = 20  # how many to actually render
 # layer position so older lines pulse dimmer than newer ones.
 _SHIMMER_CYCLE_S = 1.8
 _SHIMMER_WIDTH = 12          # how many characters wide the shimmer trail is
-_SHIMMER_MAX_LAYERS = 6      # apply shimmer to the top N visible lines
-_SHIMMER_LAYER_OFFSET = -0.06  # negative = wave appears to move downward
-                              # through layers (top leads, lower lags)
+_SHIMMER_MAX_LAYERS = 16     # apply full-recency shimmer to the top N lines
+_SHIMMER_LAYER_OFFSET = -0.04  # negative = wave appears to move downward
+                              # through layers (top leads, lower lags).
+                              # Smaller magnitude than before because we
+                              # now span more layers.
+# Headers and topics retain a faint shimmer FLOOR even past _SHIMMER_MAX_LAYERS,
+# so the structural markers and verdict lines never go fully static.
+_SHIMMER_FLOOR_RECENCY = 0.15  # 15% recency for floored kinds
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak)
 _BASE_RGB = {
-    "line": (190, 165, 195),    # soft mauve body — pinkish, distinct
-    "topic": (110, 150, 110),   # dark_sea_green-ish
-    "header": (200, 110, 30),   # orange3-ish
+    "line": (190, 165, 195),     # soft mauve body — pinkish, distinct
+    "line_alt": (210, 160, 175), # alternating warmer pink (more red, less blue)
+    "topic": (110, 150, 110),    # dark_sea_green-ish
+    "header": (200, 110, 30),    # orange3-ish
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
 # lines get toned down so they're present but quiet (pinkish glow,
 # subtle pulse). Topics stay at default.
 _SHIMMER_KIND_INTENSITY = {
-    "line": 0.45,    # quiet pulse on the body
+    "line": 0.45,        # quiet pulse on the body
+    "line_alt": 0.45,    # match line intensity for the alternate color
     "topic": 1.00,
-    "header": 1.40,  # cranked — section markers pop
+    "header": 1.40,      # cranked — section markers pop
 }
+# Kinds that retain a faint shimmer floor past _SHIMMER_MAX_LAYERS
+_SHIMMER_FLOORED_KINDS = frozenset({"header", "topic"})
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Warm yellow-orange for a fiery / ember
 # aesthetic. Headers brighten toward gold, lines glow warm-pink,
@@ -138,17 +147,25 @@ def _apply_shimmer(
     base_rgb = _BASE_RGB.get(kind, _BASE_RGB["line"])
     kind_intensity = _SHIMMER_KIND_INTENSITY.get(kind, 1.0)
 
-    # Recency dimming — top is full, fades to zero at MAX_LAYERS
-    if layer_index >= _SHIMMER_MAX_LAYERS:
+    # Recency dimming — top is full, fades to zero at MAX_LAYERS.
+    # Floored kinds (headers, topics) keep at least _SHIMMER_FLOOR_RECENCY
+    # so structural markers and verdict lines never go fully static.
+    raw_recency = max(0.0, 1.0 - (layer_index / _SHIMMER_MAX_LAYERS))
+    if kind in _SHIMMER_FLOORED_KINDS:
+        raw_recency = max(raw_recency, _SHIMMER_FLOOR_RECENCY)
+    if raw_recency <= 0:
+        # Past the dimming horizon and no floor — render fully static
         text_obj.append(content, style=_rgb_to_hex(base_rgb))
         return text_obj
-
-    layer_recency = (1.0 - (layer_index / _SHIMMER_MAX_LAYERS)) * kind_intensity
+    layer_recency = raw_recency * kind_intensity
 
     # Per-layer phase offset — each layer is shifted relative to the
     # one above by _SHIMMER_LAYER_OFFSET (negative = lags, so the wave
-    # appears to flow downward through the stack)
-    layer_phase_offset = (layer_index * _SHIMMER_LAYER_OFFSET) % 1.0
+    # appears to flow downward through the stack). Cap the layer index
+    # used for phase offset at MAX_LAYERS-1 so deep floored layers all
+    # share a stable phase rather than drifting wildly.
+    phase_layer = min(layer_index, _SHIMMER_MAX_LAYERS - 1)
+    layer_phase_offset = (phase_layer * _SHIMMER_LAYER_OFFSET) % 1.0
 
     now = time.monotonic()
     base_phase = (now % _SHIMMER_CYCLE_S) / _SHIMMER_CYCLE_S
@@ -209,13 +226,29 @@ class PaintDryDisplay:
         self._console = console
         self.title = "PROJECT PAINT DRY"
         self.subtitle = "bonsai narrator · live"
-        self.live_line = ""
-        # History entries are tuples (kind, text):
+
+        # Sticky live: two buffers. streaming_line is the in-progress
+        # bonsai dispatch (the typewriter source). frozen_line is the
+        # most recent committed bonsai line, which keeps showing in the
+        # live panel until the next dispatch starts streaming new
+        # content. Live panel shows streaming if non-empty, else frozen,
+        # else just the cursor glyph.
+        self.streaming_line: str = ""
+        self.frozen_line: str = ""
+
+        # History entries are 3-tuples (kind, text, parity):
         #   kind in {"line", "header", "topic"}
+        #   parity is 0 or 1 for "line" entries (alternation), None for others
         # Drops live in their own deque, rendered in a separate panel
         # below post-game so they don't clutter the narrative thread.
-        self.history: Deque[tuple[str, str]] = deque(maxlen=_MAX_HISTORY_LINES)
+        self.history: Deque[tuple[str, str, int | None]] = deque(maxlen=_MAX_HISTORY_LINES)
         self.drops: Deque[tuple[str, str]] = deque(maxlen=_MAX_HISTORY_LINES)
+
+        # Per-line parity counter for mauve/pink alternation. Toggles
+        # on each accepted "line" commit. Stored permanently per entry
+        # so the alternation is stable as new lines arrive (no flicker).
+        self._line_parity: int = 0
+
         # Running counters
         self.stat_emitted = 0
         self.stat_dropped_dedup = 0
@@ -278,15 +311,21 @@ class PaintDryDisplay:
             padding=(0, 1),
         )
 
-        # Live line — the one place we use a real accent color (cyan).
-        # The cursor glyph is solid cyan, the text is plain bright_white.
-        # overflow="fold" forces rich to wrap long lines at panel width
-        # instead of truncating them. The panel will grow vertically as
-        # needed to fit a long bonsai line.
-        if self.live_line:
+        # Live line — sticky two-buffer model. Show streaming_line if
+        # it's non-empty (active dispatch), otherwise show frozen_line
+        # (the last committed line, waiting for the next dispatch to
+        # start). Cursor glyph is bright cyan when actively streaming,
+        # grey50 when only the frozen line is showing — subtle visual
+        # cue that the field is settled vs. live.
+        displayed_live = self.streaming_line or self.frozen_line
+        is_active = bool(self.streaming_line)
+
+        if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
-            live_text.append("▌ ", style="bright_cyan")
-            live_text.append(self.live_line, style="bright_white")
+            cursor_style = "bright_cyan" if is_active else "grey50"
+            text_style = "bright_white" if is_active else "grey85"
+            live_text.append("▌ ", style=cursor_style)
+            live_text.append(displayed_live, style=text_style)
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
         live_panel = Panel(
@@ -314,7 +353,10 @@ class PaintDryDisplay:
         history_lines = list(self.history)[-_VISIBLE_HISTORY_LINES:]
         history_lines.reverse()
         history_text = Text(no_wrap=False, overflow="fold")
-        for i, (kind, text) in enumerate(history_lines):
+        for i, entry in enumerate(history_lines):
+            kind = entry[0]
+            text = entry[1]
+            parity = entry[2] if len(entry) > 2 else None
             if i > 0:
                 history_text.append("\n")
 
@@ -356,8 +398,13 @@ class PaintDryDisplay:
             else:
                 indent = "    "
                 history_text.append(indent, style="dim")
+                # Pick mauve or warmer pink based on the line's stored
+                # parity. Stored per-entry (not computed from position)
+                # so the alternation is stable as new lines arrive and
+                # old lines fall off the deque.
+                line_kind = "line_alt" if parity == 1 else "line"
                 _apply_shimmer(
-                    history_text, text, "line",
+                    history_text, text, line_kind,
                     layer_index=i,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
@@ -433,47 +480,57 @@ class PaintDryDisplay:
     # -- mutators ----------------------------------------------------------
 
     def on_header(self, text: str) -> None:
-        # Header goes into the history with a distinct style
-        self.history.append(("header", text))
+        # Header goes into the history. Doesn't touch the live buffers
+        # — frozen_line keeps showing the previous committed dispatch
+        # until the next bonsai dispatch starts streaming.
+        self.history.append(("header", text, None))
 
     def on_delta(self, text: str) -> None:
-        self.live_line += text
+        self.streaming_line += text
 
     def on_commit(self) -> None:
-        if self.live_line:
-            self.history.append(("line", self.live_line))
-            self.live_line = ""
+        # Push the just-finished streaming line into history (preserves
+        # chronological order, so any subsequent topic/header lands
+        # AFTER it), then promote it to frozen_line so it keeps showing
+        # in the live panel until the next dispatch starts streaming.
+        if self.streaming_line:
+            self.history.append(
+                ("line", self.streaming_line, self._line_parity)
+            )
+            self._line_parity = 1 - self._line_parity
             self.stat_emitted += 1
+        self.frozen_line = self.streaming_line
+        self.streaming_line = ""
 
     def on_drop(self, reason: str, text: str) -> None:
         # Drops go to their own deque, rendered in a separate panel
         # below post-game. Keeps the history a clean read of what was
         # actually accepted while preserving the debug surface.
+        # rollback_live already cleared the streaming_line.
         label = text[:120] if text else f"<{reason}>"
         self.drops.append((reason, label))
-        self.live_line = ""  # clear any in-flight live content
         if reason == "dedup":
             self.stat_dropped_dedup += 1
         elif reason == "empty":
             self.stat_dropped_empty += 1
 
     def on_rollback_live(self) -> None:
-        """Discard the in-flight live line without committing.
+        """Discard the in-flight streaming line without committing.
 
-        Used when a streaming summary gets dedup-rejected after the fact.
-        The user briefly saw the typewriter, now it clears."""
-        self.live_line = ""
+        Used when a streaming summary gets dedup-rejected. frozen_line
+        is left UNCHANGED — the previous committed line keeps showing
+        in the live panel, so the user sees a clean snap-back to the
+        last accepted line instead of an empty live field."""
+        self.streaming_line = ""
 
     def on_wrap_up(self, text: str) -> None:
         """Final post-game commentary from bonsai."""
         self.wrap_up_text = text
 
     def on_topic(self, text: str) -> None:
-        # Commit any in-flight live line first
-        if self.live_line:
-            self.history.append(("line", self.live_line))
-            self.live_line = ""
-        self.history.append(("topic", text))
+        # Topic (after-action) lands in history. Doesn't touch live
+        # buffers — frozen_line keeps showing the last bonsai line.
+        self.history.append(("topic", text, None))
 
 
 def main() -> int:
