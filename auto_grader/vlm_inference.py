@@ -97,14 +97,33 @@ than withholding it — EXCEPT when the answered-form rule above applies.
 For each question, you must:
 1. Read what the student wrote
 2. Compare it to the correct answer / rubric
-3. Award a score, erring on the side of generosity
+3. **Identify upstream dependencies** — does this question reuse a value, \
+species, or result from an earlier part of the same multi-part question? \
+If yes, name it. If no, say "none".
+4. **If there is an upstream dependency**, ask: is the student's work in \
+THIS part internally consistent with their (possibly wrong) earlier answer? \
+i.e., did they correctly apply the method to their own upstream value, even \
+if that upstream value was wrong? Answer this BEFORE you commit to a score. \
+If the answer is yes, the consistency rule above is binding and you MUST \
+award full credit on the calculation/methodology criteria of this part. \
+The X on the earlier part already captured the upstream error — withholding \
+credit here is double-penalization, which is the most common grader failure \
+mode and the one this schema field exists to prevent.
+5. Award a score, erring on the side of generosity, with the consistency \
+rule binding when it applies.
 
-Respond in EXACTLY this JSON format (no other text):
+Respond in EXACTLY this JSON format (no other text). The
+upstream_dependency and if_dependent_then_consistent fields are
+REQUIRED — the grading process is not complete without them, and they
+must be filled in before model_score:
+
 {
   "model_read": "<what the student wrote, verbatim>",
+  "upstream_dependency": "<earlier part id this depends on, e.g. '5(a)', or 'none'>",
+  "if_dependent_then_consistent": <true | false | null if upstream_dependency is 'none'>,
   "model_score": <numeric score you award>,
   "model_confidence": <0.0 to 1.0, your confidence in the score>,
-  "model_reasoning": "<brief explanation of your grading>"
+  "model_reasoning": "<brief explanation of your grading, including how the upstream dependency was handled>"
 }
 """
 
@@ -308,6 +327,29 @@ def grade_single_item(
 
     parsed = _parse_vlm_response(content)
 
+    # Coerce upstream-dependency fields tolerantly. Older grader models or
+    # gemma-4 may not honor the new schema; default to "none" / null so
+    # downstream code can detect "grader did not declare" vs "grader said
+    # no dependency" by checking for the literal "none" sentinel.
+    raw_dep = parsed.get("upstream_dependency", "none")
+    upstream_dependency = (
+        str(raw_dep).strip() if raw_dep is not None else "none"
+    ) or "none"
+    raw_consistent = parsed.get("if_dependent_then_consistent", None)
+    if isinstance(raw_consistent, bool):
+        if_dependent_then_consistent: bool | None = raw_consistent
+    elif isinstance(raw_consistent, str):
+        # Models sometimes emit "true"/"false"/"null" as strings.
+        s = raw_consistent.strip().lower()
+        if s == "true":
+            if_dependent_then_consistent = True
+        elif s == "false":
+            if_dependent_then_consistent = False
+        else:
+            if_dependent_then_consistent = None
+    else:
+        if_dependent_then_consistent = None
+
     return Prediction(
         exam_id=item.exam_id,
         question_id=item.question_id,
@@ -317,6 +359,8 @@ def grade_single_item(
         model_read=str(parsed.get("model_read", "")),
         raw_assistant=content,
         raw_reasoning=reasoning,
+        upstream_dependency=upstream_dependency,
+        if_dependent_then_consistent=if_dependent_then_consistent,
     )
 
 
@@ -333,9 +377,18 @@ def _consume_streaming_response(
     place where consistency-rule violations are observable.
 
     SIGINT propagates through the iterator naturally — Python checks for
-    signals between chunk reads, so Ctrl-C interrupts within ~one chunk."""
-    content_full = ""
-    reasoning_full = ""
+    signals between chunk reads, so Ctrl-C interrupts within ~one chunk.
+
+    Accumulates content and reasoning into lists and joins at the end
+    rather than `s += chunk` in the loop. CPython has an in-place
+    optimization for the single-reference case that often makes `+=`
+    amortized O(N), but it is not guaranteed and silently degrades to
+    O(N^2) under conditions that are easy to trip (e.g. another
+    reference taken transiently for logging). For 200+ second
+    reasoning streams with thousands of deltas this matters.
+    """
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line.startswith("data:"):
@@ -352,7 +405,7 @@ def _consume_streaming_response(
         # narrator if wired.
         rc_delta = delta.get("reasoning_content", "")
         if rc_delta:
-            reasoning_full += rc_delta
+            reasoning_parts.append(rc_delta)
             if on_reasoning_delta is not None:
                 try:
                     on_reasoning_delta(rc_delta)
@@ -361,8 +414,8 @@ def _consume_streaming_response(
         # Final assistant content — accumulate for parsing
         c_delta = delta.get("content", "")
         if c_delta:
-            content_full += c_delta
-    return content_full, reasoning_full
+            content_parts.append(c_delta)
+    return "".join(content_parts), "".join(reasoning_parts)
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,14 @@ class _PredictionWriter:
         self._run_dir = run_dir
         self._fh = None
         self._count = 0
+        # Failure counter is part of the writer's public surface so
+        # main() can check it after the with-block closes and surface
+        # a loud banner + non-zero exit. Silent stderr noise was rated
+        # material in the predictions-jsonl-persistence anaphora — for
+        # a load-bearing file, persistence failures must reach the
+        # operator, not vanish into the scrollback.
+        self.failures = 0
+        self.last_failure_msg: str | None = None
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,25 +85,39 @@ class _PredictionWriter:
 
     def write_one(self, item: EvalItem, pred: Prediction) -> None:
         if self._fh is None:
+            self._record_failure("writer is closed")
             return
-        record = {
-            "type": "prediction",
-            "exam_id": pred.exam_id,
-            "question_id": pred.question_id,
-            "answer_type": item.answer_type,
-            "max_points": item.max_points,
-            "professor_score": item.professor_score,
-            "professor_mark": item.professor_mark,
-            "student_answer": item.student_answer,
-            "model_score": pred.model_score,
-            "model_confidence": pred.model_confidence,
-            "model_read": pred.model_read,
-            "model_reasoning": pred.model_reasoning,
-            "raw_assistant": pred.raw_assistant,
-            "raw_reasoning": pred.raw_reasoning,
-        }
-        self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-        self._count += 1
+        try:
+            record = {
+                "type": "prediction",
+                "exam_id": pred.exam_id,
+                "question_id": pred.question_id,
+                "answer_type": item.answer_type,
+                "max_points": item.max_points,
+                "professor_score": item.professor_score,
+                "professor_mark": item.professor_mark,
+                "student_answer": item.student_answer,
+                "model_score": pred.model_score,
+                "model_confidence": pred.model_confidence,
+                "model_read": pred.model_read,
+                "model_reasoning": pred.model_reasoning,
+                "upstream_dependency": pred.upstream_dependency,
+                "if_dependent_then_consistent": pred.if_dependent_then_consistent,
+                "raw_assistant": pred.raw_assistant,
+                "raw_reasoning": pred.raw_reasoning,
+            }
+            self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._count += 1
+        except Exception as e:
+            self._record_failure(str(e))
+
+    def _record_failure(self, msg: str) -> None:
+        self.failures += 1
+        self.last_failure_msg = msg
+        print(
+            f"[predictions.jsonl write failed #{self.failures}] {msg}",
+            file=sys.stderr,
+        )
 
     def __exit__(self, exc_type, exc, tb):
         if self._fh is not None:
@@ -261,11 +283,12 @@ def main():
         # Wrap the progress callback so each completed prediction is
         # written to predictions.jsonl as it lands. Crash-safe: an
         # interrupt mid-loop still leaves the partial file usable.
+        # Per-item failures are tracked on the writer (not raised) so
+        # one bad item doesn't kill the whole grading run, but the
+        # final pred_writer.failures count is checked after the
+        # with-block and surfaced as a loud banner + non-zero exit.
         def _on_item(i, total, item, pred):
-            try:
-                pred_writer.write_one(item, pred)
-            except Exception as e:
-                print(f"[predictions.jsonl write failed] {e}", file=sys.stderr)
+            pred_writer.write_one(item, pred)
             _progress(i, total, item, pred)
 
         narrator = (
@@ -382,6 +405,25 @@ def main():
         if narrator_stats['dispatches_total']:
             drop_rate = total_drops / narrator_stats['dispatches_total']
             print(f"  drop rate:            {drop_rate:.1%}")
+
+    # Loud banner + non-zero exit if predictions.jsonl persistence had
+    # any failures. The file is load-bearing for the post-hoc critic;
+    # silent failure was rated material in the predictions-jsonl-
+    # persistence anaphora and would let the critic operate on
+    # incomplete data without anyone noticing.
+    if pred_writer_cm.failures > 0:
+        print(
+            f"\n{'!' * 60}\n"
+            f"PREDICTIONS PERSISTENCE FAILED on {pred_writer_cm.failures} item(s)\n"
+            f"  file:        {pred_writer_cm.path}\n"
+            f"  last error:  {pred_writer_cm.last_failure_msg}\n"
+            f"  written:     {pred_writer_cm._count} of "
+            f"{len(predictions)} predictions\n"
+            f"The downstream critic pass will see incomplete data.\n"
+            f"{'!' * 60}",
+            file=sys.stderr,
+        )
+        return 2
 
     return 130 if interrupted else 0
 
