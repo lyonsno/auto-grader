@@ -37,27 +37,45 @@ CRITICAL: You will be given the question prompt, the student's answer, \
 and the professor's ground-truth score as CONTEXT. Your job is to call \
 the grader's reasoning AS IT RELATES TO THIS SPECIFIC QUESTION. Never \
 mention chemistry that isn't in the actual question. If the question \
-is about density, talk about density — not Lewis structures. If it's a \
-balanced equation, talk about coefficients and species — not orbital \
-hybridization. Stay grounded in the real question.
+is about density, talk about density — not Lewis structures. Stay \
+grounded in the real question.
 
 Rules:
 - One fragment or short sentence. 8-18 words. Never exceed 18 words.
 - Start with a present participle: Reading, Comparing, Catching, \
 Weighing, Spotting, Hesitating, Confirming, Disputing, Splitting, \
 Awarding, Refusing, Squinting, Tracing, Counting, Balancing, Plugging \
-in, Double-checking, Squaring up, etc.
+in, Double-checking, Squaring up, Validating, Testing, Eyeing, etc.
 - Be specific: name the concrete numbers, units, or chemical species \
-from THIS question. Pull real details out of the reasoning excerpt and \
-the question context.
-- Each summary MUST describe something NEW, different from your \
-previous calls. Zoom in on the sub-step, detail, or angle that just \
-appeared in this chunk. What did the grader just notice? What did it \
-just decide?
+from THIS question. Pull real details out of the reasoning excerpt.
 - Say what the GRADER is doing, not "the user" or "the student".
 - Sportscaster voice: lively, opinionated, sometimes salty.
 - No preamble, no commentary, no quotes around your output. \
 Output ONLY the status line.
+
+VARIETY MANDATE: Each summary MUST attack the reasoning from a \
+DIFFERENT ANGLE than your previous summaries. The grader's reasoning \
+on a single question naturally cycles through several distinct \
+dimensions — your job is to ROTATE through them rather than fixate \
+on whichever one bonsai noticed first. Topic axes to rotate through:
+
+  1. HANDWRITING / OCR — what the grader thinks the student wrote, \
+disambiguating smudges, units, digits
+  2. MATH VALIDATION — the actual arithmetic, formula application, \
+unit conversion, sig figs
+  3. RUBRIC APPLICATION — how the grader is mapping the answer to \
+the rubric, partial credit decisions
+  4. COMPARISON TO EXPECTED — the grader checking against the answer \
+key, the expected value, the correct method
+  5. GRADER'S REASONING STYLE — confidence, hedging, going in circles, \
+catching its own mistakes, charity vs strictness
+  6. THE VERDICT FORMING — the moment the grader commits to a score
+
+If you've already covered angle X in a previous call, you MUST move \
+to angle Y. Never call the same angle twice in a row. Watch for the \
+grader cycling — when the grader keeps coming back to the same point, \
+that's a SIGNAL to call out the cycling itself, not to keep narrating \
+the point.
 
 Voice exemplars across different question types:
 
@@ -94,7 +112,22 @@ _MIN_INTERVAL_S = 3.0      # minimum seconds between narrator calls
 _MAX_INTERVAL_S = 8.0      # dispatch even with few tokens after this long
 _MAX_TOKENS = 50           # generation budget for each summary
 _MAX_DISPATCHES_PER_ITEM = 12  # hard cap (loose — dedup is the real limit)
-_SIMILARITY_THRESHOLD = 0.55  # reject lines that overlap > this with prior
+_SIMILARITY_THRESHOLD = 0.70  # reject lines that overlap > this with prior
+
+# Stop words filtered out before computing similarity. Without this, two
+# lines about completely different chemistry topics still register ~50%
+# overlap because they share filler words like "the", "student", "is",
+# etc. The actual content words are what matter for variety detection.
+_SIMILARITY_STOP_WORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by",
+    "for", "from", "has", "have", "in", "is", "it", "its", "of", "on",
+    "or", "that", "the", "this", "to", "was", "were", "will", "with",
+    # Domain stop words — these appear in nearly every narrator line
+    # because they're talking about the same setup over and over
+    "student", "students", "grader", "graders", "professor", "professors",
+    "answer", "answers", "question", "questions", "model", "value",
+    "catching", "spotting", "reading", "noting", "checking", "calling",
+})
 
 
 def _rough_token_count(text: str) -> int:
@@ -519,12 +552,27 @@ class ThinkingNarrator:
                 self._pending_dispatch = False
 
     @staticmethod
+    def _content_words(line: str) -> set[str]:
+        """Tokenize line and strip stop words for content-similarity check."""
+        words = set()
+        for raw in line.lower().split():
+            # Strip punctuation
+            cleaned = "".join(c for c in raw if c.isalnum() or c in "/-")
+            if cleaned and cleaned not in _SIMILARITY_STOP_WORDS:
+                words.add(cleaned)
+        return words
+
+    @staticmethod
     def _lines_too_similar(
         a: str, b: str, threshold: float = _SIMILARITY_THRESHOLD
     ) -> bool:
-        """Return True if two lines share more than threshold of their words."""
-        words_a = set(a.lower().split())
-        words_b = set(b.lower().split())
+        """Return True if two lines share more than threshold of their
+        CONTENT words (after stop-word stripping). The stop-word filter
+        is essential — without it, two lines about completely different
+        chemistry topics still register ~50% overlap because they share
+        filler like 'the', 'student', 'answer', etc."""
+        words_a = ThinkingNarrator._content_words(a)
+        words_b = ThinkingNarrator._content_words(b)
         if not words_a or not words_b:
             return False
         overlap = len(words_a & words_b)

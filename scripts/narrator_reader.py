@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -60,8 +61,11 @@ _BASE_RGB = {
     "header": (200, 110, 30),   # orange3-ish
 }
 # Shimmer peak — what each character's color is interpolated toward
-# at the shimmer head (white-bright, slightly cooled)
-_SHIMMER_PEAK_RGB = (250, 252, 255)
+# at the shimmer head. Warm yellow-orange for a fiery / ember
+# aesthetic instead of the cool near-white that read as Halloween
+# alongside the orange headers and sea-green topics. Headers brighten
+# toward gold, lines glow warm, topics briefly flash chartreuse.
+_SHIMMER_PEAK_RGB = (255, 215, 120)
 
 
 def _interp_rgb(
@@ -154,8 +158,11 @@ class PaintDryDisplay:
         self.subtitle = "bonsai narrator · live"
         self.live_line = ""
         # History entries are tuples (kind, text):
-        #   kind in {"line", "header", "topic", "drop"}
+        #   kind in {"line", "header", "topic"}
+        # Drops live in their own deque, rendered in a separate panel
+        # below post-game so they don't clutter the narrative thread.
         self.history: Deque[tuple[str, str]] = deque(maxlen=_MAX_HISTORY_LINES)
+        self.drops: Deque[tuple[str, str]] = deque(maxlen=_MAX_HISTORY_LINES)
         # Running counters
         self.stat_emitted = 0
         self.stat_dropped_dedup = 0
@@ -236,10 +243,6 @@ class PaintDryDisplay:
             elif kind == "topic":
                 history_text.append("  · ", style="grey50")
                 _apply_shimmer(history_text, text, "topic", layer_index=i)
-            elif kind == "drop":
-                # Drops stay static and dim regardless of layer
-                history_text.append("  ✗ ", style="grey39")
-                history_text.append(text, style="grey39 strike")
             else:
                 history_text.append("    ", style="dim")
                 _apply_shimmer(history_text, text, "line", layer_index=i)
@@ -257,6 +260,31 @@ class PaintDryDisplay:
             title_align="left",
         )
 
+        # Drops panel — below everything else, including post-game.
+        # Pure debug surface; dim and quiet, no shimmer.
+        drops_panel = None
+        if self.drops:
+            drops_text = Text(no_wrap=False, overflow="fold")
+            visible_drops = list(self.drops)[-_VISIBLE_HISTORY_LINES:]
+            for i, (reason, label) in enumerate(visible_drops):
+                if i > 0:
+                    drops_text.append("\n")
+                drops_text.append("  ✗ ", style="grey39")
+                drops_text.append(f"[{reason}] ", style="grey39")
+                drops_text.append(label, style="grey42 strike")
+            drops_panel = Panel(
+                drops_text,
+                border_style="grey30",
+                padding=(0, 1),
+                title=(
+                    f"[grey42]rejected · "
+                    f"dedup={self.stat_dropped_dedup} "
+                    f"empty={self.stat_dropped_empty}[/grey42]"
+                ),
+                title_align="left",
+            )
+
+        wrap_panel = None
         if self.wrap_up_text:
             wrap_text = Text(
                 self.wrap_up_text,
@@ -271,9 +299,14 @@ class PaintDryDisplay:
                 title="[bold orange3]post-game[/bold orange3]",
                 title_align="left",
             )
-            return Group(header, live_panel, history_panel, wrap_panel)
 
-        return Group(header, live_panel, history_panel)
+        # Order: header, live, history, post-game, drops
+        panels = [header, live_panel, history_panel]
+        if wrap_panel is not None:
+            panels.append(wrap_panel)
+        if drops_panel is not None:
+            panels.append(drops_panel)
+        return Group(*panels)
 
     # -- mutators ----------------------------------------------------------
 
@@ -291,9 +324,11 @@ class PaintDryDisplay:
             self.stat_emitted += 1
 
     def on_drop(self, reason: str, text: str) -> None:
-        # Surface drop in history so user sees the narrator working
-        label = text[:80] if text else f"<{reason}>"
-        self.history.append(("drop", f"[{reason}] {label}"))
+        # Drops go to their own deque, rendered in a separate panel
+        # below post-game. Keeps the history a clean read of what was
+        # actually accepted while preserving the debug surface.
+        label = text[:120] if text else f"<{reason}>"
+        self.drops.append((reason, label))
         self.live_line = ""  # clear any in-flight live content
         if reason == "dedup":
             self.stat_dropped_dedup += 1
@@ -337,16 +372,39 @@ def main() -> int:
     fifo = os.fdopen(fd, "r", buffering=1)
 
     try:
-        # auto_refresh=True so the shimmer animates between events.
-        # The PaintDryDisplay implements __rich__ so each refresh tick
-        # re-runs render() and gets a fresh shimmer phase.
+        # auto_refresh=False — we drive the render manually from a
+        # background timer thread. Tried auto_refresh=True with
+        # display.__rich__ but rich's diff layer was treating
+        # shimmer phase changes as no-op (because the underlying
+        # text content was identical between frames, only the
+        # per-character styles changed). Manual update + force
+        # refresh works reliably.
+        animation_stop = threading.Event()
+
         with Live(
-            display,
+            display.render(),
             console=console,
             refresh_per_second=30,
             screen=False,
-            auto_refresh=True,
+            auto_refresh=False,
         ) as live:
+            def _animation_tick():
+                while not animation_stop.is_set():
+                    try:
+                        live.update(display.render(), refresh=True)
+                    except Exception:
+                        # Transient race with the message loop mutating
+                        # display state — next tick will recover.
+                        pass
+                    time.sleep(1.0 / 30)
+
+            anim_thread = threading.Thread(
+                target=_animation_tick,
+                name="paint-dry-animation",
+                daemon=True,
+            )
+            anim_thread.start()
+
             buffer = ""
             while True:
                 chunk = fifo.read(1)
@@ -383,11 +441,12 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
-                        # auto_refresh is already running; one extra
-                        # render tick will pick up the final state.
+                        # Let the animation tick render the final
+                        # state once more, then stop everything so
+                        # input() doesn't fight the timer.
                         time.sleep(0.1)
-                        # Stop the live so input() doesn't fight the
-                        # background refresh thread.
+                        animation_stop.set()
+                        anim_thread.join(timeout=0.5)
                         live.stop()
                         console.print(
                             "\n[dim]session ended — press Enter to close...[/dim]"
@@ -397,9 +456,8 @@ def main() -> int:
                         except (EOFError, KeyboardInterrupt):
                             pass
                         return 0
-
-                    live.update(display.render(), refresh=True)
     finally:
+        animation_stop.set()
         try:
             fifo.close()
         except Exception:
