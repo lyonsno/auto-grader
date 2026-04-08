@@ -182,6 +182,122 @@ def _rough_token_count(text: str) -> int:
     return int(len(text.split()) * 1.3)
 
 
+# Markdown-style reasoning preamble markers. When a thinking-mode model
+# (Qwen, etc.) emits its planning as plain markdown instead of inside
+# `<think>` tags, the response usually starts with one of these and the
+# actual final prose comes much later — or, in the failure case we
+# observed, never comes at all because the model used up its token
+# budget on the planning. We strip everything from the start of the
+# response up to the first marker that signals "now I'm done thinking
+# and here's the actual answer", or, failing that, return whatever the
+# trailing plain-prose paragraphs of the response are.
+_REASONING_PREAMBLE_MARKERS = (
+    "thinking process:",
+    "let me think",
+    "let's think",
+    "let me draft",
+    "drafting:",
+    "planning:",
+    "step 1:",
+    "**analyze",
+    "1.  **analyze",
+)
+_REASONING_FINAL_MARKERS = (
+    "final wrap-up:",
+    "final answer:",
+    "final commentary:",
+    "wrap-up:",
+    "commentary:",
+    "here's the wrap",
+    "here is the wrap",
+    "here's the commentary",
+    "here is the commentary",
+)
+
+
+def _strip_reasoning_preamble(text: str) -> str:
+    """Remove leading reasoning/planning content from a model response.
+
+    Handles three cases:
+
+    1. ``<think>...</think>`` tagged reasoning. Stripped wholesale.
+    2. Plain-markdown reasoning preamble (the failure case observed
+       in the wild on 2026-04-08): the response starts with
+       "Thinking Process:" or a numbered planning list, and the
+       actual prose either comes after a "Final wrap-up:" /
+       "Final commentary:" marker or never appears at all because
+       the model ran out of budget mid-draft. We try to find a final
+       marker; if there's one, return everything after it. If there
+       isn't, fall back to returning the trailing paragraphs of the
+       text that look like plain prose (no leading bullets, no
+       leading numbered items, no leading markdown headers).
+    3. No reasoning preamble at all — return the text unchanged.
+    """
+    if not text:
+        return ""
+
+    # Case 1: <think> tags. Strip first; remaining content is processed
+    # by the markdown logic below in case the model leaks BOTH a
+    # <think> block AND a markdown preamble.
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    if not text:
+        return ""
+
+    lower = text.lower()
+    starts_with_reasoning = any(
+        lower.lstrip().startswith(m) for m in _REASONING_PREAMBLE_MARKERS
+    )
+    if not starts_with_reasoning:
+        return text
+
+    # Case 2a: there's a "Final wrap-up:" / "Final answer:" marker
+    # somewhere in the middle. Return everything after the LAST one
+    # (last because the model may use the phrase multiple times in
+    # its planning before finally producing the actual content).
+    last_marker_pos = -1
+    for marker in _REASONING_FINAL_MARKERS:
+        pos = lower.rfind(marker)
+        if pos > last_marker_pos:
+            last_marker_pos = pos + len(marker)
+    if last_marker_pos > 0:
+        tail = text[last_marker_pos:].strip()
+        # Strip a leading colon, asterisks, quote marks if any
+        tail = re.sub(r"^[\s:\*\"']+", "", tail).strip()
+        if tail:
+            return tail
+
+    # Case 2b: no final marker found. Walk paragraphs from the END
+    # backward; the last paragraph that looks like plain prose (no
+    # leading bullet/number/header markers, not itself a reasoning
+    # preamble) is probably the actual output, if anything is.
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    for p in reversed(paragraphs):
+        first_line = p.split("\n", 1)[0].lstrip()
+        if not first_line:
+            continue
+        first_line_lower = first_line.lower()
+        # Skip markdown bullet / numbered list / header / blockquote
+        if re.match(r"^([-*+]|\d+[.)]|#+|\>)\s", first_line):
+            continue
+        # Skip if the paragraph is itself a reasoning preamble
+        # (ALL-planning failure mode: the entire response is one
+        # giant block that starts with "Thinking Process:" and never
+        # gets to actual prose)
+        if any(first_line_lower.startswith(m) for m in _REASONING_PREAMBLE_MARKERS):
+            continue
+        # Skip if the paragraph is drafting metadata
+        if re.match(
+            r"^(critique|draft|alternative|notes?|outline|plan|step \d+):",
+            first_line_lower,
+        ):
+            continue
+        return p
+    # No plain prose found anywhere — the model spent its entire
+    # budget on planning. Return empty so the caller can decide
+    # whether to skip emitting at all.
+    return ""
+
+
 class ThinkingNarrator:
     """Accumulates reasoning tokens and periodically summarizes them.
 
