@@ -99,6 +99,8 @@ def _apply_shimmer(
     content: str,
     kind: str,
     layer_index: int,
+    indent_width: int = 0,
+    wrap_width: int | None = None,
 ) -> Text:
     """Append content to text_obj with a moving shimmer overlay.
 
@@ -107,6 +109,19 @@ def _apply_shimmer(
     (recency decay) and slightly phase-offset (each layer trails the one
     above by _SHIMMER_LAYER_OFFSET of a cycle, so the wave appears to
     ripple downward through the stack).
+
+    indent_width: how many visual columns are taken by an indent already
+    appended before this content (e.g. "    " is 4). Used to compute
+    correct visual columns for wrap-aware shimmer.
+
+    wrap_width: visual columns at which the panel wraps. When provided,
+    the shimmer head sweeps based on VISUAL COLUMN (char_index modulo
+    wrap_width) rather than absolute character index — this means
+    chars at the same visual column on different visual rows of a
+    wrapped logical line get the SAME shimmer treatment, so the wave
+    appears as a vertical bar sweeping across all rows of a wrapped
+    line in unison instead of scrolling along row 1 and then dropping
+    to row 2. When None, falls back to character-index sweep.
 
     Past _SHIMMER_MAX_LAYERS the line is rendered static at base color.
     """
@@ -132,37 +147,59 @@ def _apply_shimmer(
     base_phase = (now % _SHIMMER_CYCLE_S) / _SHIMMER_CYCLE_S
     phase = (base_phase + layer_phase_offset) % 1.0
 
-    # Head sweeps from -_SHIMMER_WIDTH to len(content), so the trail
-    # enters from the left and exits off the right.
-    head = phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
-
-    for i, ch in enumerate(content):
-        distance = head - i
-        if distance < 0 or distance > _SHIMMER_WIDTH:
-            # Outside the shimmer trail at this moment — base color
-            color_rgb = base_rgb
-            bold_head = False
-        else:
-            # Triangular falloff: head is brightest, far end is base
-            raw_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
-            intensity = raw_intensity * layer_recency
-            color_rgb = _interp_rgb(base_rgb, _SHIMMER_PEAK_RGB, intensity)
-            # Bold the chyron leading character — only on the topmost
-            # layer and only at the very head of the sweep
-            bold_head = (layer_index == 0 and -0.5 <= distance < 1.5)
-
-        style = _rgb_to_hex(color_rgb)
-        if bold_head:
-            style = f"bold {style}"
-        text_obj.append(ch, style=style)
+    if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
+        # Visual-column sweep: head moves across the panel's interior
+        # width and chars at the same visual column on different
+        # visual rows of a wrapped line are in phase with each other.
+        head = phase * (wrap_width + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        for i, ch in enumerate(content):
+            absolute_col = indent_width + i
+            visual_col = absolute_col % wrap_width
+            distance = head - visual_col
+            _append_shimmer_char(
+                text_obj, ch, distance, base_rgb, layer_recency, layer_index
+            )
+    else:
+        # Fallback character-index sweep (when no wrap_width given)
+        head = phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        for i, ch in enumerate(content):
+            distance = head - i
+            _append_shimmer_char(
+                text_obj, ch, distance, base_rgb, layer_recency, layer_index
+            )
 
     return text_obj
+
+
+def _append_shimmer_char(
+    text_obj: Text,
+    ch: str,
+    distance: float,
+    base_rgb: tuple[int, int, int],
+    layer_recency: float,
+    layer_index: int,
+) -> None:
+    """Append one shimmered character with the right style based on
+    its distance from the shimmer head."""
+    if distance < 0 or distance > _SHIMMER_WIDTH:
+        color_rgb = base_rgb
+        bold_head = False
+    else:
+        raw_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+        intensity = raw_intensity * layer_recency
+        color_rgb = _interp_rgb(base_rgb, _SHIMMER_PEAK_RGB, intensity)
+        bold_head = (layer_index == 0 and -0.5 <= distance < 1.5)
+    style = _rgb_to_hex(color_rgb)
+    if bold_head:
+        style = f"bold {style}"
+    text_obj.append(ch, style=style)
 
 
 class PaintDryDisplay:
     """Maintains the live + history state and renders via rich."""
 
-    def __init__(self):
+    def __init__(self, console: Console | None = None):
+        self._console = console
         self.title = "PROJECT PAINT DRY"
         self.subtitle = "bonsai narrator · live"
         self.live_line = ""
@@ -185,6 +222,22 @@ class PaintDryDisplay:
 
     def __rich__(self) -> Group:
         return self.render()
+
+    def _compute_wrap_width(self) -> int | None:
+        """Approximate visual width at which the history panel wraps.
+
+        Panel chrome is borders (2) + padding (2) = 4 columns. The
+        history Text is rendered inside that. Returns None if no
+        console reference is available."""
+        if self._console is None:
+            return None
+        try:
+            term_width = self._console.size.width
+        except Exception:
+            return None
+        # 2 borders + 2 padding cols = 4 chars of chrome
+        usable = term_width - 4
+        return max(20, usable)
 
     def render(self) -> Group:
         # All chrome uses muted greys. The single accent color is cyan,
@@ -243,6 +296,14 @@ class PaintDryDisplay:
         # Each layer is also slightly phase-offset so the sweep ripples
         # downward through the stack rather than all pulsing in lockstep.
         # Drops never shimmer — they're rejected, they should stay quiet.
+        #
+        # Wrap-aware shimmer: when a long line wraps inside the panel
+        # to multiple visual rows, the shimmer is computed by VISUAL
+        # COLUMN (modulo wrap_width) so the wave stays in phase across
+        # the wrap — appears as a vertical bar sweeping all rows of a
+        # wrapped line in unison.
+        wrap_width = self._compute_wrap_width()
+
         history_lines = list(self.history)[-_VISIBLE_HISTORY_LINES:]
         history_lines.reverse()
         history_text = Text(no_wrap=False, overflow="fold")
@@ -251,14 +312,32 @@ class PaintDryDisplay:
                 history_text.append("\n")
 
             if kind == "header":
-                history_text.append("─ ", style="grey39")
-                _apply_shimmer(history_text, text, "header", layer_index=i)
+                indent = "─ "
+                history_text.append(indent, style="grey39")
+                _apply_shimmer(
+                    history_text, text, "header",
+                    layer_index=i,
+                    indent_width=len(indent),
+                    wrap_width=wrap_width,
+                )
             elif kind == "topic":
-                history_text.append("  · ", style="grey50")
-                _apply_shimmer(history_text, text, "topic", layer_index=i)
+                indent = "  · "
+                history_text.append(indent, style="grey50")
+                _apply_shimmer(
+                    history_text, text, "topic",
+                    layer_index=i,
+                    indent_width=len(indent),
+                    wrap_width=wrap_width,
+                )
             else:
-                history_text.append("    ", style="dim")
-                _apply_shimmer(history_text, text, "line", layer_index=i)
+                indent = "    "
+                history_text.append(indent, style="dim")
+                _apply_shimmer(
+                    history_text, text, "line",
+                    layer_index=i,
+                    indent_width=len(indent),
+                    wrap_width=wrap_width,
+                )
 
         if not history_lines:
             history_text = Text(
@@ -384,7 +463,7 @@ def main() -> int:
         return 2
 
     console = Console()
-    display = PaintDryDisplay()
+    display = PaintDryDisplay(console=console)
 
     # Open the fifo for reading. This blocks until the writer connects.
     fd = os.open(str(fifo_path), os.O_RDONLY)

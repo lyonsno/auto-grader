@@ -53,6 +53,27 @@ from THIS question. Pull real details out of the reasoning excerpt.
 - No preamble, no commentary, no quotes around your output. \
 Output ONLY the status line.
 
+CRITICAL — DO NOT CLAIM A FINAL SCORE. You are watching the grader \
+THINK, not deciding what the grader will award. The grader's verdict \
+gets reported separately at the end of the question. Your job is to \
+call what the grader is CONSIDERING, EVALUATING, WEIGHING, EYEING, \
+LEANING TOWARD — not to claim it has DECIDED on a number. NEVER write \
+phrases like "awarding 1 of 3", "giving 2/2", "docking the half-point", \
+"splitting the partial 1/3" etc. — those are verdict claims and they \
+will sometimes be wrong because the grader is still mid-reasoning.
+
+Instead, use uncertainty verbs for in-flight reasoning:
+- "Considering whether the setup is worth partial credit"
+- "Eyeing a possible 1-point deduction for the unit conversion"
+- "Leaning toward full credit on the balanced equation"
+- "Weighing the student's stoichiometry against the rubric"
+- "Hesitating on the partial — the arithmetic looks off"
+
+If the reasoning excerpt clearly shows the grader has FINALIZED a \
+score (e.g. "Final score: 3/3" or "I'll give the full 2 points"), \
+THEN you can report it. But never invent a finalization that isn't \
+explicitly in the excerpt.
+
 VARIETY MANDATE: Each summary MUST attack the reasoning from a \
 DIFFERENT ANGLE than your previous summaries. The grader's reasoning \
 on a single question naturally cycles through several distinct \
