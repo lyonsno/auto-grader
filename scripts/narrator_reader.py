@@ -223,7 +223,15 @@ _LIVE_PANEL_CONTENT_LINES = 3
 # Pulled toward orange (away from yellow) and slightly desaturated
 # from the previous values to harmonize with the rest of the sunset
 # palette without losing fire feel.
-_LIVE_UNDULATION_CYCLE_S = 3.5    # full hue cycle period
+_LIVE_UNDULATION_CYCLE_S = 6.0    # bumped from 3.5 (~1.7x) so the
+                                   # hue undulation cycles slower per
+                                   # unit time. Combined with the
+                                   # per-hue luminance compensation,
+                                   # this attacks the "hard on the
+                                   # eyes" problem from the temporal
+                                   # axis — fewer flicker cycles per
+                                   # second = less perceptual fatigue
+                                   # while reading the live line
 _LIVE_HUE_CENTER_DEG = 18          # pulled toward persimmon red-orange
 _LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
                                     # more travel through the persimmon
