@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -39,6 +40,12 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
+
+
+# Matches the elapsed-time prefix on after-action topic lines:
+#   "47s · Grader: 2/2 (matched). Prof: 2/2. · Even the kid called this."
+# Group 1: the elapsed time ("47s"), group 2: the rest after the bullet.
+_TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 
 
 _MAX_HISTORY_LINES = 60  # cap so we don't grow unbounded
@@ -323,12 +330,29 @@ class PaintDryDisplay:
             elif kind == "topic":
                 indent = "  · "
                 history_text.append(indent, style="grey50")
-                _apply_shimmer(
-                    history_text, text, "topic",
-                    layer_index=i,
-                    indent_width=len(indent),
-                    wrap_width=wrap_width,
-                )
+                # Pull out the elapsed-time prefix and color it as a
+                # punchy warm accent (bold orange3 — same warm as the
+                # post-game border and header base) so it pops out
+                # from the rest of the line.
+                m = _TIME_PREFIX_RE.match(text)
+                if m:
+                    time_prefix, rest = m.group(1), m.group(2)
+                    history_text.append(time_prefix, style="bold orange3")
+                    history_text.append("  ·  ", style="grey50")
+                    extra_indent = len(time_prefix) + len("  ·  ")
+                    _apply_shimmer(
+                        history_text, rest, "topic",
+                        layer_index=i,
+                        indent_width=len(indent) + extra_indent,
+                        wrap_width=wrap_width,
+                    )
+                else:
+                    _apply_shimmer(
+                        history_text, text, "topic",
+                        layer_index=i,
+                        indent_width=len(indent),
+                        wrap_width=wrap_width,
+                    )
             else:
                 indent = "    "
                 history_text.append(indent, style="dim")
