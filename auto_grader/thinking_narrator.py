@@ -326,7 +326,19 @@ class ThinkingNarrator:
         2-4 sentence sportscaster wrap-up with arch tone. Result lands
         in the sink as a wrap_up event so the rich display can show
         it prominently before the user closes the window.
+
+        Signals the sink with start_wrap_up() before the (slow) chat
+        completion call begins, so the reader can show a 'writing
+        post-game commentary...' placeholder immediately and the user
+        knows the script is alive while the grader is generating.
         """
+        # Fire the placeholder BEFORE the slow call so the reader can
+        # show "writing post-game commentary..." while the grader works.
+        try:
+            self._sink.start_wrap_up()
+        except Exception:
+            logger.exception("Failed to signal wrap_up_pending to sink")
+
         try:
             per_type_lines = "\n".join(
                 f"  {atype}: {acc:.0%}"

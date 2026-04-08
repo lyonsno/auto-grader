@@ -467,6 +467,13 @@ class PaintDryDisplay:
         self.stat_dropped_empty = 0
         # End-of-run wrap-up (color commentary)
         self.wrap_up_text: str = ""
+        # When wrap-up generation is in flight (between
+        # start_wrap_up() and the actual wrap_up text arriving),
+        # render() shows a "writing post-game commentary..." placeholder
+        # in the post-game panel so the user knows the script is alive
+        # and working on the wrap-up rather than hung.
+        self.wrap_up_pending: bool = False
+        self.wrap_up_pending_started: float = 0.0
         # When True, render() shows a "press Enter to close" footer.
         # The animation thread keeps running so the shimmer plays on
         # while the user reads.
@@ -856,6 +863,23 @@ class PaintDryDisplay:
                 title="[bold orange3]post-game[/bold orange3]",
                 title_align="left",
             )
+        elif self.wrap_up_pending:
+            # Placeholder while wrap-up generation is in flight.
+            # Live elapsed counter so the user sees the script is alive.
+            elapsed = time.monotonic() - self.wrap_up_pending_started
+            wrap_text = Text(
+                f"writing post-game commentary... ({elapsed:.0f}s)",
+                style="grey50 italic",
+                no_wrap=False,
+                overflow="fold",
+            )
+            wrap_panel = Panel(
+                wrap_text,
+                border_style="grey39",
+                padding=(0, 1),
+                title="[grey50]post-game · pending[/grey50]",
+                title_align="left",
+            )
 
         # Order: header, live, history, post-game, drops, [footer]
         panels = [header, live_panel, history_panel]
@@ -917,9 +941,17 @@ class PaintDryDisplay:
         last accepted line instead of an empty live field."""
         self.streaming_line = ""
 
+    def on_wrap_up_pending(self) -> None:
+        """Wrap-up generation has started — show placeholder until the
+        actual text arrives. Records the timestamp so the placeholder
+        can show elapsed time as a liveness signal."""
+        self.wrap_up_pending = True
+        self.wrap_up_pending_started = time.monotonic()
+
     def on_wrap_up(self, text: str) -> None:
         """Final post-game commentary from bonsai."""
         self.wrap_up_text = text
+        self.wrap_up_pending = False
 
     def on_topic(self, text: str, verdict: str | None = None) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
@@ -1017,6 +1049,8 @@ def main() -> int:
                             msg.get("reason", "unknown"),
                             msg.get("text", ""),
                         )
+                    elif msg_type == "wrap_up_pending":
+                        display.on_wrap_up_pending()
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
