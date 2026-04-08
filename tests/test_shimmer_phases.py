@@ -179,6 +179,29 @@ class ShimmerPhaseStateContract(unittest.TestCase):
             f"30-minute coupled drift was {drift:.3f}, exceeds 0.15",
         )
 
+    def test_drift_bounded_at_production_layer_count(self) -> None:
+        """The narrator reader instantiates ShimmerPhaseState sized to
+        _VISIBLE_HISTORY_LINES (30 as of the current narrator). The
+        Kuramoto bound is governed by K vs period spread, NOT by layer
+        count, so the same drift bound should hold at 30 layers as at
+        6. Pin that explicitly so a future bump to _VISIBLE_HISTORY_LINES
+        can't silently regress the visual contract.
+        """
+        from auto_grader.shimmer_phases import ShimmerPhaseState
+
+        state = ShimmerPhaseState(
+            num_layers=30,
+            base_cycle_s=_BASE_CYCLE_S,
+            layer_offset=_LAYER_OFFSET,
+        )
+        _advance_for(state, _SOAK_FRAMES)
+        drift = _max_offset_deviation(state)
+        self.assertLess(
+            drift,
+            0.15,
+            f"30-layer coupled drift was {drift:.3f}, exceeds 0.15",
+        )
+
     def test_phase_query_is_a_pure_lookup(self) -> None:
         """phase(i) must not advance state — the renderer calls it
         many times per frame (once per rendered line) and frame

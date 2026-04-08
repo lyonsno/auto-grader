@@ -42,6 +42,15 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
+# scripts/ is not on sys.path by default when narrator_reader.py is
+# spawned standalone. Add the repo root so the auto_grader package
+# imports cleanly regardless of how the script is launched.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from auto_grader.shimmer_phases import ShimmerPhaseState  # noqa: E402
+
 
 # Matches the elapsed-time prefix on after-action topic lines:
 #   "47s · Grader: 2/2 (matched). Prof: 2/2. · Even the kid called this."
@@ -120,8 +129,8 @@ _BASE_RGB = {
 # subtle pulse). Topics stay at default. Live gets a subtle amplitude
 # but bright peak color override below.
 _SHIMMER_KIND_INTENSITY = {
-    "line": 0.45,        # quiet pulse on the body
-    "line_alt": 0.45,    # match line intensity for the alternate color
+    "line": 0.75,        # bumped from 0.45 so the coupled-phase orbit
+    "line_alt": 0.75,    # actually reads on regular narrator lines
     "topic": 1.00,
     "topic_match": 1.00,        # match topic intensity for verdict variants
     "topic_overshoot": 1.00,
@@ -237,6 +246,7 @@ def _apply_shimmer(
     indent_width: int = 0,
     wrap_width: int | None = None,
     cycle_s: float | None = None,
+    phase_override: float | None = None,
 ) -> Text:
     """Append content to text_obj with a moving shimmer overlay.
 
@@ -245,6 +255,13 @@ def _apply_shimmer(
     (recency decay) and slightly phase-offset (each layer trails the one
     above by _SHIMMER_LAYER_OFFSET of a cycle, so the wave appears to
     ripple downward through the stack).
+
+    phase_override: when supplied, use this phase directly instead of
+    computing one from time.monotonic() and the per-layer offset. The
+    coupled-oscillator phase state (ShimmerPhaseState) provides this
+    so the layers can have weakly-coupled drifting periods that orbit
+    the ideal stack instead of marching in lockstep. The override is
+    expected to already account for the per-layer offset.
 
     indent_width: how many visual columns are taken by an indent already
     appended before this content (e.g. "    " is 4). Used to compute
@@ -280,18 +297,24 @@ def _apply_shimmer(
         return text_obj
     layer_recency = raw_recency * kind_intensity
 
-    # Per-layer phase offset — each layer is shifted relative to the
-    # one above by _SHIMMER_LAYER_OFFSET (negative = lags, so the wave
-    # appears to flow downward through the stack). Cap the layer index
-    # used for phase offset at MAX_LAYERS-1 so deep floored layers all
-    # share a stable phase rather than drifting wildly.
-    phase_layer = min(layer_index, _SHIMMER_MAX_LAYERS - 1)
-    layer_phase_offset = (phase_layer * _SHIMMER_LAYER_OFFSET) % 1.0
+    if phase_override is not None:
+        # Coupled-oscillator state already accounts for the per-layer
+        # offset (and for per-layer period perturbations). Use the
+        # provided phase verbatim.
+        phase = phase_override % 1.0
+    else:
+        # Per-layer phase offset — each layer is shifted relative to
+        # the one above by _SHIMMER_LAYER_OFFSET (negative = lags, so
+        # the wave appears to flow downward through the stack). Cap
+        # the layer index at MAX_LAYERS-1 so deep floored layers all
+        # share a stable phase rather than drifting wildly.
+        phase_layer = min(layer_index, _SHIMMER_MAX_LAYERS - 1)
+        layer_phase_offset = (phase_layer * _SHIMMER_LAYER_OFFSET) % 1.0
 
-    cycle = cycle_s if cycle_s is not None else _SHIMMER_DEFAULT_CYCLE_S
-    now = time.monotonic()
-    base_phase = (now % cycle) / cycle
-    phase = (base_phase + layer_phase_offset) % 1.0
+        cycle = cycle_s if cycle_s is not None else _SHIMMER_DEFAULT_CYCLE_S
+        now = time.monotonic()
+        base_phase = (now % cycle) / cycle
+        phase = (base_phase + layer_phase_offset) % 1.0
 
     if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
         # Visual-column sweep: head moves across the panel's interior
@@ -461,6 +484,20 @@ class PaintDryDisplay:
         # so the alternation is stable as new lines arrive (no flicker).
         self._line_parity: int = 0
 
+        # Coupled-oscillator phase state for the default-cycle history
+        # layers. Each visible layer slot has its own slightly
+        # perturbed period; weak Kuramoto coupling keeps the inter-
+        # layer offsets bounded so the stack visibly orbits the ideal
+        # configuration without smearing into noise. Advanced once
+        # per render() call. The most-recently-committed entry uses
+        # the legacy fast cycle and bypasses this state.
+        self._shimmer_phases = ShimmerPhaseState(
+            num_layers=_VISIBLE_HISTORY_LINES,
+            base_cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+            layer_offset=_SHIMMER_LAYER_OFFSET,
+        )
+        self._last_phase_update_s: float | None = None
+
         # Running counters
         self.stat_emitted = 0
         self.stat_dropped_dedup = 0
@@ -593,6 +630,22 @@ class PaintDryDisplay:
         # carry persimmon, the [item N/M] marker carries indigo, and
         # verdict topics carry celadon / vermilion / ochre.
 
+        # Advance the coupled-oscillator phase state once per frame.
+        # All _apply_shimmer calls in this render pass will read from
+        # the same advanced snapshot.
+        now = time.monotonic()
+        if self._last_phase_update_s is None:
+            dt = 0.0
+        else:
+            dt = now - self._last_phase_update_s
+            # Cap dt at 1s to absorb pauses (terminal hidden, debugger
+            # break, etc.) without injecting a huge transient that
+            # would knock layers off the ideal stack.
+            if dt > 1.0:
+                dt = 1.0
+        self._shimmer_phases.advance(dt)
+        self._last_phase_update_s = now
+
         # Compute the wrap width once — used by both the live panel
         # shimmer and the history panel shimmer.
         wrap_width = self._compute_wrap_width()
@@ -720,6 +773,15 @@ class PaintDryDisplay:
                 else _SHIMMER_DEFAULT_CYCLE_S
             )
 
+            # Coupled phase state is for the default-cycle stack only.
+            # The most-recent entry uses the legacy fast-cycle phase
+            # (computed inside _apply_shimmer from time.monotonic()).
+            phase_override = (
+                None
+                if is_most_recent
+                else self._shimmer_phases.phase(i)
+            )
+
             if kind == "header":
                 indent = "─ "
                 history_text.append(indent, style="grey39")
@@ -728,7 +790,8 @@ class PaintDryDisplay:
                 # blue (always-on cool accent) while the rest stays in
                 # warm orange3. Both halves get the same shimmer
                 # rhythm — same layer_index, same cycle, same head
-                # position via correct indent_width — so they pulse
+                # position via correct indent_width, AND the same
+                # coupled-oscillator phase override — so they pulse
                 # together but pulse FROM different base colors.
                 m = _HEADER_INDEX_RE.match(text)
                 if m:
@@ -740,6 +803,7 @@ class PaintDryDisplay:
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
+                        phase_override=phase_override,
                     )
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
@@ -748,6 +812,7 @@ class PaintDryDisplay:
                         indent_width=len(indent) + len(index_part) + 1,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
+                        phase_override=phase_override,
                     )
                 else:
                     _apply_shimmer(
@@ -756,6 +821,7 @@ class PaintDryDisplay:
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
+                        phase_override=phase_override,
                     )
             elif kind == "topic":
                 indent = "  · "
@@ -787,6 +853,7 @@ class PaintDryDisplay:
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
+                        phase_override=phase_override,
                     )
                 else:
                     _apply_shimmer(
@@ -795,6 +862,7 @@ class PaintDryDisplay:
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
+                        phase_override=phase_override,
                     )
             else:
                 indent = "    "
@@ -810,6 +878,7 @@ class PaintDryDisplay:
                     indent_width=len(indent),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
+                    phase_override=phase_override,
                 )
 
         if not display_entries:
