@@ -239,25 +239,20 @@ _TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 # Pulled toward orange (away from yellow) and slightly desaturated
 # from the previous values to harmonize with the rest of the sunset
 # palette without losing fire feel.
-_LIVE_UNDULATION_CYCLE_S = 3.8    # sped back up into the lively zone:
-                                   # still readable, but now clearly
-                                   # moving rather than glacial
-_LIVE_HUE_CENTER_DEG = 18          # pulled toward persimmon red-orange
-_LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
-                                    # more travel through the persimmon
-                                    # / vermilion family so the per-char
-                                    # undulation is actually visible
+_LIVE_UNDULATION_CYCLE_S = 3.8    # lively enough to read as motion, but
+                                   # still slower than token streaming
+_LIVE_HUE_CENTER_DEG = 176         # cool blue-moss center — split the
+                                   # difference between the structural blue
+                                   # family and the mossy narrator rows
+_LIVE_HUE_RANGE_DEG = 28           # lets the band travel from moss-green
+                                    # through blue-steel into indigo wash
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
 _LIVE_PHASE_OFFSET_RAD = 0.0
 _LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
                                     # shimmer sweep, so the top band feels
                                     # like its own counter-current
-_LIVE_BASE_SAT = 0.72              # tempered from the hotter pass so the
-                                    # live line stays warm/current without
-                                    # overpowering the rest of the panel
-_LIVE_BASE_VAL = 0.92              # slightly dimmer than the glare-prone
-                                    # earlier pass; still bright enough to
-                                    # read clearly against the dark field
+_LIVE_BASE_SAT = 0.28              # soft wash rather than hot flame
+_LIVE_BASE_VAL = 0.88              # bright enough to read, but not a neon band
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
 # brightness (BT.709 luminance weights yellow ~4× higher than red),
@@ -272,7 +267,7 @@ _LIVE_BASE_VAL = 0.92              # slightly dimmer than the glare-prone
 # 1.0 = fully flat perceived luminance. We use 0.65 — enough to
 # kill the "darker red, lighter yellow" harshness without flattening
 # the hue motion into a static orange band.
-_LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
+_LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.45
 _STATUS_UNDULATION_CYCLE_S = 5.2   # still slower than live, but materially
                                     # faster than the prior sleepy pass
 _STATUS_HUE_CENTER_DEG = 22         # shifted away from hot red toward
@@ -373,7 +368,7 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     idle and active motion feel consistent. Only boundary moments that would
     feel laggy at 12 FPS get an immediate forced refresh.
     """
-    return msg_type in {"wrap_up", "end"}
+    return msg_type in {"session_meta", "wrap_up", "end"}
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -524,7 +519,7 @@ def _undulation_hue_deg(
     phase_offset_rad: float = 0.0,
     direction: float = 1.0,
 ) -> float:
-    """Return the per-character warm-band hue at a given time and position."""
+    """Return the per-character band hue at a given time and position."""
     phase = (
         -direction * now_s * (2 * math.pi / cycle_s)
         + phase_offset_rad
@@ -559,7 +554,7 @@ def _render_warm_undulating(
     shimmer_s_drop: float = 0.40,
     bold_active_head: bool = False,
 ) -> Text:
-    """Render a warm per-character undulation with an optional shimmer crest."""
+    """Render a per-character undulating band with an optional shimmer crest."""
     if not content:
         return text_obj
 
@@ -760,6 +755,8 @@ class PaintDryDisplay:
         self._console = console
         self.title = "PROJECT PAINT DRY · sumi-e"
         self.subtitle = "bonsai narrator · live"
+        self.current_model: str = ""
+        self.current_item_bug: str = ""
 
         # Sticky live: the thought lane has a streaming buffer plus a
         # frozen committed line. The status rail has its own separate
@@ -1032,6 +1029,22 @@ class PaintDryDisplay:
             border_style="#3d4458",
             padding=(0, 1),
         )
+
+        scorebug_panel = None
+        if self.current_model or self.current_item_bug:
+            scorebug_text = Text()
+            scorebug_text.append("CURRENT MODEL ", style="bold #7f95cf")
+            model_display = self.current_model or "—"
+            scorebug_text.append(model_display, style="bold #b9c9ef")
+            if self.current_item_bug:
+                scorebug_text.append("   ", style="dim")
+                scorebug_text.append("ITEM ", style="bold #7f95cf")
+                scorebug_text.append(self.current_item_bug, style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}")
+            scorebug_panel = Panel(
+                Align.left(scorebug_text),
+                border_style="#3d4458",
+                padding=(0, 1),
+            )
 
         # Top panel — cool sticky status rail above the warmer live line.
         # Status is persistent and structural, so it gets the calmer
@@ -1337,7 +1350,10 @@ class PaintDryDisplay:
             )
 
         # Order: header, live, history, post-game, drops, [footer]
-        panels = [header, live_panel, history_panel]
+        panels = [header]
+        if scorebug_panel is not None:
+            panels.append(scorebug_panel)
+        panels.extend([live_panel, history_panel])
         if wrap_panel is not None:
             panels.append(wrap_panel)
         if drops_panel is not None:
@@ -1362,7 +1378,14 @@ class PaintDryDisplay:
         self._turn_started_at = header_now
         self.status_line = ""
         self.status_streaming_line = ""
+        m = _HEADER_INDEX_RE.match(text)
+        if m:
+            self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
         self.history.append(("header", text, None))
+
+    def on_session_meta(self, *, model: str | None = None) -> None:
+        if model:
+            self.current_model = model
 
     def on_delta(self, text: str, mode: str = "thought") -> None:
         if mode == "status":
@@ -1512,6 +1535,8 @@ def main() -> int:
                     msg_type = msg.get("type")
                     if msg_type == "header":
                         display.on_header(msg.get("text", ""))
+                    elif msg_type == "session_meta":
+                        display.on_session_meta(model=msg.get("model"))
                     elif msg_type == "delta":
                         display.on_delta(
                             msg.get("text", ""),

@@ -189,12 +189,13 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
-    def test_top_panel_uses_warm_status_gutter_with_umber_status_and_warm_live_text(self):
+    def test_top_panel_uses_warm_status_gutter_with_umber_status_and_cool_live_text(self):
         display = self._make_display()
         display.status_line = "Tracing the stoichiometry setup."
         display.frozen_line = "I'm tracing the stoichiometry."
 
-        group = display.render()
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            group = display.render()
         live_panel = group.renderables[1]
         status_text, live_text = live_panel.renderable.renderables
 
@@ -228,10 +229,31 @@ class NarratorReaderContract(unittest.TestCase):
             "sticky status text should shed some of the bright-red spike and keep more umber heft",
         )
         self.assertGreater(
-            live_red,
             live_blue,
-            "live first-person line should stay on the warm ember side, not cool blue",
+            live_red,
+            "live first-person line should now shift into the cooler structural family",
         )
+        self.assertGreater(
+            live_green,
+            live_red,
+            "live first-person line should pick up some moss/green body instead of fiery red",
+        )
+
+    def test_render_inserts_scorebug_strip_between_header_and_status_when_model_known(self):
+        display = self._make_display()
+        display.current_model = "qwen3p5-35B-A3B"
+        display.on_header("[item 3/6] 15-blue/fr-5b")
+
+        group = display.render()
+
+        scorebug_panel = group.renderables[1]
+        live_panel = group.renderables[2]
+        scorebug_text = _extract_plain(scorebug_panel.renderable)
+
+        self.assertIn("CURRENT MODEL", scorebug_text)
+        self.assertIn("qwen3p5-35B-A3B", scorebug_text)
+        self.assertIn("ITEM 3/6", scorebug_text)
+        self.assertIn("status + live", live_panel.title)
 
     def test_live_undulation_drifts_leftward(self):
         dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)

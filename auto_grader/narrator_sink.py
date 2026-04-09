@@ -40,6 +40,7 @@ class SinkConfig:
     spawn_terminal: bool = False
     log_dir: Path | None = None  # if set, JSONL + .txt are written here
     fallback_stream: IO[str] | None = None  # used when no terminal
+    session_meta: dict | None = None  # one-shot session metadata for the reader
 
 
 class NarratorSink:
@@ -101,6 +102,9 @@ class NarratorSink:
             # Open the fifo for writing — blocks until reader connects.
             # Use line buffering so messages flush on \n.
             self._fifo_writer = open(self._fifo_path, "w", buffering=1)
+
+        if self.config.session_meta:
+            self._emit({"type": "session_meta", **self.config.session_meta})
 
     def close(self) -> None:
         if not self._started:

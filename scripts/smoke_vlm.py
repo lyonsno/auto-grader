@@ -291,6 +291,7 @@ def main():
             spawn_terminal=args.narrate,
             log_dir=run_dir,
             fallback_stream=sys.stderr,
+            session_meta={"model": config.model},
         )
         sink_cm = NarratorSink(sink_config)
     else:

@@ -83,6 +83,26 @@ class TestWezTermResolution(unittest.TestCase):
         delta = next(event for event in events if event["type"] == "delta")
         self.assertEqual(delta["mode"], "status")
 
+    def test_start_can_emit_session_meta_for_model_scorebug(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(
+                    log_dir=Path(tmpdir),
+                    fallback_stream=io.StringIO(),
+                    session_meta={"model": "qwen3p5-35B-A3B"},
+                )
+            )
+            sink.start()
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        meta = next(event for event in events if event["type"] == "session_meta")
+        self.assertEqual(meta["model"], "qwen3p5-35B-A3B")
+
 
 if __name__ == "__main__":
     unittest.main()
