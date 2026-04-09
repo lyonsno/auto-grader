@@ -127,7 +127,7 @@ _BASE_RGB = {
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
-    "status": (108, 72, 42),     # dark coal-ember umber — persistent status
+    "status": (96, 64, 38),      # dark coal-ember umber — persistent status
                                   # rail, pushed a step deeper so it feels
                                   # less rosy and more like banked heat
                                   # under ash
@@ -196,7 +196,7 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-fired earth
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "status": (214, 126, 74),           # ember-lit umber crest for the
+    "status": (188, 118, 68),           # ember-lit umber crest for the
                                         # sticky status rail — brighter
                                         # orange note without losing the
                                         # darker coal base
@@ -275,15 +275,16 @@ _LIVE_BASE_VAL = 0.92              # slightly dimmer than the glare-prone
 _LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
 _STATUS_UNDULATION_CYCLE_S = 5.2   # still slower than live, but materially
                                     # faster than the prior sleepy pass
-_STATUS_HUE_CENTER_DEG = 12         # darker ember-red center
-_STATUS_HUE_RANGE_DEG = 14          # enough visible orange travel to feel
-                                    # alive without pushing into yellow
+_STATUS_HUE_CENTER_DEG = 22         # shifted away from hot red toward
+                                    # dark ember-orange / umber
+_STATUS_HUE_RANGE_DEG = 8           # narrower swing so the status rail
+                                    # keeps its heavier umber weight
 _STATUS_PER_CHAR_PHASE_OFFSET = 0.14
 _STATUS_PHASE_OFFSET_RAD = 0.85     # keep status related to live, but out of
                                     # lockstep so they do not breathe as one
-_STATUS_UNDULATION_DIRECTION = -1.0
-_STATUS_BASE_SAT = 0.76
-_STATUS_BASE_VAL = 0.68
+_STATUS_UNDULATION_DIRECTION = 1.0
+_STATUS_BASE_SAT = 0.66
+_STATUS_BASE_VAL = 0.62
 _STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
@@ -1083,7 +1084,13 @@ class PaintDryDisplay:
         status_text = Text(no_wrap=False, overflow="fold")
         displayed_status = self.status_streaming_line or self.status_line
         if displayed_status:
-            status_text.append("▌ ", style="#6f87c7")
+            displayed_status = displayed_status.upper()
+            status_gutter_rgb = _interp_rgb(
+                _BASE_RGB["status"],
+                _SHIMMER_KIND_PEAK_RGB["status"],
+                0.28,
+            )
+            status_text.append("▌ ", style=_rgb_to_hex(status_gutter_rgb))
             _render_status_undulating(
                 status_text,
                 displayed_status,
