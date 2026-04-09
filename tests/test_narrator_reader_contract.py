@@ -10,6 +10,7 @@ from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _VISIBLE_HISTORY_ROWS,
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
     _LIVE_PER_CHAR_PHASE_OFFSET,
@@ -151,6 +152,13 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("RECHECKING THE STOICHIOMETRY SETUP.", panel_text)
         self.assertNotIn("Rechecking the stoichiometry setup.", panel_text)
 
+    def test_history_visual_row_budget_is_reduced_for_scorebug_strip(self):
+        self.assertEqual(
+            _VISIBLE_HISTORY_ROWS,
+            22,
+            "history budget should be trimmed to roughly three-quarters now that the scorebug consumes vertical real estate",
+        )
+
     def test_group_depth_resets_at_each_header(self):
         display = self._make_display()
         display.history.append(("header", "[item 2/6] second", None))
@@ -206,6 +214,26 @@ class NarratorReaderContract(unittest.TestCase):
                 ("line", "newer line"),
                 ("line", "older line"),
             ],
+        )
+
+    def test_wrapped_history_lines_consume_visual_row_budget(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "brief topic", "match"))
+        display.history.append(("line", "x" * 420, 0))
+        display.history.append(("line", "newest short line", 1))
+
+        entries = display._build_display_entries(wrap_width=20)
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("topic", "brief topic"),
+                ("line", "newest short line"),
+            ],
+            "a heavily wrapped older line should consume the visual-row budget and drop before pushing out newer visible context",
         )
 
     def test_top_panel_uses_warm_status_gutter_with_umber_status_and_cool_live_text(self):

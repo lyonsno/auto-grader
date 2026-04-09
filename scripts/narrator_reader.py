@@ -67,7 +67,10 @@ _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
 
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
-_VISIBLE_HISTORY_LINES = 30  # how many to actually render
+_VISIBLE_HISTORY_ROWS = 22  # visible history budget in WRAPPED visual rows,
+                            # not logical entries. Trimmed to roughly
+                            # three-quarters now that the scorebug strip
+                            # consumes extra vertical space.
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
@@ -796,7 +799,7 @@ class PaintDryDisplay:
         # per render() call. The most-recently-committed entry uses
         # the legacy fast cycle and bypasses this state.
         self._shimmer_phases = ShimmerPhaseState(
-            num_layers=_VISIBLE_HISTORY_LINES,
+            num_layers=_VISIBLE_HISTORY_ROWS,
             base_cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
             layer_offset=_SHIMMER_LAYER_OFFSET,
         )
@@ -837,7 +840,28 @@ class PaintDryDisplay:
         _ = now
         return not self.session_ended
 
-    def _build_display_entries(self) -> list[tuple[tuple, bool, int]]:
+    @staticmethod
+    def _entry_visual_rows(entry: tuple, wrap_width: int | None) -> int:
+        """Estimate how many visual rows an entry will consume when wrapped."""
+        if wrap_width is None or wrap_width <= 0:
+            return 1
+
+        kind = entry[0]
+        text = entry[1]
+        if kind == "header":
+            prefix_width = len("─ ")
+        elif kind == "topic":
+            prefix_width = len("  · ")
+        else:
+            prefix_width = len("    ")
+
+        visual_cols = max(1, prefix_width + len(text))
+        return max(1, math.ceil(visual_cols / wrap_width))
+
+    def _build_display_entries(
+        self,
+        wrap_width: int | None = None,
+    ) -> list[tuple[tuple, bool, int]]:
         """Group history into items, reverse so newest item is first,
         and within each group keep entries in chronological order so
         the header sits ABOVE its narrator lines and topic.
@@ -899,8 +923,9 @@ class PaintDryDisplay:
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget
         #   2. Narrator lines — keep newest-first to fill what's left
-        budget = _VISIBLE_HISTORY_LINES
+        budget = _VISIBLE_HISTORY_ROWS
         keep_positions: set[int] = set()
+        used_rows = 0
 
         # Pass 1: essentials in display order (newest items first since
         # we already reversed groups). If we'd overflow, oldest items'
@@ -908,9 +933,13 @@ class PaintDryDisplay:
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
             if entry[0] in ("header", "topic"):
-                if len(keep_positions) >= budget:
+                row_cost = self._entry_visual_rows(entry, wrap_width)
+                if used_rows >= budget:
+                    break
+                if used_rows > 0 and used_rows + row_cost > budget:
                     break
                 keep_positions.add(pos)
+                used_rows += row_cost
 
         # Pass 2: narrator lines, sorted by RECENCY (highest deque idx
         # first), to fill the remaining budget. This drops oldest
@@ -924,9 +953,13 @@ class PaintDryDisplay:
         optionals.sort(key=lambda t: -t[2])  # newest first
 
         for pos, _entry, _idx in optionals:
-            if len(keep_positions) >= budget:
+            row_cost = self._entry_visual_rows(_entry, wrap_width)
+            if used_rows >= budget:
                 break
+            if used_rows > 0 and used_rows + row_cost > budget:
+                continue
             keep_positions.add(pos)
+            used_rows += row_cost
 
         # Build the final list in original (top-to-bottom) display order
         display: list[tuple[tuple, bool, int]] = []
@@ -1144,7 +1177,7 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._build_display_entries()
+        display_entries = self._build_display_entries(wrap_width=wrap_width)
         history_text = Text(no_wrap=False, overflow="fold")
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
@@ -1302,7 +1335,7 @@ class PaintDryDisplay:
         drops_panel = None
         if self.drops:
             drops_text = Text(no_wrap=False, overflow="fold")
-            visible_drops = list(self.drops)[-_VISIBLE_HISTORY_LINES:]
+            visible_drops = list(self.drops)[-_VISIBLE_HISTORY_ROWS:]
             for i, (reason, label) in enumerate(visible_drops):
                 if i > 0:
                     drops_text.append("\n")
