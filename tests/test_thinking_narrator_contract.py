@@ -112,7 +112,13 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
 
         self.assertEqual(sink.commits, [])
-        self.assertEqual(sink.drops, [("dedup", "I'm tracing the same unit conversion mistake.")])
+        self.assertEqual(
+            sink.drops,
+            [
+                ("dedup", "I'm tracing the same unit conversion mistake."),
+                ("dedup-status", "Rechecking the same unit conversion."),
+            ],
+        )
         self.assertEqual(sink.deltas, [])
         self.assertEqual(narrator._dedupe_backoff_s, narrator._DEDUP_BACKOFF_INITIAL_S * 2)
         self.assertGreater(narrator._dedupe_backoff_until, 0.0)

@@ -1219,7 +1219,7 @@ class PaintDryDisplay:
         # rollback_live already cleared the streaming_line.
         label = text[:120] if text else f"<{reason}>"
         self.drops.append((reason, label))
-        if reason == "dedup":
+        if reason.startswith("dedup"):
             self.stat_dropped_dedup += 1
         elif reason == "empty":
             self.stat_dropped_empty += 1

@@ -126,6 +126,13 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(display.status_line, "")
 
+    def test_status_retry_dedup_counts_toward_dedup_stats(self):
+        display = PaintDryDisplay()
+
+        display.on_drop("dedup-status", "Rechecking the same unit conversion.")
+
+        self.assertEqual(display.stat_dropped_dedup, 1)
+
     def test_lower_history_tiers_render_dimmer_than_top_tier(self) -> None:
         top_text = Text()
         _apply_shimmer(top_text, "ABC", "line", 0, phase_override=0.0)

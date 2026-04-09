@@ -529,7 +529,7 @@ class ThinkingNarrator:
         self,
         chunk: str,
         prior_statuses: list[str],
-    ) -> tuple[str | None, str]:
+    ) -> tuple[str | None, str, str | None]:
         status_user_content = self._build_status_user_content(
             chunk, prior_statuses
         )
@@ -541,7 +541,7 @@ class ThinkingNarrator:
         full = self._chat_completion_stream(messages, on_delta=lambda _delta: None)
         full = full.strip()
         if not full:
-            return None, status_user_content
+            return None, status_user_content, None
 
         if any(
             self._lines_too_similar(
@@ -549,9 +549,9 @@ class ThinkingNarrator:
             )
             for prev in prior_statuses
         ):
-            return None, status_user_content
+            return None, status_user_content, full
 
-        return full, status_user_content
+        return full, status_user_content, None
 
     @staticmethod
     def _playback_chunks(text: str) -> list[str]:
@@ -974,13 +974,15 @@ class ThinkingNarrator:
                     "Narrator: first-person summary was repetitive, retrying in status mode: %s",
                     full,
                 )
-                status_full, _status_user_content = self._retry_duplicate_as_status(
+                status_full, _status_user_content, status_drop = self._retry_duplicate_as_status(
                     chunk, prior_statuses
                 )
                 if not status_full:
                     with self._stats_lock:
                         self._stat_drops_dedup += 1
                     self._sink.write_drop("dedup", full)
+                    if status_drop:
+                        self._sink.write_drop("dedup-status", status_drop)
                     logger.info("Narrator: dropped repetitive summary: %s", full)
                     with self._lock:
                         self._dedupe_backoff_until = (
