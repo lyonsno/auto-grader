@@ -117,13 +117,10 @@ _BASE_RGB = {
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
-    "header": (228, 100, 50),    # persimmon (柿色) — vivid lacquer red,
-                                  # the warm anchor of the painting.
-                                  # Brighter than the muted version we
-                                  # started with: real torii-gate /
-                                  # tea-ceremony lacquer is bold, not
-                                  # apologetic, and the cool indigo
-                                  # axis was visually outweighing it
+    "header": (186, 82, 52),     # lacquered persimmon red — darker and
+                                  # redder than the earlier orange pass,
+                                  # so structural titles read like warm
+                                  # lacquer instead of pumpkin glow
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
@@ -137,10 +134,10 @@ _BASE_RGB = {
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (112, 146, 218),       # brighter deep indigo agreement —
-                                          # still blue-forward, but now
-                                          # visibly positive instead of
-                                          # merely severe
+    "topic_match": (70, 92, 156),         # deep indigo agreement —
+                                          # darker than the header-index
+                                          # blue so it harmonizes with
+                                          # structure without duplicating it
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -186,9 +183,9 @@ _SHIMMER_KIND_PEAK_RGB = {
     "live": (245, 155, 80),       # persimmon ember — live field warms
                                    # toward the same lacquer-red as the
                                    # headers as the wave passes
-    "header": (255, 165, 95),     # fired persimmon — bright lacquer
-                                   # in-family brightening, pushed to
-                                   # match the brighter base
+    "header": (232, 136, 102),    # fired lacquer red — brighter crest,
+                                   # but still clearly red-led rather than
+                                   # tipping back into orange
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
@@ -196,7 +193,7 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (170, 206, 255),     # rain-lit affirmative crest for
+    "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
     "status": (160, 194, 248),          # brightened indigo-steel crest
                                         # for the sticky status rail
