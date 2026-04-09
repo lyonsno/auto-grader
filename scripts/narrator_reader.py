@@ -342,6 +342,22 @@ _EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
                                      # we want warm structural emphasis
                                      # without a full verdict signal
 
+_SCOREBUG_BIG_DIGITS = {
+    "0": ("╭ ╮", "╰ ╯"),
+    "1": (" ╷ ", " ╵ "),
+    "2": ("╭─╮", "╰─ "),
+    "3": ("╭─╮", " ╰╯"),
+    "4": ("╷ ╷", "╰─╯"),
+    "5": ("╭─ ", " ╰╯"),
+    "6": ("╭─ ", "╰─╯"),
+    "7": ("╶─╮", "  │"),
+    "8": ("╭─╮", "├─┤"),
+    "9": ("╭─╮", " ╰╯"),
+    ".": ("   ", " • "),
+    "/": ("  ╱", "╱  "),
+    "-": ("   ", "───"),
+}
+
 
 def _interp_rgb(
     base: tuple[int, int, int],
@@ -378,6 +394,16 @@ def _blend_rgb(
         )
         for channel, target_channel in zip(base, target, strict=True)
     )
+
+
+def _scorebug_big_value_rows(value: str) -> tuple[str, str]:
+    top_parts: list[str] = []
+    bottom_parts: list[str] = []
+    for ch in value:
+        top, bottom = _SCOREBUG_BIG_DIGITS.get(ch, ("   ", f" {ch} "))
+        top_parts.append(top)
+        bottom_parts.append(bottom)
+    return (" ".join(top_parts), " ".join(bottom_parts))
 
 
 def _live_placeholder(now_s: float) -> str:
@@ -976,6 +1002,37 @@ class PaintDryDisplay:
         row.append(f"{' ' * label_pad}{label}{' ' * label_pad}", style=label_style)
         row.append(f"{' ' * value_pad}{value}{' ' * value_pad}", style=value_style)
 
+    @staticmethod
+    def _append_scorebug_big_value_cell(
+        label_row: Text,
+        value_top_row: Text,
+        value_bottom_row: Text,
+        label: str,
+        value: str,
+        *,
+        label_style: str,
+        value_style: str,
+        label_pad: int = 3,
+        value_pad: int = 2,
+    ) -> None:
+        if label_row.plain:
+            label_row.append("  ", style="dim")
+            value_top_row.append("  ", style="dim")
+            value_bottom_row.append("  ", style="dim")
+        label_row.append(
+            f"{' ' * label_pad}{label}{' ' * label_pad}",
+            style=label_style,
+        )
+        top, bottom = _scorebug_big_value_rows(value)
+        value_top_row.append(
+            f"{' ' * value_pad}{top}{' ' * value_pad}",
+            style=value_style,
+        )
+        value_bottom_row.append(
+            f"{' ' * value_pad}{bottom}{' ' * value_pad}",
+            style=value_style,
+        )
+
     def should_animate(self, now: float | None = None) -> bool:
         """Return whether the UI should keep driving the shimmer loop.
 
@@ -1248,9 +1305,13 @@ class PaintDryDisplay:
 
             scorebug_rows: list[Text] = [scorebug_top]
             if self.score_points_possible > 0:
-                scorebug_bottom = Text()
-                self._append_scorebug_cell(
-                    scorebug_bottom,
+                scorebug_labels = Text()
+                scorebug_values_top = Text()
+                scorebug_values_bottom = Text()
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_bottom,
                     "ON TARGET",
                     (
                         f"{self._format_scorebug_points(self.score_on_target_points)}"
@@ -1258,11 +1319,11 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #eef3ff on #32578e",
                     value_style="bold #dce9ff on #1c2d47",
-                    label_pad=3,
-                    value_pad=2,
                 )
-                self._append_scorebug_cell(
-                    scorebug_bottom,
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_bottom,
                     "LEFT ON TABLE",
                     (
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
@@ -1270,11 +1331,11 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #fff3db on #8a6635",
                     value_style="bold #fff1d9 on #4a3720",
-                    label_pad=3,
-                    value_pad=2,
                 )
-                self._append_scorebug_cell(
-                    scorebug_bottom,
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_bottom,
                     "BAD CALLS",
                     (
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
@@ -1282,40 +1343,44 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #ffe9e2 on #8d4637",
                     value_style="bold #ffe7de on #4f251f",
-                    label_pad=3,
-                    value_pad=2,
                 )
-                scorebug_rows.append(scorebug_bottom)
+                scorebug_rows.extend(
+                    [scorebug_labels, scorebug_values_top, scorebug_values_bottom]
+                )
             else:
-                scorebug_bottom = Text()
-                self._append_scorebug_cell(
-                    scorebug_bottom,
+                scorebug_labels = Text()
+                scorebug_values_top = Text()
+                scorebug_values_bottom = Text()
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
                     label_style="bold #eef3ff on #32578e",
                     value_style="bold #dce9ff on #1c2d47",
-                    label_pad=3,
-                    value_pad=2,
                 )
-                self._append_scorebug_cell(
-                    scorebug_bottom,
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
                     label_style="bold #fff3db on #8a6635",
                     value_style="bold #fff1d9 on #4a3720",
-                    label_pad=3,
-                    value_pad=2,
                 )
-                self._append_scorebug_cell(
-                    scorebug_bottom,
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
                     label_style="bold #ffe9e2 on #8d4637",
                     value_style="bold #ffe7de on #4f251f",
-                    label_pad=3,
-                    value_pad=2,
                 )
-                scorebug_rows.append(scorebug_bottom)
+                scorebug_rows.extend(
+                    [scorebug_labels, scorebug_values_top, scorebug_values_bottom]
+                )
 
             scorebug_panel = Panel(
                 Align.left(Group(*scorebug_rows)),
