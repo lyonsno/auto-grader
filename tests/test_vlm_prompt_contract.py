@@ -89,6 +89,16 @@ class GradingPromptContract(unittest.TestCase):
             "prompt should narrow ambiguity handling so the model does not loop on rereads",
         )
 
+    def test_system_prompt_tells_easy_wrong_form_items_to_stop_early(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "If the student plainly did not provide the requested answer form, stop once that is established and score only what is actually on the page.",
+            prompt,
+            "easy wrong-form items should not invite long re-litigation after the missing form is already clear",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
