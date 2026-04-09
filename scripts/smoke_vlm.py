@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -23,7 +24,11 @@ from auto_grader.eval_harness import (
 )
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
-from auto_grader.vlm_inference import ServerConfig, grade_all_items
+from auto_grader.vlm_inference import (
+    ServerConfig,
+    grade_all_items,
+    grading_prompt_metadata,
+)
 
 
 _GROUND_TRUTH = Path(__file__).resolve().parent.parent / "eval" / "ground_truth.yaml"
@@ -33,6 +38,15 @@ _TEMPLATE = (
     / "templates"
     / "chm141-final-fall2023.yaml"
 )
+_TRICKY_PICKS = [
+    ("15-blue", "fr-1"),    # easy warmup (numeric, density)
+    ("15-blue", "fr-3"),    # FORMAT: full molecular vs net ionic, prof 0/4
+    ("15-blue", "fr-5b"),   # CHARITY: consistent-with-wrong-premise
+    ("15-blue", "fr-10a"),  # PARTIAL: prof gave 1.5/3 fractional
+    ("15-blue", "fr-11a"),  # ELECTRON CONFIG: orbital boxes, visual
+    ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
+]
+_TRICKY_TEST_SET_ID = "tricky-v1"
 
 
 def _progress(i: int, total: int, item, pred):
@@ -141,6 +155,152 @@ class _PredictionWriter:
         return False  # never swallow exceptions
 
 
+class _RunManifest:
+    """Persist run identity + lifecycle for later comparison tooling."""
+
+    def __init__(self, path: Path, initial_data: dict[str, object]):
+        self.path = path
+        self._data = dict(initial_data)
+
+    def write_status(
+        self,
+        status: str,
+        *,
+        finished_at: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        self._data["status"] = status
+        if finished_at is not None:
+            self._data["finished_at"] = finished_at
+        if error is not None:
+            self._data["error"] = error
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.path.with_suffix(".tmp")
+        tmp_path.write_text(
+            json.dumps(self._data, indent=2, sort_keys=True) + "\n"
+        )
+        tmp_path.replace(self.path)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _iso_now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _git_output(*args: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=_repo_root(),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        return "unknown"
+    return completed.stdout.strip() or "unknown"
+
+
+def _run_identity(model: str, run_dir_override: str | None) -> tuple[str, Path]:
+    if run_dir_override:
+        run_dir = Path(run_dir_override)
+        return run_dir.name, run_dir
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe_model = model.replace("/", "_")
+    run_id = f"{ts}-{safe_model}"
+    run_dir = Path.home() / "dev" / "auto-grader-runs" / run_id
+    return run_id, run_dir
+
+
+def _select_subset(
+    args: argparse.Namespace,
+    ground_truth: list[EvalItem],
+) -> tuple[list[EvalItem], str]:
+    if args.pick:
+        wanted = []
+        for token in args.pick.split(","):
+            token = token.strip()
+            if not token or ":" not in token:
+                continue
+            exam_id, qid = token.split(":", 1)
+            wanted.append((exam_id.strip(), qid.strip()))
+        gt_index = {
+            (item.exam_id, item.question_id): item for item in ground_truth
+        }
+        subset = []
+        missing = []
+        for key in wanted:
+            if key in gt_index:
+                subset.append(gt_index[key])
+            else:
+                missing.append(key)
+        if missing:
+            print(
+                f"WARNING: --pick missing in ground truth: {missing}",
+                file=sys.stderr,
+            )
+        normalized = ",".join(f"{exam}:{qid}" for exam, qid in wanted)
+        return subset, f"pick-v1:{normalized}"
+
+    if args.tricky:
+        gt_index = {
+            (item.exam_id, item.question_id): item for item in ground_truth
+        }
+        subset = [gt_index[k] for k in _TRICKY_PICKS if k in gt_index]
+        return subset, _TRICKY_TEST_SET_ID
+
+    if args.all:
+        return ground_truth, "all-v1"
+
+    return ground_truth[: args.items], f"first-{args.items}-v1"
+
+
+def _build_manifest(
+    *,
+    run_id: str,
+    run_dir: Path,
+    config: ServerConfig,
+    args: argparse.Namespace,
+    test_set_id: str,
+    item_count: int,
+) -> _RunManifest:
+    prompt_meta = grading_prompt_metadata()
+    manifest = _RunManifest(
+        run_dir / "manifest.json",
+        {
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+            "status": "running",
+            "started_at": _iso_now(),
+            "finished_at": None,
+            "git_commit": _git_output("rev-parse", "HEAD"),
+            "git_branch": _git_output("branch", "--show-current"),
+            "model": config.model,
+            "base_url": config.base_url,
+            "prompt_version": prompt_meta["version"],
+            "prompt_content_hash": prompt_meta["content_hash"],
+            "test_set_id": test_set_id,
+            "item_count": item_count,
+            "narrator_url": (
+                args.narrator_url
+                if (args.narrate or args.narrate_stderr)
+                else None
+            ),
+            "narrator_model": (
+                args.narrator_model
+                if (args.narrate or args.narrate_stderr)
+                else None
+            ),
+        },
+    )
+    manifest.write_status("running")
+    return manifest
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="qwen3p5-35B-A3B")
@@ -197,49 +357,11 @@ def main():
         help="Model name for the wrap-up call. Defaults to --model.",
     )
     parser.add_argument("--run-dir", default=None,
-                        help="Directory to write narrator.jsonl/.txt logs (default: runs/<ts>-<model>/)")
+                        help="Directory to write run artifacts (default: ~/dev/auto-grader-runs/<ts>-<model>/)")
     args = parser.parse_args()
 
     gt = load_ground_truth(_GROUND_TRUTH)
-
-    # Curated tricky test set — known failure-mode probes
-    _TRICKY_PICKS = [
-        ("15-blue", "fr-1"),    # easy warmup (numeric, density)
-        ("15-blue", "fr-3"),    # FORMAT: full molecular vs net ionic, prof 0/4
-        ("15-blue", "fr-5b"),   # CHARITY: consistent-with-wrong-premise
-        ("15-blue", "fr-10a"),  # PARTIAL: prof gave 1.5/3 fractional
-        ("15-blue", "fr-11a"),  # ELECTRON CONFIG: orbital boxes, visual
-        ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
-    ]
-
-    if args.pick:
-        wanted = []
-        for token in args.pick.split(","):
-            token = token.strip()
-            if not token or ":" not in token:
-                continue
-            exam_id, qid = token.split(":", 1)
-            wanted.append((exam_id.strip(), qid.strip()))
-        gt_index = {(item.exam_id, item.question_id): item for item in gt}
-        subset = []
-        missing = []
-        for key in wanted:
-            if key in gt_index:
-                subset.append(gt_index[key])
-            else:
-                missing.append(key)
-        if missing:
-            print(
-                f"WARNING: --pick missing in ground truth: {missing}",
-                file=sys.stderr,
-            )
-    elif args.tricky:
-        gt_index = {(item.exam_id, item.question_id): item for item in gt}
-        subset = [gt_index[k] for k in _TRICKY_PICKS if k in gt_index]
-    elif args.all:
-        subset = gt
-    else:
-        subset = gt[: args.items]
+    subset, test_set_id = _select_subset(args, gt)
 
     config = ServerConfig(
         base_url=args.base_url,
@@ -256,17 +378,17 @@ def main():
 
     # Run dir is always created (even without narrator) so predictions
     # persist for the post-hoc critic and cross-run comparison reports.
-    if args.run_dir:
-        run_dir = Path(args.run_dir)
-    else:
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        safe_model = config.model.replace("/", "_")
-        run_dir = (
-            Path(__file__).resolve().parent.parent
-            / "runs" / f"{ts}-{safe_model}"
-        )
+    run_id, run_dir = _run_identity(config.model, args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Run dir: {run_dir}")
+    manifest = _build_manifest(
+        run_id=run_id,
+        run_dir=run_dir,
+        config=config,
+        args=args,
+        test_set_id=test_set_id,
+        item_count=len(subset),
+    )
 
     if narrator_enabled:
         sink_config = SinkConfig(
@@ -287,78 +409,87 @@ def main():
     narrator_stats = None
     predictions: list = []
     interrupted = False
-    with sink_cm as sink, pred_writer_cm as pred_writer:
-        # Wrap the progress callback so each completed prediction is
-        # written to predictions.jsonl as it lands. Crash-safe: an
-        # interrupt mid-loop still leaves the partial file usable.
-        # Per-item failures are tracked on the writer (not raised) so
-        # one bad item doesn't kill the whole grading run, but the
-        # final pred_writer.failures count is checked after the
-        # with-block and surfaced as a loud banner + non-zero exit.
-        def _on_item(i, total, item, pred):
-            pred_writer.write_one(item, pred)
-            _progress(i, total, item, pred)
+    try:
+        with sink_cm as sink, pred_writer_cm as pred_writer:
+            # Wrap the progress callback so each completed prediction is
+            # written to predictions.jsonl as it lands. Crash-safe: an
+            # interrupt mid-loop still leaves the partial file usable.
+            # Per-item failures are tracked on the writer (not raised) so
+            # one bad item doesn't kill the whole grading run, but the
+            # final pred_writer.failures count is checked after the
+            # with-block and surfaced as a loud banner + non-zero exit.
+            def _on_item(i, total, item, pred):
+                pred_writer.write_one(item, pred)
+                _progress(i, total, item, pred)
 
-        narrator = (
-            ThinkingNarrator(
-                sink,
-                base_url=args.narrator_url,
-                model=args.narrator_model,
-                wrap_up_base_url=args.wrap_up_url or args.base_url,
-                wrap_up_model=args.wrap_up_model or args.model,
+            narrator = (
+                ThinkingNarrator(
+                    sink,
+                    base_url=args.narrator_url,
+                    model=args.narrator_model,
+                    wrap_up_base_url=args.wrap_up_url or args.base_url,
+                    wrap_up_model=args.wrap_up_model or args.model,
+                )
+                if narrator_enabled
+                else None
             )
-            if narrator_enabled
-            else None
-        )
-        try:
-            predictions = grade_all_items(
-                subset, _SCANS_DIR, config,
-                template_path=_TEMPLATE,
-                progress_callback=_on_item,
-                narrator=narrator,
-                sink=sink,
-            )
-        except KeyboardInterrupt:
-            interrupted = True
-            print(
-                f"\n\n[interrupted] Caught Ctrl-C — sent close to OMLX, "
-                f"completed {len(predictions)} of {len(subset)} items.",
-                file=sys.stderr,
-            )
-
-        # End-of-run wrap-up commentary from bonsai. Only fire if we have
-        # at least one prediction and we weren't interrupted during
-        # grading. Wrap-up itself is also interruptible via Ctrl-C —
-        # if the user bails out of the wrap-up call, we skip it and
-        # still print the eval report and tear down the sink cleanly.
-        elapsed_for_wrap = time.time() - t0
-        if (
-            narrator is not None
-            and predictions
-            and not interrupted
-        ):
             try:
-                wrap_subset = subset[: len(predictions)]
-                wrap_report = score_predictions(wrap_subset, predictions)
-                narrator.wrap_up(
-                    wrap_report,
-                    model_name=config.model,
-                    item_count=len(predictions),
-                    elapsed_seconds=elapsed_for_wrap,
+                predictions = grade_all_items(
+                    subset, _SCANS_DIR, config,
+                    template_path=_TEMPLATE,
+                    progress_callback=_on_item,
+                    narrator=narrator,
+                    sink=sink,
                 )
             except KeyboardInterrupt:
+                interrupted = True
                 print(
-                    "\n[wrap_up interrupted] skipped post-game commentary.",
+                    f"\n\n[interrupted] Caught Ctrl-C — sent close to OMLX, "
+                    f"completed {len(predictions)} of {len(subset)} items.",
                     file=sys.stderr,
                 )
-            except Exception as e:
-                print(f"[wrap_up failed] {e}", file=sys.stderr)
 
-        if narrator is not None:
-            narrator_stats = narrator.stats()
+            # End-of-run wrap-up commentary from bonsai. Only fire if we have
+            # at least one prediction and we weren't interrupted during
+            # grading. Wrap-up itself is also interruptible via Ctrl-C —
+            # if the user bails out of the wrap-up call, we skip it and
+            # still print the eval report and tear down the sink cleanly.
+            elapsed_for_wrap = time.time() - t0
+            if (
+                narrator is not None
+                and predictions
+                and not interrupted
+            ):
+                try:
+                    wrap_subset = subset[: len(predictions)]
+                    wrap_report = score_predictions(wrap_subset, predictions)
+                    narrator.wrap_up(
+                        wrap_report,
+                        model_name=config.model,
+                        item_count=len(predictions),
+                        elapsed_seconds=elapsed_for_wrap,
+                    )
+                except KeyboardInterrupt:
+                    print(
+                        "\n[wrap_up interrupted] skipped post-game commentary.",
+                        file=sys.stderr,
+                    )
+                except Exception as e:
+                    print(f"[wrap_up failed] {e}", file=sys.stderr)
+
+            if narrator is not None:
+                narrator_stats = narrator.stats()
+    except Exception as e:
+        manifest.write_status(
+            "failed",
+            finished_at=_iso_now(),
+            error=f"{type(e).__name__}: {e}",
+        )
+        raise
     elapsed = time.time() - t0
 
     if interrupted and not predictions:
+        manifest.write_status("interrupted", finished_at=_iso_now())
         print(
             "\nNo items completed before interrupt. Exiting without report.",
             file=sys.stderr,
@@ -420,6 +551,11 @@ def main():
     # persistence anaphora and would let the critic operate on
     # incomplete data without anyone noticing.
     if pred_writer_cm.failures > 0:
+        manifest.write_status(
+            "failed",
+            finished_at=_iso_now(),
+            error=pred_writer_cm.last_failure_msg,
+        )
         print(
             f"\n{'!' * 60}\n"
             f"PREDICTIONS PERSISTENCE FAILED on {pred_writer_cm.failures} item(s)\n"
@@ -433,6 +569,10 @@ def main():
         )
         return 2
 
+    manifest.write_status(
+        "interrupted" if interrupted else "completed",
+        finished_at=_iso_now(),
+    )
     return 130 if interrupted else 0
 
 

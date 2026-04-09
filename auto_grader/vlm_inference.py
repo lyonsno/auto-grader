@@ -8,6 +8,8 @@ into Prediction objects that the eval harness can score.
 from __future__ import annotations
 
 import base64
+import hashlib
+import inspect
 import json
 import re
 from dataclasses import dataclass
@@ -161,6 +163,8 @@ must be filled in before model_score:
 }
 """
 
+GRADING_PROMPT_VERSION = "2026-04-08-condensed-v1"
+
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
     """Build the user-facing grading prompt for one question."""
@@ -196,6 +200,21 @@ def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str
         "\nRespond with ONLY the JSON object, no markdown fences or other text."
     )
     return "\n".join(parts)
+
+
+def grading_prompt_metadata() -> dict[str, str]:
+    """Return operator-legible prompt identity for run manifests."""
+    content_hash = hashlib.sha256(
+        (
+            _SYSTEM_PROMPT
+            + "\n---build_grading_prompt---\n"
+            + inspect.getsource(_build_grading_prompt)
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "version": GRADING_PROMPT_VERSION,
+        "content_hash": content_hash,
+    }
 
 
 # ---------------------------------------------------------------------------

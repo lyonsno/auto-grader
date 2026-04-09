@@ -39,6 +39,25 @@ class GradingPromptContract(unittest.TestCase):
             "consistency rule should be stated cleanly, not reiterated in multiple phrasings",
         )
 
+    def test_prompt_contract_publishes_version_and_hash(self):
+        from auto_grader import vlm_inference
+
+        version = getattr(vlm_inference, "GRADING_PROMPT_VERSION", "")
+        self.assertRegex(
+            version,
+            r"^\d{4}-\d{2}-\d{2}-",
+            "grading prompt should declare a human-readable version string in code",
+        )
+
+        metadata_fn = getattr(vlm_inference, "grading_prompt_metadata", None)
+        self.assertTrue(
+            callable(metadata_fn),
+            "vlm prompt contract should publish grading_prompt_metadata() for run manifests",
+        )
+        metadata = metadata_fn()
+        self.assertEqual(metadata["version"], version)
+        self.assertRegex(metadata["content_hash"], r"^[0-9a-f]{64}$")
+
 
 if __name__ == "__main__":
     unittest.main()
