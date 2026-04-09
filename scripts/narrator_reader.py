@@ -29,6 +29,7 @@ import json
 import math
 import os
 import re
+import select
 import sys
 import threading
 import time
@@ -247,8 +248,8 @@ _TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 # palette without losing fire feel.
 _LIVE_UNDULATION_CYCLE_S = 3.8    # lively enough to read as motion, but
                                    # still slower than token streaming
-_LIVE_HUE_CENTER_DEG = 196         # pulled bluer so the live band reads as
-                                   # steel/indigo activity rather than moss
+_LIVE_HUE_CENTER_DEG = 204         # pushed a little deeper into indigo-blue
+                                   # so the live band stays clearly cool
 _LIVE_HUE_RANGE_DEG = 18           # tighter swing keeps a hint of green
                                     # without letting the band settle there
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
@@ -284,7 +285,7 @@ _STATUS_PHASE_OFFSET_RAD = 0.85     # keep status related to live, but out of
                                     # lockstep so they do not breathe as one
 _STATUS_UNDULATION_DIRECTION = 1.0
 _STATUS_BASE_SAT = 0.66
-_STATUS_BASE_VAL = 0.62
+_STATUS_BASE_VAL = 0.58
 _STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
@@ -303,6 +304,9 @@ _ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
                               # back to keep the overall feel restrained
 _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
                               # messages quickly, but doesn't need redraw spam
+_SESSION_END_ANIMATION_LINGER_S = 120.0  # keep the finished painting alive
+                                         # and animated for a while before
+                                         # letting it settle
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
@@ -821,6 +825,7 @@ class PaintDryDisplay:
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
+        self._session_ended_at: float | None = None
         self._session_started_at: float | None = None
         self._turn_started_at: float | None = None
 
@@ -837,8 +842,12 @@ class PaintDryDisplay:
         ended and the final frame is meant to stay still while waiting
         for Enter.
         """
-        _ = now
-        return not self.session_ended
+        if not self.session_ended:
+            return True
+        if self._session_ended_at is None:
+            return False
+        now = time.monotonic() if now is None else now
+        return now < (self._session_ended_at + _SESSION_END_ANIMATION_LINGER_S)
 
     @staticmethod
     def _entry_visual_rows(entry: tuple, wrap_width: int | None) -> int:
@@ -1533,6 +1542,29 @@ def main() -> int:
             screen=False,
             auto_refresh=False,
         ) as live:
+            def _wait_for_manual_close() -> int:
+                while True:
+                    if not display.should_animate():
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            pass
+                    try:
+                        ready, _, _ = select.select([sys.stdin], [], [], _IDLE_POLL_S)
+                    except Exception:
+                        time.sleep(_IDLE_POLL_S)
+                        continue
+                    if not ready:
+                        continue
+                    try:
+                        line = sys.stdin.readline()
+                    except Exception:
+                        line = ""
+                    if line:
+                        animation_stop.set()
+                        anim_thread.join(timeout=0.5)
+                        return 0
+
             def _animation_tick():
                 while not animation_stop.is_set():
                     if display.should_animate():
@@ -1599,19 +1631,10 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
-                        # Final frame is static. Keeping the old
-                        # 30fps repaint loop alive while waiting for
-                        # Enter was enough to pin WezTerm at high CPU
-                        # long after the run had effectively ended.
                         display.session_ended = True
-                        animation_stop.set()
-                        anim_thread.join(timeout=0.5)
+                        display._session_ended_at = time.monotonic()
                         live.update(display.render(), refresh=True)
-                        try:
-                            sys.stdin.readline()
-                        except Exception:
-                            pass
-                        return 0
+                        return _wait_for_manual_close()
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:

@@ -10,6 +10,7 @@ from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
@@ -521,8 +522,14 @@ class NarratorReaderContract(unittest.TestCase):
         display.on_delta("fresh line")
         display.on_commit()
         display.session_ended = True
+        display._session_ended_at = 100.0
 
-        self.assertFalse(display.should_animate(now=time.monotonic()))
+        self.assertTrue(display.should_animate(now=100.0 + 60.0))
+        self.assertFalse(
+            display.should_animate(
+                now=100.0 + _SESSION_END_ANIMATION_LINGER_S + 0.1
+            )
+        )
 
 
 if __name__ == "__main__":
