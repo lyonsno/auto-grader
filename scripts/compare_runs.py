@@ -241,7 +241,7 @@ def _parse_query(text: str) -> dict[str, str]:
 
 def _load_manifest(manifest_path: Path) -> RunManifest:
     raw = json.loads(manifest_path.read_text())
-    run_dir = Path(str(raw.get("run_dir") or manifest_path.parent))
+    run_dir = manifest_path.parent
     return RunManifest(
         run_dir=run_dir,
         run_id=str(raw.get("run_id", run_dir.name)),
@@ -307,6 +307,11 @@ def resolve_labeled_runs(
     label_args: list[str],
     runs_root: Path,
 ) -> list[tuple[str, Path]]:
+    if run_args and query_args:
+        raise ValueError(
+            "cannot mix direct run paths with --query until the CLI preserves operator order"
+        )
+
     resolved_paths = [Path(arg) for arg in run_args]
     resolved_paths.extend(
         resolve_query_run(runs_root=runs_root, query=query)
@@ -339,7 +344,7 @@ def main() -> int:
     parser.add_argument(
         "runs",
         nargs="*",
-        help="Run directories to compare",
+        help="Run directories to compare (cannot be mixed with --query in the same invocation)",
     )
     parser.add_argument(
         "--query",
@@ -348,7 +353,8 @@ def main() -> int:
         help=(
             "Select the latest completed run whose manifest matches a "
             "comma-separated key=value selector, e.g. "
-            "model=gemma-4,prompt_version=2026-04-08-condensed-v1,test_set_id=tricky-v1"
+            "model=gemma-4,prompt_version=2026-04-08-condensed-v1,test_set_id=tricky-v1. "
+            "Cannot be mixed with direct run-path args in the same invocation."
         ),
     )
     parser.add_argument(

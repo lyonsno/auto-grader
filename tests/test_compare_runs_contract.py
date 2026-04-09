@@ -98,6 +98,14 @@ class CompareRunsContract(unittest.TestCase):
         )
         return run_dir
 
+    def _run_main(self, module, argv: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(sys, "argv", ["compare_runs.py", *argv]):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = module.main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
     def test_load_run_records_extracts_elapsed_and_critic_score(self):
         module = _load_compare_runs()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -236,6 +244,37 @@ class CompareRunsContract(unittest.TestCase):
             self.assertEqual(row["old__model"], "old-model")
             self.assertEqual(row["new__model"], "new-model")
 
+    def test_resolve_query_run_uses_discovered_manifest_parent_for_copied_runs(self):
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_root = Path(tmpdir) / "runs-root"
+            runs_root.mkdir()
+            copied_run = self._write_run(
+                runs_root,
+                run_name="copied-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-08T21:00:00",
+                score=2.0,
+            )
+
+            manifest_path = copied_run / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["run_dir"] = "/old/box/auto-grader-runs/copied-run"
+            manifest_path.write_text(json.dumps(manifest) + "\n")
+
+            resolved = module.resolve_query_run(
+                runs_root=runs_root,
+                query="model=gemma-test,prompt_version=prompt-v2,test_set_id=tricky-v1",
+            )
+
+            self.assertEqual(
+                resolved,
+                copied_run,
+                "query resolution should treat the discovered manifest location as authoritative, not a stale embedded absolute path",
+            )
+
     def test_main_can_resolve_latest_runs_by_manifest_metadata(self):
         module = _load_compare_runs()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -272,33 +311,28 @@ class CompareRunsContract(unittest.TestCase):
                 score=1.0,
             )
 
-            stdout = io.StringIO()
-            stderr = io.StringIO()
-            argv = [
-                "compare_runs.py",
-                "--runs-root",
-                str(runs_root),
-                "--query",
-                "model=gemma-test,prompt_version=prompt-v2,test_set_id=tricky-v1",
-                "--query",
-                "model=qwen-test,prompt_version=prompt-v1,test_set_id=tricky-v1",
-                "--label",
-                "gemma-v2",
-                "--label",
-                "qwen-v1",
-                "--out",
-                str(out_path),
-            ]
-            with mock.patch.object(sys, "argv", argv):
-                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
-                    stderr
-                ):
-                    code = module.main()
+            code, _stdout, stderr = self._run_main(
+                module,
+                [
+                    "--runs-root",
+                    str(runs_root),
+                    "--query",
+                    "model=gemma-test,prompt_version=prompt-v2,test_set_id=tricky-v1",
+                    "--query",
+                    "model=qwen-test,prompt_version=prompt-v1,test_set_id=tricky-v1",
+                    "--label",
+                    "gemma-v2",
+                    "--label",
+                    "qwen-v1",
+                    "--out",
+                    str(out_path),
+                ],
+            )
 
             self.assertEqual(
                 code,
                 0,
-                f"query mode should resolve latest matching manifests without raw run-dir inputs; stderr was: {stderr.getvalue()}",
+                f"query mode should resolve latest matching manifests without raw run-dir inputs; stderr was: {stderr}",
             )
             rows = out_path.read_text().splitlines()
             self.assertEqual(len(rows), 2)
@@ -307,6 +341,45 @@ class CompareRunsContract(unittest.TestCase):
             self.assertIn("qwen-v1__score", header)
             self.assertIn(",2.0,", f",{row},")
             self.assertIn(",1.0,", f",{row},")
+
+    def test_main_rejects_mixed_path_and_query_mode_until_order_is_preserved(self):
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            runs_root = base / "runs-root"
+            runs_root.mkdir()
+            path_run = self._write_run(
+                base,
+                run_name="path-run",
+                model="path-model",
+                prompt_version="prompt-path",
+                test_set_id="manual-v1",
+                started_at="2026-04-08T20:00:00",
+                score=2.0,
+            )
+            self._write_run(
+                runs_root,
+                run_name="query-run",
+                model="query-model",
+                prompt_version="prompt-query",
+                test_set_id="tricky-v1",
+                started_at="2026-04-08T21:00:00",
+                score=1.0,
+            )
+
+            code, _stdout, stderr = self._run_main(
+                module,
+                [
+                    str(path_run),
+                    "--runs-root",
+                    str(runs_root),
+                    "--query",
+                    "model=query-model,prompt_version=prompt-query,test_set_id=tricky-v1",
+                ],
+            )
+
+            self.assertEqual(code, 1)
+            self.assertIn("cannot mix direct run paths with --query", stderr)
 
 
 if __name__ == "__main__":
