@@ -81,6 +81,40 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertFalse(display.should_animate(now=time.monotonic()))
 
+    def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self) -> None:
+        display = self._make_display()
+        display.on_delta("I'm tracing the unit slip.")
+        display.on_commit(mode="thought")
+        display.on_delta("Rechecking the same unit slip.")
+        display.on_commit(mode="status")
+
+        self.assertEqual(display.status_line, "Rechecking the same unit slip.")
+        self.assertEqual(display.frozen_line, "I'm tracing the unit slip.")
+
+    def test_render_shows_status_above_live_thought(self) -> None:
+        display = self._make_display()
+        display.status_line = "Rechecking the unit conversion."
+        display.frozen_line = "I'm tracing the denominator swap."
+
+        live_panel = display.render().renderables[1]
+        panel_text = live_panel.renderable.plain
+
+        self.assertIn("status + live", live_panel.title)
+        self.assertIn("Rechecking the unit conversion.", panel_text)
+        self.assertIn("I'm tracing the denominator swap.", panel_text)
+        self.assertLess(
+            panel_text.index("Rechecking the unit conversion."),
+            panel_text.index("I'm tracing the denominator swap."),
+        )
+
+    def test_new_header_clears_sticky_status(self) -> None:
+        display = self._make_display()
+        display.status_line = "Rechecking the unit conversion."
+
+        display.on_header("[item 2/6] 15-blue/fr-2")
+
+        self.assertEqual(display.status_line, "")
+
 
 if __name__ == "__main__":
     unittest.main()

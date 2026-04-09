@@ -127,6 +127,8 @@ _BASE_RGB = {
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
+    "status": (104, 126, 176),    # indigo-steel — sticky lane label on top,
+                                   # cool and settled rather than aqua
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
@@ -134,13 +136,10 @@ _BASE_RGB = {
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (150, 208, 214),       # electric celadon — cooler,
-                                          # brighter affirmative read.
-                                          # Still garden-adjacent, but
-                                          # pulled toward aqua so
-                                          # agreement feels cleaner and
-                                          # more "alive" than the old
-                                          # mossy celadon
+    "topic_match": (114, 136, 186),      # indigo-steel affirmative —
+                                         # still cool/good, but now in
+                                         # the same darker blue family
+                                         # as the sticky status lane
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -161,6 +160,8 @@ _SHIMMER_KIND_INTENSITY = {
                           # coupled-oscillator phase ripple more
                           # presence on the largest visual surface
     "topic": 1.00,
+    "status": 1.12,            # sticky top-lane status should pulse a
+                               # bit more than a generic topic
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
@@ -191,15 +192,15 @@ _SHIMMER_KIND_PEAK_RGB = {
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
+    "status": (170, 192, 234),    # indigo-steel highlight — cool lift
+                                   # without drifting into aqua
     "line": (175, 215, 180),      # glazed celadon — sage moss row
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (195, 232, 255),     # rain-lit sky celadon — borrows
-                                        # the cooler blue family we
-                                        # weren't using enough, so the
-                                        # match shimmer reads electric
-                                        # rather than ochre-warm
+    "topic_match": (182, 204, 244),     # brighter indigo-steel — match
+                                        # verdicts stay in the same cool
+                                        # family as the status lane
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
@@ -217,6 +218,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header",
     "header_index",
     "header_dash",
+    "status",
     "topic",
     "topic_match",
     "topic_overshoot",
@@ -229,6 +231,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
 # top + bottom borders). When bonsai's output is longer than will
 # fit in that area, we tail-truncate (keep the most recent chars).
 _LIVE_PANEL_CONTENT_LINES = 3
+_TOP_PANEL_CONTENT_LINES = 1 + _LIVE_PANEL_CONTENT_LINES
 
 # Live-line undulation parameters — each character on the live line
 # gets a per-position, per-time hue from a warm orange-amber palette.
@@ -642,6 +645,7 @@ class PaintDryDisplay:
         # else just the cursor glyph.
         self.streaming_line: str = ""
         self.frozen_line: str = ""
+        self.status_line: str = ""
         # Timestamp at which the most recent dispatch finished streaming.
         # Used to drive the slow fade from "just-arrived bright" to
         # "settled past tense" colors over _LIVE_FREEZE_FADE_S seconds
@@ -935,16 +939,41 @@ class PaintDryDisplay:
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
+        top_text = Text(no_wrap=False, overflow="fold")
+        status_text = self.status_line or "Waiting for a fresh status lane."
+        status_prefix = "◌ "
+        _apply_shimmer(
+            top_text,
+            status_prefix,
+            "status",
+            layer_index=0,
+            indent_width=0,
+            wrap_width=wrap_width,
+            cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+            phase_override=self._shimmer_phases.phase(0),
+        )
+        _apply_shimmer(
+            top_text,
+            status_text,
+            "status",
+            layer_index=0,
+            indent_width=len(status_prefix),
+            wrap_width=wrap_width,
+            cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+            phase_override=self._shimmer_phases.phase(0),
+        )
+        top_text.append("\n")
+        top_text.append_text(live_text)
+
         live_panel = Panel(
-            live_text,
+            top_text,
             border_style="#3d4458",
             padding=(0, 1),
-            title="[grey50]live[/grey50]",
+            title="[grey50]status + live[/grey50]",
             title_align="left",
-            # Fixed height: top border + content + bottom border.
-            # Locks the live panel's vertical footprint so the layout
-            # doesn't jitter when bonsai produces a long line.
-            height=_LIVE_PANEL_CONTENT_LINES + 2,
+            # Fixed height: one sticky status row plus the live content
+            # rows, with borders.
+            height=_TOP_PANEL_CONTENT_LINES + 2,
         )
 
         # History panel — items grouped by header. Each item is a
@@ -1190,12 +1219,13 @@ class PaintDryDisplay:
         # Header goes into the history. Doesn't touch the live buffers
         # — frozen_line keeps showing the previous committed dispatch
         # until the next bonsai dispatch starts streaming.
+        self.status_line = ""
         self.history.append(("header", text, None))
 
     def on_delta(self, text: str) -> None:
         self.streaming_line += text
 
-    def on_commit(self) -> None:
+    def on_commit(self, mode: str = "thought") -> None:
         # Push the just-finished streaming line into history (preserves
         # chronological order, so any subsequent topic/header lands
         # AFTER it), then promote it to frozen_line so it keeps showing
@@ -1210,7 +1240,10 @@ class PaintDryDisplay:
             # actual content to freeze. Empty commits don't restart
             # the fade clock.
             self._freeze_started_at = time.monotonic()
-        self.frozen_line = self.streaming_line
+        if mode == "status":
+            self.status_line = self.streaming_line
+        else:
+            self.frozen_line = self.streaming_line
         self.streaming_line = ""
 
     def on_drop(self, reason: str, text: str) -> None:
@@ -1341,7 +1374,7 @@ def main() -> int:
                     elif msg_type == "delta":
                         display.on_delta(msg.get("text", ""))
                     elif msg_type == "commit":
-                        display.on_commit()
+                        display.on_commit(msg.get("mode", "thought"))
                     elif msg_type == "rollback_live":
                         display.on_rollback_live()
                     elif msg_type == "topic":

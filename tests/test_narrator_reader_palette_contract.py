@@ -19,39 +19,51 @@ def _load_narrator_reader():
 
 
 class NarratorReaderPaletteContract(unittest.TestCase):
-    def test_match_verdict_base_color_reads_cooler_than_warm_celadon(self):
+    def test_status_base_color_reads_as_indigo_steel_not_turquoise(self):
         module = _load_narrator_reader()
-        red, green, blue = module._BASE_RGB["topic_match"]
+        red, green, blue = module._BASE_RGB["status"]
 
         self.assertGreater(
             blue,
-            red,
-            "match verdict should stay on the cool side, not read amber/wheat",
+            green,
+            "status should stay firmly blue-led, not drift toward turquoise",
         )
-        self.assertLessEqual(
-            abs(green - blue),
-            12,
-            "match verdict should read as a colder electric aqua, not mossy green",
+        self.assertGreater(
+            blue - green,
+            20,
+            "status should read as indigo-steel, not aqua/celadon",
+        )
+        self.assertLess(
+            red,
+            green,
+            "status should keep the red channel clearly behind the cool steel mix",
         )
 
-    def test_match_verdict_gets_its_own_shimmer_lift_and_cool_peak(self):
+    def test_status_and_match_share_the_indigo_steel_family(self):
         module = _load_narrator_reader()
         self.assertGreater(
-            module._SHIMMER_KIND_INTENSITY["topic_match"],
+            module._SHIMMER_KIND_INTENSITY["status"],
             module._SHIMMER_KIND_INTENSITY["topic"],
-            "match verdict should shimmer slightly more than a generic topic",
+            "status should shimmer a bit more than a generic topic line",
         )
 
-        red, green, blue = module._SHIMMER_KIND_PEAK_RGB["topic_match"]
-        self.assertGreaterEqual(
-            blue,
-            green,
-            "match shimmer peak should borrow the cooler sky accent, not warm toward ochre",
+        status_red, status_green, status_blue = module._SHIMMER_KIND_PEAK_RGB["status"]
+        match_red, match_green, match_blue = module._SHIMMER_KIND_PEAK_RGB["topic_match"]
+
+        self.assertGreater(
+            status_blue - status_green,
+            18,
+            "status shimmer peak should stay steel-blue instead of washing aqua",
         )
         self.assertGreater(
-            green,
-            red,
-            "match shimmer peak should stay in the cool family",
+            match_blue - match_green,
+            18,
+            "match shimmer peak should harmonize with the indigo status lane",
+        )
+        self.assertLess(
+            abs(status_blue - match_blue),
+            28,
+            "status and match highlights should feel like the same blue family",
         )
 
 

@@ -2,10 +2,9 @@
 
 Reads streaming reasoning tokens from the VLM and produces short
 first-person thinking lines via Bonsai, with a present-participle
-status-mode fallback when the first-person line would just repeat
-the prior thought. Architecture A: each summary becomes an assistant
-turn in a growing chat history so the narrator naturally CONTINUES
-its own summary stream.
+status lane when the first-person stream starts looping. Statuses
+persist across an item; first-person thoughts only carry the
+current status segment.
 
 Spoke-specific bits (loading vamp, OMLX status polling, command URL
 plumbing) are stripped. The chunking heuristics, dispatch state machine,
@@ -195,6 +194,9 @@ _STATUS_SIMILARITY_THRESHOLD = 0.90  # status-mode lines are ALLOWED to stay
                                      # on the same semantic point; only drop
                                      # them when they are basically the exact
                                      # same line again
+_STATUS_CONTEXT_LIMIT = 5
+_THOUGHT_CONTEXT_LIMIT = 4
+_MAX_BACKOFF_FACTOR = 8.0
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -400,7 +402,9 @@ class ThinkingNarrator:
         # eventually unblocks (via the stream watchdog) won't clobber the
         # state of the dispatch that took its place.
         self._dispatch_generation = 0
-        self._prior_summaries: list[str] = []  # for dedup
+        self._prior_statuses: list[str] = []
+        self._thoughts_since_status: list[str] = []
+        self._dispatch_backoff_factor = 1.0
 
         # Lifetime stats (across all items)
         self._stats_lock = threading.Lock()
@@ -448,7 +452,9 @@ class ThinkingNarrator:
             # dispatch from the previous item can't clobber the new
             # item's state.
             self._dispatch_generation += 1
-            self._prior_summaries = []
+            self._prior_statuses = []
+            self._thoughts_since_status = []
+            self._dispatch_backoff_factor = 1.0
         with self._stats_lock:
             # Roll the previous item's dispatch count into the lifetime
             # max-seen stat, then reset for the new item.
@@ -465,46 +471,91 @@ class ThinkingNarrator:
         return base
 
     @staticmethod
-    def _build_user_content(
-        chunk: str,
-        prior: list[str],
-        *,
-        status_mode: bool = False,
-    ) -> str:
-        if not prior:
-            return f"Current reasoning excerpt:\n\n{chunk}"
+    def _recent_lines(lines: list[str], limit: int) -> list[str]:
+        if len(lines) <= limit:
+            return list(lines)
+        return list(lines[-limit:])
 
-        if status_mode:
-            avoid_block = (
-                "\n\nRecent prior calls:\n"
-                + "\n".join(f"- {s}" for s in prior[-5:])
-                + "\n\nYou are still on the SAME point. Do not invent a new "
-                "angle. Compress the ongoing state into one short "
-                "present-participle status line."
+    def _current_status(self) -> str | None:
+        if not self._prior_statuses:
+            return None
+        return self._prior_statuses[-1]
+
+    def _current_min_interval_s(self) -> float:
+        return _MIN_INTERVAL_S * self._dispatch_backoff_factor
+
+    def _current_max_interval_s(self) -> float:
+        return _MAX_INTERVAL_S * self._dispatch_backoff_factor
+
+    def _reset_dispatch_backoff(self) -> None:
+        self._dispatch_backoff_factor = 1.0
+
+    def _bump_dispatch_backoff(self) -> None:
+        self._dispatch_backoff_factor = min(
+            _MAX_BACKOFF_FACTOR,
+            self._dispatch_backoff_factor * 2.0,
+        )
+
+    def _build_thought_user_content(
+        self,
+        chunk: str,
+        *,
+        current_status: str | None,
+        recent_thoughts: list[str],
+    ) -> str:
+        parts = [f"Current reasoning excerpt:\n\n{chunk}"]
+        if current_status:
+            parts.append("Current status lane:\n" f"- {current_status}")
+        if recent_thoughts:
+            parts.append(
+                "Recent first-person thoughts from this SAME status lane "
+                "(do NOT repeat or paraphrase):\n"
+                + "\n".join(
+                    f"- {thought}"
+                    for thought in self._recent_lines(
+                        recent_thoughts, _THOUGHT_CONTEXT_LIMIT
+                    )
+                )
+                + "\n\nYour next line must stay grounded in the same lane "
+                "but add a materially new detail from this excerpt."
             )
-        else:
-            avoid_block = (
-                "\n\nYour previous calls (do NOT repeat or paraphrase):\n"
-                + "\n".join(f"- {s}" for s in prior[-5:])
-                + "\n\nYour next call MUST describe a NEW detail "
-                "from this excerpt — a different number, molecule, "
-                "step, or angle that you haven't called yet."
+        return "\n\n".join(parts)
+
+    def _build_status_user_content(
+        self,
+        chunk: str,
+        *,
+        recent_statuses: list[str],
+    ) -> str:
+        parts = [f"Current reasoning excerpt:\n\n{chunk}"]
+        if recent_statuses:
+            parts.append(
+                "Recent status lines for this item:\n"
+                + "\n".join(
+                    f"- {status}"
+                    for status in self._recent_lines(
+                        recent_statuses, _STATUS_CONTEXT_LIMIT
+                    )
+                )
             )
-        return f"Current reasoning excerpt:\n\n{chunk}{avoid_block}"
+        parts.append(
+            "You are still on the SAME point. Do not invent a new angle. "
+            "Compress the ongoing state into one short present-participle "
+            "status line."
+        )
+        return "\n\n".join(parts)
 
     def _retry_duplicate_as_status(
         self,
         chunk: str,
-        prior: list[str],
+        prior_statuses: list[str],
     ) -> tuple[str | None, str]:
-        status_user_content = self._build_user_content(
-            chunk, prior, status_mode=True
+        status_user_content = self._build_status_user_content(
+            chunk,
+            recent_statuses=prior_statuses,
         )
-        with self._lock:
-            history_without_system = list(self._messages[1:-1])
         messages = [
             {"role": "system", "content": self._compose_system_prompt(status_mode=True)},
-            *history_without_system,
             {"role": "user", "content": status_user_content},
         ]
 
@@ -519,7 +570,7 @@ class ThinkingNarrator:
             self._lines_too_similar(
                 full, prev, threshold=_STATUS_SIMILARITY_THRESHOLD
             )
-            for prev in prior
+            for prev in prior_statuses
         ):
             self._sink.rollback_live()
             return None, status_user_content
@@ -793,7 +844,7 @@ class ThinkingNarrator:
                 text = self._chat_completion(
                     messages,
                     max_tokens=256,
-                    temperature=0.85,
+                    temperature=1.0,
                     timeout=60,
                 )
             except Exception:
@@ -845,9 +896,12 @@ class ThinkingNarrator:
             tokens = _rough_token_count(self._buffer)
 
             enough_tokens = (
-                tokens >= _TARGET_CHUNK_TOKENS and elapsed >= _MIN_INTERVAL_S
+                tokens >= _TARGET_CHUNK_TOKENS
+                and elapsed >= self._current_min_interval_s()
             )
-            time_ceiling = elapsed >= _MAX_INTERVAL_S and tokens > 0
+            time_ceiling = (
+                elapsed >= self._current_max_interval_s() and tokens > 0
+            )
 
             # Stuck-dispatch recovery: if a dispatch has been "pending"
             # for longer than _DISPATCH_STUCK_TIMEOUT_S, its thread is
@@ -900,17 +954,19 @@ class ThinkingNarrator:
         with self._stats_lock:
             self._stat_dispatches_total += 1
         try:
-            # Inject explicit "don't repeat yourself" instruction with the
-            # actual prior summaries inline. Bonsai is a small model and
-            # needs the prior list spelled out, not just system-prompt rules.
             with self._lock:
-                prior = list(self._prior_summaries)
-            user_content = self._build_user_content(chunk, prior)
-            with self._lock:
-                self._messages.append(
-                    {"role": "user", "content": user_content}
-                )
-                messages = list(self._messages)
+                prior_statuses = list(self._prior_statuses)
+                current_status = self._current_status()
+                recent_thoughts = list(self._thoughts_since_status)
+            user_content = self._build_thought_user_content(
+                chunk,
+                current_status=current_status,
+                recent_thoughts=recent_thoughts,
+            )
+            messages = [
+                {"role": "system", "content": self._compose_system_prompt()},
+                {"role": "user", "content": user_content},
+            ]
 
             # Stream tokens DIRECTLY to the sink as they arrive — this gives
             # the user the typewriter effect on the live row. We accumulate
@@ -935,48 +991,43 @@ class ThinkingNarrator:
                     self._stat_drops_empty += 1
                 self._sink.rollback_live()
                 self._sink.write_drop("empty", "")
-                with self._lock:
-                    if self._messages and self._messages[-1]["role"] == "user":
-                        self._messages.pop()
                 return
 
             # Dedup check
             if any(
                 self._lines_too_similar(full, prev)
-                for prev in prior
+                for prev in recent_thoughts
             ):
                 logger.info(
                     "Narrator: first-person summary was repetitive, retrying in status mode: %s",
                     full,
                 )
                 status_full, status_user_content = self._retry_duplicate_as_status(
-                    chunk, prior
+                    chunk, prior_statuses
                 )
                 if not status_full:
                     with self._stats_lock:
                         self._stat_drops_dedup += 1
+                    with self._lock:
+                        self._bump_dispatch_backoff()
                     self._sink.write_drop("dedup", full)
                     logger.info("Narrator: dropped repetitive summary: %s", full)
-                    with self._lock:
-                        if self._messages and self._messages[-1]["role"] == "user":
-                            self._messages.pop()
                     return
                 full = status_full
-                with self._lock:
-                    if self._messages and self._messages[-1]["role"] == "user":
-                        self._messages[-1] = {
-                            "role": "user",
-                            "content": status_user_content,
-                        }
+                committed_mode = "status"
+            else:
+                committed_mode = "thought"
 
             # Accept — commit the live line to history
-            self._sink.commit_live()
+            self._sink.commit_live(mode=committed_mode)
 
             with self._lock:
-                self._messages.append(
-                    {"role": "assistant", "content": full}
-                )
-                self._prior_summaries.append(full)
+                self._reset_dispatch_backoff()
+                if committed_mode == "status":
+                    self._prior_statuses.append(full)
+                    self._thoughts_since_status = []
+                else:
+                    self._thoughts_since_status.append(full)
             with self._stats_lock:
                 self._stat_summaries_emitted += 1
             logger.info("Narrator summary: %s", full)
@@ -1031,7 +1082,7 @@ class ThinkingNarrator:
         self,
         messages: list[dict],
         *,
-        temperature: float = 0.6,
+        temperature: float = 1.0,
         max_tokens: int = _MAX_TOKENS,
         top_p: float = 0.8,
         top_k: int = 20,
@@ -1111,7 +1162,7 @@ class ThinkingNarrator:
         messages: list[dict],
         on_delta: Callable[[str], None],
         *,
-        temperature: float = 0.6,
+        temperature: float = 1.0,
         max_tokens: int = _MAX_TOKENS,
         top_p: float = 0.8,
         top_k: int = 20,

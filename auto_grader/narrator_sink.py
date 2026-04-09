@@ -14,7 +14,7 @@ just routes events to its outputs. JSON line protocol over the fifo:
     {"type": "delta",  "text": "Reading"}
     {"type": "delta",  "text": " the"}
     ...
-    {"type": "commit"}
+    {"type": "commit", "mode": "thought"}
     {"type": "topic",  "text": "Thought for 47s · density calc"}
     {"type": "end"}
 """
@@ -158,10 +158,10 @@ class NarratorSink:
                 self._fallback.write(text)
                 self._fallback.flush()
 
-    def commit_live(self) -> None:
+    def commit_live(self, *, mode: str = "thought") -> None:
         """Finalize the current live line and push it into the history."""
         with self._lock:
-            self._emit({"type": "commit"})
+            self._emit({"type": "commit", "mode": mode})
             if self._txt_file is not None and self._live_buffer:
                 self._txt_file.write(f"  {self._live_buffer}\n")
             if not self.config.spawn_terminal:
