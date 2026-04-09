@@ -102,11 +102,14 @@ Initial contract slice for the deterministic MC lane:
 
 - generation must be able to emit a per-student MC answer-sheet artifact before the full
   PDF pipeline exists
-- the artifact must include a stable `opaque_instance_code`
+- the artifact must include a stable, non-semantic `opaque_instance_code` that does not
+  expose student or template identifiers
 - it must include a per-page fallback code for paper recovery
 - it must include rendered MC questions with any shuffled choice order made explicit
 - it must include the answer-key mapping from logical choice key to physical bubble label
 - it must include canonical page-space bubble rectangles for each rendered bubble
+- it must declare the layout coordinate contract explicitly (`units`, `origin`, `y_axis`,
+  `layout_version`) so later PDF and OpenCV stages do not invent a second layout truth
 
 This narrow artifact is the handoff between generation and deterministic OpenCV grading.
 Later PDF rendering should consume the same contract rather than inventing a second layout

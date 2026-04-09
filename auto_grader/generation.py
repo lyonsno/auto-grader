@@ -32,7 +32,6 @@ _BUBBLE_GAP = 10
 _MAX_ROWS_PER_PAGE = 10
 
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
-_CODE_COMPONENT_RE = re.compile(r"[^a-z0-9]+")
 
 
 def build_mc_answer_sheet(
@@ -278,6 +277,10 @@ def _build_page_layout(
     return {
         "page_number": 1,
         "fallback_page_code": f"{opaque_instance_code}-p1",
+        "layout_version": "mc_answer_sheet_v1",
+        "units": "pt",
+        "origin": "top_left",
+        "y_axis": "down",
         "width": _LETTER_WIDTH,
         "height": _LETTER_HEIGHT,
         "bubble_regions": bubble_regions,
@@ -292,15 +295,9 @@ def _build_opaque_instance_code(
     seed: int | str,
 ) -> str:
     digest = hashlib.sha256(
-        f"{template_slug}|{student_id}|{attempt_number}|{seed}".encode("utf-8")
-    ).hexdigest()[:10]
-    normalized_student = _normalize_code_component(student_id)
-    return f"{template_slug}-{normalized_student}-a{attempt_number}-{digest}"
-
-
-def _normalize_code_component(value: str) -> str:
-    normalized = _CODE_COMPONENT_RE.sub("-", value.strip().lower()).strip("-")
-    return normalized or "student"
+        f"opaque-instance|{template_slug}|{student_id}|{attempt_number}|{seed}".encode("utf-8")
+    ).hexdigest()[:20]
+    return f"inst_{digest}"
 
 
 def _stable_seed(seed: int | str, student_id: str, question_id: str) -> int:

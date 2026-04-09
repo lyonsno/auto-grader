@@ -83,6 +83,14 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
         self.assertNotEqual(first["opaque_instance_code"], second["opaque_instance_code"])
         self.assertNotEqual(first["pages"][0]["fallback_page_code"], second["pages"][0]["fallback_page_code"])
 
+    def test_opaque_instance_code_does_not_expose_student_or_template_identifiers(self):
+        artifact = self._build_one(student_id="Student 007")
+
+        opaque_code = artifact["opaque_instance_code"].lower()
+        self.assertNotIn("quiz-1", opaque_code)
+        self.assertNotIn("student", opaque_code)
+        self.assertNotIn("007", opaque_code)
+
     def test_answer_key_matches_rendered_bubble_layout(self):
         artifact = self._build_one()
 
@@ -104,6 +112,10 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
         artifact = self._build_one()
 
         page = artifact["pages"][0]
+        self.assertEqual(page["units"], "pt")
+        self.assertEqual(page["origin"], "top_left")
+        self.assertEqual(page["y_axis"], "down")
+        self.assertEqual(page["layout_version"], "mc_answer_sheet_v1")
         self.assertGreater(page["width"], 0)
         self.assertGreater(page["height"], 0)
         self.assertGreater(len(page["bubble_regions"]), 0)
