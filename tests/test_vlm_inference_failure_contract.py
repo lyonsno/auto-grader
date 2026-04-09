@@ -119,6 +119,25 @@ class VlmInferenceFailureContract(unittest.TestCase):
         self.assertEqual(reasoning, "Tracing the unit conversion. ")
         self.assertEqual("".join(seen), "Tracing the unit conversion. ")
 
+    def test_stream_consumer_ignores_whitespace_only_reasoning_channel_and_uses_fallback(self):
+        seen: list[str] = []
+        resp = [
+            b'data: {"choices":[{"delta":{"reasoning_content":"\\n","content":"```json\\n{\\"model_reasoning\\": \\"The student set up the ratio correctly. "}}]}\n',
+            b'data: {"choices":[{"delta":{"content":"Then they slipped on the arithmetic.\\"}\\n```"}}]}\n',
+            b'data: {"choices":[{"finish_reason":"stop","delta":{}}]}\n',
+            b'data: [DONE]\n',
+        ]
+
+        _content, reasoning, _finish_reason = _consume_streaming_response(
+            resp, seen.append
+        )
+
+        self.assertEqual(
+            reasoning,
+            "The student set up the ratio correctly. Then they slipped on the arithmetic.",
+        )
+        self.assertEqual("".join(seen), reasoning)
+
 
 if __name__ == "__main__":
     unittest.main()

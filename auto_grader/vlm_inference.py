@@ -552,8 +552,17 @@ def _consume_streaming_response(
         # narrator if wired.
         rc_delta = delta.get("reasoning_content", "")
         if rc_delta:
-            saw_reasoning_channel = True
-            reasoning_parts.append(rc_delta)
+            if rc_delta.strip():
+                saw_reasoning_channel = True
+                reasoning_parts.append(rc_delta)
+            elif not reasoning_parts:
+                # Ignore whitespace-only pseudo-deltas. Some streams emit
+                # a bare newline on the reasoning channel even though the
+                # actual reasoning only arrives inside the final JSON
+                # model_reasoning field. Treat that as "no real reasoning
+                # channel yet" so the fallback parser can still engage.
+                rc_delta = ""
+        if rc_delta and rc_delta.strip():
             if on_reasoning_delta is not None:
                 try:
                     on_reasoning_delta(rc_delta)
