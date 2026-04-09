@@ -99,10 +99,11 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # the way down the stack instead of just
                                 # on the most recent few items
 _HISTORY_TIER_DIM_MIN = 0.58    # floor for within-item fade.
-_HISTORY_GROUP_DIM_STEP = 0.08  # each successive thought line under a header
+_HISTORY_GROUP_DIM_STEP = 0.05  # each successive thought line under a header
                                  # should visibly dim, but the fade should
-                                 # stair-step across ~5 lines before it
-                                 # settles at the floor.
+                                 # take longer to settle so deeper within-item
+                                 # stacks still read as a gradient instead of
+                                 # flattening by line 6.
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
 # Sumi-e palette: a Japanese garden floor in two desaturated rows
