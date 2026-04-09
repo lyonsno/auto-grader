@@ -46,13 +46,13 @@ _TRICKY_PICKS = [
 ]
 
 _TRICKY_PLUS_PICKS = [
-    *_TRICKY_PICKS,
     ("27-blue-2023", "fr-3"),    # clean correct net ionic
     ("27-blue-2023", "fr-5b"),   # clean correct stoichiometry numeric
     ("27-blue-2023", "fr-12a"),  # clean correct Lewis structure
     ("39-blue-redacted", "fr-10a"),  # clean correct frequency numeric
     ("34-blue", "fr-8"),         # partial numeric with confused work
     ("34-blue", "fr-12a"),       # Lewis partial with setup credit
+    *_TRICKY_PICKS,
 ]
 
 

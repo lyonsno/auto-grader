@@ -102,6 +102,19 @@ class SmokeVlmContract(unittest.TestCase):
             },
         )
 
+    def test_tricky_plus_runs_expansion_items_first(self) -> None:
+        self.assertEqual(
+            smoke_vlm._TRICKY_PLUS_PICKS[:6],
+            [
+                ("27-blue-2023", "fr-3"),
+                ("27-blue-2023", "fr-5b"),
+                ("27-blue-2023", "fr-12a"),
+                ("39-blue-redacted", "fr-10a"),
+                ("34-blue", "fr-8"),
+                ("34-blue", "fr-12a"),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
