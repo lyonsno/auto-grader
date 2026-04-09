@@ -4,7 +4,11 @@ from unittest import mock
 import unittest
 
 from auto_grader.eval_harness import EvalItem
-from auto_grader.vlm_inference import ServerConfig, grade_single_item
+from auto_grader.vlm_inference import (
+    ServerConfig,
+    _consume_streaming_response,
+    grade_single_item,
+)
 
 
 class _DummyResponse:
@@ -78,6 +82,42 @@ class VlmInferenceFailureContract(unittest.TestCase):
         self.assertEqual(pred.raw_assistant, "definitely not json")
         self.assertEqual(pred.raw_reasoning, "reasoning trace")
         self.assertIn("parse", pred.model_reasoning.lower())
+
+    def test_stream_consumer_falls_back_to_model_reasoning_content_when_reasoning_channel_missing(self):
+        seen: list[str] = []
+        resp = [
+            b'data: {"choices":[{"delta":{"content":"```json\\n{\\n  \\"model_read\\": \\"d = m/v\\",\\n  \\"model_reasoning\\": \\"The student "}}]}\n',
+            b'data: {"choices":[{"delta":{"content":"set the ratio correctly\\\\nthen botched the arithmetic.\\",\\n  \\"model_score\\": 1.0\\n}\\n```"}}]}\n',
+            b'data: {"choices":[{"finish_reason":"stop","delta":{}}]}\n',
+            b'data: [DONE]\n',
+        ]
+
+        content, reasoning, finish_reason = _consume_streaming_response(
+            resp, seen.append
+        )
+
+        self.assertIn('"model_reasoning"', content)
+        self.assertEqual(
+            reasoning,
+            "The student set the ratio correctly then botched the arithmetic.",
+        )
+        self.assertEqual("".join(seen), reasoning)
+        self.assertEqual(finish_reason, "stop")
+
+    def test_stream_consumer_prefers_reasoning_channel_when_present(self):
+        seen: list[str] = []
+        resp = [
+            b'data: {"choices":[{"delta":{"reasoning_content":"Tracing the unit conversion. ","content":"{\\"model_reasoning\\": \\"ignored fallback\\""}}]}\n',
+            b'data: {"choices":[{"finish_reason":"stop","delta":{}}]}\n',
+            b'data: [DONE]\n',
+        ]
+
+        _content, reasoning, _finish_reason = _consume_streaming_response(
+            resp, seen.append
+        )
+
+        self.assertEqual(reasoning, "Tracing the unit conversion. ")
+        self.assertEqual("".join(seen), "Tracing the unit conversion. ")
 
 
 if __name__ == "__main__":

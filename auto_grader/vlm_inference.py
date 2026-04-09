@@ -470,6 +470,69 @@ def _consume_streaming_response(
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
     finish_reason: str | None = None
+    fallback_scan = ""
+    waiting_for_reasoning_colon = False
+    waiting_for_reasoning_quote = False
+    capturing_reasoning_string = False
+    pending_escape = False
+    pending_unicode_digits = 0
+    saw_reasoning_channel = False
+
+    def _extract_fallback_reasoning(content_delta: str) -> str:
+        nonlocal fallback_scan
+        nonlocal waiting_for_reasoning_colon
+        nonlocal waiting_for_reasoning_quote
+        nonlocal capturing_reasoning_string
+        nonlocal pending_escape
+        nonlocal pending_unicode_digits
+
+        if not content_delta:
+            return ""
+
+        extracted: list[str] = []
+        for ch in content_delta:
+            if capturing_reasoning_string:
+                if pending_unicode_digits > 0:
+                    pending_unicode_digits -= 1
+                    continue
+                if pending_escape:
+                    if ch in {"n", "r", "t"}:
+                        extracted.append(" ")
+                    elif ch == "u":
+                        pending_unicode_digits = 4
+                    else:
+                        extracted.append(ch)
+                    pending_escape = False
+                    continue
+                if ch == "\\":
+                    pending_escape = True
+                    continue
+                if ch == '"':
+                    capturing_reasoning_string = False
+                    continue
+                extracted.append(ch)
+                continue
+
+            fallback_scan = (fallback_scan + ch)[-64:]
+            if waiting_for_reasoning_colon:
+                if ch == ":":
+                    waiting_for_reasoning_colon = False
+                    waiting_for_reasoning_quote = True
+                continue
+            if waiting_for_reasoning_quote:
+                if ch == '"':
+                    waiting_for_reasoning_quote = False
+                    capturing_reasoning_string = True
+                elif ch in " \t\r\n":
+                    continue
+                else:
+                    waiting_for_reasoning_quote = False
+                continue
+            if fallback_scan.endswith('"model_reasoning"'):
+                waiting_for_reasoning_colon = True
+
+        return "".join(extracted)
+
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line.startswith("data:"):
@@ -489,6 +552,7 @@ def _consume_streaming_response(
         # narrator if wired.
         rc_delta = delta.get("reasoning_content", "")
         if rc_delta:
+            saw_reasoning_channel = True
             reasoning_parts.append(rc_delta)
             if on_reasoning_delta is not None:
                 try:
@@ -499,6 +563,15 @@ def _consume_streaming_response(
         c_delta = delta.get("content", "")
         if c_delta:
             content_parts.append(c_delta)
+            if not saw_reasoning_channel:
+                fallback_reasoning = _extract_fallback_reasoning(c_delta)
+                if fallback_reasoning:
+                    reasoning_parts.append(fallback_reasoning)
+                    if on_reasoning_delta is not None:
+                        try:
+                            on_reasoning_delta(fallback_reasoning)
+                        except Exception:
+                            pass
     return "".join(content_parts), "".join(reasoning_parts), finish_reason
 
 
