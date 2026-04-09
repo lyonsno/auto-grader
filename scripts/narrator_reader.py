@@ -67,10 +67,10 @@ _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
 
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
-_VISIBLE_HISTORY_ROWS = 22  # visible history budget in WRAPPED visual rows,
-                            # not logical entries. Trimmed to roughly
-                            # three-quarters now that the scorebug strip
-                            # consumes extra vertical space.
+_VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
+                            # not logical entries. Keep the old overall
+                            # depth, but count it coherently now that the
+                            # scorebug and long wrapped lines exist.
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so

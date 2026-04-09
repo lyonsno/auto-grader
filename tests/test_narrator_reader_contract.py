@@ -155,8 +155,8 @@ class NarratorReaderContract(unittest.TestCase):
     def test_history_visual_row_budget_is_reduced_for_scorebug_strip(self):
         self.assertEqual(
             _VISIBLE_HISTORY_ROWS,
-            22,
-            "history budget should be trimmed to roughly three-quarters now that the scorebug consumes vertical real estate",
+            30,
+            "history budget should return to the original length while staying wrap-aware",
         )
 
     def test_group_depth_resets_at_each_header(self):
@@ -220,7 +220,7 @@ class NarratorReaderContract(unittest.TestCase):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))
         display.history.append(("topic", "brief topic", "match"))
-        display.history.append(("line", "x" * 420, 0))
+        display.history.append(("line", "x" * 620, 0))
         display.history.append(("line", "newest short line", 1))
 
         entries = display._build_display_entries(wrap_width=20)
