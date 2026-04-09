@@ -66,6 +66,17 @@ class NarratorReaderPaletteContract(unittest.TestCase):
         self.assertGreater(blue, green)
         self.assertGreater(green, red)
 
+    def test_status_rail_is_darker_than_header_index_accent(self):
+        module = _load_narrator_reader()
+        status_red, status_green, status_blue = module._BASE_RGB["status"]
+        index_red, index_green, index_blue = module._BASE_RGB["header_index"]
+
+        self.assertLess(
+            status_red + status_green + status_blue,
+            index_red + index_green + index_blue,
+            "status rail should sit a step darker than the crisp header-index blue",
+        )
+
     def test_match_verdict_is_darker_and_more_indigo_than_header_index(self):
         module = _load_narrator_reader()
         match_red, match_green, match_blue = module._BASE_RGB["topic_match"]
@@ -99,6 +110,20 @@ class NarratorReaderPaletteContract(unittest.TestCase):
             red, green, blue = module._SHIMMER_KIND_PEAK_RGB[kind]
             self.assertGreater(blue, green)
             self.assertGreater(green, red)
+
+    def test_live_field_is_tempered_below_the_old_hot_pass(self):
+        module = _load_narrator_reader()
+
+        self.assertLessEqual(
+            module._LIVE_BASE_SAT,
+            0.74,
+            "live field should be calmer than the earlier hotter saturation pass",
+        )
+        self.assertLessEqual(
+            module._LIVE_BASE_VAL,
+            0.92,
+            "live field should be slightly dimmer than the earlier glare-prone pass",
+        )
 
 
 if __name__ == "__main__":
