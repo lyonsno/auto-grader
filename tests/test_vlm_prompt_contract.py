@@ -149,6 +149,26 @@ class GradingPromptContract(unittest.TestCase):
             "the JSON schema should persist the obvious-wrong bucket",
         )
 
+    def test_system_prompt_keeps_obvious_wrong_out_of_partial_credit_cases(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Do not use is_obviously_wrong = true if any lawful partial-credit path remains.",
+            prompt,
+            "obvious-wrong should be reserved for true zero-credit cases, not harsh partial-credit judgments",
+        )
+
+    def test_system_prompt_blocks_rescue_credit_on_answered_form_failures(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "When the requested form is itself the thing being graded, do not award rescue credit for nearby ingredients of the answer unless the rubric explicitly does so.",
+            prompt,
+            "answered-form failures should not pick up rescue points just for mentioning nearby chemistry",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

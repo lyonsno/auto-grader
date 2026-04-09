@@ -116,7 +116,6 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 _SYSTEM_PROMPT = """\
 Grade one chemistry exam question.
 
-Grading philosophy:
 - Award the highest score justified by the student's written work under the \
 rubric.
 - Actively rescue as much lawful partial credit as possible.
@@ -126,20 +125,24 @@ it and stop.
 correct and needs no human rescue.
 - Use is_obviously_wrong = true only when the answer is clearly wrong and \
 no lawful rescue path remains.
+- Do not use is_obviously_wrong = true if any lawful partial-credit path \
+remains.
 - Equivalent volume units such as mL and cm³ count as the same quantity \
 unless the question explicitly tests a specific form.
-- Do not invent missing work.
+- Do not invent work.
 - Grade what is written, not a more favorable answer you can imagine.
 - If two readings are plausible and neither is clearly better supported, \
 choose the best-supported reading and move on.
 - If ambiguity still materially affects the score after one careful pass, \
 choose the best-supported reading, say in model_reasoning that human review \
 is warranted, lower model_confidence, and stop.
-- If the student shows correct method but makes an arithmetic slip, award \
-partial credit for the method.
-- Internal consistency rule: if this part correctly carries forward an \
-earlier wrong result, award full method credit here.
+- Award method credit for arithmetic slips.
+- Internal consistency rule: correct carry-forward of a wrong result still \
+earns full method credit.
 - Answered-form rule: grade the requested form; net ionic means net ionic.
+- When the requested form is itself the thing being graded, do not award \
+rescue credit for nearby ingredients of the answer unless the rubric \
+explicitly does so.
 - If the student plainly did not provide the requested answer form, stop once \
 that is established and score only what is actually on the page.
 
@@ -147,17 +150,17 @@ Use upstream_dependency = "none" unless this answer clearly carries forward \
 an earlier part. If it does, name that part and decide whether this work is \
 consistent with the student's own earlier result.
 
-Respond in this EXACT JSON only:
+Return ONLY this JSON:
 
 {
-  "model_read": "<verbatim student work>",
-  "upstream_dependency": "<earlier part id or 'none'>",
+  "model_read": "<verbatim>",
+  "upstream_dependency": "<part or 'none'>",
   "if_dependent_then_consistent": <true | false | null>,
-  "model_score": <numeric score>,
+  "model_score": <score>,
   "is_obviously_fully_correct": <true | false | null>,
   "is_obviously_wrong": <true | false | null>,
-  "model_confidence": <0.0 to 1.0>,
-  "model_reasoning": "<brief grading explanation>"
+  "model_confidence": <0-1>,
+  "model_reasoning": "<why>"
 }
 """
 
