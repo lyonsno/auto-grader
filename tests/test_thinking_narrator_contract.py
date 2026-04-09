@@ -4,6 +4,7 @@ import json
 from unittest import mock
 import unittest
 
+from auto_grader.eval_harness import EvalItem, Prediction
 from auto_grader.thinking_narrator import ThinkingNarrator
 
 
@@ -49,6 +50,15 @@ class _RetryNarrator(ThinkingNarrator):
         for token in text.split():
             on_delta(token + " ")
         return text
+
+
+class _AfterActionNarrator(ThinkingNarrator):
+    def __init__(self, sink: _DummySink, response: str) -> None:
+        super().__init__(sink)
+        self._response = response
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return self._response
 
 
 class ThinkingNarratorContract(unittest.TestCase):
@@ -192,6 +202,48 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(completion_mock.call_args.kwargs["temperature"], 1.0)
         self.assertEqual(completion_mock.call_args.kwargs["presence_penalty"], 1.0)
         self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.01)
+
+    def test_after_action_normalizes_score_denominators_to_item_max_points(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(
+            sink,
+            "Grader: 0.5/1 (correct relationship but wrong sign and units). "
+            "Prof: 1.5/2 (partial credit for setup, full credit for execution). "
+            "· student plain missed sign and units, judges in lockstep.",
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.5,
+            max_points=3.0,
+            professor_mark="partial",
+            student_answer="...",
+            notes="",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            model_score=0.5,
+            model_confidence=0.9,
+            model_reasoning="Correct formula, wrong energy value.",
+            model_read="E = hν ...",
+        )
+
+        narrator._produce_after_action(146.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.topics,
+            [
+                (
+                    "146s · Grader: 0.5/3 (correct relationship but wrong sign and units). "
+                    "Prof: 1.5/3 (partial credit for setup, full credit for execution). "
+                    "· student plain missed sign and units, judges in lockstep.",
+                    "undershoot",
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":
