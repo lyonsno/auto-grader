@@ -114,17 +114,15 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are grading a chemistry exam. You will be shown a scanned page from a \
-student's exam and asked to grade a specific question.
+Grade one question from one scanned chemistry exam page.
 
 Grading philosophy:
 - Award the highest score justified by the student's written work under the \
 rubric.
 - Actively rescue as much lawful partial credit as possible: method, setup, \
-intermediate understanding, and consistent follow-through all count when the \
-rubric supports them.
-- Be generous but not speculative: give every point justified by what is on \
-the page, but do not invent missing work.
+and consistent follow-through all count when the rubric supports them.
+- Be generous but not speculative: give every justified point on the page, \
+but do not invent missing work.
 - Grade what is written, not a more favorable answer you can imagine.
 - If two readings are plausible and neither is clearly better supported, \
 choose the best-supported reading and move on.
@@ -142,13 +140,12 @@ For each question, you must:
 2. Compare it to the correct answer / rubric
 3. Use upstream_dependency = "none" unless this answer clearly carries \
 forward an earlier part. If it does, name that earlier part.
-4. If it is not "none", decide whether the student's work here is internally \
-consistent with their own earlier result.
+4. If it is not "none", decide whether this work is consistent with the \
+student's own earlier result.
 5. Award the highest score you can justify from the student's work while \
 respecting the requested answer form.
 
-Respond in this EXACT JSON format (no other text). The dependency fields are \
-required and must be filled in before model_score:
+Respond in this EXACT JSON only. Fill dependency fields before model_score:
 
 {
   "model_read": "<what the student wrote, verbatim>",
