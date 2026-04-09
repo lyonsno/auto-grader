@@ -12,6 +12,7 @@ from scripts.narrator_reader import (
     _LIVE_FREEZE_FADE_S,
     _apply_shimmer,
     _history_tier_dim_factor,
+    _message_requires_immediate_refresh,
     _render_layer_index,
 )
 
@@ -234,6 +235,21 @@ class NarratorReaderContract(unittest.TestCase):
             "resolution/topic lines should stay full-strength instead of fading with the thought stack",
         )
         self.assertEqual(_render_layer_index("header", 3), 0)
+
+    def test_stream_events_do_not_force_immediate_repaint(self):
+        for msg_type in (
+            "header",
+            "delta",
+            "commit",
+            "rollback_live",
+            "topic",
+            "drop",
+            "wrap_up_pending",
+        ):
+            self.assertFalse(_message_requires_immediate_refresh(msg_type))
+
+        for msg_type in ("wrap_up", "end"):
+            self.assertTrue(_message_requires_immediate_refresh(msg_type))
 
     def test_lower_history_tiers_render_dimmer_than_top_tier(self) -> None:
         top_text = Text()

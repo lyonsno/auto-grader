@@ -352,6 +352,16 @@ def _render_layer_index(kind: str, group_depth: int) -> int:
     return group_depth if kind == "line" else 0
 
 
+def _message_requires_immediate_refresh(msg_type: str) -> bool:
+    """Return whether a FIFO event should bypass the normal animation cadence.
+
+    Regular stream events should let the animation loop own repaint timing so
+    idle and active motion feel consistent. Only boundary moments that would
+    feel laggy at 12 FPS get an immediate forced refresh.
+    """
+    return msg_type in {"wrap_up", "end"}
+
+
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     """Convert HSV (h in degrees, s/v in [0, 1]) to 8-bit RGB."""
     h = h % 360
@@ -1426,10 +1436,11 @@ def main() -> int:
                             pass
                         return 0
 
-                    try:
-                        live.update(display.render(), refresh=True)
-                    except Exception:
-                        pass
+                    if _message_requires_immediate_refresh(msg_type):
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            pass
     finally:
         animation_stop.set()
         try:
