@@ -73,6 +73,17 @@ class NarratorReaderContract(unittest.TestCase):
                 return span.style
         raise AssertionError("no hex content style found after cursor")
 
+    @staticmethod
+    def _style_for_substring(text: Text, needle: str) -> str:
+        start = text.plain.index(needle)
+        for span in text.spans:
+            if (
+                isinstance(span.style, str)
+                and span.start <= start < span.end
+            ):
+                return span.style
+        raise AssertionError(f"no style span found for substring {needle!r}")
+
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
         display = PaintDryDisplay()
         display.on_delta("I'm tracing the stoichiometry.")
@@ -246,6 +257,11 @@ class NarratorReaderContract(unittest.TestCase):
             live_red,
             "live first-person line should pick up some moss/green body instead of fiery red",
         )
+        self.assertGreater(
+            live_blue,
+            live_green,
+            "live first-person line should lean more steel-blue than moss-green",
+        )
 
     def test_render_inserts_scorebug_strip_between_header_and_status_when_model_known(self):
         display = self._make_display()
@@ -257,11 +273,23 @@ class NarratorReaderContract(unittest.TestCase):
         scorebug_panel = group.renderables[1]
         live_panel = group.renderables[2]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
+        scorebug_text_obj = scorebug_panel.renderable.renderable
 
         self.assertIn("CURRENT MODEL", scorebug_text)
         self.assertIn("qwen3p5-35B-A3B", scorebug_text)
-        self.assertIn("ITEM 3/6", scorebug_text)
+        self.assertIn("ITEM", scorebug_text)
+        self.assertIn("3/6", scorebug_text)
         self.assertIn("status + live", live_panel.title)
+        self.assertIn(
+            "on #",
+            self._style_for_substring(scorebug_text_obj, "CURRENT MODEL"),
+            "scorebug labels should now read like scoreboard capsules, not plain metadata text",
+        )
+        self.assertIn(
+            "on #",
+            self._style_for_substring(scorebug_text_obj, "ITEM"),
+            "item indicator should live in its own scorebug cell",
+        )
 
     def test_live_undulation_drifts_leftward(self):
         dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)

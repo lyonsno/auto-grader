@@ -244,11 +244,10 @@ _TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 # palette without losing fire feel.
 _LIVE_UNDULATION_CYCLE_S = 3.8    # lively enough to read as motion, but
                                    # still slower than token streaming
-_LIVE_HUE_CENTER_DEG = 176         # cool blue-moss center — split the
-                                   # difference between the structural blue
-                                   # family and the mossy narrator rows
-_LIVE_HUE_RANGE_DEG = 28           # lets the band travel from moss-green
-                                    # through blue-steel into indigo wash
+_LIVE_HUE_CENTER_DEG = 196         # pulled bluer so the live band reads as
+                                   # steel/indigo activity rather than moss
+_LIVE_HUE_RANGE_DEG = 18           # tighter swing keeps a hint of green
+                                    # without letting the band settle there
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
 _LIVE_PHASE_OFFSET_RAD = 0.0
 _LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
@@ -1036,13 +1035,16 @@ class PaintDryDisplay:
         scorebug_panel = None
         if self.current_model or self.current_item_bug:
             scorebug_text = Text()
-            scorebug_text.append("CURRENT MODEL ", style="bold #7f95cf")
+            scorebug_text.append(" CURRENT MODEL ", style="bold #eaf2ff on #405a93")
             model_display = self.current_model or "—"
-            scorebug_text.append(model_display, style="bold #b9c9ef")
+            scorebug_text.append(f" {model_display} ", style="bold #d8e5ff on #27344f")
             if self.current_item_bug:
                 scorebug_text.append("   ", style="dim")
-                scorebug_text.append("ITEM ", style="bold #7f95cf")
-                scorebug_text.append(self.current_item_bug, style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}")
+                scorebug_text.append(" ITEM ", style="bold #fff1e6 on #7d4a2e")
+                scorebug_text.append(
+                    f" {self.current_item_bug} ",
+                    style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
             scorebug_panel = Panel(
                 Align.left(scorebug_text),
                 border_style="#3d4458",
