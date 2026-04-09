@@ -96,10 +96,10 @@ class NarratorReaderContract(unittest.TestCase):
         live_panel = group.renderables[1]
         panel_text = _extract_plain(live_panel.renderable)
 
-        self.assertIn("Tracing", panel_text)
+        self.assertIn("TRACING", panel_text)
         self.assertIn("I'm tracing the stoichiometry.", panel_text)
         self.assertLess(
-            panel_text.index("Tracing"),
+            panel_text.index("TRACING"),
             panel_text.index("I'm tracing the stoichiometry."),
         )
 
@@ -113,12 +113,24 @@ class NarratorReaderContract(unittest.TestCase):
         panel_text = _extract_plain(live_panel.renderable)
 
         self.assertIn("status + live", live_panel.title)
-        self.assertIn("Tracing the stoichiometry setup.", panel_text)
+        self.assertIn("TRACING THE STOICHIOMETRY SETUP.", panel_text)
         self.assertIn("I'm tracing the stoichiometry.", panel_text)
         self.assertLess(
-            panel_text.index("Tracing the stoichiometry setup."),
+            panel_text.index("TRACING THE STOICHIOMETRY SETUP."),
             panel_text.index("I'm tracing the stoichiometry."),
         )
+
+    def test_status_renders_in_all_caps_without_mutating_stored_text(self):
+        display = self._make_display()
+        display.status_line = "Rechecking the stoichiometry setup."
+
+        group = display.render()
+        live_panel = group.renderables[1]
+        panel_text = _extract_plain(live_panel.renderable)
+
+        self.assertEqual(display.status_line, "Rechecking the stoichiometry setup.")
+        self.assertIn("RECHECKING THE STOICHIOMETRY SETUP.", panel_text)
+        self.assertNotIn("Rechecking the stoichiometry setup.", panel_text)
 
     def test_group_depth_resets_at_each_header(self):
         display = self._make_display()
@@ -177,7 +189,7 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
-    def test_top_panel_uses_cool_status_gutter_with_warm_status_and_live_text(self):
+    def test_top_panel_uses_warm_status_gutter_with_umber_status_and_warm_live_text(self):
         display = self._make_display()
         display.status_line = "Tracing the stoichiometry setup."
         display.frozen_line = "I'm tracing the stoichiometry."
@@ -194,20 +206,26 @@ class NarratorReaderContract(unittest.TestCase):
             self._first_content_hex(live_text)
         )
 
-        self.assertEqual(
-            status_gutter,
-            "#6f87c7",
-            "status gutter should preserve a cool top-panel anchor",
+        gutter_red, gutter_green, gutter_blue = self._rgb_from_hex(status_gutter)
+        self.assertGreater(
+            gutter_red,
+            gutter_green,
+            "status gutter should now join the warm status family instead of staying blue",
         )
         self.assertGreater(
-            status_red,
-            status_green,
-            "sticky status text should now sit in the darker warm structural family",
+            gutter_green,
+            gutter_blue,
+            "status gutter should read as ember/umber rather than magenta or blue",
         )
         self.assertGreater(
             status_green,
             status_blue,
-            "sticky status text should stay auburn/umber, not burgundy-purple",
+            "sticky status text should stay umber-forward, not bright red or burgundy-purple",
+        )
+        self.assertLess(
+            status_red - status_green,
+            95,
+            "sticky status text should shed some of the bright-red spike and keep more umber heft",
         )
         self.assertGreater(
             live_red,
@@ -241,31 +259,31 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertAlmostEqual(hue_at_char_0_later, hue_at_char_1_now, places=6)
 
-    def test_status_undulation_drifts_leftward_with_phase_offset(self):
+    def test_status_undulation_drifts_rightward_with_phase_offset(self):
         dt = _STATUS_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _STATUS_UNDULATION_CYCLE_S)
 
-        hue_at_char_1_now = _undulation_hue_deg(
+        hue_at_char_0_now = _undulation_hue_deg(
             0.0,
-            1,
-            cycle_s=_STATUS_UNDULATION_CYCLE_S,
-            center_deg=12,
-            range_deg=14,
-            per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
-            phase_offset_rad=0.85,
-            direction=-1.0,
-        )
-        hue_at_char_0_later = _undulation_hue_deg(
-            dt,
             0,
             cycle_s=_STATUS_UNDULATION_CYCLE_S,
             center_deg=12,
             range_deg=14,
             per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
             phase_offset_rad=0.85,
-            direction=-1.0,
+            direction=1.0,
+        )
+        hue_at_char_1_later = _undulation_hue_deg(
+            dt,
+            1,
+            cycle_s=_STATUS_UNDULATION_CYCLE_S,
+            center_deg=12,
+            range_deg=14,
+            per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=0.85,
+            direction=1.0,
         )
 
-        self.assertAlmostEqual(hue_at_char_0_later, hue_at_char_1_now, places=6)
+        self.assertAlmostEqual(hue_at_char_1_later, hue_at_char_0_now, places=6)
 
     def test_new_header_clears_sticky_status(self):
         display = PaintDryDisplay()
