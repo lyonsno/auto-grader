@@ -89,7 +89,10 @@ class TestWezTermResolution(unittest.TestCase):
                 SinkConfig(
                     log_dir=Path(tmpdir),
                     fallback_stream=io.StringIO(),
-                    session_meta={"model": "qwen3p5-35B-A3B"},
+                    session_meta={
+                        "model": "qwen3p5-35B-A3B",
+                        "set_label": "TRICKY",
+                    },
                 )
             )
             sink.start()
@@ -102,6 +105,33 @@ class TestWezTermResolution(unittest.TestCase):
 
         meta = next(event for event in events if event["type"] == "session_meta")
         self.assertEqual(meta["model"], "qwen3p5-35B-A3B")
+        self.assertEqual(meta["set_label"], "TRICKY")
+
+    def test_write_topic_can_emit_scorebug_tally_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_topic(
+                "31s · Grader: 0/4. Prof: 0/4.",
+                verdict="match",
+                grader_score=0.0,
+                truth_score=0.0,
+                max_points=4.0,
+            )
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        topic = next(event for event in events if event["type"] == "topic")
+        self.assertEqual(topic["verdict"], "match")
+        self.assertEqual(topic["grader_score"], 0.0)
+        self.assertEqual(topic["truth_score"], 0.0)
+        self.assertEqual(topic["max_points"], 4.0)
 
 
 if __name__ == "__main__":

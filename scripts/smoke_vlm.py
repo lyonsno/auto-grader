@@ -56,6 +56,27 @@ def _validate_narrator_model(model: str) -> str:
     return normalized
 
 
+def _scorebug_session_meta(
+    *,
+    args: argparse.Namespace,
+    model: str,
+    subset_count: int,
+) -> dict[str, object]:
+    if args.tricky:
+        set_label = "TRICKY"
+    elif args.all:
+        set_label = "ALL"
+    elif args.pick:
+        set_label = "PICK"
+    else:
+        set_label = f"FIRST {subset_count}"
+    return {
+        "model": model,
+        "set_label": set_label,
+        "subset_count": subset_count,
+    }
+
+
 class _PredictionWriter:
     """Append-only JSONL writer for grader predictions.
 
@@ -293,7 +314,11 @@ def main():
             spawn_terminal=args.narrate,
             log_dir=run_dir,
             fallback_stream=sys.stderr,
-            session_meta={"model": config.model},
+            session_meta=_scorebug_session_meta(
+                args=args,
+                model=config.model,
+                subset_count=len(subset),
+            ),
         )
         sink_cm = NarratorSink(sink_config)
     else:

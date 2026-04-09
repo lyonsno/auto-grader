@@ -20,7 +20,7 @@ class _DummySink:
     def write_drop(self, reason: str, text: str) -> None:
         return None
 
-    def write_topic(self, text: str, verdict: str | None = None) -> None:
+    def write_topic(self, text: str, verdict: str | None = None, **kwargs) -> None:
         return None
 
     def start_wrap_up(self) -> None:
@@ -61,6 +61,25 @@ class SmokeVlmContract(unittest.TestCase):
         resolved = smoke_vlm._validate_narrator_model(model_path)
 
         self.assertEqual(resolved, model_path)
+
+    def test_scorebug_session_meta_labels_tricky_subset(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+        args = parser.parse_args(["--model", "gemma-4-26b-a4b-it-bf16", "--tricky"])
+
+        meta = smoke_vlm._scorebug_session_meta(
+            args=args,
+            model=args.model,
+            subset_count=6,
+        )
+
+        self.assertEqual(
+            meta,
+            {
+                "model": "gemma-4-26b-a4b-it-bf16",
+                "set_label": "TRICKY",
+                "subset_count": 6,
+            },
+        )
 
 
 if __name__ == "__main__":

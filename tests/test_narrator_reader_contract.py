@@ -5,6 +5,7 @@ import time
 import unittest
 from unittest import mock
 
+from rich.align import Align
 from rich.console import Console, Group
 from rich.text import Text
 
@@ -382,7 +383,10 @@ class NarratorReaderContract(unittest.TestCase):
         scorebug_panel = group.renderables[1]
         live_panel = group.renderables[2]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
-        scorebug_text_obj = scorebug_panel.renderable.renderable
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        scorebug_text_obj = scorebug_renderable.renderables[0]
 
         self.assertIn("CURRENT MODEL", scorebug_text)
         self.assertIn("qwen3p5-35B-A3B", scorebug_text)
@@ -398,6 +402,68 @@ class NarratorReaderContract(unittest.TestCase):
             "on #",
             self._style_for_substring(scorebug_text_obj, "ITEM"),
             "item indicator should live in its own scorebug cell",
+        )
+
+    def test_scorebug_can_render_set_and_running_tally_cells(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="gemma-4-26b-a4b-it-bf16",
+            set_label="TRICKY",
+            subset_count=6,
+        )
+        display.on_header("[item 4/6] 15-blue/fr-10a")
+        display.on_topic(
+            "35s · Grader: 2/2. Prof: 2/2.",
+            verdict="match",
+            grader_score=2.0,
+            truth_score=2.0,
+            max_points=2.0,
+        )
+        display.on_topic(
+            "53s · Grader: 0/4. Prof: 1/4.",
+            verdict="undershoot",
+            grader_score=0.0,
+            truth_score=1.0,
+            max_points=4.0,
+        )
+        display.on_topic(
+            "82s · Grader: 3/3. Prof: 1.5/3.",
+            verdict="overshoot",
+            grader_score=3.0,
+            truth_score=1.5,
+            max_points=3.0,
+        )
+
+        group = display.render()
+
+        scorebug_panel = group.renderables[1]
+        scorebug_text = _extract_plain(scorebug_panel.renderable)
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        scorebug_text_obj = scorebug_renderable.renderables[0]
+        tally_text_obj = scorebug_renderable.renderables[1]
+
+        self.assertIn("CURRENT MODEL", scorebug_text)
+        self.assertIn("SET", scorebug_text)
+        self.assertIn("TRICKY", scorebug_text)
+        self.assertIn("ITEM", scorebug_text)
+        self.assertIn("4/6", scorebug_text)
+        self.assertIn("ON TARGET", scorebug_text)
+        self.assertIn("2.0/9.0", scorebug_text)
+        self.assertIn("LEFT ON TABLE", scorebug_text)
+        self.assertIn("1.0/1.0", scorebug_text)
+        self.assertIn("BAD CALLS", scorebug_text)
+        self.assertIn("1.5/1.5", scorebug_text)
+        self.assertIn(
+            "on #",
+            self._style_for_substring(scorebug_text_obj, "SET"),
+            "set label should also read like a scoreboard cell",
+        )
+        self.assertIn(
+            "on #",
+            self._style_for_substring(tally_text_obj, "ON TARGET"),
+            "running tally labels should render as scorebug cells, not plain text",
         )
 
     def test_live_undulation_drifts_leftward(self):

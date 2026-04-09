@@ -874,7 +874,15 @@ class PaintDryDisplay:
         self.title = "PROJECT PAINT DRY · sumi-e"
         self.subtitle = "bonsai narrator · live"
         self.current_model: str = ""
+        self.current_set_label: str = ""
+        self.current_subset_count: int | None = None
         self.current_item_bug: str = ""
+        self.score_on_target_points = 0.0
+        self.score_points_possible = 0.0
+        self.score_left_on_table_points = 0.0
+        self.score_left_on_table_potential = 0.0
+        self.score_bad_call_points = 0.0
+        self.score_bad_call_potential = 0.0
 
         # Sticky live: the thought lane has a streaming buffer plus a
         # frozen committed line. The status rail has its own separate
@@ -940,6 +948,24 @@ class PaintDryDisplay:
 
     def __rich__(self) -> Group:
         return self.render()
+
+    @staticmethod
+    def _format_scorebug_points(value: float) -> str:
+        return f"{value:.1f}"
+
+    @staticmethod
+    def _append_scorebug_cell(
+        row: Text,
+        label: str,
+        value: str,
+        *,
+        label_style: str,
+        value_style: str,
+    ) -> None:
+        if row.plain:
+            row.append("  ", style="dim")
+        row.append(f" {label} ", style=label_style)
+        row.append(f" {value} ", style=value_style)
 
     def should_animate(self, now: float | None = None) -> bool:
         """Return whether the UI should keep driving the shimmer loop.
@@ -1184,20 +1210,70 @@ class PaintDryDisplay:
         )
 
         scorebug_panel = None
-        if self.current_model or self.current_item_bug:
-            scorebug_text = Text()
-            scorebug_text.append(" CURRENT MODEL ", style="bold #eaf2ff on #405a93")
-            model_display = self.current_model or "—"
-            scorebug_text.append(f" {model_display} ", style="bold #d8e5ff on #27344f")
-            if self.current_item_bug:
-                scorebug_text.append("   ", style="dim")
-                scorebug_text.append(" ITEM ", style="bold #fff1e6 on #7d4a2e")
-                scorebug_text.append(
-                    f" {self.current_item_bug} ",
-                    style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+        if self.current_model or self.current_item_bug or self.current_set_label:
+            scorebug_top = Text()
+            self._append_scorebug_cell(
+                scorebug_top,
+                "CURRENT MODEL",
+                self.current_model or "—",
+                label_style="bold #eaf2ff on #405a93",
+                value_style="bold #d8e5ff on #27344f",
+            )
+            if self.current_set_label:
+                set_value = self.current_set_label
+                self._append_scorebug_cell(
+                    scorebug_top,
+                    "SET",
+                    set_value,
+                    label_style="bold #eef6ff on #32506e",
+                    value_style="bold #d7e8ff on #1d3147",
                 )
+            if self.current_item_bug:
+                self._append_scorebug_cell(
+                    scorebug_top,
+                    "ITEM",
+                    self.current_item_bug,
+                    label_style="bold #fff1e6 on #7d4a2e",
+                    value_style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
+
+            scorebug_rows: list[Text] = [scorebug_top]
+            if self.score_points_possible > 0:
+                scorebug_bottom = Text()
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "ON TARGET",
+                    (
+                        f"{self._format_scorebug_points(self.score_on_target_points)}"
+                        f"/{self._format_scorebug_points(self.score_points_possible)}"
+                    ),
+                    label_style="bold #eef3ff on #32578e",
+                    value_style="bold #dce9ff on #1c2d47",
+                )
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "LEFT ON TABLE",
+                    (
+                        f"{self._format_scorebug_points(self.score_left_on_table_points)}"
+                        f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
+                    ),
+                    label_style="bold #fff3db on #8a6635",
+                    value_style="bold #fff1d9 on #4a3720",
+                )
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "BAD CALLS",
+                    (
+                        f"{self._format_scorebug_points(self.score_bad_call_points)}"
+                        f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
+                    ),
+                    label_style="bold #ffe9e2 on #8d4637",
+                    value_style="bold #ffe7de on #4f251f",
+                )
+                scorebug_rows.append(scorebug_bottom)
+
             scorebug_panel = Panel(
-                Align.left(scorebug_text),
+                Align.left(Group(*scorebug_rows)),
                 border_style="#3d4458",
                 padding=(0, 1),
             )
@@ -1553,9 +1629,19 @@ class PaintDryDisplay:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
         self.history.append(("header", text, None))
 
-    def on_session_meta(self, *, model: str | None = None) -> None:
+    def on_session_meta(
+        self,
+        *,
+        model: str | None = None,
+        set_label: str | None = None,
+        subset_count: int | None = None,
+    ) -> None:
         if model:
             self.current_model = model
+        if set_label:
+            self.current_set_label = set_label
+        if subset_count is not None:
+            self.current_subset_count = subset_count
 
     def on_delta(self, text: str, mode: str = "thought") -> None:
         if mode == "status":
@@ -1613,13 +1699,38 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
-    def on_topic(self, text: str, verdict: str | None = None) -> None:
+    def on_topic(
+        self,
+        text: str,
+        verdict: str | None = None,
+        *,
+        grader_score: float | None = None,
+        truth_score: float | None = None,
+        max_points: float | None = None,
+    ) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
         # buffers — frozen_line keeps showing the last bonsai line.
         # The verdict ("match" / "overshoot" / "undershoot" / None)
         # is stored in the third tuple slot so the renderer can pick
         # the right color variant for the topic line.
         self.history.append(("topic", text, verdict))
+        if (
+            grader_score is None
+            or truth_score is None
+            or max_points is None
+        ):
+            return
+        self.score_points_possible += max_points
+        if abs(grader_score - truth_score) < 1e-9:
+            self.score_on_target_points += truth_score
+            return
+        if grader_score < truth_score:
+            self.score_left_on_table_points += truth_score - grader_score
+            self.score_left_on_table_potential += truth_score
+            return
+        if grader_score > truth_score:
+            self.score_bad_call_points += grader_score - truth_score
+            self.score_bad_call_potential += max(0.0, max_points - truth_score)
 
 
 def main() -> int:
@@ -1729,7 +1840,11 @@ def main() -> int:
                     if msg_type == "header":
                         display.on_header(msg.get("text", ""))
                     elif msg_type == "session_meta":
-                        display.on_session_meta(model=msg.get("model"))
+                        display.on_session_meta(
+                            model=msg.get("model"),
+                            set_label=msg.get("set_label"),
+                            subset_count=msg.get("subset_count"),
+                        )
                     elif msg_type == "delta":
                         display.on_delta(
                             msg.get("text", ""),
@@ -1743,6 +1858,9 @@ def main() -> int:
                         display.on_topic(
                             msg.get("text", ""),
                             verdict=msg.get("verdict"),
+                            grader_score=msg.get("grader_score"),
+                            truth_score=msg.get("truth_score"),
+                            max_points=msg.get("max_points"),
                         )
                     elif msg_type == "drop":
                         display.on_drop(

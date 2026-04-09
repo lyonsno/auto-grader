@@ -30,7 +30,7 @@ class _DummySink:
     def write_drop(self, reason: str, text: str) -> None:
         self.drops.append((reason, text))
 
-    def write_topic(self, text: str, verdict: str | None = None) -> None:
+    def write_topic(self, text: str, verdict: str | None = None, **kwargs) -> None:
         self.topics.append((text, verdict))
 
 
