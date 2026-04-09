@@ -158,6 +158,7 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
         self.assertGreater(len(page["bubble_regions"]), 0)
 
         for region in page["bubble_regions"]:
+            self.assertEqual(region["shape"], "circle")
             self.assertGreater(region["x"], 0)
             self.assertGreater(region["y"], 0)
             self.assertGreater(region["width"], 0)
@@ -182,6 +183,31 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
             self.assertGreater(marker["height"], 0)
             self.assertLessEqual(marker["x"] + marker["width"], page["width"])
             self.assertLessEqual(marker["y"] + marker["height"], page["height"])
+
+    def test_bubble_regions_leave_readable_horizontal_gaps_between_choices(self):
+        artifact = self._build_one()
+
+        page = artifact["pages"][0]
+        first_question_regions = sorted(
+            [
+                region
+                for region in page["bubble_regions"]
+                if region["question_id"] == artifact["mc_questions"][0]["question_id"]
+            ],
+            key=lambda region: region["x"],
+        )
+        gaps = [
+            later["x"] - (earlier["x"] + earlier["width"])
+            for earlier, later in zip(first_question_regions, first_question_regions[1:], strict=False)
+        ]
+        self.assertTrue(gaps)
+        for gap in gaps:
+            self.assertGreaterEqual(
+                gap,
+                20,
+                "Bubble boxes should not be packed edge-to-edge; the page contract "
+                "needs enough horizontal breathing room for humans and later scan review.",
+            )
 
     def test_blank_student_identifier_is_rejected(self):
         from auto_grader.generation import build_mc_answer_sheet

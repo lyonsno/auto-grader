@@ -26,9 +26,9 @@ _LETTER_HEIGHT = 792
 _LAYOUT_LEFT = 72
 _LAYOUT_TOP = 144
 _COLUMN_WIDTH = 234
-_ROW_HEIGHT = 48
+_ROW_HEIGHT = 60
 _BUBBLE_SIZE = 18
-_BUBBLE_GAP = 10
+_BUBBLE_GAP = 24
 _MAX_ROWS_PER_PAGE = 10
 _REGISTRATION_MARKER_SIZE = 18
 _REGISTRATION_MARKER_INSET = 24
@@ -269,6 +269,7 @@ def _build_page_layout(
                 {
                     "question_id": question["question_id"],
                     "bubble_label": choice["bubble_label"],
+                    "shape": "circle",
                     "x": bubbles_x + choice_index * (_BUBBLE_SIZE + _BUBBLE_GAP),
                     "y": row_y,
                     "width": _BUBBLE_SIZE,

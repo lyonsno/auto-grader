@@ -15,6 +15,16 @@ from typing import Any
 
 
 _PROMPT_OFFSET = 96
+_PROMPT_LINE_GAP = 18
+_LEGEND_LINE_OFFSET = 24
+_HEADER_LEFT = 60
+_HEADER_TITLE_TOP = 32
+_HEADER_INSTANCE_TOP = 50
+_HEADER_PAGE_CODE_TOP = 66
+_HEADER_TITLE_FONT_SIZE = 11
+_HEADER_META_FONT_SIZE = 8
+_CHOICE_LEGEND_FONT_SIZE = 8
+_CHOICE_LEGEND_LEFT = 156
 
 
 def render_mc_answer_sheet_pdf(artifact: Mapping[str, Any]) -> bytes:
@@ -100,9 +110,19 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
     content_lines = [
         "0 G",
         "0.75 w",
-        *_text_block(36, height - 36, 10, "MC Answer Sheet"),
-        *_text_block(36, height - 50, 9, f"Instance: {artifact['opaque_instance_code']}"),
-        *_text_block(36, height - 64, 9, f"Page code: {page['fallback_page_code']}"),
+        *_text_block(_HEADER_LEFT, _pdf_text_y(height, _HEADER_TITLE_TOP), _HEADER_TITLE_FONT_SIZE, "MC Answer Sheet"),
+        *_text_block(
+            _HEADER_LEFT,
+            _pdf_text_y(height, _HEADER_INSTANCE_TOP),
+            _HEADER_META_FONT_SIZE,
+            f"Instance: {artifact['opaque_instance_code']}",
+        ),
+        *_text_block(
+            _HEADER_LEFT,
+            _pdf_text_y(height, _HEADER_PAGE_CODE_TOP),
+            _HEADER_META_FONT_SIZE,
+            f"Page code: {page['fallback_page_code']}",
+        ),
     ]
 
     registration_markers = page.get("registration_markers")
@@ -155,7 +175,7 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
         content_lines.extend(
             _text_block(
                 max(36, prompt_x),
-                _pdf_text_y(height, prompt_y_top),
+                _pdf_text_y(height, prompt_y_top - _PROMPT_LINE_GAP),
                 10,
                 f"{question_number}. {question.get('prompt', '')}",
             )
@@ -168,22 +188,18 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
             region_y = _require_number(region["y"], "bubble_region.y")
             region_width = _require_number(region["width"], "bubble_region.width")
             region_height = _require_number(region["height"], "bubble_region.height")
-            content_lines.append(
-                (
-                    f"{_pdf_number(region_x)} "
-                    f"{_pdf_number(_pdf_rect_y(height, region_y, region_height))} "
-                    f"{_pdf_number(region_width)} "
-                    f"{_pdf_number(region_height)} re S"
-                )
+            content_lines.append(_circle_path(region_x, _pdf_rect_y(height, region_y, region_height), region_width, region_height))
+        legend_text = "   ".join(
+            f"{choice['bubble_label']}. {choice.get('text', '')}" for choice in choices
+        )
+        content_lines.extend(
+            _text_block(
+                _CHOICE_LEGEND_LEFT,
+                _pdf_text_y(height, prompt_y_top + _LEGEND_LINE_OFFSET),
+                _CHOICE_LEGEND_FONT_SIZE,
+                legend_text,
             )
-            content_lines.extend(
-                _text_block(
-                    region_x + region_width + 6,
-                    _pdf_text_y(height, region_y),
-                    9,
-                    f"{bubble_label}. {choice.get('text', '')}",
-                )
-            )
+        )
 
     return {"width": width, "height": height, "stream": "\n".join(content_lines)}
 
@@ -200,6 +216,31 @@ def _text_block(x: int | float, y: int | float, font_size: int | float, text: st
 
 def _escape_text(text: str) -> str:
     return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _circle_path(x: int | float, y: int | float, width: int | float, height: int | float) -> str:
+    radius_x = width / 2
+    radius_y = height / 2
+    center_x = x + radius_x
+    center_y = y + radius_y
+    control = 0.552284749831 * radius_x
+    return " ".join(
+        [
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y)} m",
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y + control)}",
+            f"{_pdf_number(center_x + control)} {_pdf_number(center_y + radius_y)}",
+            f"{_pdf_number(center_x)} {_pdf_number(center_y + radius_y)} c",
+            f"{_pdf_number(center_x - control)} {_pdf_number(center_y + radius_y)}",
+            f"{_pdf_number(center_x - radius_x)} {_pdf_number(center_y + control)}",
+            f"{_pdf_number(center_x - radius_x)} {_pdf_number(center_y)} c",
+            f"{_pdf_number(center_x - radius_x)} {_pdf_number(center_y - control)}",
+            f"{_pdf_number(center_x - control)} {_pdf_number(center_y - radius_y)}",
+            f"{_pdf_number(center_x)} {_pdf_number(center_y - radius_y)} c",
+            f"{_pdf_number(center_x + control)} {_pdf_number(center_y - radius_y)}",
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y - control)}",
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y)} c S",
+        ]
+    )
 
 
 def _pdf_rect_y(page_height: int | float, top_y: int | float, rect_height: int | float) -> int | float:

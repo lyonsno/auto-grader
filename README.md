@@ -133,7 +133,8 @@ Current implementation status on the MC/OpenCV prerequisite lane:
   from that artifact
 - the rendered PDF currently carries visible instance/page recovery codes,
   rendered prompt/choice text, filled registration markers for scan
-  normalization, and the exact bubble rectangles from the layout contract
+  normalization, and circular answer bubbles whose bounding boxes come directly
+  from the layout contract
 - QR-code placement is still future work; it should be added as an explicit
   extension of the same page artifact rather than as a second layout truth
 

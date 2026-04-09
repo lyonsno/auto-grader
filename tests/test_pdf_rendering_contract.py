@@ -114,7 +114,7 @@ class PdfRenderingContractTests(unittest.TestCase):
             "The rendered page should include rendered choice text from the artifact.",
         )
 
-    def test_renderer_draws_bubble_rectangles_at_artifact_coordinates(self) -> None:
+    def test_renderer_draws_bubble_circles_at_artifact_coordinates(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
         artifact = _build_artifact()
         page = artifact["pages"][0]
@@ -123,18 +123,94 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         for region in page["bubble_regions"]:
             pdf_y = page["height"] - region["y"] - region["height"]
-            rectangle_command = (
-                f"{_pdf_number(region['x'])} "
-                f"{_pdf_number(pdf_y)} "
-                f"{_pdf_number(region['width'])} "
-                f"{_pdf_number(region['height'])} re S"
+            circle_command = _pdf_circle_command(
+                region["x"],
+                pdf_y,
+                region["width"],
+                region["height"],
             ).encode("utf-8")
             self.assertIn(
-                rectangle_command,
+                circle_command,
                 pdf_bytes,
-                "Every rendered bubble rectangle should use the page-space coordinates "
-                "from the generation artifact exactly.",
+                "Every rendered bubble should be drawn as a circle at the page-space "
+                "coordinates from the generation artifact exactly.",
             )
+
+    def test_renderer_positions_question_prompt_above_bubble_row(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        first_question = artifact["mc_questions"][0]
+        first_question_regions = [
+            region
+            for region in page["bubble_regions"]
+            if region["question_id"] == first_question["question_id"]
+        ]
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
+        prompt_y = _pdf_number(page["height"] - (min(region["y"] for region in first_question_regions) - 18) - 10)
+        prompt_command = (
+            f"BT\n/F1 10 Tf\n{_pdf_number(prompt_x)} {prompt_y} Td\n"
+            f"({_escape_pdf_text('1. ' + first_question['prompt'])}) Tj\nET"
+        ).encode("utf-8")
+
+        self.assertIn(
+            prompt_command,
+            pdf_bytes,
+            "Question prompt text should render on its own line above the bubble row "
+            "instead of sharing the same baseline as the choices.",
+        )
+
+    def test_renderer_offsets_header_clear_of_top_left_registration_marker(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        top_left_marker = next(
+            marker for marker in page["registration_markers"] if marker["marker_id"] == "top_left"
+        )
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        expected_x = top_left_marker["x"] + top_left_marker["width"] + 18
+        title_command = (
+            f"BT\n/F1 11 Tf\n{_pdf_number(expected_x)} 750 Td\n"
+            f"({_escape_pdf_text('MC Answer Sheet')}) Tj\nET"
+        ).encode("utf-8")
+        self.assertIn(
+            title_command,
+            pdf_bytes,
+            "Header text should clear the top-left registration marker instead of colliding with it.",
+        )
+
+    def test_renderer_positions_choice_legend_below_bubble_row(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        first_question = artifact["mc_questions"][0]
+        first_question_regions = [
+            region
+            for region in page["bubble_regions"]
+            if region["question_id"] == first_question["question_id"]
+        ]
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        legend_text = "   ".join(
+            f"{choice['bubble_label']}. {choice['text']}" for choice in first_question["choices"]
+        )
+        legend_command = (
+            f"BT\n/F1 8 Tf\n156 "
+            f"{_pdf_number(page['height'] - (min(region['y'] for region in first_question_regions) + 24) - 10)} Td\n"
+            f"({_escape_pdf_text(legend_text)}) Tj\nET"
+        ).encode("utf-8")
+        self.assertIn(
+            legend_command,
+            pdf_bytes,
+            "Choice labels should render on their own legend line below the bubble row "
+            "instead of being crammed into the marks themselves.",
+        )
 
     def test_renderer_draws_registration_markers_at_artifact_coordinates(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
@@ -157,3 +233,32 @@ class PdfRenderingContractTests(unittest.TestCase):
                 "Registration markers should be drawn at the exact page-space "
                 "coordinates recorded in the artifact.",
             )
+
+
+def _escape_pdf_text(text: str) -> str:
+    return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _pdf_circle_command(x: int | float, y: int | float, width: int | float, height: int | float) -> str:
+    radius_x = width / 2
+    radius_y = height / 2
+    center_x = x + radius_x
+    center_y = y + radius_y
+    control = 0.552284749831 * radius_x
+    return " ".join(
+        [
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y)} m",
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y + control)}",
+            f"{_pdf_number(center_x + control)} {_pdf_number(center_y + radius_y)}",
+            f"{_pdf_number(center_x)} {_pdf_number(center_y + radius_y)} c",
+            f"{_pdf_number(center_x - control)} {_pdf_number(center_y + radius_y)}",
+            f"{_pdf_number(center_x - radius_x)} {_pdf_number(center_y + control)}",
+            f"{_pdf_number(center_x - radius_x)} {_pdf_number(center_y)} c",
+            f"{_pdf_number(center_x - radius_x)} {_pdf_number(center_y - control)}",
+            f"{_pdf_number(center_x - control)} {_pdf_number(center_y - radius_y)}",
+            f"{_pdf_number(center_x)} {_pdf_number(center_y - radius_y)} c",
+            f"{_pdf_number(center_x + control)} {_pdf_number(center_y - radius_y)}",
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y - control)}",
+            f"{_pdf_number(center_x + radius_x)} {_pdf_number(center_y)} c S",
+        ]
+    )
