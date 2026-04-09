@@ -206,6 +206,44 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(completion_mock.call_args.kwargs["presence_penalty"], 1.0)
         self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.01)
 
+    def test_after_action_prompt_avoids_indexable_stock_examples(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink)
+        prediction = type(
+            "P",
+            (),
+            {"model_score": 2, "model_read": "6.98 g/mL", "model_reasoning": "Used m/V cleanly."},
+        )()
+        item = type(
+            "I",
+            (),
+            {
+                "professor_score": 2,
+                "exam_id": "15-blue",
+                "question_id": "fr-1",
+                "answer_type": "numeric",
+                "max_points": 2.0,
+                "student_answer": "6.98 g/mL",
+                "professor_mark": "2/2",
+                "notes": "clean",
+            },
+        )()
+
+        with mock.patch.object(narrator, "_chat_completion", return_value="Tracing the answer.") as completion_mock:
+            narrator._produce_after_action(
+                12.0,
+                prediction=prediction,
+                item=item,
+                template_question={"answer": "density", "notes": "n/a"},
+            )
+
+        user_prompt = completion_mock.call_args.args[0][1]["content"]
+        self.assertNotIn("Examples:", user_prompt)
+        self.assertNotIn("Even the 1-bit kid called this one.", user_prompt)
+        self.assertNotIn("judges in lockstep", user_prompt)
+        self.assertIn("Prefer no coda to a stock phrase.", user_prompt)
+        self.assertIn("When the scores differ, explicitly describe the disagreement.", user_prompt)
+
     def test_after_action_normalizes_score_denominators_to_item_max_points(self):
         sink = _DummySink()
         narrator = _AfterActionNarrator(

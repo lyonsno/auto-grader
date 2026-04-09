@@ -846,29 +846,19 @@ class ThinkingNarrator:
                 f"Write ONE concise after-action line in this format:\n"
                 f'  "Grader: <score> (<one-clause reason>). '
                 f'Prof: <score> (<one-clause reason>). · '
-                f'<optional dry/arch one-line coda>"\n\n'
-                f"Examples:\n"
-                f'  "Grader: 2/2 (matched on density via m/V). '
-                f"Prof: 2/2 (clean check). · "
-                f'Even the 1-bit kid called this one."\n'
-                f'  "Grader: 0/4 (caught the wrong format — student wrote '
-                f'molecular instead of net ionic). Prof: 0/4 (same call). '
-                f'· Both judges agreeing the student earned the zero, not '
-                f'a tough draw at all."\n'
-                f'  "Grader: 0/2 (refused credit on consistent-with-wrong-'
-                f"premise mol calc). Prof: 2/2 (charitable). · "
-                f'Grader still missing the consistency rule, ouch."\n'
-                f'  "Grader: 1/2 (split partial on ozone Lewis). '
-                f"Prof: 1/2 (matched). · "
-                f'Both judges spotting one resonance form, neither catching the second."\n\n'
-                f"In the coda, when both judges agree on a low score, "
-                f"phrase it as 'judges agreeing the student earned X' "
-                f"or 'student plainly missed Y, judges in lockstep' — "
-                f"NEVER 'both judges missed' on low scores.\n\n"
-                f"Be matter-of-fact in the score+reason portion. "
-                f"The coda is optional but encouraged — dry, arch, "
-                f"sportscaster post-play tone. Output ONE line only, "
-                f"no preamble, no quotes around your output."
+                f'<optional short coda>"\n\n'
+                f"Style rules:\n"
+                f"- The score+reason portion should be matter-of-fact and question-specific.\n"
+                f"- The optional coda should be fresh, concrete, and tied to this exact item.\n"
+                f"- Prefer no coda to a stock phrase.\n"
+                f"- Do not reuse canned taglines or recurring catchphrases.\n"
+                f"- Avoid slogan-like codas, victory laps, and recurring comic patter.\n"
+                f"- When the scores match, describe agreement plainly without celebratory catchphrases.\n"
+                f"- When the scores differ, explicitly describe the disagreement.\n"
+                f"- Never describe disagreement as agreement.\n"
+                f"- Never say the judges 'missed' something when they both assigned the student a low score; "
+                f"that means they both caught the student's error.\n\n"
+                f"Output ONE line only, no preamble, no quotes around your output."
             )
 
             messages = [
