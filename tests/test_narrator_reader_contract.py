@@ -141,6 +141,23 @@ class NarratorReaderContract(unittest.TestCase):
             panel_text.index("I'm tracing the stoichiometry."),
         )
 
+    def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
+        display = self._make_display()
+        display.frozen_line = "I'm tracing the previous item."
+
+        display.on_header("[item 2/6] 15-blue/fr-2")
+
+        group = display.render()
+        live_panel = next(
+            panel for panel in group.renderables
+            if getattr(panel, "title", None) == "[grey50]status + live[/grey50]"
+        )
+        panel_text = _extract_plain(live_panel.renderable)
+
+        self.assertEqual(display.frozen_line, "")
+        self.assertIn("AWAITING STATUS", panel_text)
+        self.assertNotIn("I'm tracing the previous item.", panel_text)
+
     def test_status_renders_in_all_caps_without_mutating_stored_text(self):
         display = self._make_display()
         display.status_line = "Rechecking the stoichiometry setup."
@@ -152,6 +169,30 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.status_line, "Rechecking the stoichiometry setup.")
         self.assertIn("RECHECKING THE STOICHIOMETRY SETUP.", panel_text)
         self.assertNotIn("Rechecking the stoichiometry setup.", panel_text)
+
+    def test_empty_live_lane_shows_rotating_placeholder_copy(self):
+        display = self._make_display()
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            first_panel = display.render().renderables[1]
+            first_text = _extract_plain(first_panel.renderable)
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=19.0):
+            later_panel = display.render().renderables[1]
+            later_text = _extract_plain(later_panel.renderable)
+
+        self.assertNotEqual(first_text, later_text)
+        self.assertTrue(
+            any(
+                phrase in first_text
+                for phrase in (
+                    "thinking",
+                    "review",
+                    "grading",
+                    "replay",
+                    "chain-of-thought",
+                )
+            ),
+            "empty live lane should use mildly witty waiting copy instead of a dead cursor",
+        )
 
     def test_history_visual_row_budget_is_reduced_for_scorebug_strip(self):
         self.assertEqual(

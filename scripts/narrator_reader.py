@@ -307,6 +307,15 @@ _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
 _SESSION_END_ANIMATION_LINGER_S = 120.0  # keep the finished painting alive
                                          # and animated for a while before
                                          # letting it settle
+_LIVE_PLACEHOLDER_ROTATE_S = 6.0
+_LIVE_PLACEHOLDER_OPTIONS = (
+    "thinking through the tape...",
+    "review booth is checking the work...",
+    "grading engine warming up...",
+    "calling for the next replay...",
+    "waiting on the next chain-of-thought...",
+    "running the numbers upstairs...",
+)
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
@@ -333,6 +342,11 @@ def _interp_rgb(
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+def _live_placeholder(now_s: float) -> str:
+    idx = int(now_s // _LIVE_PLACEHOLDER_ROTATE_S) % len(_LIVE_PLACEHOLDER_OPTIONS)
+    return _LIVE_PLACEHOLDER_OPTIONS[idx]
 
 
 def _scale_rgb(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
@@ -1139,7 +1153,17 @@ class PaintDryDisplay:
                 freeze_age_s=freeze_age_s,
             )
         else:
-            live_text = Text("▌ ", style="grey39", overflow="fold")
+            live_text = Text(no_wrap=False, overflow="fold")
+            live_text.append("▌ ", style="grey39")
+            _render_live_undulating(
+                live_text,
+                _live_placeholder(now),
+                indent_width=2,
+                wrap_width=wrap_width,
+                is_active=False,
+                char_offset=0,
+                freeze_age_s=None,
+            )
 
         status_text = Text(no_wrap=False, overflow="fold")
         displayed_status = self.status_streaming_line or self.status_line
@@ -1158,7 +1182,8 @@ class PaintDryDisplay:
                 wrap_width=wrap_width,
             )
         else:
-            status_text.append("", style="grey39")
+            status_text.append("▌ ", style="grey39")
+            status_text.append("AWAITING STATUS", style="grey50")
 
         live_panel = Panel(
             Group(status_text, live_text),
@@ -1425,6 +1450,9 @@ class PaintDryDisplay:
         self._turn_started_at = header_now
         self.status_line = ""
         self.status_streaming_line = ""
+        self.streaming_line = ""
+        self.frozen_line = ""
+        self._freeze_started_at = None
         m = _HEADER_INDEX_RE.match(text)
         if m:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
