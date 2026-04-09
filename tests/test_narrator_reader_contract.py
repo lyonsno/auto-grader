@@ -320,23 +320,35 @@ class NarratorReaderContract(unittest.TestCase):
             "a heavily wrapped older line should consume the visual-row budget and drop before pushing out newer visible context",
         )
 
-    def test_top_panel_uses_warm_status_gutter_with_umber_status_and_cool_live_text(self):
-        display = self._make_display()
-        display.status_line = "Tracing the stoichiometry setup."
-        display.frozen_line = "I'm tracing the stoichiometry."
+    def test_top_panel_uses_warm_status_with_alternating_cool_and_soft_warm_live_text(self):
+        cool_display = self._make_display()
+        cool_display.status_line = "Tracing the stoichiometry setup."
+        cool_display.frozen_line = "I'm tracing the stoichiometry."
+        cool_display._frozen_line_parity = 0
+
+        warm_display = self._make_display()
+        warm_display.status_line = "Tracing the stoichiometry setup."
+        warm_display.frozen_line = "I'm tracing the stoichiometry."
+        warm_display._frozen_line_parity = 1
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
-            group = display.render()
-        live_panel = group.renderables[1]
-        status_text, live_text = live_panel.renderable.renderables
+            cool_group = cool_display.render()
+            warm_group = warm_display.render()
+        cool_live_panel = cool_group.renderables[1]
+        warm_live_panel = warm_group.renderables[1]
+        cool_status_text, cool_live_text = cool_live_panel.renderable.renderables
+        warm_status_text, warm_live_text = warm_live_panel.renderable.renderables
 
-        status_gutter = status_text.spans[0].style
+        status_gutter = cool_status_text.spans[0].style
         status_rgbs = [
             self._rgb_from_hex(style)
-            for style in self._content_hexes(status_text)
+            for style in self._content_hexes(warm_status_text)
         ]
-        live_red, live_green, live_blue = self._rgb_from_hex(
-            self._first_content_hex(live_text)
+        cool_red, cool_green, cool_blue = self._rgb_from_hex(
+            self._first_content_hex(cool_live_text)
+        )
+        warm_red, warm_green, warm_blue = self._rgb_from_hex(
+            self._first_content_hex(warm_live_text)
         )
 
         gutter_red, gutter_green, gutter_blue = self._rgb_from_hex(status_gutter)
@@ -359,19 +371,24 @@ class NarratorReaderContract(unittest.TestCase):
             "sticky status text should be allowed to pick up restrained cool glints inside the warmer rail",
         )
         self.assertGreater(
-            live_blue,
-            live_red,
-            "live first-person line should now shift into the cooler structural family",
+            cool_blue,
+            cool_red,
+            "even-parity live line should stay on the cooler structural family",
         )
         self.assertGreater(
-            live_green,
-            live_red,
-            "live first-person line should pick up some moss/green body instead of fiery red",
+            cool_green,
+            cool_red,
+            "cool live line should keep some moss/green body",
         )
         self.assertGreater(
-            live_blue,
-            live_green,
-            "live first-person line should lean more steel-blue than moss-green",
+            warm_red,
+            warm_blue,
+            "odd-parity live line should flip into a softened warm family",
+        )
+        self.assertGreater(
+            warm_green,
+            warm_blue,
+            "soft-warm live line should still stay pastel and friendly instead of pure hot red",
         )
 
     def test_render_places_scorebug_above_header_when_model_known(self):
