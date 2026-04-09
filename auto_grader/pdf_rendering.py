@@ -17,17 +17,18 @@ from typing import Any
 _PROMPT_OFFSET = 96
 _PROMPT_LINE_GAP = 28
 _HEADER_LEFT = 60
-_HEADER_TITLE_TOP = 32
-_HEADER_INSTANCE_TOP = 50
-_HEADER_PAGE_CODE_TOP = 66
-_HEADER_TITLE_FONT_SIZE = 11
-_HEADER_META_FONT_SIZE = 8
-_CHOICE_LEGEND_FONT_SIZE = 8
-_BUBBLE_LABEL_FONT_SIZE = 8
+_HEADER_TITLE_TOP = 36
+_HEADER_INSTANCE_TOP = 62
+_HEADER_PAGE_CODE_TOP = 82
+_HEADER_TITLE_FONT_SIZE = 18
+_HEADER_META_FONT_SIZE = 10
+_QUESTION_FONT_SIZE = 13
+_CHOICE_LEGEND_FONT_SIZE = 10
+_BUBBLE_LABEL_FONT_SIZE = 10
 _BUBBLE_LABEL_TOP_OFFSET = 6
 _CHOICE_LEGEND_LEFT_OFFSET = 12
-_CHOICE_LEGEND_TOP_OFFSET = 2
-_CHOICE_LEGEND_LINE_SPACING = 12
+_CHOICE_LEGEND_TOP_OFFSET = 4
+_CHOICE_LEGEND_LINE_SPACING = 14
 
 
 def render_mc_answer_sheet_pdf(artifact: Mapping[str, Any]) -> bytes:
@@ -112,7 +113,7 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
 
     content_lines = [
         "0 G",
-        "0.75 w",
+        "1 w",
         *_text_block(_HEADER_LEFT, _pdf_text_y(height, _HEADER_TITLE_TOP), _HEADER_TITLE_FONT_SIZE, "MC Answer Sheet"),
         *_text_block(
             _HEADER_LEFT,
@@ -180,7 +181,7 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
             _text_block(
                 prompt_left,
                 _pdf_text_y(height, prompt_y_top - _PROMPT_LINE_GAP),
-                10,
+                _QUESTION_FONT_SIZE,
                 f"{question_number}. {question.get('prompt', '')}",
             )
         )

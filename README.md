@@ -135,7 +135,8 @@ Current implementation status on the MC/OpenCV prerequisite lane:
   rendered prompt text, filled registration markers for scan normalization,
   circular answer bubbles with direct `A/B/C/D` labels, and a vertically
   stacked choice list placed underneath each prompt to the left of the bubble
-  row, all still derived from the same page contract
+  row, with larger question typography and human-markable bubble sizing, all
+  still derived from the same page contract
 - QR-code placement is still future work; it should be added as an explicit
   extension of the same page artifact rather than as a second layout truth
 

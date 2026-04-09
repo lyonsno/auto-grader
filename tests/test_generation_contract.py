@@ -166,6 +166,22 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
             self.assertLessEqual(region["x"] + region["width"], page["width"])
             self.assertLessEqual(region["y"] + region["height"], page["height"])
 
+    def test_bubble_regions_are_large_enough_for_human_marks(self):
+        artifact = self._build_one()
+
+        page = artifact["pages"][0]
+        for region in page["bubble_regions"]:
+            self.assertGreaterEqual(
+                region["width"],
+                22,
+                "Bubble regions should be large enough for a clean pencil mark, not tiny placeholders.",
+            )
+            self.assertGreaterEqual(
+                region["height"],
+                22,
+                "Bubble regions should be large enough for a clean pencil mark, not tiny placeholders.",
+            )
+
     def test_page_exposes_registration_markers_for_scan_normalization(self):
         artifact = self._build_one()
 

@@ -152,7 +152,7 @@ class PdfRenderingContractTests(unittest.TestCase):
         prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
         prompt_y = _pdf_number(page["height"] - (min(region["y"] for region in first_question_regions) - 28) - 10)
         prompt_command = (
-            f"BT\n/F1 10 Tf\n{_pdf_number(prompt_x)} {prompt_y} Td\n"
+            f"BT\n/F1 13 Tf\n{_pdf_number(prompt_x)} {prompt_y} Td\n"
             f"({_escape_pdf_text('1. ' + first_question['prompt'])}) Tj\nET"
         ).encode("utf-8")
 
@@ -175,13 +175,49 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         expected_x = top_left_marker["x"] + top_left_marker["width"] + 18
         title_command = (
-            f"BT\n/F1 11 Tf\n{_pdf_number(expected_x)} 750 Td\n"
+            f"BT\n/F1 18 Tf\n{_pdf_number(expected_x)} 746 Td\n"
             f"({_escape_pdf_text('MC Answer Sheet')}) Tj\nET"
         ).encode("utf-8")
         self.assertIn(
             title_command,
             pdf_bytes,
             "Header text should clear the top-left registration marker instead of colliding with it.",
+        )
+
+    def test_renderer_uses_larger_question_and_choice_typography(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        first_question = artifact["mc_questions"][0]
+        first_question_regions = [
+            region
+            for region in page["bubble_regions"]
+            if region["question_id"] == first_question["question_id"]
+        ]
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
+        prompt_y = _pdf_number(page["height"] - (min(region["y"] for region in first_question_regions) - 28) - 10)
+        prompt_command = (
+            f"BT\n/F1 13 Tf\n{_pdf_number(prompt_x)} {prompt_y} Td\n"
+            f"({_escape_pdf_text('1. ' + first_question['prompt'])}) Tj\nET"
+        ).encode("utf-8")
+        choice_command = (
+            f"BT\n/F1 10 Tf\n84 "
+            f"{_pdf_number(page['height'] - (min(region['y'] for region in first_question_regions) + 4) - 10)} Td\n"
+            f"({_escape_pdf_text(first_question['choices'][0]['bubble_label'] + '. ' + first_question['choices'][0]['text'])}) Tj\nET"
+        ).encode("utf-8")
+
+        self.assertIn(
+            prompt_command,
+            pdf_bytes,
+            "Question prompts should use a more readable font size once the page structure is settled.",
+        )
+        self.assertIn(
+            choice_command,
+            pdf_bytes,
+            "Choice text should scale up with the question prompt instead of staying tiny.",
         )
 
     def test_renderer_draws_bubble_labels_below_circles(self) -> None:
@@ -200,7 +236,7 @@ class PdfRenderingContractTests(unittest.TestCase):
         for region in first_question_regions:
             center_x = region["x"] + (region["width"] / 2)
             label_command = (
-                f"BT\n/F1 8 Tf\n{_pdf_number(center_x - 2)} "
+                f"BT\n/F1 10 Tf\n{_pdf_number(center_x - 2)} "
                 f"{_pdf_number(page['height'] - (region['y'] + region['height'] + 6) - 10)} Td\n"
                 f"({_escape_pdf_text(region['bubble_label'])}) Tj\nET"
             ).encode("utf-8")
@@ -226,14 +262,14 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
         legend_x = prompt_x + 12
-        line_spacing = 12
+        line_spacing = 14
         first_row_top = min(region["y"] for region in first_question_regions)
         first_bubble_x = min(region["x"] for region in first_question_regions)
         prompt_y = page["height"] - (first_row_top - 28) - 10
         for index, choice in enumerate(first_question["choices"]):
-            legend_y = page["height"] - (first_row_top + 2 + index * line_spacing) - 10
+            legend_y = page["height"] - (first_row_top + 4 + index * line_spacing) - 10
             legend_command = (
-                f"BT\n/F1 8 Tf\n{legend_x} "
+                f"BT\n/F1 10 Tf\n{legend_x} "
                 f"{_pdf_number(legend_y)} Td\n"
                 f"({_escape_pdf_text(choice['bubble_label'] + '. ' + choice['text'])}) Tj\nET"
             ).encode("utf-8")
