@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 import unittest
 from unittest import mock
@@ -10,9 +11,14 @@ from rich.text import Text
 from scripts.narrator_reader import (
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
+    _LIVE_PER_CHAR_PHASE_OFFSET,
+    _LIVE_UNDULATION_CYCLE_S,
+    _STATUS_PER_CHAR_PHASE_OFFSET,
+    _STATUS_UNDULATION_CYCLE_S,
     _apply_shimmer,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
+    _undulation_hue_deg,
     _render_layer_index,
 )
 
@@ -208,6 +214,58 @@ class NarratorReaderContract(unittest.TestCase):
             live_blue,
             "live first-person line should stay on the warm ember side, not cool blue",
         )
+
+    def test_live_undulation_drifts_leftward(self):
+        dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
+
+        hue_at_char_1_now = _undulation_hue_deg(
+            0.0,
+            1,
+            cycle_s=_LIVE_UNDULATION_CYCLE_S,
+            center_deg=18,
+            range_deg=22,
+            per_char_phase_offset=_LIVE_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=0.0,
+            direction=-1.0,
+        )
+        hue_at_char_0_later = _undulation_hue_deg(
+            dt,
+            0,
+            cycle_s=_LIVE_UNDULATION_CYCLE_S,
+            center_deg=18,
+            range_deg=22,
+            per_char_phase_offset=_LIVE_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=0.0,
+            direction=-1.0,
+        )
+
+        self.assertAlmostEqual(hue_at_char_0_later, hue_at_char_1_now, places=6)
+
+    def test_status_undulation_drifts_leftward_with_phase_offset(self):
+        dt = _STATUS_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _STATUS_UNDULATION_CYCLE_S)
+
+        hue_at_char_1_now = _undulation_hue_deg(
+            0.0,
+            1,
+            cycle_s=_STATUS_UNDULATION_CYCLE_S,
+            center_deg=12,
+            range_deg=14,
+            per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=0.85,
+            direction=-1.0,
+        )
+        hue_at_char_0_later = _undulation_hue_deg(
+            dt,
+            0,
+            cycle_s=_STATUS_UNDULATION_CYCLE_S,
+            center_deg=12,
+            range_deg=14,
+            per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=0.85,
+            direction=-1.0,
+        )
+
+        self.assertAlmostEqual(hue_at_char_0_later, hue_at_char_1_now, places=6)
 
     def test_new_header_clears_sticky_status(self):
         display = PaintDryDisplay()

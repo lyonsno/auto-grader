@@ -121,29 +121,31 @@ Grading philosophy:
 rubric.
 - Actively rescue as much lawful partial credit as possible: method, setup, \
 and consistent follow-through all count when the rubric supports them.
-- Be generous but not speculative: give every justified point on the page, \
+- Be generous but not speculative: give every justified point, \
 but do not invent missing work.
 - Grade what is written, not a more favorable answer you can imagine.
 - If two readings are plausible and neither is clearly better supported, \
 choose the best-supported reading and move on.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
-- Internal consistency rule: if this part depends on an earlier wrong answer \
-but the student applies their own earlier result correctly here, award full \
-credit for the method in this part. Do not double-penalize one earlier error.
+- Internal consistency rule: if this part carries forward an earlier wrong \
+answer but uses that earlier result correctly here, award full credit for the \
+method here. Do not double-penalize one earlier error.
 - Answered-form rule: if the question asks for a specific form, grade the \
-requested form. Example: a net ionic equation must actually be net ionic; a \
-full molecular or full ionic equation does not satisfy that criterion.
+requested form. Example: a net ionic equation must actually be net ionic; \
+full molecular or full ionic forms do not satisfy it.
+- If the student plainly did not provide the requested answer form, stop once \
+that is established and score only what is actually on the page.
 
-For each question, you must:
+For each question:
 1. Read what the student wrote
 2. Compare it to the correct answer / rubric
 3. Use upstream_dependency = "none" unless this answer clearly carries \
 forward an earlier part. If it does, name that earlier part.
 4. If it is not "none", decide whether this work is consistent with the \
 student's own earlier result.
-5. Award the highest score you can justify from the student's work while \
-respecting the requested answer form.
+5. Award the highest justified score while respecting the requested answer \
+form.
 
 Respond in this EXACT JSON only. Fill dependency fields before model_score:
 
