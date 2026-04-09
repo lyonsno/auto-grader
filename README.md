@@ -106,6 +106,7 @@ Initial contract slice for the deterministic MC lane:
   expose student or template identifiers
 - it must include a per-page fallback code for paper recovery
 - it must include rendered MC questions with any shuffled choice order made explicit
+- variableized MC rendering must be stable across equivalent variable declaration order
 - it must include the answer-key mapping from logical choice key to physical bubble label
 - it must include canonical page-space bubble rectangles for each rendered bubble
 - it must declare the layout coordinate contract explicitly (`units`, `origin`, `y_axis`,

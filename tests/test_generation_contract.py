@@ -54,6 +54,43 @@ def _template() -> dict:
     }
 
 
+def _variableized_template(variable_order: tuple[str, ...]) -> dict:
+    variable_specs = {
+        "a": {"type": "int", "min": 1, "max": 5, "step": 1},
+        "b": {"type": "int", "min": 10, "max": 90, "step": 10},
+        "c": {"type": "int", "min": 100, "max": 500, "step": 100},
+    }
+    return {
+        "slug": "quiz-variables",
+        "title": "Variable Quiz",
+        "sections": [
+            {
+                "id": "mc",
+                "title": "Multiple Choice",
+                "questions": [
+                    {
+                        "id": "mc-var-1",
+                        "points": 2,
+                        "answer_type": "multiple_choice",
+                        "prompt": "Compute {{a}} + {{b}} + {{c}}.",
+                        "variables": {
+                            name: variable_specs[name] for name in variable_order
+                        },
+                        "choices": {
+                            "A": "{{a}}",
+                            "B": "{{b}}",
+                            "C": "{{c}}",
+                            "D": "{{a}} + {{b}} + {{c}}",
+                        },
+                        "correct": "D",
+                        "shuffle": True,
+                    }
+                ],
+            }
+        ],
+    }
+
+
 class TestMcAnswerSheetGeneration(unittest.TestCase):
     def _build_one(self, student_id: str = "s-001", seed: int = 17):
         from auto_grader.generation import build_mc_answer_sheet
@@ -138,3 +175,22 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
                 attempt_number=1,
                 seed=17,
             )
+
+    def test_variableized_generation_is_stable_across_variable_declaration_order(self):
+        from auto_grader.generation import build_mc_answer_sheet
+
+        student = {"student_id": "s-001", "student_name": "Ada Lovelace"}
+        first = build_mc_answer_sheet(
+            _variableized_template(("a", "b", "c")),
+            student,
+            attempt_number=1,
+            seed=0,
+        )
+        second = build_mc_answer_sheet(
+            _variableized_template(("c", "b", "a")),
+            student,
+            attempt_number=1,
+            seed=0,
+        )
+
+        self.assertEqual(first, second)

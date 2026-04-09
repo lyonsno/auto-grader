@@ -172,8 +172,8 @@ def _sample_variables(
     rng: random.Random,
 ) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for name, spec in variable_specs.items():
-        values[name] = _sample_variable(spec, rng)
+    for name in sorted(variable_specs):
+        values[name] = _sample_variable(variable_specs[name], rng)
     return values
 
 
