@@ -341,6 +341,17 @@ def _history_tier_dim_factor(layer_index: int) -> float:
     )
 
 
+def _render_layer_index(kind: str, group_depth: int) -> int:
+    """Return the effective fade layer for a history entry.
+
+    Only narrator thought lines should sink within an item block.
+    Structural lines such as headers and resolution/topic lines stay
+    at full strength so the eye can keep finding the question/result
+    anchors quickly.
+    """
+    return group_depth if kind == "line" else 0
+
+
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     """Convert HSV (h in degrees, s/v in [0, 1]) to 8-bit RGB."""
     h = h % 360
@@ -1006,6 +1017,7 @@ class PaintDryDisplay:
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
+            render_layer = _render_layer_index(kind, group_depth)
             if i > 0:
                 history_text.append("\n")
 
@@ -1035,7 +1047,7 @@ class PaintDryDisplay:
                 # width is 0 here because the dash IS the leading edge.
                 _apply_shimmer(
                     history_text, indent, "header_dash",
-                    layer_index=group_depth,
+                    layer_index=render_layer,
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
@@ -1054,7 +1066,7 @@ class PaintDryDisplay:
                     rest_part = m.group(2)
                     _apply_shimmer(
                         history_text, index_part, "header_index",
-                        layer_index=group_depth,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1063,7 +1075,7 @@ class PaintDryDisplay:
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
                         history_text, rest_part, "header",
-                        layer_index=group_depth,
+                        layer_index=render_layer,
                         indent_width=len(indent) + len(index_part) + 1,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1072,7 +1084,7 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, "header",
-                        layer_index=group_depth,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1104,7 +1116,7 @@ class PaintDryDisplay:
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
                         history_text, rest, topic_kind,
-                        layer_index=group_depth,
+                        layer_index=render_layer,
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1113,7 +1125,7 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, topic_kind,
-                        layer_index=group_depth,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1129,7 +1141,7 @@ class PaintDryDisplay:
                 line_kind = "line_alt" if parity == 1 else "line"
                 _apply_shimmer(
                     history_text, text, line_kind,
-                    layer_index=group_depth,
+                    layer_index=render_layer,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
