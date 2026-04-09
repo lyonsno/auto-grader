@@ -11,6 +11,7 @@ from scripts.narrator_reader import (
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
     _apply_shimmer,
+    _history_tier_dim_factor,
 )
 
 
@@ -176,7 +177,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(display.stat_dropped_dedup, 1)
 
-    def test_header_starts_total_timer_and_live_delta_starts_turn_timer(self):
+    def test_header_starts_total_and_turn_timers(self):
         display = self._make_display()
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=100.0):
@@ -184,16 +185,9 @@ class NarratorReaderContract(unittest.TestCase):
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
             header_text = _extract_plain(display.render().renderables[0].renderable)
         self.assertIn("total=7s", header_text)
-        self.assertIn("turn=--", header_text)
+        self.assertIn("turn=7s", header_text)
 
-        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=108.0):
-            display.on_delta("Tracing")
-        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=111.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("total=11s", header_text)
-        self.assertIn("turn=3s", header_text)
-
-    def test_turn_timer_clears_after_commit_drop_and_rollback(self):
+    def test_turn_timer_persists_within_item_and_resets_on_next_header(self):
         display = self._make_display()
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=200.0):
@@ -203,21 +197,34 @@ class NarratorReaderContract(unittest.TestCase):
         display.on_commit("status")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
             header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("turn=--", header_text)
+        self.assertIn("turn=5s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=206.0):
             display.on_delta("Rechecking")
         display.on_drop("dedup", "Rechecking the same unit conversion.")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
             header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("turn=--", header_text)
+        self.assertIn("turn=8s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=209.0):
             display.on_delta("Tracing")
         display.on_rollback_live()
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
             header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("turn=--", header_text)
+        self.assertIn("turn=11s", header_text)
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=212.0):
+            display.on_header("[item 2/6] 15-blue/fr-2")
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
+            header_text = _extract_plain(display.render().renderables[0].renderable)
+        self.assertIn("total=15s", header_text)
+        self.assertIn("turn=3s", header_text)
+
+    def test_local_group_dim_factor_descends_materially_per_line(self):
+        self.assertEqual(_history_tier_dim_factor(0), 1.0)
+        self.assertLess(_history_tier_dim_factor(1), 0.9)
+        self.assertLess(_history_tier_dim_factor(2), _history_tier_dim_factor(1))
+        self.assertEqual(_history_tier_dim_factor(3), _history_tier_dim_factor(4))
 
     def test_lower_history_tiers_render_dimmer_than_top_tier(self) -> None:
         top_text = Text()

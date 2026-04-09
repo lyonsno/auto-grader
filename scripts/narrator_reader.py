@@ -91,11 +91,10 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # keeps the structural pulse visible all
                                 # the way down the stack instead of just
                                 # on the most recent few items
-_HISTORY_TIER_DIM_MIN = 0.58    # explicit per-tier palette fade. Top tier
-                                 # stays full-strength; deepest visible
-                                 # history tier settles at 58% brightness.
-                                 # This is the intentional "older lines sink
-                                 # into memory" cue, separate from shimmer.
+_HISTORY_TIER_DIM_MIN = 0.58    # floor for within-item fade.
+_HISTORY_GROUP_DIM_STEP = 0.14  # each successive line under a header should
+                                 # visibly dim; the old viewport-normalized
+                                 # fade was too subtle to read in practice.
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
 # Sumi-e palette: a Japanese garden floor in two desaturated rows
@@ -328,17 +327,18 @@ def _scale_rgb(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]
 
 
 def _history_tier_dim_factor(layer_index: int) -> float:
-    """Return the explicit brightness factor for a visible history tier.
+    """Return the brightness factor for a line within an item group.
 
-    Topmost history tier stays at full brightness. Lower tiers fade
-    linearly until the deepest visible tier reaches
-    _HISTORY_TIER_DIM_MIN, then clamp there.
+    This is intentionally local to the current header block, not the
+    whole viewport. Each step down within an item should be visibly
+    dimmer, then clamp at the floor so deep blocks don't disappear.
     """
-    if layer_index <= 0 or _VISIBLE_HISTORY_LINES <= 1:
+    if layer_index <= 0:
         return 1.0
-    capped_index = min(layer_index, _VISIBLE_HISTORY_LINES - 1)
-    position = capped_index / (_VISIBLE_HISTORY_LINES - 1)
-    return 1.0 - (1.0 - _HISTORY_TIER_DIM_MIN) * position
+    return max(
+        _HISTORY_TIER_DIM_MIN,
+        1.0 - (_HISTORY_GROUP_DIM_STEP * layer_index),
+    )
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -1226,15 +1226,14 @@ class PaintDryDisplay:
         # Header goes into the history. Doesn't touch the live buffers
         # — frozen_line keeps showing the previous committed dispatch
         # until the next bonsai dispatch starts streaming.
+        header_now = time.monotonic()
         if self._session_started_at is None:
-            self._session_started_at = time.monotonic()
-        self._turn_started_at = None
+            self._session_started_at = header_now
+        self._turn_started_at = header_now
         self.status_line = ""
         self.history.append(("header", text, None))
 
     def on_delta(self, text: str) -> None:
-        if text and self._turn_started_at is None:
-            self._turn_started_at = time.monotonic()
         self.streaming_line += text
 
     def on_commit(self, mode: str = "thought") -> None:
@@ -1251,7 +1250,6 @@ class PaintDryDisplay:
             self._freeze_started_at = time.monotonic()
             self.frozen_line = self.streaming_line
         self.streaming_line = ""
-        self._turn_started_at = None
 
     def on_drop(self, reason: str, text: str) -> None:
         # Drops go to their own deque, rendered in a separate panel
@@ -1264,7 +1262,6 @@ class PaintDryDisplay:
             self.stat_dropped_dedup += 1
         elif reason == "empty":
             self.stat_dropped_empty += 1
-        self._turn_started_at = None
 
     def on_rollback_live(self) -> None:
         """Discard the in-flight streaming line without committing.
@@ -1274,7 +1271,6 @@ class PaintDryDisplay:
         in the live panel, so the user sees a clean snap-back to the
         last accepted line instead of an empty live field."""
         self.streaming_line = ""
-        self._turn_started_at = None
 
     def on_wrap_up_pending(self) -> None:
         """Wrap-up generation has started — show placeholder until the
