@@ -374,14 +374,15 @@ class NarratorReaderContract(unittest.TestCase):
             "live first-person line should lean more steel-blue than moss-green",
         )
 
-    def test_render_inserts_scorebug_strip_between_header_and_status_when_model_known(self):
+    def test_render_places_scorebug_above_header_when_model_known(self):
         display = self._make_display()
         display.current_model = "qwen3p5-35B-A3B"
         display.on_header("[item 3/6] 15-blue/fr-5b")
 
         group = display.render()
 
-        scorebug_panel = group.renderables[1]
+        scorebug_panel = group.renderables[0]
+        header_panel = group.renderables[1]
         live_panel = group.renderables[2]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
@@ -393,6 +394,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("qwen3p5-35B-A3B", scorebug_text)
         self.assertIn("ITEM", scorebug_text)
         self.assertIn("3/6", scorebug_text)
+        self.assertIn("PROJECT PAINT DRY", _extract_plain(header_panel.renderable))
         self.assertIn("status + live", live_panel.title)
         self.assertIn(
             "on #",
@@ -437,7 +439,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         group = display.render()
 
-        scorebug_panel = group.renderables[1]
+        scorebug_panel = group.renderables[0]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
         if isinstance(scorebug_renderable, Align):
@@ -501,7 +503,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         group = display.render()
 
-        scorebug_panel = group.renderables[1]
+        scorebug_panel = group.renderables[0]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
         if isinstance(scorebug_renderable, Align):
@@ -608,7 +610,7 @@ class NarratorReaderContract(unittest.TestCase):
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=100.0):
             display.on_header("[item 1/6] 15-blue/fr-1")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("total=7s", header_text)
         self.assertIn("turn=7s", header_text)
 
@@ -621,27 +623,27 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_delta("Tracing")
         display.on_commit("status")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("turn=5s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=206.0):
             display.on_delta("Rechecking")
         display.on_drop("dedup", "Rechecking the same unit conversion.")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("turn=8s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=209.0):
             display.on_delta("Tracing")
         display.on_rollback_live()
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("turn=11s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=212.0):
             display.on_header("[item 2/6] 15-blue/fr-2")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("total=15s", header_text)
         self.assertIn("turn=3s", header_text)
 

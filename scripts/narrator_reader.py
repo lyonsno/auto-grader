@@ -1347,8 +1347,8 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
-                    label_style="bold #fff3db on #8a6635",
-                    value_style="bold #fff1d9 on #4a3720",
+                    label_style="bold #fff1d6 on #6b5028",
+                    value_style="bold #ffefcf on #3e2f1b",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1360,8 +1360,8 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
-                    label_style="bold #ffe9e2 on #8d4637",
-                    value_style="bold #ffe7de on #4f251f",
+                    label_style="bold #ffe5dd on #7a392f",
+                    value_style="bold #ffe3d8 on #47211d",
                 )
                 scorebug_rows.extend(
                     [
@@ -1393,8 +1393,8 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
-                    label_style="bold #fff3db on #8a6635",
-                    value_style="bold #fff1d9 on #4a3720",
+                    label_style="bold #fff1d6 on #6b5028",
+                    value_style="bold #ffefcf on #3e2f1b",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1403,8 +1403,8 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
-                    label_style="bold #ffe9e2 on #8d4637",
-                    value_style="bold #ffe7de on #4f251f",
+                    label_style="bold #ffe5dd on #7a392f",
+                    value_style="bold #ffe3d8 on #47211d",
                 )
                 scorebug_rows.extend(
                     [
@@ -1735,10 +1735,14 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: header, live, history, post-game, drops, [footer]
-        panels = [header]
+        # Order: scorebug, header, live, history, post-game, drops, [footer]
+        # The big tally cells are the most glanceable session-state
+        # surface, so they lead the stack. The project header drops
+        # below them as show identity rather than primary telemetry.
+        panels = []
         if scorebug_panel is not None:
             panels.append(scorebug_panel)
+        panels.append(header)
         panels.extend([live_panel, history_panel])
         if wrap_panel is not None:
             panels.append(wrap_panel)
