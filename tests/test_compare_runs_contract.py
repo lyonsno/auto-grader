@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def _load_compare_runs():
@@ -23,6 +26,78 @@ def _load_compare_runs():
 
 
 class CompareRunsContract(unittest.TestCase):
+    def _write_run(
+        self,
+        base: Path,
+        *,
+        run_name: str,
+        model: str,
+        prompt_version: str,
+        test_set_id: str,
+        started_at: str,
+        score: float,
+    ) -> Path:
+        run_dir = base / run_name
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_name,
+                    "run_dir": str(run_dir),
+                    "status": "completed",
+                    "started_at": started_at,
+                    "finished_at": started_at,
+                    "git_commit": "deadbeef",
+                    "git_branch": "cc/test",
+                    "model": model,
+                    "base_url": "http://127.0.0.1:8001",
+                    "prompt_version": prompt_version,
+                    "prompt_content_hash": "a" * 64,
+                    "test_set_id": test_set_id,
+                    "item_count": 1,
+                    "narrator_url": None,
+                    "narrator_model": None,
+                }
+            )
+            + "\n"
+        )
+        (run_dir / "predictions.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "header",
+                            "model": model,
+                            "run_dir": str(run_dir),
+                            "started": started_at,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "prediction",
+                            "exam_id": "15-blue",
+                            "question_id": "fr-1",
+                            "answer_type": "numeric",
+                            "max_points": 2,
+                            "professor_score": 2,
+                            "professor_mark": "check",
+                            "student_answer": "foo",
+                            "model_score": score,
+                            "model_confidence": 0.5,
+                            "model_read": "foo",
+                            "model_reasoning": "bar",
+                            "raw_assistant": "{}",
+                            "raw_reasoning": "abc",
+                            "upstream_dependency": "none",
+                            "if_dependent_then_consistent": None,
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        return run_dir
+
     def test_load_run_records_extracts_elapsed_and_critic_score(self):
         module = _load_compare_runs()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -160,6 +235,78 @@ class CompareRunsContract(unittest.TestCase):
             self.assertEqual(row["new__score"], 2.0)
             self.assertEqual(row["old__model"], "old-model")
             self.assertEqual(row["new__model"], "new-model")
+
+    def test_main_can_resolve_latest_runs_by_manifest_metadata(self):
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            runs_root = base / "runs-root"
+            runs_root.mkdir()
+            out_path = base / "comparison.csv"
+
+            self._write_run(
+                runs_root,
+                run_name="gemma-old",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-08T20:00:00",
+                score=1.0,
+            )
+            self._write_run(
+                runs_root,
+                run_name="gemma-latest",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-08T21:00:00",
+                score=2.0,
+            )
+            self._write_run(
+                runs_root,
+                run_name="qwen-latest",
+                model="qwen-test",
+                prompt_version="prompt-v1",
+                test_set_id="tricky-v1",
+                started_at="2026-04-08T21:30:00",
+                score=1.0,
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            argv = [
+                "compare_runs.py",
+                "--runs-root",
+                str(runs_root),
+                "--query",
+                "model=gemma-test,prompt_version=prompt-v2,test_set_id=tricky-v1",
+                "--query",
+                "model=qwen-test,prompt_version=prompt-v1,test_set_id=tricky-v1",
+                "--label",
+                "gemma-v2",
+                "--label",
+                "qwen-v1",
+                "--out",
+                str(out_path),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                    stderr
+                ):
+                    code = module.main()
+
+            self.assertEqual(
+                code,
+                0,
+                f"query mode should resolve latest matching manifests without raw run-dir inputs; stderr was: {stderr.getvalue()}",
+            )
+            rows = out_path.read_text().splitlines()
+            self.assertEqual(len(rows), 2)
+            header, row = rows
+            self.assertIn("gemma-v2__score", header)
+            self.assertIn("qwen-v1__score", header)
+            self.assertIn(",2.0,", f",{row},")
+            self.assertIn(",1.0,", f",{row},")
 
 
 if __name__ == "__main__":
