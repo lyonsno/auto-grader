@@ -364,6 +364,10 @@ _SCOREBUG_BIG_DIGITS = {
     "-": ("   ", "═══", "   "),
 }
 
+_HISTORY_GROUP_PHASE_LEAD = 0.085  # per-item terrace jump: enough to read as
+                                   # a structural break without making adjacent
+                                   # items feel like unrelated weather systems
+
 
 def _interp_rgb(
     base: tuple[int, int, int],
@@ -400,6 +404,17 @@ def _blend_rgb(
         )
         for channel, target_channel in zip(base, target, strict=True)
     )
+
+
+def _history_group_phase(base_phase: float, group_index: int) -> float:
+    """Advance each visible item group by a fixed terrace lead.
+
+    The history stack should feel coherent within an item, but item
+    boundaries should not all lie on the exact same shimmer plane.
+    This helper keeps one local field per item and advances each
+    successive visible group by a stable phase offset.
+    """
+    return (base_phase + (group_index * _HISTORY_GROUP_PHASE_LEAD)) % 1.0
 
 
 def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
@@ -1553,10 +1568,18 @@ class PaintDryDisplay:
         # the wrap.
         display_entries = self._build_display_entries(wrap_width=wrap_width)
         history_text = Text(no_wrap=False, overflow="fold")
+        current_group_index = -1
+        current_group_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
+            if kind == "header":
+                current_group_index += 1
+                current_group_phase = _history_group_phase(
+                    self._shimmer_phases.phase(current_group_index),
+                    current_group_index,
+                )
             render_layer = _render_layer_index(kind, group_depth)
             if i > 0:
                 history_text.append("\n")
@@ -1569,14 +1592,11 @@ class PaintDryDisplay:
                 else _SHIMMER_DEFAULT_CYCLE_S
             )
 
-            # Coupled phase state is for the default-cycle stack only.
-            # The most-recent entry uses the legacy fast-cycle phase
-            # (computed inside _apply_shimmer from time.monotonic()).
-            phase_override = (
-                None
-                if is_most_recent
-                else self._shimmer_phases.phase(i)
-            )
+            # Keep one coherent phase field within an item, then jump
+            # ahead by a fixed terrace lead at the next item's header.
+            # This prevents the diagonal shimmer from marching
+            # uninterrupted through multiple visible items.
+            phase_override = current_group_phase
 
             if kind == "header":
                 indent = "─ "

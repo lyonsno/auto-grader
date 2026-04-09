@@ -696,6 +696,30 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertEqual(_render_layer_index("header", 3), 0)
 
+    def test_history_groups_get_terraced_phase_offsets(self):
+        import scripts.narrator_reader as module
+
+        self.assertTrue(
+            hasattr(module, "_history_group_phase"),
+            "history shimmer should expose a per-group terrace helper so item blocks can advance in phase together",
+        )
+        phase0 = module._history_group_phase(0.25, 0)
+        phase1 = module._history_group_phase(0.25, 1)
+        phase2 = module._history_group_phase(0.25, 2)
+
+        self.assertAlmostEqual(phase0, 0.25, places=9)
+        self.assertGreater(
+            (phase1 - phase0) % 1.0,
+            0.05,
+            "adjacent item groups should not sit on the same phase plane",
+        )
+        self.assertAlmostEqual(
+            (phase2 - phase1) % 1.0,
+            (phase1 - phase0) % 1.0,
+            places=9,
+            msg="history terraces should advance by a consistent per-group lead",
+        )
+
     def test_stream_events_do_not_force_immediate_repaint(self):
         for msg_type in (
             "header",
