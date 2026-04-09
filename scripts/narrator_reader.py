@@ -91,11 +91,11 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # keeps the structural pulse visible all
                                 # the way down the stack instead of just
                                 # on the most recent few items
-_HISTORY_TIER_DIM_MIN = 0.58    # explicit per-tier palette fade. Top tier
-                                 # stays full-strength; deepest visible
-                                 # history tier settles at 58% brightness.
-                                 # This is the intentional "older lines sink
-                                 # into memory" cue, separate from shimmer.
+_HISTORY_TIER_DIM_MIN = 0.58    # floor for within-item fade.
+_HISTORY_GROUP_DIM_STEP = 0.08  # each successive thought line under a header
+                                 # should visibly dim, but the fade should
+                                 # stair-step across ~5 lines before it
+                                 # settles at the floor.
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
 # Sumi-e palette: a Japanese garden floor in two desaturated rows
@@ -117,29 +117,27 @@ _BASE_RGB = {
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
-    "header": (228, 100, 50),    # persimmon (柿色) — vivid lacquer red,
-                                  # the warm anchor of the painting.
-                                  # Brighter than the muted version we
-                                  # started with: real torii-gate /
-                                  # tea-ceremony lacquer is bold, not
-                                  # apologetic, and the cool indigo
-                                  # axis was visually outweighing it
+    "header": (186, 82, 52),     # lacquered persimmon red — darker and
+                                  # redder than the earlier orange pass,
+                                  # so structural titles read like warm
+                                  # lacquer instead of pumpkin glow
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
-    "status": (104, 126, 176),    # indigo-steel — sticky lane label on top,
-                                   # cool and settled rather than aqua
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
+    "status": (80, 102, 164),    # dark indigo-steel — persistent status
+                                  # rail, intentionally one step darker
+                                  # than the crisp header-index blue
     # Topic verdict variants — full-saturation garden colors. The
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (114, 136, 186),      # indigo-steel affirmative —
-                                         # still cool/good, but now in
-                                         # the same darker blue family
-                                         # as the sticky status lane
+    "topic_match": (70, 92, 156),         # deep indigo agreement —
+                                          # darker than the header-index
+                                          # blue so it harmonizes with
+                                          # structure without duplicating it
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -160,11 +158,10 @@ _SHIMMER_KIND_INTENSITY = {
                           # coupled-oscillator phase ripple more
                           # presence on the largest visual surface
     "topic": 1.00,
-    "status": 1.12,            # sticky top-lane status should pulse a
-                               # bit more than a generic topic
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
+    "status": 1.15,
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
     "header": 1.40,      # cranked — section markers pop
@@ -186,21 +183,20 @@ _SHIMMER_KIND_PEAK_RGB = {
     "live": (245, 155, 80),       # persimmon ember — live field warms
                                    # toward the same lacquer-red as the
                                    # headers as the wave passes
-    "header": (255, 165, 95),     # fired persimmon — bright lacquer
-                                   # in-family brightening, pushed to
-                                   # match the brighter base
+    "header": (232, 136, 102),    # fired lacquer red — brighter crest,
+                                   # but still clearly red-led rather than
+                                   # tipping back into orange
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
-    "status": (170, 192, 234),    # indigo-steel highlight — cool lift
-                                   # without drifting into aqua
     "line": (175, 215, 180),      # glazed celadon — sage moss row
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (182, 204, 244),     # brighter indigo-steel — match
-                                        # verdicts stay in the same cool
-                                        # family as the status lane
+    "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
+                                        # agreement lines
+    "status": (136, 164, 220),          # brightened dark-indigo crest
+                                        # for the sticky status rail
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
@@ -218,9 +214,9 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header",
     "header_index",
     "header_dash",
-    "status",
     "topic",
     "topic_match",
+    "status",
     "topic_overshoot",
     "topic_undershoot",
 })
@@ -231,7 +227,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
 # top + bottom borders). When bonsai's output is longer than will
 # fit in that area, we tail-truncate (keep the most recent chars).
 _LIVE_PANEL_CONTENT_LINES = 3
-_TOP_PANEL_CONTENT_LINES = 1 + _LIVE_PANEL_CONTENT_LINES
+_TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 
 # Live-line undulation parameters — each character on the live line
 # gets a per-position, per-time hue from a warm orange-amber palette.
@@ -255,13 +251,12 @@ _LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
                                     # / vermilion family so the per-char
                                     # undulation is actually visible
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
-_LIVE_BASE_SAT = 0.80              # bumped from 0.62 — the live field
-                                    # was washing out into static beige
-                                    # because the saturation was too low
-                                    # for the eye to read the undulation;
-                                    # this restores warm pop without
-                                    # crossing into neon territory
-_LIVE_BASE_VAL = 0.95              # bright paper base
+_LIVE_BASE_SAT = 0.72              # tempered from the hotter pass so the
+                                    # live line stays warm/current without
+                                    # overpowering the rest of the panel
+_LIVE_BASE_VAL = 0.92              # slightly dimmer than the glare-prone
+                                    # earlier pass; still bright enough to
+                                    # read clearly against the dark field
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
 # brightness (BT.709 luminance weights yellow ~4× higher than red),
@@ -299,6 +294,9 @@ _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
 # stroke as the wash dries), so the wave reads as a quiet brightening
 # of the ink rather than a fire sweep.
 _SHIMMER_PEAK_RGB = (235, 215, 175)
+_EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
+                                     # we want warm structural emphasis
+                                     # without a full verdict signal
 
 
 def _interp_rgb(
@@ -329,17 +327,39 @@ def _scale_rgb(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]
 
 
 def _history_tier_dim_factor(layer_index: int) -> float:
-    """Return the explicit brightness factor for a visible history tier.
+    """Return the brightness factor for a line within an item group.
 
-    Topmost history tier stays at full brightness. Lower tiers fade
-    linearly until the deepest visible tier reaches
-    _HISTORY_TIER_DIM_MIN, then clamp there.
+    This is intentionally local to the current header block, not the
+    whole viewport. Each step down within an item should be visibly
+    dimmer, then clamp at the floor so deep blocks don't disappear.
     """
-    if layer_index <= 0 or _VISIBLE_HISTORY_LINES <= 1:
+    if layer_index <= 0:
         return 1.0
-    capped_index = min(layer_index, _VISIBLE_HISTORY_LINES - 1)
-    position = capped_index / (_VISIBLE_HISTORY_LINES - 1)
-    return 1.0 - (1.0 - _HISTORY_TIER_DIM_MIN) * position
+    return max(
+        _HISTORY_TIER_DIM_MIN,
+        1.0 - (_HISTORY_GROUP_DIM_STEP * layer_index),
+    )
+
+
+def _render_layer_index(kind: str, group_depth: int) -> int:
+    """Return the effective fade layer for a history entry.
+
+    Only narrator thought lines should sink within an item block.
+    Structural lines such as headers and resolution/topic lines stay
+    at full strength so the eye can keep finding the question/result
+    anchors quickly.
+    """
+    return group_depth if kind == "line" else 0
+
+
+def _message_requires_immediate_refresh(msg_type: str) -> bool:
+    """Return whether a FIFO event should bypass the normal animation cadence.
+
+    Regular stream events should let the animation loop own repaint timing so
+    idle and active motion feel consistent. Only boundary moments that would
+    feel laggy at 12 FPS get an immediate forced refresh.
+    """
+    return msg_type in {"wrap_up", "end"}
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -643,9 +663,9 @@ class PaintDryDisplay:
         # live panel until the next dispatch starts streaming new
         # content. Live panel shows streaming if non-empty, else frozen,
         # else just the cursor glyph.
+        self.status_line: str = ""
         self.streaming_line: str = ""
         self.frozen_line: str = ""
-        self.status_line: str = ""
         # Timestamp at which the most recent dispatch finished streaming.
         # Used to drive the slow fade from "just-arrived bright" to
         # "settled past tense" colors over _LIVE_FREEZE_FADE_S seconds
@@ -693,37 +713,29 @@ class PaintDryDisplay:
         # and working on the wrap-up rather than hung.
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
-        # When True, render() shows a "press Enter to close" footer.
-        # The animation thread keeps running so the shimmer plays on
-        # while the user reads.
+        # When True, render() shows a "press Enter to close" footer and
+        # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
+        self._session_started_at: float | None = None
+        self._turn_started_at: float | None = None
 
     def __rich__(self) -> Group:
         return self.render()
 
     def should_animate(self, now: float | None = None) -> bool:
-        """Return whether the UI needs timer-driven repainting.
+        """Return whether the UI should keep driving the shimmer loop.
 
-        Static state changes are pushed directly from the fifo/message
-        loop. The background animation thread is only needed while the
-        live field is actively streaming, while the frozen-line fade is
-        still settling, or while the wrap-up pending timer is ticking.
-        Once the session has ended, keep the final frame static while
-        waiting for Enter instead of repainting forever.
+        Project Paint Dry is not a static log viewer. Even when no new
+        tokens are arriving, the active session still has ongoing shimmer
+        across the status rail, live field, and history stack. The only
+        time we intentionally stop repainting is after the session has
+        ended and the final frame is meant to stay still while waiting
+        for Enter.
         """
-        if self.session_ended:
-            return False
-        if self.streaming_line or self.wrap_up_pending:
-            return True
-        if (
-            self.frozen_line
-            and self._freeze_started_at is not None
-        ):
-            current = time.monotonic() if now is None else now
-            return (current - self._freeze_started_at) < _LIVE_FREEZE_FADE_S
-        return False
+        _ = now
+        return not self.session_ended
 
-    def _build_display_entries(self) -> list[tuple[tuple, bool]]:
+    def _build_display_entries(self) -> list[tuple[tuple, bool, int]]:
         """Group history into items, reverse so newest item is first,
         and within each group keep entries in chronological order so
         the header sits ABOVE its narrator lines and topic.
@@ -740,9 +752,12 @@ class PaintDryDisplay:
         here's the verdict" for every visible item; the play-by-play
         between them is the part that compresses.
 
-        Returns a list of (entry, is_most_recent) tuples in display
-        order. is_most_recent is True for exactly the entry at the
-        back of the deque (the most-recently-committed thing).
+        Returns a list of (entry, is_most_recent, group_depth) tuples
+        in display order. group_depth is the per-item depth that resets
+        at each header, so visual fading can restart from every item
+        heading instead of running as one global downhill wash.
+        is_most_recent is True for exactly the entry at the back of the
+        deque (the most-recently-committed thing).
         """
         history_list = list(self.history)
         if not history_list:
@@ -763,14 +778,20 @@ class PaintDryDisplay:
         if current_group:
             groups.append(current_group)
 
-        # Newest item on top, but entries within each group stay in
-        # their natural (commit) order so header > lines > topic
+        # Newest item on top. Within each group, keep the header first
+        # and topic last, but flip narrator lines so the freshest
+        # thought sits closest to the header and older thoughts descend.
         groups.reverse()
 
         # Flat list of (entry, deque_idx) in display order (top-down)
         flat: list[tuple[tuple, int]] = []
         for group in groups:
-            flat.extend(group)
+            header = [pair for pair in group if pair[0][0] == "header"]
+            lines = [pair for pair in group if pair[0][0] == "line"]
+            rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
+            flat.extend(header)
+            flat.extend(reversed(lines))
+            flat.extend(rest)
 
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget
@@ -805,10 +826,15 @@ class PaintDryDisplay:
             keep_positions.add(pos)
 
         # Build the final list in original (top-to-bottom) display order
-        display: list[tuple[tuple, bool]] = []
+        display: list[tuple[tuple, bool, int]] = []
+        group_depth = -1
         for pos, (entry, idx) in enumerate(flat):
             if pos in keep_positions:
-                display.append((entry, idx == most_recent_idx))
+                if entry[0] == "header":
+                    group_depth = 0
+                else:
+                    group_depth = max(0, group_depth + 1)
+                display.append((entry, idx == most_recent_idx, group_depth))
         return display
 
     def _compute_wrap_width(self) -> int | None:
@@ -863,6 +889,26 @@ class PaintDryDisplay:
         header_text.append("   ", style="dim")
         header_text.append(self.subtitle, style="#5a73b4")
         header_text.append("   ", style="dim")
+        total_elapsed_s = (
+            int(max(0.0, now - self._session_started_at))
+            if self._session_started_at is not None
+            else 0
+        )
+        turn_elapsed_s = (
+            int(max(0.0, now - self._turn_started_at))
+            if self._turn_started_at is not None
+            else None
+        )
+        header_text.append(
+            f"total={total_elapsed_s}s",
+            style="#7f95cf" if self._session_started_at is not None else "grey50",
+        )
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"turn={turn_elapsed_s}s" if turn_elapsed_s is not None else "turn=--",
+            style=_rgb_to_hex(_EMBER_ACCENT_RGB) if turn_elapsed_s is not None else "grey50",
+        )
+        header_text.append("  ", style="dim")
         header_text.append(
             f"emitted={self.stat_emitted}",
             style="green4" if self.stat_emitted > 0 else "grey50",
@@ -883,17 +929,11 @@ class PaintDryDisplay:
             padding=(0, 1),
         )
 
-        # Live line — sticky two-buffer model. Show streaming_line if
-        # it's non-empty (active dispatch), otherwise show frozen_line
-        # (the last committed line, waiting for the next dispatch to
-        # start). Cursor glyph is bright cyan when actively streaming,
-        # grey50 when only the frozen line is showing — subtle visual
-        # cue that the field is settled vs. live.
-        #
-        # The displayed text gets a subtle yellow/orange shimmer
-        # overlay (via _apply_shimmer with kind="live") so the live
-        # field feels alive even between deltas. Subtle amplitude,
-        # vivid peak (orange-amber).
+        # Top panel — cool sticky status rail above the warmer live line.
+        # Status is persistent and structural, so it gets the calmer
+        # indigo-steel shimmer. The live first-person line below it is
+        # the more volatile surface, so it carries the warmer active
+        # treatment without overwriting the sticky status.
         displayed_live = self.streaming_line or self.frozen_line
         is_active = bool(self.streaming_line)
 
@@ -920,18 +960,15 @@ class PaintDryDisplay:
 
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
-            cursor_style = "bright_cyan" if is_active else "grey50"
+            cursor_style = _rgb_to_hex(_EMBER_ACCENT_RGB) if is_active else "grey50"
             live_text.append("▌ ", style=cursor_style)
-            # Compute freeze age for the renderer's fade. Only meaningful
-            # when not actively streaming and we have a recorded freeze
-            # timestamp; otherwise the renderer treats sat/val as fully
-            # bright.
             freeze_age_s = None
             if not is_active and self._freeze_started_at is not None:
                 freeze_age_s = time.monotonic() - self._freeze_started_at
             _render_live_undulating(
-                live_text, displayed_live,
-                indent_width=2,  # cursor glyph "▌ "
+                live_text,
+                displayed_live,
+                indent_width=2,
                 wrap_width=wrap_width,
                 is_active=is_active,
                 char_offset=live_char_offset,
@@ -939,40 +976,31 @@ class PaintDryDisplay:
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
-        top_text = Text(no_wrap=False, overflow="fold")
-        status_text = self.status_line or "Waiting for a fresh status lane."
-        status_prefix = "◌ "
-        _apply_shimmer(
-            top_text,
-            status_prefix,
-            "status",
-            layer_index=0,
-            indent_width=0,
-            wrap_width=wrap_width,
-            cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
-            phase_override=self._shimmer_phases.phase(0),
-        )
-        _apply_shimmer(
-            top_text,
-            status_text,
-            "status",
-            layer_index=0,
-            indent_width=len(status_prefix),
-            wrap_width=wrap_width,
-            cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
-            phase_override=self._shimmer_phases.phase(0),
-        )
-        top_text.append("\n")
-        top_text.append_text(live_text)
+
+        status_text = Text(no_wrap=False, overflow="fold")
+        if self.status_line:
+            status_text.append("▌ ", style="#6f87c7")
+            _apply_shimmer(
+                status_text,
+                self.status_line,
+                "status",
+                layer_index=0,
+                indent_width=2,
+                wrap_width=wrap_width,
+                cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+            )
+        else:
+            status_text.append("", style="grey39")
 
         live_panel = Panel(
-            top_text,
+            Group(status_text, live_text),
             border_style="#3d4458",
             padding=(0, 1),
             title="[grey50]status + live[/grey50]",
             title_align="left",
-            # Fixed height: one sticky status row plus the live content
-            # rows, with borders.
+            # Fixed height: top border + content + bottom border.
+            # Locks the live panel's vertical footprint so the layout
+            # doesn't jitter when bonsai produces a long line.
             height=_TOP_PANEL_CONTENT_LINES + 2,
         )
 
@@ -995,10 +1023,11 @@ class PaintDryDisplay:
         # the wrap.
         display_entries = self._build_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
-        for i, (entry, is_most_recent) in enumerate(display_entries):
+        for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
+            render_layer = _render_layer_index(kind, group_depth)
             if i > 0:
                 history_text.append("\n")
 
@@ -1028,7 +1057,7 @@ class PaintDryDisplay:
                 # width is 0 here because the dash IS the leading edge.
                 _apply_shimmer(
                     history_text, indent, "header_dash",
-                    layer_index=i,
+                    layer_index=render_layer,
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
@@ -1047,7 +1076,7 @@ class PaintDryDisplay:
                     rest_part = m.group(2)
                     _apply_shimmer(
                         history_text, index_part, "header_index",
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1056,7 +1085,7 @@ class PaintDryDisplay:
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
                         history_text, rest_part, "header",
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent) + len(index_part) + 1,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1065,7 +1094,7 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, "header",
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1077,9 +1106,9 @@ class PaintDryDisplay:
                 # Pick the topic color variant based on the stored
                 # verdict (third tuple slot, named "parity" for line
                 # entries but reused as the verdict string for topic
-                # entries). Cool sage for matches, warm coral for
-                # grader-overshot, warm amber for grader-undershot,
-                # plain plum fallback when verdict is unknown.
+                # entries). Deep indigo for matches, warm vermilion
+                # for grader-overshot, warm ochre for grader-undershot,
+                # bone fallback when verdict is unknown.
                 topic_kind = {
                     "match": "topic_match",
                     "overshoot": "topic_overshoot",
@@ -1092,12 +1121,15 @@ class PaintDryDisplay:
                 m = _TIME_PREFIX_RE.match(text)
                 if m:
                     time_prefix, rest = m.group(1), m.group(2)
-                    history_text.append(time_prefix, style="bold #d86324")
+                    history_text.append(
+                        time_prefix,
+                        style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    )
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
                         history_text, rest, topic_kind,
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1106,7 +1138,7 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, topic_kind,
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1122,7 +1154,7 @@ class PaintDryDisplay:
                 line_kind = "line_alt" if parity == 1 else "line"
                 _apply_shimmer(
                     history_text, text, line_kind,
-                    layer_index=i,
+                    layer_index=render_layer,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
@@ -1219,6 +1251,10 @@ class PaintDryDisplay:
         # Header goes into the history. Doesn't touch the live buffers
         # — frozen_line keeps showing the previous committed dispatch
         # until the next bonsai dispatch starts streaming.
+        header_now = time.monotonic()
+        if self._session_started_at is None:
+            self._session_started_at = header_now
+        self._turn_started_at = header_now
         self.status_line = ""
         self.history.append(("header", text, None))
 
@@ -1226,23 +1262,17 @@ class PaintDryDisplay:
         self.streaming_line += text
 
     def on_commit(self, mode: str = "thought") -> None:
-        # Push the just-finished streaming line into history (preserves
-        # chronological order, so any subsequent topic/header lands
-        # AFTER it), then promote it to frozen_line so it keeps showing
-        # in the live panel until the next dispatch starts streaming.
-        if self.streaming_line:
+        # Thought commits land in the history and become the sticky
+        # frozen line. Status commits update only the sticky status rail.
+        if self.streaming_line and mode == "status":
+            self.status_line = self.streaming_line
+        elif self.streaming_line:
             self.history.append(
                 ("line", self.streaming_line, self._line_parity)
             )
             self._line_parity = 1 - self._line_parity
             self.stat_emitted += 1
-            # Mark the start of the freeze fade — only when there was
-            # actual content to freeze. Empty commits don't restart
-            # the fade clock.
             self._freeze_started_at = time.monotonic()
-        if mode == "status":
-            self.status_line = self.streaming_line
-        else:
             self.frozen_line = self.streaming_line
         self.streaming_line = ""
 
@@ -1253,7 +1283,7 @@ class PaintDryDisplay:
         # rollback_live already cleared the streaming_line.
         label = text[:120] if text else f"<{reason}>"
         self.drops.append((reason, label))
-        if reason == "dedup":
+        if reason.startswith("dedup"):
             self.stat_dropped_dedup += 1
         elif reason == "empty":
             self.stat_dropped_empty += 1
@@ -1406,10 +1436,11 @@ def main() -> int:
                             pass
                         return 0
 
-                    try:
-                        live.update(display.render(), refresh=True)
-                    except Exception:
-                        pass
+                    if _message_requires_immediate_refresh(msg_type):
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            pass
     finally:
         animation_stop.set()
         try:

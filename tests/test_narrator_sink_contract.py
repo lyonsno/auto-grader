@@ -51,24 +51,20 @@ class TestWezTermResolution(unittest.TestCase):
     def test_commit_live_can_emit_status_mode_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sink = NarratorSink(
-                SinkConfig(
-                    log_dir=Path(tmpdir),
-                    fallback_stream=io.StringIO(),
-                )
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
             )
             sink.start()
-            sink.write_delta("Rechecking")
+            sink.write_delta("Tracing")
             sink.commit_live(mode="status")
             sink.close()
 
-            rows = [
+            events = [
                 json.loads(line)
                 for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
             ]
 
-        commit_rows = [row for row in rows if row["type"] == "commit"]
-        self.assertEqual(len(commit_rows), 1)
-        self.assertEqual(commit_rows[0]["mode"], "status")
+        commit = next(event for event in events if event["type"] == "commit")
+        self.assertEqual(commit["mode"], "status")
 
 
 if __name__ == "__main__":

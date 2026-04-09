@@ -65,25 +65,17 @@ class ServerConfig:
     raising temperature toward 0.8-1.0 while keeping presence_penalty
     at 0. We do NOT raise presence_penalty for structured output.
 
-    max_tokens=16384 is intentionally generous. Picking an intermediate
-    value (e.g. 4096) is the worst of all worlds: too low to reliably
-    accommodate the longest legitimate reasoning we have observed (fr-5b
-    was ~30K chars ≈ 7-8K tokens of reasoning_content), too high to
-    "fail fast" on a runaway loop. The cost of setting max_tokens high
-    is asymmetric — it is only paid when the model actually uses the
-    budget — so a high ceiling catches the long-reasoning case without
-    penalizing short-reasoning items. 16384 gives comfortable headroom
-    above the worst observed legitimate reasoning while still being a
-    finite safety net for true infinite loops. The optimization target
-    is "every item gets a definitive answer"; per-item wall clock up
-    to 3-4 minutes on the hardest items is acceptable for a 12-item
-    curated test set.
+    max_tokens=8192 keeps headroom for legitimately hard items without
+    letting one bad stall chew through the old 16384-token runway. The
+    longest useful traces we have seen were already in the ~7-8K token
+    band, so 8192 is still generous, but no longer gives pathological
+    items an enormous extra burn window.
     """
 
     base_url: str  # e.g. "http://192.168.68.128:8001"
     api_key: str = "1234"
     model: str = "qwen3p5-35B-A3B"
-    max_tokens: int = 16384
+    max_tokens: int = 8192
     temperature: float = 0.6
     top_p: float = 0.95
     top_k: int = 20
@@ -126,9 +118,16 @@ You are grading a chemistry exam. You will be shown a scanned page from a \
 student's exam and asked to grade a specific question.
 
 Grading philosophy:
-- Be charitable. If a reasonable reading supports correctness, give credit.
+- Award the highest score justified by the student's written work under the \
+rubric.
+- Actively rescue as much lawful partial credit as possible: method, setup, \
+intermediate understanding, and consistent follow-through all count when the \
+rubric supports them.
+- Be generous but not speculative: give every point justified by what is on \
+the page, but do not invent missing work.
 - Grade what is written, not a more favorable answer you can imagine.
-- If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
+- If two readings are plausible and neither is clearly better supported, \
+choose the best-supported reading and move on.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
 - Internal consistency rule: if this part depends on an earlier wrong answer \
@@ -141,17 +140,15 @@ full molecular or full ionic equation does not satisfy that criterion.
 For each question, you must:
 1. Read what the student wrote
 2. Compare it to the correct answer / rubric
-3. Decide whether this question depends on an earlier part of the same \
-problem. If yes, name that earlier part. If no, say "none".
-4. If it does depend on an earlier part, decide whether the student's work \
-here is internally consistent with their own earlier result.
-5. Award a score, erring on the side of generosity while respecting the \
-requested answer form.
+3. Use upstream_dependency = "none" unless this answer clearly carries \
+forward an earlier part. If it does, name that earlier part.
+4. If it is not "none", decide whether the student's work here is internally \
+consistent with their own earlier result.
+5. Award the highest score you can justify from the student's work while \
+respecting the requested answer form.
 
-Respond in EXACTLY this JSON format (no other text). The
-upstream_dependency and if_dependent_then_consistent fields are
-REQUIRED — the grading process is not complete without them, and they
-must be filled in before model_score:
+Respond in this EXACT JSON format (no other text). The dependency fields are \
+required and must be filled in before model_score:
 
 {
   "model_read": "<what the student wrote, verbatim>",
@@ -159,7 +156,7 @@ must be filled in before model_score:
   "if_dependent_then_consistent": <true | false | null if upstream_dependency is 'none'>,
   "model_score": <numeric score you award>,
   "model_confidence": <0.0 to 1.0, your confidence in the score>,
-  "model_reasoning": "<brief explanation of your grading, including how the upstream dependency was handled>"
+  "model_reasoning": "<brief explanation of your grading, including dependency handling when applicable>"
 }
 """
 
@@ -271,6 +268,33 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
     raise ValueError(f"Could not parse VLM response as JSON: {text[:300]}")
 
 
+def _failure_prediction(
+    item: EvalItem,
+    *,
+    message: str,
+    raw_assistant: str,
+    raw_reasoning: str,
+) -> Prediction:
+    """Return a structured grader failure as a Prediction.
+
+    Runs should degrade on one bad item rather than crashing the whole
+    batch. We encode the failure as a zero-confidence, zero-score
+    prediction and preserve the raw payloads for later inspection.
+    """
+    return Prediction(
+        exam_id=item.exam_id,
+        question_id=item.question_id,
+        model_score=0.0,
+        model_confidence=0.0,
+        model_reasoning=message,
+        model_read="",
+        raw_assistant=raw_assistant,
+        raw_reasoning=raw_reasoning,
+        upstream_dependency="none",
+        if_dependent_then_consistent=None,
+    )
+
+
 def grade_single_item(
     item: EvalItem,
     page_image: bytes,
@@ -331,12 +355,13 @@ def grade_single_item(
     last_err = None
     content = ""
     reasoning = ""
+    finish_reason: str | None = None
     for attempt in range(3):
         try:
             req = _build_request()
             resp = urllib.request.urlopen(req, timeout=600)
             try:
-                content, reasoning = _consume_streaming_response(
+                content, reasoning, finish_reason = _consume_streaming_response(
                     resp, on_reasoning_delta
                 )
             except KeyboardInterrupt:
@@ -366,7 +391,24 @@ def grade_single_item(
             f"{item.exam_id}/{item.question_id}: {last_err}"
         )
 
-    parsed = _parse_vlm_response(content)
+    try:
+        parsed = _parse_vlm_response(content)
+    except ValueError:
+        if finish_reason == "length":
+            message = (
+                "Grader output was truncated at the max token limit before it "
+                "finished the required JSON."
+            )
+        else:
+            message = (
+                "Grader output could not be parsed as the required JSON."
+            )
+        return _failure_prediction(
+            item,
+            message=message,
+            raw_assistant=content,
+            raw_reasoning=reasoning,
+        )
 
     # Coerce upstream-dependency fields tolerantly. Older grader models or
     # gemma-4 may not honor the new schema; default to "none" / null so
@@ -407,7 +449,7 @@ def grade_single_item(
 
 def _consume_streaming_response(
     resp, on_reasoning_delta
-) -> tuple[str, str]:
+) -> tuple[str, str, str | None]:
     """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
     through the callback as they arrive (when provided); returns
     (assistant_content, reasoning_content) for parsing AND for the
@@ -430,6 +472,7 @@ def _consume_streaming_response(
     """
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
+    finish_reason: str | None = None
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line.startswith("data:"):
@@ -441,7 +484,10 @@ def _consume_streaming_response(
             chunk = json.loads(data)
         except json.JSONDecodeError:
             continue
-        delta = chunk.get("choices", [{}])[0].get("delta", {})
+        choice = chunk.get("choices", [{}])[0]
+        delta = choice.get("delta", {})
+        if choice.get("finish_reason") is not None:
+            finish_reason = str(choice.get("finish_reason"))
         # Reasoning tokens — accumulate for the critic, and pump to
         # narrator if wired.
         rc_delta = delta.get("reasoning_content", "")
@@ -456,7 +502,7 @@ def _consume_streaming_response(
         c_delta = delta.get("content", "")
         if c_delta:
             content_parts.append(c_delta)
-    return "".join(content_parts), "".join(reasoning_parts)
+    return "".join(content_parts), "".join(reasoning_parts), finish_reason
 
 
 # ---------------------------------------------------------------------------

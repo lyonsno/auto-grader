@@ -2,9 +2,10 @@
 
 Reads streaming reasoning tokens from the VLM and produces short
 first-person thinking lines via Bonsai, with a present-participle
-status lane when the first-person stream starts looping. Statuses
-persist across an item; first-person thoughts only carry the
-current status segment.
+status-mode fallback when the first-person line would just repeat
+the prior thought. Architecture A: each summary becomes an assistant
+turn in a growing chat history so the narrator naturally CONTINUES
+its own summary stream.
 
 Spoke-specific bits (loading vamp, OMLX status polling, command URL
 plumbing) are stripped. The chunking heuristics, dispatch state machine,
@@ -196,7 +197,9 @@ _STATUS_SIMILARITY_THRESHOLD = 0.90  # status-mode lines are ALLOWED to stay
                                      # same line again
 _STATUS_CONTEXT_LIMIT = 5
 _THOUGHT_CONTEXT_LIMIT = 4
-_MAX_BACKOFF_FACTOR = 8.0
+_DEDUP_BACKOFF_INITIAL_S = 4.0
+_DEDUP_BACKOFF_MAX_S = 24.0
+_PLAYBACK_CHUNK_DELAY_S = 0.03
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -378,6 +381,10 @@ class ThinkingNarrator:
     callback on a background thread.
     """
 
+    _DEDUP_BACKOFF_INITIAL_S = _DEDUP_BACKOFF_INITIAL_S
+    _DEDUP_BACKOFF_MAX_S = _DEDUP_BACKOFF_MAX_S
+    _PLAYBACK_CHUNK_DELAY_S = _PLAYBACK_CHUNK_DELAY_S
+
     def __init__(
         self,
         sink: "NarratorSink",
@@ -432,8 +439,10 @@ class ThinkingNarrator:
         # state of the dispatch that took its place.
         self._dispatch_generation = 0
         self._prior_statuses: list[str] = []
+        self._current_status: str | None = None
         self._thoughts_since_status: list[str] = []
-        self._dispatch_backoff_factor = 1.0
+        self._dedupe_backoff_until = 0.0
+        self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
 
         # Lifetime stats (across all items)
         self._stats_lock = threading.Lock()
@@ -482,8 +491,10 @@ class ThinkingNarrator:
             # item's state.
             self._dispatch_generation += 1
             self._prior_statuses = []
+            self._current_status = None
             self._thoughts_since_status = []
-            self._dispatch_backoff_factor = 1.0
+            self._dedupe_backoff_until = 0.0
+            self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
         with self._stats_lock:
             # Roll the previous item's dispatch count into the lifetime
             # max-seen stat, then reset for the new item.
@@ -499,101 +510,67 @@ class ThinkingNarrator:
             return base + "\n\nCONTEXT for the play you're calling:\n" + self._item_header
         return base
 
-    @staticmethod
-    def _recent_lines(lines: list[str], limit: int) -> list[str]:
-        if len(lines) <= limit:
-            return list(lines)
-        return list(lines[-limit:])
-
-    def _current_status(self) -> str | None:
-        if not self._prior_statuses:
-            return None
-        return self._prior_statuses[-1]
-
-    def _current_min_interval_s(self) -> float:
-        return _MIN_INTERVAL_S * self._dispatch_backoff_factor
-
-    def _current_max_interval_s(self) -> float:
-        return _MAX_INTERVAL_S * self._dispatch_backoff_factor
-
-    def _reset_dispatch_backoff(self) -> None:
-        self._dispatch_backoff_factor = 1.0
-
-    def _bump_dispatch_backoff(self) -> None:
-        self._dispatch_backoff_factor = min(
-            _MAX_BACKOFF_FACTOR,
-            self._dispatch_backoff_factor * 2.0,
-        )
-
     def _build_thought_user_content(
         self,
         chunk: str,
-        *,
-        current_status: str | None,
-        recent_thoughts: list[str],
+        prior_thoughts: list[str],
     ) -> str:
-        parts = [f"Current reasoning excerpt:\n\n{chunk}"]
-        if current_status:
-            parts.append("Current status lane:\n" f"- {current_status}")
-        if recent_thoughts:
-            parts.append(
-                "Recent first-person thoughts from this SAME status lane "
+        blocks = [f"Current reasoning excerpt:\n\n{chunk}"]
+        if self._current_status:
+            blocks.append(f"Current status lane:\n- {self._current_status}")
+        if prior_thoughts:
+            blocks.append(
+                "Recent first-person calls under this status "
                 "(do NOT repeat or paraphrase):\n"
                 + "\n".join(
                     f"- {thought}"
-                    for thought in self._recent_lines(
-                        recent_thoughts, _THOUGHT_CONTEXT_LIMIT
-                    )
+                    for thought in prior_thoughts[-_THOUGHT_CONTEXT_LIMIT:]
                 )
-                + "\n\nYour next line must stay grounded in the same lane "
-                "but add a materially new detail from this excerpt."
             )
-        return "\n\n".join(parts)
+        blocks.append(
+            "Write one short first-person thought about a NEW detail in this excerpt. "
+            "Stay on the current status lane, but move to a fresh angle, number, "
+            "unit, species, rubric criterion, or uncertainty."
+        )
+        return "\n\n".join(blocks)
 
+    @staticmethod
     def _build_status_user_content(
-        self,
         chunk: str,
-        *,
-        recent_statuses: list[str],
+        prior_statuses: list[str],
     ) -> str:
-        parts = [f"Current reasoning excerpt:\n\n{chunk}"]
-        if recent_statuses:
-            parts.append(
-                "Recent status lines for this item:\n"
+        blocks = [f"Current reasoning excerpt:\n\n{chunk}"]
+        if prior_statuses:
+            blocks.append(
+                "Recent status lines:\n"
                 + "\n".join(
                     f"- {status}"
-                    for status in self._recent_lines(
-                        recent_statuses, _STATUS_CONTEXT_LIMIT
-                    )
+                    for status in prior_statuses[-_STATUS_CONTEXT_LIMIT:]
                 )
             )
-        parts.append(
+        blocks.append(
             "You are still on the SAME point. Do not invent a new angle. "
-            "Compress the ongoing state into one short present-participle "
-            "status line."
+            "Compress the ongoing state into one short present-participle status line."
         )
-        return "\n\n".join(parts)
+        return "\n\n".join(blocks)
 
     def _retry_duplicate_as_status(
         self,
         chunk: str,
         prior_statuses: list[str],
-    ) -> tuple[str | None, str]:
+    ) -> tuple[str | None, str, str | None]:
         status_user_content = self._build_status_user_content(
-            chunk,
-            recent_statuses=prior_statuses,
+            chunk, prior_statuses
         )
         messages = [
             {"role": "system", "content": self._compose_system_prompt(status_mode=True)},
             {"role": "user", "content": status_user_content},
         ]
 
-        self._sink.rollback_live()
-        full = self._chat_completion_stream(messages, on_delta=self._sink.write_delta)
+        full = self._chat_completion_stream(messages, on_delta=lambda _delta: None)
         full = full.strip()
         if not full:
-            self._sink.rollback_live()
-            return None, status_user_content
+            return None, status_user_content, None
 
         if any(
             self._lines_too_similar(
@@ -601,10 +578,24 @@ class ThinkingNarrator:
             )
             for prev in prior_statuses
         ):
-            self._sink.rollback_live()
-            return None, status_user_content
+            return None, status_user_content, full
 
-        return full, status_user_content
+        return full, status_user_content, None
+
+    @staticmethod
+    def _playback_chunks(text: str) -> list[str]:
+        chunks = re.findall(r"\S+\s*", text)
+        return chunks or ([text] if text else [])
+
+    def _play_accepted_line(self, text: str) -> None:
+        chunks = self._playback_chunks(text)
+        if not chunks:
+            return
+        delay_s = self._PLAYBACK_CHUNK_DELAY_S
+        for index, chunk in enumerate(chunks):
+            self._sink.write_delta(chunk)
+            if delay_s > 0 and index < len(chunks) - 1:
+                time.sleep(delay_s)
 
     def stop(self) -> None:
         with self._lock:
@@ -728,7 +719,7 @@ class ThinkingNarrator:
             text = self._chat_completion(
                 messages,
                 max_tokens=16384,
-                temperature=0.85,
+                temperature=1.0,
                 base_url=self._wrap_up_base_url,
                 model=self._wrap_up_model,
                 api_key=self._wrap_up_api_key,
@@ -881,6 +872,8 @@ class ThinkingNarrator:
                     messages,
                     max_tokens=256,
                     temperature=1.0,
+                    repetition_penalty=1.01,
+                    presence_penalty=1.0,
                     timeout=60,
                 )
             except Exception:
@@ -938,12 +931,9 @@ class ThinkingNarrator:
             tokens = _rough_token_count(self._buffer)
 
             enough_tokens = (
-                tokens >= _TARGET_CHUNK_TOKENS
-                and elapsed >= self._current_min_interval_s()
+                tokens >= _TARGET_CHUNK_TOKENS and elapsed >= _MIN_INTERVAL_S
             )
-            time_ceiling = (
-                elapsed >= self._current_max_interval_s() and tokens > 0
-            )
+            time_ceiling = elapsed >= _MAX_INTERVAL_S and tokens > 0
 
             # Stuck-dispatch recovery: if a dispatch has been "pending"
             # for longer than _DISPATCH_STUCK_TIMEOUT_S, its thread is
@@ -968,6 +958,9 @@ class ThinkingNarrator:
                 self._pending_dispatch = False
                 self._dispatch_started_at = None
                 self._dispatch_generation += 1
+
+            if now < self._dedupe_backoff_until:
+                return
 
             should_dispatch = (
                 (enough_tokens or time_ceiling)
@@ -997,75 +990,68 @@ class ThinkingNarrator:
             self._stat_dispatches_total += 1
         try:
             with self._lock:
+                prior_thoughts = list(self._thoughts_since_status)
                 prior_statuses = list(self._prior_statuses)
-                current_status = self._current_status()
-                recent_thoughts = list(self._thoughts_since_status)
-            user_content = self._build_thought_user_content(
-                chunk,
-                current_status=current_status,
-                recent_thoughts=recent_thoughts,
-            )
+            user_content = self._build_thought_user_content(chunk, prior_thoughts)
             messages = [
                 {"role": "system", "content": self._compose_system_prompt()},
                 {"role": "user", "content": user_content},
             ]
 
-            # Stream tokens DIRECTLY to the sink as they arrive — this gives
-            # the user the typewriter effect on the live row. We accumulate
-            # the full text in parallel for the post-stream dedup check.
-            # If the dedup catches it, we rollback_live (clear the live row)
-            # and emit a drop event. The user briefly sees the typed-out line
-            # before it gets rolled back, which actually communicates "the
-            # narrator tried this and rejected it" nicely.
-            captured = []
-
-            def _stream_to_sink(delta: str) -> None:
-                captured.append(delta)
-                self._sink.write_delta(delta)
-
             full = self._chat_completion_stream(
-                messages, on_delta=_stream_to_sink
+                messages, on_delta=lambda _delta: None
             )
             full = full.strip()
 
             if not full:
                 with self._stats_lock:
                     self._stat_drops_empty += 1
-                self._sink.rollback_live()
                 self._sink.write_drop("empty", "")
                 return
 
             # Dedup check
             if any(
                 self._lines_too_similar(full, prev)
-                for prev in recent_thoughts
+                for prev in prior_thoughts
             ):
                 logger.info(
                     "Narrator: first-person summary was repetitive, retrying in status mode: %s",
                     full,
                 )
-                status_full, status_user_content = self._retry_duplicate_as_status(
+                status_full, _status_user_content, status_drop = self._retry_duplicate_as_status(
                     chunk, prior_statuses
                 )
                 if not status_full:
                     with self._stats_lock:
                         self._stat_drops_dedup += 1
-                    with self._lock:
-                        self._bump_dispatch_backoff()
                     self._sink.write_drop("dedup", full)
+                    if status_drop:
+                        self._sink.write_drop("dedup-status", status_drop)
                     logger.info("Narrator: dropped repetitive summary: %s", full)
+                    with self._lock:
+                        self._dedupe_backoff_until = (
+                            time.monotonic() + self._dedupe_backoff_s
+                        )
+                        self._dedupe_backoff_s = min(
+                            self._dedupe_backoff_s * 2,
+                            self._DEDUP_BACKOFF_MAX_S,
+                        )
                     return
                 full = status_full
                 committed_mode = "status"
             else:
                 committed_mode = "thought"
 
-            # Accept — commit the live line to history
+            # Accept — now that dedup has settled, play the accepted line
+            # into the live row and then commit it.
+            self._play_accepted_line(full)
             self._sink.commit_live(mode=committed_mode)
 
             with self._lock:
-                self._reset_dispatch_backoff()
+                self._dedupe_backoff_until = 0.0
+                self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
                 if committed_mode == "status":
+                    self._current_status = full
                     self._prior_statuses.append(full)
                     self._thoughts_since_status = []
                 else:
@@ -1129,7 +1115,7 @@ class ThinkingNarrator:
         top_p: float = 0.8,
         top_k: int = 20,
         min_p: float = 0.002,
-        repetition_penalty: float = 1.001,
+        repetition_penalty: float = 1.01,
         presence_penalty: float = 1.0,
         base_url: str | None = None,
         model: str | None = None,
@@ -1209,7 +1195,7 @@ class ThinkingNarrator:
         top_p: float = 0.8,
         top_k: int = 20,
         min_p: float = 0.002,
-        repetition_penalty: float = 1.001,
+        repetition_penalty: float = 1.01,
         presence_penalty: float = 1.0,
         max_chars: int = 350,
         max_seconds: float = 20.0,
