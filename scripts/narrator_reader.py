@@ -271,6 +271,12 @@ _LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
                                     # like its own counter-current
 _LIVE_BASE_SAT = 0.28              # soft wash rather than hot flame
 _LIVE_BASE_VAL = 0.88              # bright enough to read, but not a neon band
+_LIVE_WARM_HUE_CENTER_DEG = 30     # softened ember / apricot sibling for
+                                   # alternating live dispatches
+_LIVE_WARM_HUE_RANGE_DEG = 16
+_LIVE_WARM_BASE_SAT = 0.22
+_LIVE_WARM_BASE_VAL = 0.90
+_LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH = 0.35
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
 # brightness (BT.709 luminance weights yellow ~4× higher than red),
@@ -350,7 +356,7 @@ _EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
 _SCOREBUG_BIG_DIGITS = {
     "0": ("╔═╗", "║ ║", "╚═╝"),
     "1": (" ╗ ", " ║ ", " ╩ "),
-    "2": ("╔═╗", " ╔╝", "╚═ "),
+    "2": ("╔═╗", "╔═╝", "╚═ "),
     "3": ("╔═╗", " ═╣", "╚═╝"),
     "4": ("║ ║", "╚═╣", "  ╩"),
     "5": ("╔═╗", "╠═ ", "╚═╝"),
@@ -362,6 +368,10 @@ _SCOREBUG_BIG_DIGITS = {
     "/": ("   ", " ╱ ", "╱  "),
     "-": ("   ", "═══", "   "),
 }
+
+_HISTORY_GROUP_PHASE_LEAD = 0.085  # per-item terrace jump: enough to read as
+                                   # a structural break without making adjacent
+                                   # items feel like unrelated weather systems
 
 
 def _interp_rgb(
@@ -399,6 +409,17 @@ def _blend_rgb(
         )
         for channel, target_channel in zip(base, target, strict=True)
     )
+
+
+def _history_group_phase(base_phase: float, group_index: int) -> float:
+    """Advance each visible item group by a fixed terrace lead.
+
+    The history stack should feel coherent within an item, but item
+    boundaries should not all lie on the exact same shimmer plane.
+    This helper keeps one local field per item and advances each
+    successive visible group by a stable phase offset.
+    """
+    return (base_phase + (group_index * _HISTORY_GROUP_PHASE_LEAD)) % 1.0
 
 
 def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
@@ -816,17 +837,18 @@ def _render_live_undulating(
     indent_width: int,
     wrap_width: int | None,
     is_active: bool,
+    palette_variant: str = "cool",
     char_offset: int = 0,
     freeze_age_s: float | None = None,
 ) -> Text:
-    """Render the live line with per-character undulating warm colors
-    (yellow / orange / red) AND a shimmer overlay on top.
+    """Render the live line with per-character undulating color washes.
 
-    Each character has its own hue computed from time + char position,
-    so adjacent characters land at slightly different points in the
-    palette and the whole field undulates over a slow cycle. The
-    shimmer head brightens characters near it and pushes their
-    saturation down (toward white) for a heat-flicker feel.
+    The live lane alternates between a cooler aqua/green/bone wash and
+    a softened pastel warm wash on accepted thought lines. Adjacent
+    characters still land at slightly different points in the palette
+    and the whole field undulates over a slow cycle. The shimmer head
+    brightens characters near it and pushes their saturation down
+    (toward white) for a heat-flicker feel.
 
     char_offset: number of characters that were tail-truncated off
     the front of `content` before passing in. Used to keep the
@@ -845,20 +867,33 @@ def _render_live_undulating(
     if not content:
         return text_obj
 
+    if palette_variant == "warm":
+        center_deg = _LIVE_WARM_HUE_CENTER_DEG
+        range_deg = _LIVE_WARM_HUE_RANGE_DEG
+        base_sat = _LIVE_WARM_BASE_SAT
+        base_val = _LIVE_WARM_BASE_VAL
+        luminance_correction_strength = _LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH
+    else:
+        center_deg = _LIVE_HUE_CENTER_DEG
+        range_deg = _LIVE_HUE_RANGE_DEG
+        base_sat = _LIVE_BASE_SAT
+        base_val = _LIVE_BASE_VAL
+        luminance_correction_strength = _LIVE_LUMINANCE_CORRECTION_STRENGTH
+
     return _render_warm_undulating(
         text_obj,
         content,
         indent_width,
         wrap_width,
         cycle_s=_LIVE_UNDULATION_CYCLE_S,
-        center_deg=_LIVE_HUE_CENTER_DEG,
-        range_deg=_LIVE_HUE_RANGE_DEG,
+        center_deg=center_deg,
+        range_deg=range_deg,
         per_char_phase_offset=_LIVE_PER_CHAR_PHASE_OFFSET,
         phase_offset_rad=_LIVE_PHASE_OFFSET_RAD,
         direction=_LIVE_UNDULATION_DIRECTION,
-        base_sat=_LIVE_BASE_SAT,
-        base_val=_LIVE_BASE_VAL,
-        luminance_correction_strength=_LIVE_LUMINANCE_CORRECTION_STRENGTH,
+        base_sat=base_sat,
+        base_val=base_val,
+        luminance_correction_strength=luminance_correction_strength,
         char_offset=char_offset,
         freeze_age_s=None if is_active else freeze_age_s,
         frozen_sat_mul=_LIVE_FROZEN_SAT_MUL,
@@ -1018,6 +1053,7 @@ class PaintDryDisplay:
         self.status_streaming_line: str = ""
         self.streaming_line: str = ""
         self.frozen_line: str = ""
+        self._frozen_line_parity: int = 0
         # Timestamp at which the most recent dispatch finished streaming.
         # Used to drive the slow fade from "just-arrived bright" to
         # "settled past tense" colors over _LIVE_FREEZE_FADE_S seconds
@@ -1434,8 +1470,8 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
-                    label_style="bold #fff3db on #8a6635",
-                    value_style="bold #fff1d9 on #4a3720",
+                    label_style="bold #fff1d6 on #6b5028",
+                    value_style="bold #ffefcf on #3e2f1b",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1447,8 +1483,8 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
-                    label_style="bold #ffe9e2 on #8d4637",
-                    value_style="bold #ffe7de on #4f251f",
+                    label_style="bold #ffe5dd on #7a392f",
+                    value_style="bold #ffe3d8 on #47211d",
                 )
                 scorebug_rows.extend(
                     [
@@ -1480,8 +1516,8 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
-                    label_style="bold #fff3db on #8a6635",
-                    value_style="bold #fff1d9 on #4a3720",
+                    label_style="bold #fff1d6 on #6b5028",
+                    value_style="bold #ffefcf on #3e2f1b",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1490,8 +1526,8 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
-                    label_style="bold #ffe9e2 on #8d4637",
-                    value_style="bold #ffe7de on #4f251f",
+                    label_style="bold #ffe5dd on #7a392f",
+                    value_style="bold #ffe3d8 on #47211d",
                 )
                 scorebug_rows.extend(
                     [
@@ -1515,6 +1551,9 @@ class PaintDryDisplay:
         # treatment without overwriting the sticky status.
         displayed_live = self.streaming_line or self.frozen_line
         is_active = bool(self.streaming_line)
+        live_palette_variant = "warm" if (
+            self._line_parity if is_active else self._frozen_line_parity
+        ) else "cool"
 
         # Tail-truncate the live content so it always fits in
         # _LIVE_PANEL_CONTENT_LINES of visual rows. The panel itself
@@ -1550,6 +1589,7 @@ class PaintDryDisplay:
                 indent_width=2,
                 wrap_width=wrap_width,
                 is_active=is_active,
+                palette_variant=live_palette_variant,
                 char_offset=live_char_offset,
                 freeze_age_s=freeze_age_s,
             )
@@ -1562,6 +1602,7 @@ class PaintDryDisplay:
                 indent_width=2,
                 wrap_width=wrap_width,
                 is_active=False,
+                palette_variant=live_palette_variant,
                 char_offset=0,
                 freeze_age_s=None,
             )
@@ -1630,10 +1671,18 @@ class PaintDryDisplay:
         # the wrap.
         display_entries = self._build_display_entries(wrap_width=wrap_width)
         history_text = Text(no_wrap=False, overflow="fold")
+        current_group_index = -1
+        current_group_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
+            if kind == "header":
+                current_group_index += 1
+                current_group_phase = _history_group_phase(
+                    self._shimmer_phases.phase(current_group_index),
+                    current_group_index,
+                )
             render_layer = _render_layer_index(kind, group_depth)
             if i > 0:
                 history_text.append("\n")
@@ -1646,14 +1695,11 @@ class PaintDryDisplay:
                 else _SHIMMER_DEFAULT_CYCLE_S
             )
 
-            # Coupled phase state is for the default-cycle stack only.
-            # The most-recent entry uses the legacy fast-cycle phase
-            # (computed inside _apply_shimmer from time.monotonic()).
-            phase_override = (
-                None
-                if is_most_recent
-                else self._shimmer_phases.phase(i)
-            )
+            # Keep one coherent phase field within an item, then jump
+            # ahead by a fixed terrace lead at the next item's header.
+            # This prevents the diagonal shimmer from marching
+            # uninterrupted through multiple visible items.
+            phase_override = current_group_phase
 
             if kind == "header":
                 indent = "─ "
@@ -1838,10 +1884,14 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: header, live, history, post-game, drops, [footer]
-        panels = [header]
+        # Order: scorebug, header, live, history, post-game, drops, [footer]
+        # The big tally cells are the most glanceable session-state
+        # surface, so they lead the stack. The project header drops
+        # below them as show identity rather than primary telemetry.
+        panels = []
         if scorebug_panel is not None:
             panels.append(scorebug_panel)
+        panels.append(header)
         panels.append(live_panel)
         if focus_preview_panel is not None:
             panels.append(focus_preview_panel)
@@ -1872,6 +1922,7 @@ class PaintDryDisplay:
         self.status_streaming_line = ""
         self.streaming_line = ""
         self.frozen_line = ""
+        self._frozen_line_parity = self._line_parity
         self._freeze_started_at = None
         self.focus_preview_png = None
         self.focus_preview_label = ""
@@ -1908,9 +1959,11 @@ class PaintDryDisplay:
             self.status_line = self.status_streaming_line
             self.status_streaming_line = ""
         elif self.streaming_line:
+            committed_parity = self._line_parity
             self.history.append(
-                ("line", self.streaming_line, self._line_parity)
+                ("line", self.streaming_line, committed_parity)
             )
+            self._frozen_line_parity = committed_parity
             self._line_parity = 1 - self._line_parity
             self.stat_emitted += 1
             self._freeze_started_at = time.monotonic()

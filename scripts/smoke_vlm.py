@@ -60,6 +60,25 @@ _TRICKY_FOCUS_REGION_MOCKS: dict[tuple[str, str], FocusRegion] = {
     ),
 }
 
+_TRICKY_PICKS = [
+    ("15-blue", "fr-1"),    # easy warmup (numeric, density)
+    ("15-blue", "fr-3"),    # FORMAT: full molecular vs net ionic, prof 0/4
+    ("15-blue", "fr-5b"),   # CHARITY: consistent-with-wrong-premise
+    ("15-blue", "fr-10a"),  # PARTIAL: prof gave 1.5/3 fractional
+    ("15-blue", "fr-11a"),  # ELECTRON CONFIG: orbital boxes, visual
+    ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
+]
+
+_TRICKY_PLUS_PICKS = [
+    ("27-blue-2023", "fr-3"),    # clean correct net ionic
+    ("27-blue-2023", "fr-5b"),   # clean correct stoichiometry numeric
+    ("27-blue-2023", "fr-12a"),  # clean correct Lewis structure
+    ("39-blue-redacted", "fr-10a"),  # clean correct frequency numeric
+    ("34-blue", "fr-8"),         # partial numeric with confused work
+    ("34-blue", "fr-12a"),       # Lewis partial with setup credit
+    *_TRICKY_PICKS,
+]
+
 
 def _progress(i: int, total: int, item, pred):
     mark = "=" if pred.model_score == item.professor_score else "X"
@@ -88,6 +107,8 @@ def _scorebug_session_meta(
 ) -> dict[str, object]:
     if args.tricky:
         set_label = "TRICKY"
+    elif args.tricky_plus:
+        set_label = "TRICKY+"
     elif args.all:
         set_label = "ALL"
     elif args.pick:
@@ -270,6 +291,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "partial credit + Lewis structure partial. Overrides --items."
         ),
     )
+    parser.add_argument(
+        "--tricky-plus",
+        action="store_true",
+        help=(
+            "Grade the tricky regression sentinel plus a small expansion "
+            "of clean-correct and partial-credit calibration items. "
+            "Overrides --items."
+        ),
+    )
     parser.add_argument("--narrate", action="store_true",
                         help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
     parser.add_argument("--narrate-stderr", action="store_true",
@@ -306,16 +336,6 @@ def main():
     gt = load_ground_truth(_GROUND_TRUTH)
     template_document = _load_template_document(_TEMPLATE)
 
-    # Curated tricky test set — known failure-mode probes
-    _TRICKY_PICKS = [
-        ("15-blue", "fr-1"),    # easy warmup (numeric, density)
-        ("15-blue", "fr-3"),    # FORMAT: full molecular vs net ionic, prof 0/4
-        ("15-blue", "fr-5b"),   # CHARITY: consistent-with-wrong-premise
-        ("15-blue", "fr-10a"),  # PARTIAL: prof gave 1.5/3 fractional
-        ("15-blue", "fr-11a"),  # ELECTRON CONFIG: orbital boxes, visual
-        ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
-    ]
-
     if args.pick:
         wanted = []
         for token in args.pick.split(","):
@@ -340,6 +360,9 @@ def main():
     elif args.tricky:
         gt_index = {(item.exam_id, item.question_id): item for item in gt}
         subset = [gt_index[k] for k in _TRICKY_PICKS if k in gt_index]
+    elif args.tricky_plus:
+        gt_index = {(item.exam_id, item.question_id): item for item in gt}
+        subset = [gt_index[k] for k in _TRICKY_PLUS_PICKS if k in gt_index]
     elif args.all:
         subset = gt
     else:

@@ -367,23 +367,35 @@ class NarratorReaderContract(unittest.TestCase):
             "a heavily wrapped older line should consume the visual-row budget and drop before pushing out newer visible context",
         )
 
-    def test_top_panel_uses_warm_status_gutter_with_umber_status_and_cool_live_text(self):
-        display = self._make_display()
-        display.status_line = "Tracing the stoichiometry setup."
-        display.frozen_line = "I'm tracing the stoichiometry."
+    def test_top_panel_uses_warm_status_with_alternating_cool_and_soft_warm_live_text(self):
+        cool_display = self._make_display()
+        cool_display.status_line = "Tracing the stoichiometry setup."
+        cool_display.frozen_line = "I'm tracing the stoichiometry."
+        cool_display._frozen_line_parity = 0
+
+        warm_display = self._make_display()
+        warm_display.status_line = "Tracing the stoichiometry setup."
+        warm_display.frozen_line = "I'm tracing the stoichiometry."
+        warm_display._frozen_line_parity = 1
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
-            group = display.render()
-        live_panel = group.renderables[1]
-        status_text, live_text = live_panel.renderable.renderables
+            cool_group = cool_display.render()
+            warm_group = warm_display.render()
+        cool_live_panel = cool_group.renderables[1]
+        warm_live_panel = warm_group.renderables[1]
+        cool_status_text, cool_live_text = cool_live_panel.renderable.renderables
+        warm_status_text, warm_live_text = warm_live_panel.renderable.renderables
 
-        status_gutter = status_text.spans[0].style
+        status_gutter = cool_status_text.spans[0].style
         status_rgbs = [
             self._rgb_from_hex(style)
-            for style in self._content_hexes(status_text)
+            for style in self._content_hexes(warm_status_text)
         ]
-        live_red, live_green, live_blue = self._rgb_from_hex(
-            self._first_content_hex(live_text)
+        cool_red, cool_green, cool_blue = self._rgb_from_hex(
+            self._first_content_hex(cool_live_text)
+        )
+        warm_red, warm_green, warm_blue = self._rgb_from_hex(
+            self._first_content_hex(warm_live_text)
         )
 
         gutter_red, gutter_green, gutter_blue = self._rgb_from_hex(status_gutter)
@@ -406,29 +418,35 @@ class NarratorReaderContract(unittest.TestCase):
             "sticky status text should be allowed to pick up restrained cool glints inside the warmer rail",
         )
         self.assertGreater(
-            live_blue,
-            live_red,
-            "live first-person line should now shift into the cooler structural family",
+            cool_blue,
+            cool_red,
+            "even-parity live line should stay on the cooler structural family",
         )
         self.assertGreater(
-            live_green,
-            live_red,
-            "live first-person line should pick up some moss/green body instead of fiery red",
+            cool_green,
+            cool_red,
+            "cool live line should keep some moss/green body",
         )
         self.assertGreater(
-            live_blue,
-            live_green,
-            "live first-person line should lean more steel-blue than moss-green",
+            warm_red,
+            warm_blue,
+            "odd-parity live line should flip into a softened warm family",
+        )
+        self.assertGreater(
+            warm_green,
+            warm_blue,
+            "soft-warm live line should still stay pastel and friendly instead of pure hot red",
         )
 
-    def test_render_inserts_scorebug_strip_between_header_and_status_when_model_known(self):
+    def test_render_places_scorebug_above_header_when_model_known(self):
         display = self._make_display()
         display.current_model = "qwen3p5-35B-A3B"
         display.on_header("[item 3/6] 15-blue/fr-5b")
 
         group = display.render()
 
-        scorebug_panel = group.renderables[1]
+        scorebug_panel = group.renderables[0]
+        header_panel = group.renderables[1]
         live_panel = group.renderables[2]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
@@ -440,6 +458,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("qwen3p5-35B-A3B", scorebug_text)
         self.assertIn("ITEM", scorebug_text)
         self.assertIn("3/6", scorebug_text)
+        self.assertIn("PROJECT PAINT DRY", _extract_plain(header_panel.renderable))
         self.assertIn("status + live", live_panel.title)
         self.assertIn(
             "on #",
@@ -484,7 +503,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         group = display.render()
 
-        scorebug_panel = group.renderables[1]
+        scorebug_panel = group.renderables[0]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
         if isinstance(scorebug_renderable, Align):
@@ -534,6 +553,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("╔", top)
         self.assertIn("║", middle)
         self.assertIn("╝", bottom)
+        self.assertIn("╔═╝", middle, "the 2 glyph should have a chunky middle shoulder, not a skinny bend")
         self.assertNotIn("╱", top)
         self.assertIn("╱", middle + bottom)
         self.assertIn("▪", bottom)
@@ -548,7 +568,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         group = display.render()
 
-        scorebug_panel = group.renderables[1]
+        scorebug_panel = group.renderables[0]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
         if isinstance(scorebug_renderable, Align):
@@ -655,7 +675,7 @@ class NarratorReaderContract(unittest.TestCase):
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=100.0):
             display.on_header("[item 1/6] 15-blue/fr-1")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("total=7s", header_text)
         self.assertIn("turn=7s", header_text)
 
@@ -668,27 +688,27 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_delta("Tracing")
         display.on_commit("status")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("turn=5s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=206.0):
             display.on_delta("Rechecking")
         display.on_drop("dedup", "Rechecking the same unit conversion.")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("turn=8s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=209.0):
             display.on_delta("Tracing")
         display.on_rollback_live()
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("turn=11s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=212.0):
             display.on_header("[item 2/6] 15-blue/fr-2")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
+            header_text = _extract_plain(display.render().renderables[1].renderable)
         self.assertIn("total=15s", header_text)
         self.assertIn("turn=3s", header_text)
 
@@ -722,6 +742,30 @@ class NarratorReaderContract(unittest.TestCase):
             "resolution/topic lines should stay full-strength instead of fading with the thought stack",
         )
         self.assertEqual(_render_layer_index("header", 3), 0)
+
+    def test_history_groups_get_terraced_phase_offsets(self):
+        import scripts.narrator_reader as module
+
+        self.assertTrue(
+            hasattr(module, "_history_group_phase"),
+            "history shimmer should expose a per-group terrace helper so item blocks can advance in phase together",
+        )
+        phase0 = module._history_group_phase(0.25, 0)
+        phase1 = module._history_group_phase(0.25, 1)
+        phase2 = module._history_group_phase(0.25, 2)
+
+        self.assertAlmostEqual(phase0, 0.25, places=9)
+        self.assertGreater(
+            (phase1 - phase0) % 1.0,
+            0.05,
+            "adjacent item groups should not sit on the same phase plane",
+        )
+        self.assertAlmostEqual(
+            (phase2 - phase1) % 1.0,
+            (phase1 - phase0) % 1.0,
+            places=9,
+            msg="history terraces should advance by a consistent per-group lead",
+        )
 
     def test_stream_events_do_not_force_immediate_repaint(self):
         for msg_type in (
