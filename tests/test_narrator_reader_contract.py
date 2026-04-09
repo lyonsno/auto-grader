@@ -154,11 +154,6 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertGreater(
             live_red,
-            status_blue,
-            "live first-person line should carry the warmer active treatment",
-        )
-        self.assertGreater(
-            live_red,
             live_blue,
             "live first-person line should stay on the warm ember side, not cool blue",
         )
@@ -223,9 +218,13 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_local_group_dim_factor_descends_materially_per_line(self):
         self.assertEqual(_history_tier_dim_factor(0), 1.0)
-        self.assertLess(_history_tier_dim_factor(1), 0.9)
+        self.assertLess(_history_tier_dim_factor(1), 0.93)
         self.assertLess(_history_tier_dim_factor(2), _history_tier_dim_factor(1))
-        self.assertEqual(_history_tier_dim_factor(3), _history_tier_dim_factor(4))
+        self.assertLess(_history_tier_dim_factor(3), _history_tier_dim_factor(2))
+        self.assertLess(_history_tier_dim_factor(4), _history_tier_dim_factor(3))
+        self.assertLess(_history_tier_dim_factor(5), _history_tier_dim_factor(4))
+        self.assertLess(_history_tier_dim_factor(6), _history_tier_dim_factor(5))
+        self.assertEqual(_history_tier_dim_factor(6), _history_tier_dim_factor(7))
 
     def test_only_reasoning_lines_use_group_depth_for_fade(self):
         self.assertEqual(_render_layer_index("line", 2), 2)

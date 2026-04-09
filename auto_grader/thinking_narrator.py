@@ -836,6 +836,8 @@ class ThinkingNarrator:
                     messages,
                     max_tokens=256,
                     temperature=1.0,
+                    repetition_penalty=1.01,
+                    presence_penalty=1.0,
                     timeout=60,
                 )
             except Exception:
@@ -1071,7 +1073,7 @@ class ThinkingNarrator:
         top_p: float = 0.8,
         top_k: int = 20,
         min_p: float = 0.002,
-        repetition_penalty: float = 1.001,
+        repetition_penalty: float = 1.01,
         presence_penalty: float = 1.0,
         base_url: str | None = None,
         model: str | None = None,
@@ -1151,7 +1153,7 @@ class ThinkingNarrator:
         top_p: float = 0.8,
         top_k: int = 20,
         min_p: float = 0.002,
-        repetition_penalty: float = 1.001,
+        repetition_penalty: float = 1.01,
         presence_penalty: float = 1.0,
         max_chars: int = 350,
         max_seconds: float = 20.0,

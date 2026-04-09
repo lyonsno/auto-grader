@@ -151,6 +151,8 @@ class ThinkingNarratorContract(unittest.TestCase):
         def _raise_and_capture(request, timeout):
             body = json.loads(request.data.decode())
             self.assertEqual(body["temperature"], 1.0)
+            self.assertEqual(body["presence_penalty"], 1.0)
+            self.assertEqual(body["repetition_penalty"], 1.01)
             raise RuntimeError("boom")
 
         with mock.patch("urllib.request.urlopen", side_effect=_raise_and_capture):
@@ -188,6 +190,8 @@ class ThinkingNarratorContract(unittest.TestCase):
             )
 
         self.assertEqual(completion_mock.call_args.kwargs["temperature"], 1.0)
+        self.assertEqual(completion_mock.call_args.kwargs["presence_penalty"], 1.0)
+        self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.01)
 
 
 if __name__ == "__main__":
