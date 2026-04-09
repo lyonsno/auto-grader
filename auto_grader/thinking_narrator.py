@@ -219,6 +219,35 @@ _SIMILARITY_STOP_WORDS = frozenset({
     "eyeing", "weighing", "considering", "leaning", "hesitating",
 })
 
+_GRADER_SCORE_RE = re.compile(r"(Grader:\s*)([^ ]+)")
+_PROF_SCORE_RE = re.compile(r"(Prof:\s*)([^ ]+)")
+
+
+def _format_score_with_denominator(score: float, max_points: float) -> str:
+    return f"{score:g}/{max_points:g}"
+
+
+def _normalize_after_action_scores(
+    text: str,
+    *,
+    grader_score: float,
+    professor_score: float,
+    max_points: float,
+) -> str:
+    grader_display = _format_score_with_denominator(grader_score, max_points)
+    professor_display = _format_score_with_denominator(professor_score, max_points)
+    text = _GRADER_SCORE_RE.sub(
+        lambda match: f"{match.group(1)}{grader_display}",
+        text,
+        count=1,
+    )
+    text = _PROF_SCORE_RE.sub(
+        lambda match: f"{match.group(1)}{professor_display}",
+        text,
+        count=1,
+    )
+    return text
+
 
 def _rough_token_count(text: str) -> int:
     """Approximate token count (words * 1.3)."""
@@ -762,6 +791,12 @@ class ThinkingNarrator:
             else:
                 verdict = "GRADER UNDERSHOT"
                 verdict_short = "undershoot"
+            grader_score_display = _format_score_with_denominator(
+                prediction.model_score, item.max_points
+            )
+            professor_score_display = _format_score_with_denominator(
+                item.professor_score, item.max_points
+            )
             payload = (
                 f"The grader just rendered a verdict on question "
                 f"{item.question_id}. Here's the after-action:\n\n"
@@ -774,10 +809,11 @@ class ThinkingNarrator:
             payload += (
                 f"  Student wrote: \"{item.student_answer}\"\n"
                 f"  Grader read: \"{prediction.model_read}\"\n"
-                f"  Grader awarded: {prediction.model_score} pts\n"
+                f"  Grader awarded: {prediction.model_score} pts "
+                f"(display as {grader_score_display})\n"
                 f"  Grader reasoning: {prediction.model_reasoning[:300]}\n"
                 f"  Professor awarded: {item.professor_score} pts "
-                f"(mark: {item.professor_mark})\n"
+                f"(display as {professor_score_display}, mark: {item.professor_mark})\n"
                 f"  Professor's note: \"{item.notes}\"\n"
                 f"  Verdict: {verdict}\n\n"
                 f"CRITICAL SEMANTICS: The grader and professor are JUDGES "
@@ -853,6 +889,12 @@ class ThinkingNarrator:
                     item.exam_id, item.question_id,
                 )
             if text:
+                text = _normalize_after_action_scores(
+                    text,
+                    grader_score=prediction.model_score,
+                    professor_score=item.professor_score,
+                    max_points=item.max_points,
+                )
                 logger.info("After-action: %s", text)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · {text}",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from auto_grader.eval_harness import EvalItem, Prediction
 from auto_grader.thinking_narrator import (
     _MAX_INTERVAL_S,
     _MIN_INTERVAL_S,
@@ -15,6 +16,7 @@ class _DummySink:
         self.rollbacks = 0
         self.commit_modes: list[str] = []
         self.drops: list[tuple[str, str]] = []
+        self.topics: list[tuple[str, str | None]] = []
 
     def write_delta(self, text: str) -> None:
         self.deltas.append(text)
@@ -27,6 +29,9 @@ class _DummySink:
 
     def write_drop(self, reason: str, text: str) -> None:
         self.drops.append((reason, text))
+
+    def write_topic(self, text: str, verdict: str | None = None) -> None:
+        self.topics.append((text, verdict))
 
 
 class _QueuedNarrator(ThinkingNarrator):
@@ -44,6 +49,15 @@ class _QueuedNarrator(ThinkingNarrator):
         for token in text.split():
             on_delta(token + " ")
         return text
+
+
+class _AfterActionNarrator(ThinkingNarrator):
+    def __init__(self, sink: _DummySink, response: str) -> None:
+        super().__init__(sink)
+        self._response = response
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return self._response
 
 
 class ThinkingNarratorContract(unittest.TestCase):
@@ -165,6 +179,48 @@ class ThinkingNarratorContract(unittest.TestCase):
 
         self.assertEqual(sink.commit_modes, ["thought"])
         self.assertEqual(narrator._dispatch_backoff_factor, 1.0)
+
+    def test_after_action_normalizes_score_denominators_to_item_max_points(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(
+            sink,
+            "Grader: 0.5/1 (correct relationship but wrong sign and units). "
+            "Prof: 1.5/2 (partial credit for setup, full credit for execution). "
+            "· student plain missed sign and units, judges in lockstep.",
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.5,
+            max_points=3.0,
+            professor_mark="partial",
+            student_answer="...",
+            notes="",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            model_score=0.5,
+            model_confidence=0.9,
+            model_reasoning="Correct formula, wrong energy value.",
+            model_read="E = hν ...",
+        )
+
+        narrator._produce_after_action(146.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.topics,
+            [
+                (
+                    "146s · Grader: 0.5/3 (correct relationship but wrong sign and units). "
+                    "Prof: 1.5/3 (partial credit for setup, full credit for execution). "
+                    "· student plain missed sign and units, judges in lockstep.",
+                    "undershoot",
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":
