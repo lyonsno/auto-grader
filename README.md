@@ -98,6 +98,20 @@ The system generates:
 A central requirement is reproducibility. It must always be possible to reconstruct what a
 given student received, even later.
 
+Initial contract slice for the deterministic MC lane:
+
+- generation must be able to emit a per-student MC answer-sheet artifact before the full
+  PDF pipeline exists
+- the artifact must include a stable `opaque_instance_code`
+- it must include a per-page fallback code for paper recovery
+- it must include rendered MC questions with any shuffled choice order made explicit
+- it must include the answer-key mapping from logical choice key to physical bubble label
+- it must include canonical page-space bubble rectangles for each rendered bubble
+
+This narrow artifact is the handoff between generation and deterministic OpenCV grading.
+Later PDF rendering should consume the same contract rather than inventing a second layout
+truth.
+
 ### 3. Paper artifacts (Identification + Layout)
 
 Printed artifacts include:
@@ -230,11 +244,13 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   schema contract: structural validation, variable declarations, answer-type rules,
   expression evaluator safety, and integration tests against the real CHM 141 exam
   template.
+- `tests/test_generation_contract.py` defines the enforceable initial MC answer-sheet
+  generation contract for the deterministic OpenCV lane.
 - `python -m auto_grader.contract_test_runner` is the preferred low-friction local
   entrypoint for the authoritative contract suites. It always runs the metadata,
-  connection, Postgres harness, runner, template schema, and discovery guardrail
-  contracts, and includes the Postgres schema contract when `TEST_DATABASE_URL` is
-  set.
+  connection, Postgres harness, runner, template schema, generation, and discovery
+  guardrail contracts, and includes the Postgres schema contract when
+  `TEST_DATABASE_URL` is set.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
   add a non-vacuous failing contract test first, then implement.
