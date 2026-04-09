@@ -147,12 +147,12 @@ class NarratorSink:
                 self._fallback.write(f"\n{text}\n")
                 self._fallback.flush()
 
-    def write_delta(self, text: str) -> None:
+    def write_delta(self, text: str, *, mode: str = "thought") -> None:
         """Append a token delta to the live line."""
         if not text:
             return
         with self._lock:
-            self._emit({"type": "delta", "text": text})
+            self._emit({"type": "delta", "text": text, "mode": mode})
             self._live_buffer += text
             if not self.config.spawn_terminal:
                 self._fallback.write(text)

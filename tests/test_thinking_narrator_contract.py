@@ -11,13 +11,15 @@ from auto_grader.thinking_narrator import ThinkingNarrator
 class _DummySink:
     def __init__(self) -> None:
         self.deltas: list[str] = []
+        self.delta_modes: list[str] = []
         self.rollbacks = 0
         self.commits: list[str] = []
         self.drops: list[tuple[str, str]] = []
         self.topics: list[tuple[str, str | None]] = []
 
-    def write_delta(self, text: str) -> None:
+    def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
+        self.delta_modes.append(mode)
 
     def rollback_live(self) -> None:
         self.rollbacks += 1
@@ -81,6 +83,7 @@ class ThinkingNarratorContract(unittest.TestCase):
             "".join(sink.deltas),
             "Rechecking the same unit conversion.",
         )
+        self.assertEqual(sink.delta_modes, ["status"] * len(sink.deltas))
         self.assertEqual(
             narrator._prior_statuses[-1],
             "Rechecking the same unit conversion.",
@@ -203,6 +206,44 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(completion_mock.call_args.kwargs["presence_penalty"], 1.0)
         self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.01)
 
+    def test_after_action_prompt_avoids_indexable_stock_examples(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink)
+        prediction = type(
+            "P",
+            (),
+            {"model_score": 2, "model_read": "6.98 g/mL", "model_reasoning": "Used m/V cleanly."},
+        )()
+        item = type(
+            "I",
+            (),
+            {
+                "professor_score": 2,
+                "exam_id": "15-blue",
+                "question_id": "fr-1",
+                "answer_type": "numeric",
+                "max_points": 2.0,
+                "student_answer": "6.98 g/mL",
+                "professor_mark": "2/2",
+                "notes": "clean",
+            },
+        )()
+
+        with mock.patch.object(narrator, "_chat_completion", return_value="Tracing the answer.") as completion_mock:
+            narrator._produce_after_action(
+                12.0,
+                prediction=prediction,
+                item=item,
+                template_question={"answer": "density", "notes": "n/a"},
+            )
+
+        user_prompt = completion_mock.call_args.args[0][1]["content"]
+        self.assertNotIn("Examples:", user_prompt)
+        self.assertNotIn("Even the 1-bit kid called this one.", user_prompt)
+        self.assertNotIn("judges in lockstep", user_prompt)
+        self.assertIn("Prefer no coda to a stock phrase.", user_prompt)
+        self.assertIn("When the scores differ, explicitly describe the disagreement.", user_prompt)
+
     def test_after_action_normalizes_score_denominators_to_item_max_points(self):
         sink = _DummySink()
         narrator = _AfterActionNarrator(
@@ -241,6 +282,49 @@ class ThinkingNarratorContract(unittest.TestCase):
                     "Prof: 1.5/3 (partial credit for setup, full credit for execution). "
                     "· student plain missed sign and units, judges in lockstep.",
                     "undershoot",
+                )
+            ],
+        )
+
+    def test_after_action_clamps_multiline_repeat_to_one_normalized_line(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(
+            sink,
+            "Grader: 0/2 (student added moles instead of using stoichiometry).\n"
+            "Prof: 2/2 (same reasoning). · student plainly missed stoichiometry, judges in lockstep.\n"
+            "Grader: 0/2 (student added moles instead of using stoichiometry). "
+            "Prof: 2/2 (same reasoning). · student plainly missed stoichiometry, judges in lockstep.\n"
+            "Grader:",
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=1,
+            professor_score=0.0,
+            max_points=2.0,
+            professor_mark="0/2",
+            student_answer="...",
+            notes="same reasoning",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=0.0,
+            model_confidence=0.9,
+            model_reasoning="Used addition instead of stoichiometry.",
+            model_read="13.839 + 13.839",
+        )
+
+        narrator._produce_after_action(287.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.topics,
+            [
+                (
+                    "287s · Grader: 0/2 (student added moles instead of using stoichiometry). "
+                    "Prof: 0/2 (same reasoning). · student plainly missed stoichiometry, judges in lockstep.",
+                    "match",
                 )
             ],
         )

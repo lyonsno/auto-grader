@@ -253,6 +253,31 @@ def _normalize_after_action_scores(
     return text
 
 
+def _sanitize_after_action_text(text: str) -> str:
+    """Clamp after-action output to one clean verdict line.
+
+    The after-action prompt asks for one line, but under load Bonsai can
+    sometimes emit repeated multiline verdicts or trail off into a partial
+    restart like a final bare ``Grader:``. We keep the first complete
+    grader/prof line and collapse internal whitespace so the reader never
+    receives a multiline topic blob.
+    """
+    lines = [line.strip() for line in text.replace("\r", "\n").splitlines()]
+    candidates = [line for line in lines if line]
+    if not candidates:
+        return ""
+
+    preferred = next(
+        (
+            line
+            for line in candidates
+            if "Grader:" in line and "Prof:" in line
+        ),
+        candidates[0],
+    )
+    return " ".join(preferred.split())
+
+
 def _rough_token_count(text: str) -> int:
     """Approximate token count (words * 1.3)."""
     return int(len(text.split()) * 1.3)
@@ -588,13 +613,13 @@ class ThinkingNarrator:
         chunks = re.findall(r"\S+\s*", text)
         return chunks or ([text] if text else [])
 
-    def _play_accepted_line(self, text: str) -> None:
+    def _play_accepted_line(self, text: str, *, mode: str = "thought") -> None:
         chunks = self._playback_chunks(text)
         if not chunks:
             return
         delay_s = self._PLAYBACK_CHUNK_DELAY_S
         for index, chunk in enumerate(chunks):
-            self._sink.write_delta(chunk)
+            self._sink.write_delta(chunk, mode=mode)
             if delay_s > 0 and index < len(chunks) - 1:
                 time.sleep(delay_s)
 
@@ -822,29 +847,19 @@ class ThinkingNarrator:
                 f"Write ONE concise after-action line in this format:\n"
                 f'  "Grader: <score> (<one-clause reason>). '
                 f'Prof: <score> (<one-clause reason>). · '
-                f'<optional dry/arch one-line coda>"\n\n'
-                f"Examples:\n"
-                f'  "Grader: 2/2 (matched on density via m/V). '
-                f"Prof: 2/2 (clean check). · "
-                f'Even the 1-bit kid called this one."\n'
-                f'  "Grader: 0/4 (caught the wrong format — student wrote '
-                f'molecular instead of net ionic). Prof: 0/4 (same call). '
-                f'· Both judges agreeing the student earned the zero, not '
-                f'a tough draw at all."\n'
-                f'  "Grader: 0/2 (refused credit on consistent-with-wrong-'
-                f"premise mol calc). Prof: 2/2 (charitable). · "
-                f'Grader still missing the consistency rule, ouch."\n'
-                f'  "Grader: 1/2 (split partial on ozone Lewis). '
-                f"Prof: 1/2 (matched). · "
-                f'Both judges spotting one resonance form, neither catching the second."\n\n'
-                f"In the coda, when both judges agree on a low score, "
-                f"phrase it as 'judges agreeing the student earned X' "
-                f"or 'student plainly missed Y, judges in lockstep' — "
-                f"NEVER 'both judges missed' on low scores.\n\n"
-                f"Be matter-of-fact in the score+reason portion. "
-                f"The coda is optional but encouraged — dry, arch, "
-                f"sportscaster post-play tone. Output ONE line only, "
-                f"no preamble, no quotes around your output."
+                f'<optional short coda>"\n\n'
+                f"Style rules:\n"
+                f"- The score+reason portion should be matter-of-fact and question-specific.\n"
+                f"- The optional coda should be fresh, concrete, and tied to this exact item.\n"
+                f"- Prefer no coda to a stock phrase.\n"
+                f"- Do not reuse canned taglines or recurring catchphrases.\n"
+                f"- Avoid slogan-like codas, victory laps, and recurring comic patter.\n"
+                f"- When the scores match, describe agreement plainly without celebratory catchphrases.\n"
+                f"- When the scores differ, explicitly describe the disagreement.\n"
+                f"- Never describe disagreement as agreement.\n"
+                f"- Never say the judges 'missed' something when they both assigned the student a low score; "
+                f"that means they both caught the student's error.\n\n"
+                f"Output ONE line only, no preamble, no quotes around your output."
             )
 
             messages = [
@@ -883,6 +898,7 @@ class ThinkingNarrator:
                     item.exam_id, item.question_id,
                 )
             if text:
+                text = _sanitize_after_action_text(text)
                 text = _normalize_after_action_scores(
                     text,
                     grader_score=prediction.model_score,
@@ -1045,7 +1061,7 @@ class ThinkingNarrator:
 
             # Accept — now that dedup has settled, play the accepted line
             # into the live row and then commit it.
-            self._play_accepted_line(full)
+            self._play_accepted_line(full, mode=committed_mode)
             self._sink.commit_live(mode=committed_mode)
 
             with self._lock:

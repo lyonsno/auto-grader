@@ -66,6 +66,23 @@ class TestWezTermResolution(unittest.TestCase):
         commit = next(event for event in events if event["type"] == "commit")
         self.assertEqual(commit["mode"], "status")
 
+    def test_write_delta_can_emit_status_mode_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_delta("Tracing", mode="status")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        delta = next(event for event in events if event["type"] == "delta")
+        self.assertEqual(delta["mode"], "status")
+
 
 if __name__ == "__main__":
     unittest.main()

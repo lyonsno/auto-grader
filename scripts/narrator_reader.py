@@ -450,6 +450,8 @@ def _apply_shimmer(
         # Past the dimming horizon and no floor — render fully static
         text_obj.append(content, style=_rgb_to_hex(base_rgb))
         return text_obj
+    if kind in {"line", "line_alt"}:
+        kind_intensity *= tier_dim
     layer_recency = raw_recency * kind_intensity
 
     if phase_override is not None:
@@ -657,13 +659,12 @@ class PaintDryDisplay:
         self.title = "PROJECT PAINT DRY · sumi-e"
         self.subtitle = "bonsai narrator · live"
 
-        # Sticky live: two buffers. streaming_line is the in-progress
-        # bonsai dispatch (the typewriter source). frozen_line is the
-        # most recent committed bonsai line, which keeps showing in the
-        # live panel until the next dispatch starts streaming new
-        # content. Live panel shows streaming if non-empty, else frozen,
-        # else just the cursor glyph.
+        # Sticky live: the thought lane has a streaming buffer plus a
+        # frozen committed line. The status rail has its own separate
+        # streaming buffer so status updates typewriter in-place without
+        # stealing the live thought lane during a status refresh.
         self.status_line: str = ""
+        self.status_streaming_line: str = ""
         self.streaming_line: str = ""
         self.frozen_line: str = ""
         # Timestamp at which the most recent dispatch finished streaming.
@@ -778,9 +779,10 @@ class PaintDryDisplay:
         if current_group:
             groups.append(current_group)
 
-        # Newest item on top. Within each group, keep the header first
-        # and topic last, but flip narrator lines so the freshest
-        # thought sits closest to the header and older thoughts descend.
+        # Newest item on top. Within each group, keep the header first,
+        # move the verdict/topic line directly underneath it for quick
+        # scanning, then flip narrator lines so the freshest thought
+        # sits closest to the decision and older thoughts descend.
         groups.reverse()
 
         # Flat list of (entry, deque_idx) in display order (top-down)
@@ -790,8 +792,8 @@ class PaintDryDisplay:
             lines = [pair for pair in group if pair[0][0] == "line"]
             rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
             flat.extend(header)
-            flat.extend(reversed(lines))
             flat.extend(rest)
+            flat.extend(reversed(lines))
 
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget
@@ -978,11 +980,12 @@ class PaintDryDisplay:
             live_text = Text("▌ ", style="grey39", overflow="fold")
 
         status_text = Text(no_wrap=False, overflow="fold")
-        if self.status_line:
+        displayed_status = self.status_streaming_line or self.status_line
+        if displayed_status:
             status_text.append("▌ ", style="#6f87c7")
             _apply_shimmer(
                 status_text,
-                self.status_line,
+                displayed_status,
                 "status",
                 layer_index=0,
                 indent_width=2,
@@ -1005,13 +1008,10 @@ class PaintDryDisplay:
         )
 
         # History panel — items grouped by header. Each item is a
-        # group: header at the top, then narrator lines in chronological
-        # order beneath it, then the topic at the bottom. Groups are
+        # group: header at the top, decision/topic directly below it,
+        # then narrator lines newest-first beneath that. Groups are
         # rendered newest-first, so the current item sits at the top
         # of the panel and older items sink below as new items start.
-        #
-        # Within each group entries are in their natural (commit) order,
-        # so the header always sits ABOVE its own narrator lines.
         #
         # Layer index for shimmer is visual position (0 = topmost),
         # so the current item's header gets the brightest shimmer and
@@ -1256,16 +1256,21 @@ class PaintDryDisplay:
             self._session_started_at = header_now
         self._turn_started_at = header_now
         self.status_line = ""
+        self.status_streaming_line = ""
         self.history.append(("header", text, None))
 
-    def on_delta(self, text: str) -> None:
-        self.streaming_line += text
+    def on_delta(self, text: str, mode: str = "thought") -> None:
+        if mode == "status":
+            self.status_streaming_line += text
+        else:
+            self.streaming_line += text
 
     def on_commit(self, mode: str = "thought") -> None:
         # Thought commits land in the history and become the sticky
         # frozen line. Status commits update only the sticky status rail.
-        if self.streaming_line and mode == "status":
-            self.status_line = self.streaming_line
+        if self.status_streaming_line and mode == "status":
+            self.status_line = self.status_streaming_line
+            self.status_streaming_line = ""
         elif self.streaming_line:
             self.history.append(
                 ("line", self.streaming_line, self._line_parity)
@@ -1296,6 +1301,7 @@ class PaintDryDisplay:
         in the live panel, so the user sees a clean snap-back to the
         last accepted line instead of an empty live field."""
         self.streaming_line = ""
+        self.status_streaming_line = ""
 
     def on_wrap_up_pending(self) -> None:
         """Wrap-up generation has started — show placeholder until the
@@ -1402,7 +1408,10 @@ def main() -> int:
                     if msg_type == "header":
                         display.on_header(msg.get("text", ""))
                     elif msg_type == "delta":
-                        display.on_delta(msg.get("text", ""))
+                        display.on_delta(
+                            msg.get("text", ""),
+                            mode=msg.get("mode", "thought"),
+                        )
                     elif msg_type == "commit":
                         display.on_commit(msg.get("mode", "thought"))
                     elif msg_type == "rollback_live":
