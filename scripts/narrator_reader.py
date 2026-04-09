@@ -126,9 +126,9 @@ _BASE_RGB = {
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
-    "status": (80, 102, 164),    # dark indigo-steel — persistent status
-                                  # rail, intentionally one step darker
-                                  # than the crisp header-index blue
+    "status": (118, 82, 60),     # dark auburn-umber — persistent status
+                                  # rail, intentionally darker and more
+                                  # structural than the brighter live ember
     # Topic verdict variants — full-saturation garden colors. The
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
@@ -194,8 +194,8 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-fired earth
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "status": (136, 164, 220),          # brightened dark-indigo crest
-                                        # for the sticky status rail
+    "status": (190, 132, 100),          # ember-lit auburn crest for the
+                                        # sticky status rail
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth

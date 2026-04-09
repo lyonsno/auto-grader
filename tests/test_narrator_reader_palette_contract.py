@@ -59,22 +59,30 @@ class NarratorReaderPaletteContract(unittest.TestCase):
             "match verdict should be restrained and inky, not bright turquoise",
         )
 
-    def test_status_rail_uses_same_indigo_steel_family(self):
+    def test_status_rail_reads_as_warm_structural_auburn(self):
         module = _load_narrator_reader()
         red, green, blue = module._BASE_RGB["status"]
 
-        self.assertGreater(blue, green)
-        self.assertGreater(green, red)
+        self.assertGreater(
+            red,
+            green,
+            "status rail should move into the warm structural family",
+        )
+        self.assertGreater(
+            green,
+            blue,
+            "status rail should stay auburn/umber, not purple-burgundy",
+        )
 
-    def test_status_rail_is_darker_than_header_index_accent(self):
+    def test_status_rail_is_darker_than_header_title(self):
         module = _load_narrator_reader()
         status_red, status_green, status_blue = module._BASE_RGB["status"]
-        index_red, index_green, index_blue = module._BASE_RGB["header_index"]
+        header_red, header_green, header_blue = module._BASE_RGB["header"]
 
         self.assertLess(
             status_red + status_green + status_blue,
-            index_red + index_green + index_blue,
-            "status rail should sit a step darker than the crisp header-index blue",
+            header_red + header_green + header_blue,
+            "status rail should sit a step darker than the lacquer-red header title",
         )
 
     def test_match_verdict_is_darker_and_more_indigo_than_header_index(self):
@@ -98,7 +106,7 @@ class NarratorReaderPaletteContract(unittest.TestCase):
             "match verdict should complement the header-index blue rather than duplicate it",
         )
 
-    def test_match_verdict_and_status_get_cool_steel_shimmer(self):
+    def test_match_verdict_and_status_get_their_intended_shimmer_families(self):
         module = _load_narrator_reader()
         self.assertGreater(
             module._SHIMMER_KIND_INTENSITY["topic_match"],
@@ -106,10 +114,13 @@ class NarratorReaderPaletteContract(unittest.TestCase):
             "match verdict should still shimmer a little more than a generic topic",
         )
 
-        for kind in ("topic_match", "status"):
-            red, green, blue = module._SHIMMER_KIND_PEAK_RGB[kind]
-            self.assertGreater(blue, green)
-            self.assertGreater(green, red)
+        match_red, match_green, match_blue = module._SHIMMER_KIND_PEAK_RGB["topic_match"]
+        self.assertGreater(match_blue, match_green)
+        self.assertGreater(match_green, match_red)
+
+        status_red, status_green, status_blue = module._SHIMMER_KIND_PEAK_RGB["status"]
+        self.assertGreater(status_red, status_green)
+        self.assertGreater(status_green, status_blue)
 
     def test_live_field_is_tempered_below_the_old_hot_pass(self):
         module = _load_narrator_reader()
