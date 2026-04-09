@@ -695,6 +695,8 @@ class PaintDryDisplay:
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
+        self._session_started_at: float | None = None
+        self._turn_started_at: float | None = None
 
     def __rich__(self) -> Group:
         return self.render()
@@ -860,6 +862,26 @@ class PaintDryDisplay:
         header_text.append("   ", style="dim")
         header_text.append(self.subtitle, style="#5a73b4")
         header_text.append("   ", style="dim")
+        total_elapsed_s = (
+            int(max(0.0, now - self._session_started_at))
+            if self._session_started_at is not None
+            else 0
+        )
+        turn_elapsed_s = (
+            int(max(0.0, now - self._turn_started_at))
+            if self._turn_started_at is not None
+            else None
+        )
+        header_text.append(
+            f"total={total_elapsed_s}s",
+            style="#7f95cf" if self._session_started_at is not None else "grey50",
+        )
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"turn={turn_elapsed_s}s" if turn_elapsed_s is not None else "turn=--",
+            style="orange3" if turn_elapsed_s is not None else "grey50",
+        )
+        header_text.append("  ", style="dim")
         header_text.append(
             f"emitted={self.stat_emitted}",
             style="green4" if self.stat_emitted > 0 else "grey50",
@@ -1198,10 +1220,15 @@ class PaintDryDisplay:
         # Header goes into the history. Doesn't touch the live buffers
         # — frozen_line keeps showing the previous committed dispatch
         # until the next bonsai dispatch starts streaming.
+        if self._session_started_at is None:
+            self._session_started_at = time.monotonic()
+        self._turn_started_at = None
         self.status_line = ""
         self.history.append(("header", text, None))
 
     def on_delta(self, text: str) -> None:
+        if text and self._turn_started_at is None:
+            self._turn_started_at = time.monotonic()
         self.streaming_line += text
 
     def on_commit(self, mode: str = "thought") -> None:
@@ -1218,6 +1245,7 @@ class PaintDryDisplay:
             self._freeze_started_at = time.monotonic()
             self.frozen_line = self.streaming_line
         self.streaming_line = ""
+        self._turn_started_at = None
 
     def on_drop(self, reason: str, text: str) -> None:
         # Drops go to their own deque, rendered in a separate panel
@@ -1230,6 +1258,7 @@ class PaintDryDisplay:
             self.stat_dropped_dedup += 1
         elif reason == "empty":
             self.stat_dropped_empty += 1
+        self._turn_started_at = None
 
     def on_rollback_live(self) -> None:
         """Discard the in-flight streaming line without committing.
@@ -1239,6 +1268,7 @@ class PaintDryDisplay:
         in the live panel, so the user sees a clean snap-back to the
         last accepted line instead of an empty live field."""
         self.streaming_line = ""
+        self._turn_started_at = None
 
     def on_wrap_up_pending(self) -> None:
         """Wrap-up generation has started — show placeholder until the
