@@ -161,8 +161,27 @@ class NarratorReaderPaletteContract(unittest.TestCase):
         )
         self.assertLessEqual(
             module._STATUS_UNDULATION_CYCLE_S,
-            5.7,
-            "status counterflow should also speed up materially while staying slower than live",
+            6.2,
+            "status counterflow should stay in the visibly-moving range even after easing back",
+        )
+        self.assertGreater(
+            module._STATUS_UNDULATION_CYCLE_S,
+            module._LIVE_UNDULATION_CYCLE_S,
+            "status should remain the slower top-band motion after the FPS bump",
+        )
+
+    def test_slower_animation_families_are_eased_back_a_bit(self):
+        module = _load_narrator_reader()
+
+        self.assertGreaterEqual(
+            module._SHIMMER_DEFAULT_CYCLE_S,
+            3.1,
+            "the slower default shimmer should ease back a bit as redraw FPS increases",
+        )
+        self.assertGreaterEqual(
+            module._STATUS_UNDULATION_CYCLE_S,
+            5.8,
+            "status should stay the slower top-band motion after the FPS bump",
         )
 
 

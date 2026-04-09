@@ -73,8 +73,11 @@ _VISIBLE_HISTORY_LINES = 30  # how many to actually render
 # Each layer has a fixed phase offset relative to the one above it (so
 # they're in stable orbit, not drifting), and intensity decays with
 # layer position so older lines pulse dimmer than newer ones.
-_SHIMMER_DEFAULT_CYCLE_S = 2.7  # slowed 50% from prior 1.8 — most lines pulse calmly
-_SHIMMER_RECENT_CYCLE_S = 1.2   # most-recently-committed line pulses 50% faster
+_SHIMMER_DEFAULT_CYCLE_S = 3.2  # eased back slightly as redraw cadence rises,
+                                # so the calmer field stays calm instead of
+                                # feeling busier at 24 FPS
+_SHIMMER_RECENT_CYCLE_S = 1.35  # still the quickest history motion, but
+                                # a touch less twitchy under the smoother redraw
                                  # than the original 1.8 — strong contrast against
                                  # the slowed default
 _SHIMMER_WIDTH = 12          # how many characters wide the shimmer trail is
@@ -268,8 +271,8 @@ _LIVE_BASE_VAL = 0.88              # bright enough to read, but not a neon band
 # kill the "darker red, lighter yellow" harshness without flattening
 # the hue motion into a static orange band.
 _LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.45
-_STATUS_UNDULATION_CYCLE_S = 5.2   # still slower than live, but materially
-                                    # faster than the prior sleepy pass
+_STATUS_UNDULATION_CYCLE_S = 6.0   # still slower than live, and eased back a
+                                    # bit after the redraw-rate bump
 _STATUS_HUE_CENTER_DEG = 22         # shifted away from hot red toward
                                     # dark ember-orange / umber
 _STATUS_HUE_RANGE_DEG = 8           # narrower swing so the status rail
@@ -293,9 +296,9 @@ _STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
 _LIVE_FREEZE_FADE_S = 2.5
 _LIVE_FROZEN_SAT_MUL = 0.70
 _LIVE_FROZEN_VAL_MUL = 0.85
-_ACTIVE_ANIMATION_FPS = 12.0  # full-screen forced repaints are expensive
-                              # in WezTerm; animate only while something is
-                              # actually changing, and at a saner cadence
+_ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
+                              # the slower animation families above are eased
+                              # back to keep the overall feel restrained
 _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
                               # messages quickly, but doesn't need redraw spam
 # Shimmer peak — what each character's color is interpolated toward

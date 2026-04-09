@@ -9,6 +9,7 @@ from rich.console import Console, Group
 from rich.text import Text
 
 from scripts.narrator_reader import (
+    _ACTIVE_ANIMATION_FPS,
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
     _LIVE_PER_CHAR_PHASE_OFFSET,
@@ -84,6 +85,13 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.frozen_line, "I'm tracing the stoichiometry.")
         self.assertEqual(display.streaming_line, "")
         self.assertEqual(display.status_streaming_line, "")
+
+    def test_active_animation_fps_is_doubled_for_smoother_motion(self):
+        self.assertEqual(
+            _ACTIVE_ANIMATION_FPS,
+            24.0,
+            "top-band motion should redraw at 24 FPS instead of the old 12 FPS",
+        )
 
     def test_status_delta_types_in_status_lane_without_overwriting_live_line(self):
         display = PaintDryDisplay()
