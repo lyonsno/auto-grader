@@ -30,7 +30,7 @@ def _extract_plain(renderable) -> str:
 class NarratorReaderContract(unittest.TestCase):
     @staticmethod
     def _hex_luminance(style: str) -> int:
-        style = style.lstrip("#")
+        style = style.split()[-1].lstrip("#")
         red = int(style[0:2], 16)
         green = int(style[2:4], 16)
         blue = int(style[4:6], 16)
@@ -68,15 +68,34 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
         display = PaintDryDisplay()
-        display.streaming_line = "I'm tracing the stoichiometry."
+        display.on_delta("I'm tracing the stoichiometry.")
         display.on_commit("thought")
-        display.streaming_line = "Tracing the stoichiometry setup."
+        display.on_delta("Tracing the stoichiometry setup.", mode="status")
 
         display.on_commit("status")
 
         self.assertEqual(display.status_line, "Tracing the stoichiometry setup.")
         self.assertEqual(display.frozen_line, "I'm tracing the stoichiometry.")
         self.assertEqual(display.streaming_line, "")
+        self.assertEqual(display.status_streaming_line, "")
+
+    def test_status_delta_types_in_status_lane_without_overwriting_live_line(self):
+        display = PaintDryDisplay()
+        display.on_delta("I'm tracing the stoichiometry.")
+        display.on_commit("thought")
+
+        display.on_delta("Tracing", mode="status")
+
+        group = display.render()
+        live_panel = group.renderables[1]
+        panel_text = _extract_plain(live_panel.renderable)
+
+        self.assertIn("Tracing", panel_text)
+        self.assertIn("I'm tracing the stoichiometry.", panel_text)
+        self.assertLess(
+            panel_text.index("Tracing"),
+            panel_text.index("I'm tracing the stoichiometry."),
+        )
 
     def test_render_shows_status_above_live_thought(self):
         display = PaintDryDisplay()
@@ -109,10 +128,10 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(depths[0], ("header", "[item 1/6] first", 0))
         self.assertEqual(depths[1], ("line", "first line", 1))
         self.assertEqual(depths[2], ("header", "[item 2/6] second", 0))
-        self.assertEqual(depths[3], ("line", "second line", 1))
-        self.assertEqual(depths[4], ("topic", "second topic", 2))
+        self.assertEqual(depths[3], ("topic", "second topic", 1))
+        self.assertEqual(depths[4], ("line", "second line", 2))
 
-    def test_lines_render_newest_first_within_each_header(self):
+    def test_lines_render_newest_first_beneath_topic_within_each_header(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))
         display.history.append(("line", "older line", 0))
@@ -126,9 +145,29 @@ class NarratorReaderContract(unittest.TestCase):
             summary,
             [
                 ("header", "[item 1/6] first"),
+                ("topic", "topic line"),
                 ("line", "newer line"),
                 ("line", "older line"),
+            ],
+        )
+
+    def test_topic_renders_directly_under_header_before_thought_lines(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("line", "older line", 0))
+        display.history.append(("line", "newer line", 1))
+        display.history.append(("topic", "topic line", "match"))
+
+        entries = display._build_display_entries()
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
                 ("topic", "topic line"),
+                ("line", "newer line"),
+                ("line", "older line"),
             ],
         )
 
@@ -266,6 +305,26 @@ class NarratorReaderContract(unittest.TestCase):
             self._hex_luminance(lower_style),
             self._hex_luminance(top_style),
         )
+
+    def test_faded_summary_lines_get_less_shimmer_boost(self) -> None:
+        top_static = Text()
+        _apply_shimmer(top_static, "A", "line", 0, phase_override=0.0)
+        top_shimmer = Text()
+        _apply_shimmer(top_shimmer, "A", "line", 0, phase_override=(12 / 13))
+
+        lower_static = Text()
+        _apply_shimmer(lower_static, "A", "line", 5, phase_override=0.0)
+        lower_shimmer = Text()
+        _apply_shimmer(lower_shimmer, "A", "line", 5, phase_override=(12 / 13))
+
+        top_boost = self._hex_luminance(top_shimmer.spans[0].style) - self._hex_luminance(
+            top_static.spans[0].style
+        )
+        lower_boost = self._hex_luminance(
+            lower_shimmer.spans[0].style
+        ) - self._hex_luminance(lower_static.spans[0].style)
+
+        self.assertGreater(top_boost, lower_boost)
 
     def test_active_session_keeps_animating_after_live_freeze_fade(self) -> None:
         display = self._make_display()

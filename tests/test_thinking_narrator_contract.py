@@ -11,13 +11,15 @@ from auto_grader.thinking_narrator import ThinkingNarrator
 class _DummySink:
     def __init__(self) -> None:
         self.deltas: list[str] = []
+        self.delta_modes: list[str] = []
         self.rollbacks = 0
         self.commits: list[str] = []
         self.drops: list[tuple[str, str]] = []
         self.topics: list[tuple[str, str | None]] = []
 
-    def write_delta(self, text: str) -> None:
+    def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
+        self.delta_modes.append(mode)
 
     def rollback_live(self) -> None:
         self.rollbacks += 1
@@ -81,6 +83,7 @@ class ThinkingNarratorContract(unittest.TestCase):
             "".join(sink.deltas),
             "Rechecking the same unit conversion.",
         )
+        self.assertEqual(sink.delta_modes, ["status"] * len(sink.deltas))
         self.assertEqual(
             narrator._prior_statuses[-1],
             "Rechecking the same unit conversion.",

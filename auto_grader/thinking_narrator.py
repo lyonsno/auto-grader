@@ -587,13 +587,13 @@ class ThinkingNarrator:
         chunks = re.findall(r"\S+\s*", text)
         return chunks or ([text] if text else [])
 
-    def _play_accepted_line(self, text: str) -> None:
+    def _play_accepted_line(self, text: str, *, mode: str = "thought") -> None:
         chunks = self._playback_chunks(text)
         if not chunks:
             return
         delay_s = self._PLAYBACK_CHUNK_DELAY_S
         for index, chunk in enumerate(chunks):
-            self._sink.write_delta(chunk)
+            self._sink.write_delta(chunk, mode=mode)
             if delay_s > 0 and index < len(chunks) - 1:
                 time.sleep(delay_s)
 
@@ -1044,7 +1044,7 @@ class ThinkingNarrator:
 
             # Accept — now that dedup has settled, play the accepted line
             # into the live row and then commit it.
-            self._play_accepted_line(full)
+            self._play_accepted_line(full, mode=committed_mode)
             self._sink.commit_live(mode=committed_mode)
 
             with self._lock:
