@@ -199,6 +199,7 @@ _STATUS_CONTEXT_LIMIT = 5
 _THOUGHT_CONTEXT_LIMIT = 4
 _DEDUP_BACKOFF_INITIAL_S = 4.0
 _DEDUP_BACKOFF_MAX_S = 24.0
+_PLAYBACK_CHUNK_DELAY_S = 0.03
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -353,6 +354,7 @@ class ThinkingNarrator:
 
     _DEDUP_BACKOFF_INITIAL_S = _DEDUP_BACKOFF_INITIAL_S
     _DEDUP_BACKOFF_MAX_S = _DEDUP_BACKOFF_MAX_S
+    _PLAYBACK_CHUNK_DELAY_S = _PLAYBACK_CHUNK_DELAY_S
 
     def __init__(
         self,
@@ -536,11 +538,9 @@ class ThinkingNarrator:
             {"role": "user", "content": status_user_content},
         ]
 
-        self._sink.rollback_live()
-        full = self._chat_completion_stream(messages, on_delta=self._sink.write_delta)
+        full = self._chat_completion_stream(messages, on_delta=lambda _delta: None)
         full = full.strip()
         if not full:
-            self._sink.rollback_live()
             return None, status_user_content
 
         if any(
@@ -549,10 +549,24 @@ class ThinkingNarrator:
             )
             for prev in prior_statuses
         ):
-            self._sink.rollback_live()
             return None, status_user_content
 
         return full, status_user_content
+
+    @staticmethod
+    def _playback_chunks(text: str) -> list[str]:
+        chunks = re.findall(r"\S+\s*", text)
+        return chunks or ([text] if text else [])
+
+    def _play_accepted_line(self, text: str) -> None:
+        chunks = self._playback_chunks(text)
+        if not chunks:
+            return
+        delay_s = self._PLAYBACK_CHUNK_DELAY_S
+        for index, chunk in enumerate(chunks):
+            self._sink.write_delta(chunk)
+            if delay_s > 0 and index < len(chunks) - 1:
+                time.sleep(delay_s)
 
     def stop(self) -> None:
         with self._lock:
@@ -940,28 +954,14 @@ class ThinkingNarrator:
                 {"role": "user", "content": user_content},
             ]
 
-            # Stream tokens DIRECTLY to the sink as they arrive — this gives
-            # the user the typewriter effect on the live row. We accumulate
-            # the full text in parallel for the post-stream dedup check.
-            # If the dedup catches it, we rollback_live (clear the live row)
-            # and emit a drop event. The user briefly sees the typed-out line
-            # before it gets rolled back, which actually communicates "the
-            # narrator tried this and rejected it" nicely.
-            captured = []
-
-            def _stream_to_sink(delta: str) -> None:
-                captured.append(delta)
-                self._sink.write_delta(delta)
-
             full = self._chat_completion_stream(
-                messages, on_delta=_stream_to_sink
+                messages, on_delta=lambda _delta: None
             )
             full = full.strip()
 
             if not full:
                 with self._stats_lock:
                     self._stat_drops_empty += 1
-                self._sink.rollback_live()
                 self._sink.write_drop("empty", "")
                 return
 
@@ -996,7 +996,9 @@ class ThinkingNarrator:
             else:
                 committed_mode = "thought"
 
-            # Accept — commit the live line to history
+            # Accept — now that dedup has settled, play the accepted line
+            # into the live row and then commit it.
+            self._play_accepted_line(full)
             self._sink.commit_live(mode=committed_mode)
 
             with self._lock:

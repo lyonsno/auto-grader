@@ -32,6 +32,8 @@ class _DummySink:
 
 
 class _RetryNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
     def __init__(self, sink: _DummySink) -> None:
         super().__init__(sink)
         self.calls: list[str] = []
@@ -62,9 +64,13 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
 
         self.assertEqual(narrator.calls, ["thought", "status"])
-        self.assertEqual(sink.rollbacks, 1)
+        self.assertEqual(sink.rollbacks, 0)
         self.assertEqual(sink.commits, ["status"])
         self.assertEqual(sink.drops, [])
+        self.assertEqual(
+            "".join(sink.deltas),
+            "Rechecking the same unit conversion.",
+        )
         self.assertEqual(
             narrator._prior_statuses[-1],
             "Rechecking the same unit conversion.",
@@ -107,6 +113,7 @@ class ThinkingNarratorContract(unittest.TestCase):
 
         self.assertEqual(sink.commits, [])
         self.assertEqual(sink.drops, [("dedup", "I'm tracing the same unit conversion mistake.")])
+        self.assertEqual(sink.deltas, [])
         self.assertEqual(narrator._dedupe_backoff_s, narrator._DEDUP_BACKOFF_INITIAL_S * 2)
         self.assertGreater(narrator._dedupe_backoff_until, 0.0)
 
