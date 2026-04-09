@@ -125,17 +125,18 @@ _BASE_RGB = {
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
+    "status": (82, 105, 150),    # deep indigo-steel — sticky status rail,
+                                  # cooler and darker than the old aqua
+                                  # so it harmonizes with the existing
+                                  # indigo/steel chrome
     # Topic verdict variants — full-saturation garden colors. The
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (150, 208, 214),       # electric celadon — cooler,
-                                          # brighter affirmative read.
-                                          # Still garden-adjacent, but
-                                          # pulled toward aqua so
-                                          # agreement feels cleaner and
-                                          # more "alive" than the old
-                                          # mossy celadon
+    "topic_match": (90, 115, 165),        # indigo-steel agreement —
+                                          # affirmative, but in the same
+                                          # cool family as the sticky
+                                          # status rail instead of aqua
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -159,6 +160,7 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
+    "status": 1.15,
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
     "header": 1.40,      # cranked — section markers pop
@@ -190,11 +192,10 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (195, 232, 255),     # rain-lit sky celadon — borrows
-                                        # the cooler blue family we
-                                        # weren't using enough, so the
-                                        # match shimmer reads electric
-                                        # rather than ochre-warm
+    "topic_match": (156, 188, 238),     # brighter indigo-steel crest
+                                        # for agreement lines
+    "status": (150, 180, 230),          # brightened indigo-steel crest
+                                        # for the sticky status rail
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
@@ -214,6 +215,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header_dash",
     "topic",
     "topic_match",
+    "status",
     "topic_overshoot",
     "topic_undershoot",
 })
@@ -224,6 +226,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
 # top + bottom borders). When bonsai's output is longer than will
 # fit in that area, we tail-truncate (keep the most recent chars).
 _LIVE_PANEL_CONTENT_LINES = 3
+_TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 
 # Live-line undulation parameters — each character on the live line
 # gets a per-position, per-time hue from a warm orange-amber palette.
@@ -603,6 +606,7 @@ class PaintDryDisplay:
         # live panel until the next dispatch starts streaming new
         # content. Live panel shows streaming if non-empty, else frozen,
         # else just the cursor glyph.
+        self.status_line: str = ""
         self.streaming_line: str = ""
         self.frozen_line: str = ""
         # Timestamp at which the most recent dispatch finished streaming.
@@ -828,12 +832,11 @@ class PaintDryDisplay:
             padding=(0, 1),
         )
 
-        # Live line — sticky two-buffer model. Show streaming_line if
-        # it's non-empty (active dispatch), otherwise show frozen_line
-        # (the last committed line, waiting for the next dispatch to
-        # start). Cursor glyph is bright cyan when actively streaming,
-        # grey50 when only the frozen line is showing — subtle visual
-        # cue that the field is settled vs. live.
+        # Top panel — cool sticky status rail above the warm live line.
+        # Status holds the current lane in a persistent, slower-moving
+        # register; the first-person line below it keeps streaming as
+        # the moment-to-moment voice. Status commits do not overwrite
+        # the frozen thought line.
         #
         # The displayed text gets a subtle yellow/orange shimmer
         # overlay (via _apply_shimmer with kind="live") so the live
@@ -884,16 +887,32 @@ class PaintDryDisplay:
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
+
+        status_text = Text(no_wrap=False, overflow="fold")
+        if self.status_line:
+            status_text.append("▌ ", style="#51627f")
+            _apply_shimmer(
+                status_text,
+                self.status_line,
+                "status",
+                layer_index=0,
+                indent_width=2,
+                wrap_width=wrap_width,
+                cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+            )
+        else:
+            status_text.append("", style="grey39")
+
         live_panel = Panel(
-            live_text,
+            Group(status_text, live_text),
             border_style="#3d4458",
             padding=(0, 1),
-            title="[grey50]live[/grey50]",
+            title="[grey50]status + live[/grey50]",
             title_align="left",
             # Fixed height: top border + content + bottom border.
             # Locks the live panel's vertical footprint so the layout
             # doesn't jitter when bonsai produces a long line.
-            height=_LIVE_PANEL_CONTENT_LINES + 2,
+            height=_TOP_PANEL_CONTENT_LINES + 2,
         )
 
         # History panel — items grouped by header. Each item is a
@@ -1139,27 +1158,25 @@ class PaintDryDisplay:
         # Header goes into the history. Doesn't touch the live buffers
         # — frozen_line keeps showing the previous committed dispatch
         # until the next bonsai dispatch starts streaming.
+        self.status_line = ""
         self.history.append(("header", text, None))
 
     def on_delta(self, text: str) -> None:
         self.streaming_line += text
 
-    def on_commit(self) -> None:
-        # Push the just-finished streaming line into history (preserves
-        # chronological order, so any subsequent topic/header lands
-        # AFTER it), then promote it to frozen_line so it keeps showing
-        # in the live panel until the next dispatch starts streaming.
-        if self.streaming_line:
+    def on_commit(self, mode: str = "thought") -> None:
+        # Thought commits land in the history and become the sticky
+        # frozen line. Status commits update only the sticky status rail.
+        if self.streaming_line and mode == "status":
+            self.status_line = self.streaming_line
+        elif self.streaming_line:
             self.history.append(
                 ("line", self.streaming_line, self._line_parity)
             )
             self._line_parity = 1 - self._line_parity
             self.stat_emitted += 1
-            # Mark the start of the freeze fade — only when there was
-            # actual content to freeze. Empty commits don't restart
-            # the fade clock.
             self._freeze_started_at = time.monotonic()
-        self.frozen_line = self.streaming_line
+            self.frozen_line = self.streaming_line
         self.streaming_line = ""
 
     def on_drop(self, reason: str, text: str) -> None:
@@ -1290,7 +1307,7 @@ def main() -> int:
                     elif msg_type == "delta":
                         display.on_delta(msg.get("text", ""))
                     elif msg_type == "commit":
-                        display.on_commit()
+                        display.on_commit(msg.get("mode", "thought"))
                     elif msg_type == "rollback_live":
                         display.on_rollback_live()
                     elif msg_type == "topic":

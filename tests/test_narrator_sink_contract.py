@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from auto_grader.narrator_sink import NarratorSink
+from auto_grader.narrator_sink import NarratorSink, SinkConfig
 
 
 class TestWezTermResolution(unittest.TestCase):
@@ -45,6 +47,24 @@ class TestWezTermResolution(unittest.TestCase):
                 "--new-window",
             ],
         )
+
+    def test_commit_live_can_emit_status_mode_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_delta("Tracing")
+            sink.commit_live(mode="status")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        commit = next(event for event in events if event["type"] == "commit")
+        self.assertEqual(commit["mode"], "status")
 
 
 if __name__ == "__main__":
