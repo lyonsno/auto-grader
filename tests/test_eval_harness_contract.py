@@ -92,6 +92,24 @@ class TestEvalHarnessImports(unittest.TestCase):
 
         self.assertTrue(isinstance(EvalReport, type))
 
+    def test_prediction_exposes_obvious_triage_fields(self):
+        from auto_grader.eval_harness import Prediction
+
+        pred = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=2.0,
+            model_confidence=0.9,
+            model_reasoning="clear full-credit read",
+            model_read="6.98 mL",
+            is_obviously_fully_correct=True,
+            is_obviously_wrong=False,
+        )
+        self.assertTrue(hasattr(pred, "is_obviously_fully_correct"))
+        self.assertTrue(hasattr(pred, "is_obviously_wrong"))
+        self.assertTrue(pred.is_obviously_fully_correct)
+        self.assertFalse(pred.is_obviously_wrong)
+
 
 # ---------------------------------------------------------------------------
 # Contract: load_ground_truth
@@ -459,6 +477,37 @@ class TestEvalReportSummary(unittest.TestCase):
             self.report.total_points_professor,
             self.report.total_points_possible,
         )
+
+
+class TestObviousBucketMetrics(unittest.TestCase):
+    def test_obvious_bucket_precision_tracks_binary_triage_calls(self):
+        from auto_grader.eval_harness import Prediction, load_ground_truth, score_predictions
+
+        gt = load_ground_truth(_GROUND_TRUTH_PATH)
+        preds = []
+        for item in gt:
+            preds.append(
+                Prediction(
+                    exam_id=item.exam_id,
+                    question_id=item.question_id,
+                    model_score=item.truth_score,
+                    model_confidence=1.0,
+                    model_reasoning="matches truth",
+                    model_read=item.student_answer,
+                    is_obviously_fully_correct=(
+                        True if item.truth_score == item.max_points else None
+                    ),
+                    is_obviously_wrong=(
+                        True if item.truth_score == 0 else None
+                    ),
+                )
+            )
+
+        report = score_predictions(gt, preds)
+        self.assertGreater(report.obvious_full_credit_calls, 0)
+        self.assertEqual(report.obvious_full_credit_precision, 1.0)
+        self.assertGreater(report.obvious_wrong_calls, 0)
+        self.assertEqual(report.obvious_wrong_precision, 1.0)
 
 
 if __name__ == "__main__":

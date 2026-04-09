@@ -124,6 +124,31 @@ class GradingPromptContract(unittest.TestCase):
             "hard ambiguous items should hand off cleanly once bounded effort is exhausted",
         )
 
+    def test_system_prompt_declares_obvious_correctness_buckets(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Use is_obviously_fully_correct = true only when the answer is clearly correct and needs no human rescue.",
+            prompt,
+            "prompt should expose a high-trust obvious-full-credit bucket",
+        )
+        self.assertIn(
+            "Use is_obviously_wrong = true only when the answer is clearly wrong and no lawful rescue path remains.",
+            prompt,
+            "prompt should expose a high-trust obvious-wrong bucket",
+        )
+        self.assertIn(
+            '"is_obviously_fully_correct": <true | false | null>',
+            prompt,
+            "the JSON schema should persist the obvious-full-credit bucket",
+        )
+        self.assertIn(
+            '"is_obviously_wrong": <true | false | null>',
+            prompt,
+            "the JSON schema should persist the obvious-wrong bucket",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

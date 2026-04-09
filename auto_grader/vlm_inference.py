@@ -122,6 +122,10 @@ rubric.
 - Actively rescue as much lawful partial credit as possible.
 - If the student's work supports a lawful full-credit interpretation, take \
 it and stop.
+- Use is_obviously_fully_correct = true only when the answer is clearly \
+correct and needs no human rescue.
+- Use is_obviously_wrong = true only when the answer is clearly wrong and \
+no lawful rescue path remains.
 - Equivalent volume units such as mL and cm³ count as the same quantity \
 unless the question explicitly tests a specific form.
 - Do not invent missing work.
@@ -150,6 +154,8 @@ Respond in this EXACT JSON only:
   "upstream_dependency": "<earlier part id or 'none'>",
   "if_dependent_then_consistent": <true | false | null>,
   "model_score": <numeric score>,
+  "is_obviously_fully_correct": <true | false | null>,
+  "is_obviously_wrong": <true | false | null>,
   "model_confidence": <0.0 to 1.0>,
   "model_reasoning": "<brief grading explanation>"
 }
@@ -251,13 +257,35 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
     conf_m = re.search(r'"?model_confidence"?\s*:\s*([\d.]+)', text)
     read_m = re.search(r'"?model_read"?\s*:\s*"([^"]*)"', text)
     reason_m = re.search(r'"?model_reasoning"?\s*:\s*"([^"]*)"', text)
+    obvious_full_m = re.search(
+        r'"?is_obviously_fully_correct"?\s*:\s*(true|false|null)',
+        text,
+        flags=re.IGNORECASE,
+    )
+    obvious_wrong_m = re.search(
+        r'"?is_obviously_wrong"?\s*:\s*(true|false|null)',
+        text,
+        flags=re.IGNORECASE,
+    )
 
     if score_m:
+        def _boolish(match):
+            if not match:
+                return None
+            value = match.group(1).lower()
+            if value == "true":
+                return True
+            if value == "false":
+                return False
+            return None
+
         return {
             "model_score": float(score_m.group(1)),
             "model_confidence": float(conf_m.group(1)) if conf_m else 0.5,
             "model_read": read_m.group(1) if read_m else "",
             "model_reasoning": reason_m.group(1) if reason_m else "",
+            "is_obviously_fully_correct": _boolish(obvious_full_m),
+            "is_obviously_wrong": _boolish(obvious_wrong_m),
         }
 
     raise ValueError(f"Could not parse VLM response as JSON: {text[:300]}")
@@ -285,6 +313,8 @@ def _failure_prediction(
         model_read="",
         raw_assistant=raw_assistant,
         raw_reasoning=raw_reasoning,
+        is_obviously_fully_correct=None,
+        is_obviously_wrong=None,
         upstream_dependency="none",
         if_dependent_then_consistent=None,
     )
@@ -428,6 +458,27 @@ def grade_single_item(
     else:
         if_dependent_then_consistent = None
 
+    def _coerce_optional_bool(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            s = value.strip().lower()
+            if s == "true":
+                return True
+            if s == "false":
+                return False
+        return None
+
+    is_obviously_fully_correct = _coerce_optional_bool(
+        parsed.get("is_obviously_fully_correct")
+    )
+    is_obviously_wrong = _coerce_optional_bool(
+        parsed.get("is_obviously_wrong")
+    )
+    if is_obviously_fully_correct and is_obviously_wrong:
+        is_obviously_fully_correct = None
+        is_obviously_wrong = None
+
     return Prediction(
         exam_id=item.exam_id,
         question_id=item.question_id,
@@ -437,6 +488,8 @@ def grade_single_item(
         model_read=str(parsed.get("model_read", "")),
         raw_assistant=content,
         raw_reasoning=reasoning,
+        is_obviously_fully_correct=is_obviously_fully_correct,
+        is_obviously_wrong=is_obviously_wrong,
         upstream_dependency=upstream_dependency,
         if_dependent_then_consistent=if_dependent_then_consistent,
     )

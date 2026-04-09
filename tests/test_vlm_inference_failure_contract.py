@@ -59,6 +59,8 @@ class VlmInferenceFailureContract(unittest.TestCase):
         self.assertEqual(pred.question_id, "fr-11a")
         self.assertEqual(pred.model_score, 0.0)
         self.assertEqual(pred.model_confidence, 0.0)
+        self.assertIsNone(pred.is_obviously_fully_correct)
+        self.assertIsNone(pred.is_obviously_wrong)
         self.assertEqual(pred.raw_reasoning, "very long reasoning")
         self.assertIn("truncated", pred.model_reasoning.lower())
         self.assertIn("max", pred.model_reasoning.lower())
@@ -79,6 +81,8 @@ class VlmInferenceFailureContract(unittest.TestCase):
 
         self.assertEqual(pred.model_score, 0.0)
         self.assertEqual(pred.model_confidence, 0.0)
+        self.assertIsNone(pred.is_obviously_fully_correct)
+        self.assertIsNone(pred.is_obviously_wrong)
         self.assertEqual(pred.raw_assistant, "definitely not json")
         self.assertEqual(pred.raw_reasoning, "reasoning trace")
         self.assertIn("parse", pred.model_reasoning.lower())

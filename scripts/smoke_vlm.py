@@ -110,6 +110,8 @@ class _PredictionWriter:
                 "student_answer": item.student_answer,
                 "model_score": pred.model_score,
                 "model_confidence": pred.model_confidence,
+                "is_obviously_fully_correct": pred.is_obviously_fully_correct,
+                "is_obviously_wrong": pred.is_obviously_wrong,
                 "model_read": pred.model_read,
                 "model_reasoning": pred.model_reasoning,
                 "upstream_dependency": pred.upstream_dependency,
