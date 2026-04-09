@@ -228,7 +228,8 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   contract when run against an explicit disposable `TEST_DATABASE_URL`.
 - `tests/test_template_schema_contract.py` defines the enforceable YAML template
   schema contract: structural validation, variable declarations, answer-type rules,
-  expression evaluator safety, and integration tests against the real CHM 141 exam
+  expression evaluator safety, optional normalized `focus_region` metadata for
+  display/cropping affordances, and integration tests against the real CHM 141 exam
   template.
 - `python -m auto_grader.contract_test_runner` is the preferred low-friction local
   entrypoint for the authoritative contract suites. It always runs the metadata,
@@ -246,6 +247,8 @@ The authoring schema should support:
 
 - variable declarations (type, constraints, formatting expectations)
 - prompt text with placeholders
+- optional normalized `focus_region` hints so UIs can highlight/crop the part of
+  the page currently being graded without guessing OCR boxes
 - correct answer computation or specification
 - distractor strategies or explicit distractors
 - option shuffling and stable per-student mapping

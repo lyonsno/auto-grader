@@ -299,6 +299,34 @@ class TestStructuralValidation(unittest.TestCase):
         errors = self._validate(_wrap_in_template([q]))
         self.assertTrue(any("grading" in e.lower() for e in errors))
 
+    def test_question_focus_region_is_allowed_when_box_is_normalized(self):
+        q = _minimal_mc_question(
+            {
+                "focus_region": {
+                    "x": 0.15,
+                    "y": 0.35,
+                    "width": 0.25,
+                    "height": 0.10,
+                }
+            }
+        )
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertEqual(errors, [])
+
+    def test_focus_region_rejects_out_of_bounds_box(self):
+        q = _minimal_mc_question(
+            {
+                "focus_region": {
+                    "x": 0.90,
+                    "y": 0.35,
+                    "width": 0.25,
+                    "height": 0.10,
+                }
+            }
+        )
+        errors = self._validate(_wrap_in_template([q]))
+        self.assertTrue(any("focus_region" in e.lower() for e in errors))
+
 
 # ===========================================================================
 # 4. Sub-parts contract
