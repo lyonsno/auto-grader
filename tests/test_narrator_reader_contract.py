@@ -21,6 +21,7 @@ from scripts.narrator_reader import (
     _STATUS_UNDULATION_CYCLE_S,
     _apply_shimmer,
     _render_status_undulating,
+    _scorebug_big_value_rows,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
     _undulation_hue_deg,
@@ -443,6 +444,12 @@ class NarratorReaderContract(unittest.TestCase):
             scorebug_renderable = scorebug_renderable.renderable
         scorebug_text_obj = scorebug_renderable.renderables[0]
         tally_text_obj = scorebug_renderable.renderables[1]
+        tally_value_top = scorebug_renderable.renderables[2]
+        tally_value_mid = scorebug_renderable.renderables[3]
+        tally_value_bottom = scorebug_renderable.renderables[4]
+        expected_on_target = _scorebug_big_value_rows("2.0/9.0")
+        expected_left = _scorebug_big_value_rows("1.0/1.0")
+        expected_bad = _scorebug_big_value_rows("1.5/1.5")
 
         self.assertIn("CURRENT MODEL", scorebug_text)
         self.assertIn("SET", scorebug_text)
@@ -450,11 +457,17 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("ITEM", scorebug_text)
         self.assertIn("4/6", scorebug_text)
         self.assertIn("ON TARGET", scorebug_text)
-        self.assertIn("2.0/9.0", scorebug_text)
         self.assertIn("LEFT ON TABLE", scorebug_text)
-        self.assertIn("1.0/1.0", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
-        self.assertIn("1.5/1.5", scorebug_text)
+        self.assertIn(expected_on_target[0], tally_value_top.plain)
+        self.assertIn(expected_on_target[1], tally_value_mid.plain)
+        self.assertIn(expected_on_target[2], tally_value_bottom.plain)
+        self.assertIn(expected_left[0], tally_value_top.plain)
+        self.assertIn(expected_left[1], tally_value_mid.plain)
+        self.assertIn(expected_left[2], tally_value_bottom.plain)
+        self.assertIn(expected_bad[0], tally_value_top.plain)
+        self.assertIn(expected_bad[1], tally_value_mid.plain)
+        self.assertIn(expected_bad[2], tally_value_bottom.plain)
         self.assertIn(
             "on #",
             self._style_for_substring(scorebug_text_obj, "SET"),
@@ -465,6 +478,48 @@ class NarratorReaderContract(unittest.TestCase):
             self._style_for_substring(tally_text_obj, "ON TARGET"),
             "running tally labels should render as scorebug cells, not plain text",
         )
+
+    def test_scorebug_big_value_rows_render_three_line_scoreboard_digits(self):
+        top, middle, bottom = _scorebug_big_value_rows("2.0/9.0")
+
+        self.assertEqual(len(top), len(middle))
+        self.assertEqual(len(middle), len(bottom))
+        self.assertIn("╔", top)
+        self.assertIn("║", middle)
+        self.assertIn("╝", bottom)
+        self.assertNotIn("╱", top)
+        self.assertIn("╱", middle + bottom)
+        self.assertIn("▪", bottom)
+
+    def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY",
+            subset_count=6,
+        )
+
+        group = display.render()
+
+        scorebug_panel = group.renderables[1]
+        scorebug_text = _extract_plain(scorebug_panel.renderable)
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        tally_value_top = scorebug_renderable.renderables[2]
+        tally_value_mid = scorebug_renderable.renderables[3]
+        tally_value_bottom = scorebug_renderable.renderables[4]
+        zero_rows = _scorebug_big_value_rows("0.0/0.0")
+
+        self.assertIn("CURRENT MODEL", scorebug_text)
+        self.assertIn("SET", scorebug_text)
+        self.assertIn("TRICKY", scorebug_text)
+        self.assertIn("ON TARGET", scorebug_text)
+        self.assertIn("LEFT ON TABLE", scorebug_text)
+        self.assertIn("BAD CALLS", scorebug_text)
+        self.assertIn(zero_rows[0], tally_value_top.plain)
+        self.assertIn(zero_rows[1], tally_value_mid.plain)
+        self.assertIn(zero_rows[2], tally_value_bottom.plain)
 
     def test_live_undulation_drifts_leftward(self):
         dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
@@ -533,6 +588,20 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(display.stat_dropped_dedup, 1)
 
+    def test_rejected_panel_caps_visible_drops_to_four_lines(self):
+        display = self._make_display()
+        for idx in range(6):
+            display.on_drop("dedup", f"drop line {idx}")
+
+        group = display.render()
+        drops_panel = group.renderables[-1]
+        drops_text = _extract_plain(drops_panel.renderable)
+
+        self.assertNotIn("drop line 0", drops_text)
+        self.assertNotIn("drop line 1", drops_text)
+        self.assertIn("drop line 2", drops_text)
+        self.assertIn("drop line 5", drops_text)
+
     def test_header_starts_total_and_turn_timers(self):
         display = self._make_display()
 
@@ -579,6 +648,16 @@ class NarratorReaderContract(unittest.TestCase):
     def test_local_group_dim_factor_descends_materially_per_line(self):
         self.assertEqual(_history_tier_dim_factor(0), 1.0)
         self.assertLess(_history_tier_dim_factor(1), 0.96)
+        self.assertLess(
+            _history_tier_dim_factor(2),
+            0.87,
+            "the first couple thought lines should still fall off quickly",
+        )
+        self.assertLess(
+            _history_tier_dim_factor(3),
+            0.80,
+            "the early fade should keep the old sharper drop before the tail eases out",
+        )
         self.assertLess(_history_tier_dim_factor(2), _history_tier_dim_factor(1))
         self.assertLess(_history_tier_dim_factor(3), _history_tier_dim_factor(2))
         self.assertLess(_history_tier_dim_factor(4), _history_tier_dim_factor(3))
