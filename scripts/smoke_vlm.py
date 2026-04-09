@@ -47,6 +47,15 @@ def _progress(i: int, total: int, item, pred):
     )
 
 
+def _validate_narrator_model(model: str) -> str:
+    normalized = model.strip()
+    if normalized.rstrip("/").endswith("/snapshots"):
+        raise ValueError(
+            "--narrator-model must be the full snapshot model path, not the bare snapshots/ directory."
+        )
+    return normalized
+
+
 class _PredictionWriter:
     """Append-only JSONL writer for grader predictions.
 
@@ -206,6 +215,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
+    if args.narrate or args.narrate_stderr:
+        args.narrator_model = _validate_narrator_model(args.narrator_model)
 
     gt = load_ground_truth(_GROUND_TRUTH)
 

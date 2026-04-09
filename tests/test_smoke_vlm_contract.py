@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from auto_grader.thinking_narrator import ThinkingNarrator
 from scripts import smoke_vlm
@@ -41,6 +42,25 @@ class SmokeVlmContract(unittest.TestCase):
         narrator = ThinkingNarrator(_DummySink())
 
         self.assertEqual(narrator._base_url, "http://nlmb2p.local:8002")
+
+    def test_validate_narrator_model_rejects_bare_snapshots_directory(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "full snapshot model path",
+        ):
+            smoke_vlm._validate_narrator_model(
+                "/Users/noahlyons/.cache/huggingface/hub/models--prism-ml--bonsai-8b-mlx-1bit/snapshots/"
+            )
+
+    def test_validate_narrator_model_accepts_full_snapshot_path(self) -> None:
+        model_path = (
+            "/Users/noahlyons/.cache/huggingface/hub/models--prism-ml--bonsai-8b-mlx-1bit/"
+            "snapshots/d95a01f5e78184d278e21c4cfd57ff417a60ae22"
+        )
+
+        resolved = smoke_vlm._validate_narrator_model(model_path)
+
+        self.assertEqual(resolved, model_path)
 
 
 if __name__ == "__main__":
