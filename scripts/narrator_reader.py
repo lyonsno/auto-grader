@@ -127,9 +127,9 @@ _BASE_RGB = {
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
-    "status": (96, 124, 188),    # brighter indigo-steel — persistent
-                                  # status rail that stays legible even
-                                  # when the warmer live line is moving
+    "status": (80, 102, 164),    # dark indigo-steel — persistent status
+                                  # rail, intentionally one step darker
+                                  # than the crisp header-index blue
     # Topic verdict variants — full-saturation garden colors. The
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
@@ -195,7 +195,7 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-fired earth
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "status": (160, 194, 248),          # brightened indigo-steel crest
+    "status": (136, 164, 220),          # brightened dark-indigo crest
                                         # for the sticky status rail
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
@@ -251,13 +251,12 @@ _LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
                                     # / vermilion family so the per-char
                                     # undulation is actually visible
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
-_LIVE_BASE_SAT = 0.80              # bumped from 0.62 — the live field
-                                    # was washing out into static beige
-                                    # because the saturation was too low
-                                    # for the eye to read the undulation;
-                                    # this restores warm pop without
-                                    # crossing into neon territory
-_LIVE_BASE_VAL = 0.95              # bright paper base
+_LIVE_BASE_SAT = 0.72              # tempered from the hotter pass so the
+                                    # live line stays warm/current without
+                                    # overpowering the rest of the panel
+_LIVE_BASE_VAL = 0.92              # slightly dimmer than the glare-prone
+                                    # earlier pass; still bright enough to
+                                    # read clearly against the dark field
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
 # brightness (BT.709 luminance weights yellow ~4× higher than red),
@@ -295,6 +294,9 @@ _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
 # stroke as the wash dries), so the wave reads as a quiet brightening
 # of the ink rather than a fire sweep.
 _SHIMMER_PEAK_RGB = (235, 215, 175)
+_EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
+                                     # we want warm structural emphasis
+                                     # without a full verdict signal
 
 
 def _interp_rgb(
@@ -894,7 +896,7 @@ class PaintDryDisplay:
         header_text.append("  ", style="dim")
         header_text.append(
             f"turn={turn_elapsed_s}s" if turn_elapsed_s is not None else "turn=--",
-            style="orange3" if turn_elapsed_s is not None else "grey50",
+            style=_rgb_to_hex(_EMBER_ACCENT_RGB) if turn_elapsed_s is not None else "grey50",
         )
         header_text.append("  ", style="dim")
         header_text.append(
@@ -948,7 +950,7 @@ class PaintDryDisplay:
 
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
-            cursor_style = "orange3" if is_active else "grey50"
+            cursor_style = _rgb_to_hex(_EMBER_ACCENT_RGB) if is_active else "grey50"
             live_text.append("▌ ", style=cursor_style)
             freeze_age_s = None
             if not is_active and self._freeze_started_at is not None:
@@ -1109,7 +1111,10 @@ class PaintDryDisplay:
                 m = _TIME_PREFIX_RE.match(text)
                 if m:
                     time_prefix, rest = m.group(1), m.group(2)
-                    history_text.append(time_prefix, style="bold #d86324")
+                    history_text.append(
+                        time_prefix,
+                        style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    )
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
