@@ -660,6 +660,14 @@ class PaintDryDisplay:
     def __rich__(self) -> Group:
         return self.render()
 
+    def should_animate(self) -> bool:
+        """Whether the display should keep driving the expensive refresh loop.
+
+        Finished sessions keep a static final frame on screen while waiting
+        for Enter, but they no longer need shimmer updates at 30 FPS.
+        """
+        return not self.session_ended
+
     def _build_display_entries(self) -> list[tuple[tuple, bool]]:
         """Group history into items, reverse so newest item is first,
         and within each group keep entries in chronological order so
@@ -1241,6 +1249,9 @@ def main() -> int:
         ) as live:
             def _animation_tick():
                 while not animation_stop.is_set():
+                    if not display.should_animate():
+                        time.sleep(0.25)
+                        continue
                     try:
                         live.update(display.render(), refresh=True)
                     except Exception:
@@ -1298,11 +1309,11 @@ def main() -> int:
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
                         # Flag the display so render() shows a "press
-                        # Enter" footer. Keep the animation thread
-                        # running so the shimmer continues to play
-                        # while the user reads the final state.
-                        # Wait for stdin in a side thread.
+                        # Enter" footer. Re-render once, then stop the
+                        # expensive animation loop; a static final frame
+                        # is enough while the user reads the end state.
                         display.session_ended = True
+                        live.update(display.render(), refresh=True)
                         enter_event = threading.Event()
 
                         def _wait_enter():
@@ -1317,9 +1328,9 @@ def main() -> int:
                             name="paint-dry-enter-wait",
                             daemon=True,
                         ).start()
-                        enter_event.wait()
                         animation_stop.set()
                         anim_thread.join(timeout=0.5)
+                        enter_event.wait()
                         return 0
     finally:
         animation_stop.set()

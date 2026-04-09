@@ -306,6 +306,8 @@ class NarratorSink:
                 f"narrator_reader.py not found at {reader_script}"
             )
 
+        self._reap_existing_viewers(reader_script)
+
         # Project root for uv run
         project_root = Path(__file__).resolve().parent.parent
 
@@ -336,3 +338,19 @@ class NarratorSink:
                 f"stderr: {stderr}\n"
                 "(requires WezTerm installed and a running WezTerm instance)"
             )
+
+    @staticmethod
+    def _reap_existing_viewers(reader_script: Path) -> None:
+        """Kill stale narrator readers before spawning a new viewer.
+
+        The reader runs a 30 FPS truecolor refresh loop, so letting old
+        windows accumulate can turn into a real CPU problem for WezTerm.
+        Reap by the concrete script path so we only target Paint Dry
+        readers from this checkout lineage.
+        """
+        subprocess.run(
+            ["pkill", "-f", str(reader_script)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
