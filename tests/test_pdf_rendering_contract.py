@@ -135,3 +135,25 @@ class PdfRenderingContractTests(unittest.TestCase):
                 "Every rendered bubble rectangle should use the page-space coordinates "
                 "from the generation artifact exactly.",
             )
+
+    def test_renderer_draws_registration_markers_at_artifact_coordinates(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        for marker in page["registration_markers"]:
+            pdf_y = page["height"] - marker["y"] - marker["height"]
+            marker_command = (
+                f"{_pdf_number(marker['x'])} "
+                f"{_pdf_number(pdf_y)} "
+                f"{_pdf_number(marker['width'])} "
+                f"{_pdf_number(marker['height'])} re f"
+            ).encode("utf-8")
+            self.assertIn(
+                marker_command,
+                pdf_bytes,
+                "Registration markers should be drawn at the exact page-space "
+                "coordinates recorded in the artifact.",
+            )

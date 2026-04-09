@@ -165,6 +165,24 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
             self.assertLessEqual(region["x"] + region["width"], page["width"])
             self.assertLessEqual(region["y"] + region["height"], page["height"])
 
+    def test_page_exposes_registration_markers_for_scan_normalization(self):
+        artifact = self._build_one()
+
+        page = artifact["pages"][0]
+        self.assertEqual(
+            [marker["marker_id"] for marker in page["registration_markers"]],
+            ["top_left", "top_right", "bottom_left", "bottom_right"],
+        )
+
+        for marker in page["registration_markers"]:
+            self.assertEqual(marker["kind"], "square")
+            self.assertGreaterEqual(marker["x"], 0)
+            self.assertGreaterEqual(marker["y"], 0)
+            self.assertGreater(marker["width"], 0)
+            self.assertGreater(marker["height"], 0)
+            self.assertLessEqual(marker["x"] + marker["width"], page["width"])
+            self.assertLessEqual(marker["y"] + marker["height"], page["height"])
+
     def test_blank_student_identifier_is_rejected(self):
         from auto_grader.generation import build_mc_answer_sheet
 

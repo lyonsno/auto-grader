@@ -105,6 +105,27 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
         *_text_block(36, height - 64, 9, f"Page code: {page['fallback_page_code']}"),
     ]
 
+    registration_markers = page.get("registration_markers")
+    if not isinstance(registration_markers, list):
+        raise ValueError("page.registration_markers must be a list")
+
+    for raw_marker in registration_markers:
+        if not isinstance(raw_marker, Mapping):
+            raise ValueError("page.registration_markers entries must be mappings")
+        marker = dict(raw_marker)
+        marker_x = _require_number(marker["x"], "registration_marker.x")
+        marker_y = _require_number(marker["y"], "registration_marker.y")
+        marker_width = _require_number(marker["width"], "registration_marker.width")
+        marker_height = _require_number(marker["height"], "registration_marker.height")
+        content_lines.append(
+            (
+                f"{_pdf_number(marker_x)} "
+                f"{_pdf_number(_pdf_rect_y(height, marker_y, marker_height))} "
+                f"{_pdf_number(marker_width)} "
+                f"{_pdf_number(marker_height)} re f"
+            )
+        )
+
     questions = artifact.get("mc_questions")
     if not isinstance(questions, list):
         raise ValueError("artifact.mc_questions must be a list")

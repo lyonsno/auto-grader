@@ -30,6 +30,8 @@ _ROW_HEIGHT = 48
 _BUBBLE_SIZE = 18
 _BUBBLE_GAP = 10
 _MAX_ROWS_PER_PAGE = 10
+_REGISTRATION_MARKER_SIZE = 18
+_REGISTRATION_MARKER_INSET = 24
 
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
@@ -274,6 +276,8 @@ def _build_page_layout(
                 }
             )
 
+    registration_markers = _build_registration_markers()
+
     return {
         "page_number": 1,
         "fallback_page_code": f"{opaque_instance_code}-p1",
@@ -283,8 +287,48 @@ def _build_page_layout(
         "y_axis": "down",
         "width": _LETTER_WIDTH,
         "height": _LETTER_HEIGHT,
+        "registration_markers": registration_markers,
         "bubble_regions": bubble_regions,
     }
+
+
+def _build_registration_markers() -> list[dict[str, Any]]:
+    size = _REGISTRATION_MARKER_SIZE
+    inset = _REGISTRATION_MARKER_INSET
+    return [
+        {
+            "marker_id": "top_left",
+            "kind": "square",
+            "x": inset,
+            "y": inset,
+            "width": size,
+            "height": size,
+        },
+        {
+            "marker_id": "top_right",
+            "kind": "square",
+            "x": _LETTER_WIDTH - inset - size,
+            "y": inset,
+            "width": size,
+            "height": size,
+        },
+        {
+            "marker_id": "bottom_left",
+            "kind": "square",
+            "x": inset,
+            "y": _LETTER_HEIGHT - inset - size,
+            "width": size,
+            "height": size,
+        },
+        {
+            "marker_id": "bottom_right",
+            "kind": "square",
+            "x": _LETTER_WIDTH - inset - size,
+            "y": _LETTER_HEIGHT - inset - size,
+            "width": size,
+            "height": size,
+        },
+    ]
 
 
 def _build_opaque_instance_code(
