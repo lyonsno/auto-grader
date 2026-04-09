@@ -95,7 +95,7 @@ class NarratorReaderContract(unittest.TestCase):
             self._hex_luminance(top_style),
         )
 
-    def test_reader_animates_during_live_freeze_fade_then_goes_idle(self) -> None:
+    def test_active_session_keeps_animating_after_live_freeze_fade(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")
         display.on_commit()
@@ -106,7 +106,7 @@ class NarratorReaderContract(unittest.TestCase):
                 now=display._freeze_started_at + (_LIVE_FREEZE_FADE_S / 2)
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             display.should_animate(
                 now=display._freeze_started_at + _LIVE_FREEZE_FADE_S + 0.1
             )

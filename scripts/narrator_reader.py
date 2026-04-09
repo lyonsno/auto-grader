@@ -693,35 +693,25 @@ class PaintDryDisplay:
         # and working on the wrap-up rather than hung.
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
-        # When True, render() shows a "press Enter to close" footer.
-        # The animation thread keeps running so the shimmer plays on
-        # while the user reads.
+        # When True, render() shows a "press Enter to close" footer and
+        # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
 
     def __rich__(self) -> Group:
         return self.render()
 
     def should_animate(self, now: float | None = None) -> bool:
-        """Return whether the UI needs timer-driven repainting.
+        """Return whether the UI should keep driving the shimmer loop.
 
-        Static state changes are pushed directly from the fifo/message
-        loop. The background animation thread is only needed while the
-        live field is actively streaming, while the frozen-line fade is
-        still settling, or while the wrap-up pending timer is ticking.
-        Once the session has ended, keep the final frame static while
-        waiting for Enter instead of repainting forever.
+        Project Paint Dry is not a static log viewer. Even when no new
+        tokens are arriving, the active session still has ongoing shimmer
+        across the status rail, live field, and history stack. The only
+        time we intentionally stop repainting is after the session has
+        ended and the final frame is meant to stay still while waiting
+        for Enter.
         """
-        if self.session_ended:
-            return False
-        if self.streaming_line or self.wrap_up_pending:
-            return True
-        if (
-            self.frozen_line
-            and self._freeze_started_at is not None
-        ):
-            current = time.monotonic() if now is None else now
-            return (current - self._freeze_started_at) < _LIVE_FREEZE_FADE_S
-        return False
+        _ = now
+        return not self.session_ended
 
     def _build_display_entries(self) -> list[tuple[tuple, bool]]:
         """Group history into items, reverse so newest item is first,
