@@ -248,6 +248,49 @@ class ThinkingNarratorContract(unittest.TestCase):
             ],
         )
 
+    def test_after_action_clamps_multiline_repeat_to_one_normalized_line(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(
+            sink,
+            "Grader: 0/2 (student added moles instead of using stoichiometry).\n"
+            "Prof: 2/2 (same reasoning). · student plainly missed stoichiometry, judges in lockstep.\n"
+            "Grader: 0/2 (student added moles instead of using stoichiometry). "
+            "Prof: 2/2 (same reasoning). · student plainly missed stoichiometry, judges in lockstep.\n"
+            "Grader:",
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=1,
+            professor_score=0.0,
+            max_points=2.0,
+            professor_mark="0/2",
+            student_answer="...",
+            notes="same reasoning",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=0.0,
+            model_confidence=0.9,
+            model_reasoning="Used addition instead of stoichiometry.",
+            model_read="13.839 + 13.839",
+        )
+
+        narrator._produce_after_action(287.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.topics,
+            [
+                (
+                    "287s · Grader: 0/2 (student added moles instead of using stoichiometry). "
+                    "Prof: 0/2 (same reasoning). · student plainly missed stoichiometry, judges in lockstep.",
+                    "match",
+                )
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

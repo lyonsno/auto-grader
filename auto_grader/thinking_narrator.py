@@ -252,6 +252,31 @@ def _normalize_after_action_scores(
     return text
 
 
+def _sanitize_after_action_text(text: str) -> str:
+    """Clamp after-action output to one clean verdict line.
+
+    The after-action prompt asks for one line, but under load Bonsai can
+    sometimes emit repeated multiline verdicts or trail off into a partial
+    restart like a final bare ``Grader:``. We keep the first complete
+    grader/prof line and collapse internal whitespace so the reader never
+    receives a multiline topic blob.
+    """
+    lines = [line.strip() for line in text.replace("\r", "\n").splitlines()]
+    candidates = [line for line in lines if line]
+    if not candidates:
+        return ""
+
+    preferred = next(
+        (
+            line
+            for line in candidates
+            if "Grader:" in line and "Prof:" in line
+        ),
+        candidates[0],
+    )
+    return " ".join(preferred.split())
+
+
 def _rough_token_count(text: str) -> int:
     """Approximate token count (words * 1.3)."""
     return int(len(text.split()) * 1.3)
@@ -882,6 +907,7 @@ class ThinkingNarrator:
                     item.exam_id, item.question_id,
                 )
             if text:
+                text = _sanitize_after_action_text(text)
                 text = _normalize_after_action_scores(
                     text,
                     grader_score=prediction.model_score,
