@@ -81,6 +81,27 @@ class SmokeVlmContract(unittest.TestCase):
             },
         )
 
+    def test_scorebug_session_meta_labels_tricky_plus_subset(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+        args = parser.parse_args(
+            ["--model", "qwen3p5-35B-A3B", "--tricky-plus"]
+        )
+
+        meta = smoke_vlm._scorebug_session_meta(
+            args=args,
+            model=args.model,
+            subset_count=12,
+        )
+
+        self.assertEqual(
+            meta,
+            {
+                "model": "qwen3p5-35B-A3B",
+                "set_label": "TRICKY+",
+                "subset_count": 12,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
