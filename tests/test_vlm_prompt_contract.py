@@ -64,6 +64,21 @@ class GradingPromptContract(unittest.TestCase):
             "prompt should explicitly say to rescue rubric-grounded partial credit",
         )
 
+    def test_system_prompt_prefers_lawful_full_credit_and_equivalent_units(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "If the student's work supports a lawful full-credit interpretation, take it and stop.",
+            prompt,
+            "prompt should prefer a supportable full-credit reading over continued nitpicking",
+        )
+        self.assertIn(
+            "Equivalent volume units such as mL and cm³ count as the same quantity unless the question explicitly tests a specific form.",
+            prompt,
+            "prompt should treat mL and cm³ as equivalent when the form itself is not being tested",
+        )
+
     def test_system_prompt_defaults_dependency_to_none_unless_clear(self):
         from auto_grader import vlm_inference
 

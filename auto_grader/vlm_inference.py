@@ -114,14 +114,17 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-Grade one question from one chemistry exam page.
+Grade one chemistry exam question.
 
 Grading philosophy:
 - Award the highest score justified by the student's written work under the \
 rubric.
-- Actively rescue as much lawful partial credit as possible: method, setup, \
-and consistent follow-through all count.
-- Be generous but not speculative: do not invent missing work.
+- Actively rescue as much lawful partial credit as possible.
+- If the student's work supports a lawful full-credit interpretation, take \
+it and stop.
+- Equivalent volume units such as mL and cm³ count as the same quantity \
+unless the question explicitly tests a specific form.
+- Do not invent missing work.
 - Grade what is written, not a more favorable answer you can imagine.
 - If two readings are plausible and neither is clearly better supported, \
 choose the best-supported reading and move on.
@@ -130,34 +133,25 @@ choose the best-supported reading, say in model_reasoning that human review \
 is warranted, lower model_confidence, and stop.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
-- Internal consistency rule: if this part carries forward an earlier wrong \
-answer but uses that earlier result correctly here, award full credit for the \
-method here.
-- Answered-form rule: if the question asks for a specific form, grade the \
-requested form. Example: a net ionic equation must actually be net ionic; \
-full molecular or full ionic forms do not satisfy it.
+- Internal consistency rule: if this part correctly carries forward an \
+earlier wrong result, award full method credit here.
+- Answered-form rule: grade the requested form; net ionic means net ionic.
 - If the student plainly did not provide the requested answer form, stop once \
 that is established and score only what is actually on the page.
 
-For each question:
-1. Read what the student wrote
-2. Compare it to the correct answer / rubric
-3. Use upstream_dependency = "none" unless this answer clearly carries \
-forward an earlier part. If it does, name that earlier part.
-4. If it is not "none", decide whether this work is consistent with the \
-student's own earlier result.
-5. Award the highest justified score while respecting the requested answer \
-form.
+Use upstream_dependency = "none" unless this answer clearly carries forward \
+an earlier part. If it does, name that part and decide whether this work is \
+consistent with the student's own earlier result.
 
 Respond in this EXACT JSON only:
 
 {
-  "model_read": "<what the student wrote, verbatim>",
-  "upstream_dependency": "<earlier part id this depends on, e.g. '5(a)', or 'none'>",
-  "if_dependent_then_consistent": <true | false | null if upstream_dependency is 'none'>,
-  "model_score": <numeric score you award>,
-  "model_confidence": <0.0 to 1.0, your confidence in the score>,
-  "model_reasoning": "<brief explanation of your grading>"
+  "model_read": "<verbatim student work>",
+  "upstream_dependency": "<earlier part id or 'none'>",
+  "if_dependent_then_consistent": <true | false | null>,
+  "model_score": <numeric score>,
+  "model_confidence": <0.0 to 1.0>,
+  "model_reasoning": "<brief grading explanation>"
 }
 """
 
