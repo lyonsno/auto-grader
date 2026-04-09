@@ -127,6 +127,8 @@ student's exam and asked to grade a specific question.
 
 Grading philosophy:
 - Be charitable. If a reasonable reading supports correctness, give credit.
+- Grade what is written, not a more favorable answer you can imagine.
+- If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
 - Internal consistency rule: if this part depends on an earlier wrong answer \

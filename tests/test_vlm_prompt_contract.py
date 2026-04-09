@@ -39,6 +39,21 @@ class GradingPromptContract(unittest.TestCase):
             "consistency rule should be stated cleanly, not reiterated in multiple phrasings",
         )
 
+    def test_system_prompt_limits_charitable_reread_loops(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Grade what is written, not a more favorable answer you can imagine.",
+            prompt,
+            "prompt should stop the model from rescuing borderline OCR reads through speculation",
+        )
+        self.assertIn(
+            "If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.",
+            prompt,
+            "prompt should narrow ambiguity handling so the model does not loop on rereads",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
