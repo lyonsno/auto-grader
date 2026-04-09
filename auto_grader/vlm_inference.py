@@ -125,9 +125,9 @@ and consistent follow-through all count.
 - Grade what is written, not a more favorable answer you can imagine.
 - If two readings are plausible and neither is clearly better supported, \
 choose the best-supported reading and move on.
-- If genuine ambiguity remains after one careful pass, lower \
-model_confidence, explain the ambiguity in model_reasoning, choose the \
-best-supported reading, and stop.
+- If ambiguity still materially affects the score after one careful pass, \
+choose the best-supported reading, say in model_reasoning that human review \
+is warranted, lower model_confidence, and stop.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
 - Internal consistency rule: if this part carries forward an earlier wrong \
