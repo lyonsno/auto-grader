@@ -12,6 +12,7 @@ from scripts.narrator_reader import (
     _LIVE_FREEZE_FADE_S,
     _apply_shimmer,
     _history_tier_dim_factor,
+    _render_layer_index,
 )
 
 
@@ -225,6 +226,15 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(_history_tier_dim_factor(1), 0.9)
         self.assertLess(_history_tier_dim_factor(2), _history_tier_dim_factor(1))
         self.assertEqual(_history_tier_dim_factor(3), _history_tier_dim_factor(4))
+
+    def test_only_reasoning_lines_use_group_depth_for_fade(self):
+        self.assertEqual(_render_layer_index("line", 2), 2)
+        self.assertEqual(
+            _render_layer_index("topic", 2),
+            0,
+            "resolution/topic lines should stay full-strength instead of fading with the thought stack",
+        )
+        self.assertEqual(_render_layer_index("header", 3), 0)
 
     def test_lower_history_tiers_render_dimmer_than_top_tier(self) -> None:
         top_text = Text()
