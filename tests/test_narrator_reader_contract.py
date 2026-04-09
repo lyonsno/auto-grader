@@ -466,6 +466,27 @@ class NarratorReaderContract(unittest.TestCase):
             "running tally labels should render as scorebug cells, not plain text",
         )
 
+    def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY",
+            subset_count=6,
+        )
+
+        group = display.render()
+
+        scorebug_panel = group.renderables[1]
+        scorebug_text = _extract_plain(scorebug_panel.renderable)
+
+        self.assertIn("CURRENT MODEL", scorebug_text)
+        self.assertIn("SET", scorebug_text)
+        self.assertIn("TRICKY", scorebug_text)
+        self.assertIn("ON TARGET", scorebug_text)
+        self.assertIn("0.0/0.0", scorebug_text)
+        self.assertIn("LEFT ON TABLE", scorebug_text)
+        self.assertIn("BAD CALLS", scorebug_text)
+
     def test_live_undulation_drifts_leftward(self):
         dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
 
@@ -532,6 +553,20 @@ class NarratorReaderContract(unittest.TestCase):
         display.on_drop("dedup-status", "Rechecking the same unit conversion.")
 
         self.assertEqual(display.stat_dropped_dedup, 1)
+
+    def test_rejected_panel_caps_visible_drops_to_four_lines(self):
+        display = self._make_display()
+        for idx in range(6):
+            display.on_drop("dedup", f"drop line {idx}")
+
+        group = display.render()
+        drops_panel = group.renderables[-1]
+        drops_text = _extract_plain(drops_panel.renderable)
+
+        self.assertNotIn("drop line 0", drops_text)
+        self.assertNotIn("drop line 1", drops_text)
+        self.assertIn("drop line 2", drops_text)
+        self.assertIn("drop line 5", drops_text)
 
     def test_header_starts_total_and_turn_timers(self):
         display = self._make_display()

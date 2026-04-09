@@ -72,6 +72,7 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # not logical entries. Keep the old overall
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
+_VISIBLE_DROP_LINES = 4
 _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
                                    # descending deeper into the stack before
                                    # it settles at the floor.
@@ -967,11 +968,13 @@ class PaintDryDisplay:
         *,
         label_style: str,
         value_style: str,
+        label_pad: int = 1,
+        value_pad: int = 1,
     ) -> None:
         if row.plain:
             row.append("  ", style="dim")
-        row.append(f" {label} ", style=label_style)
-        row.append(f" {value} ", style=value_style)
+        row.append(f"{' ' * label_pad}{label}{' ' * label_pad}", style=label_style)
+        row.append(f"{' ' * value_pad}{value}{' ' * value_pad}", style=value_style)
 
     def should_animate(self, now: float | None = None) -> bool:
         """Return whether the UI should keep driving the shimmer loop.
@@ -1255,6 +1258,8 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #eef3ff on #32578e",
                     value_style="bold #dce9ff on #1c2d47",
+                    label_pad=3,
+                    value_pad=2,
                 )
                 self._append_scorebug_cell(
                     scorebug_bottom,
@@ -1265,6 +1270,8 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #fff3db on #8a6635",
                     value_style="bold #fff1d9 on #4a3720",
+                    label_pad=3,
+                    value_pad=2,
                 )
                 self._append_scorebug_cell(
                     scorebug_bottom,
@@ -1275,6 +1282,38 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #ffe9e2 on #8d4637",
                     value_style="bold #ffe7de on #4f251f",
+                    label_pad=3,
+                    value_pad=2,
+                )
+                scorebug_rows.append(scorebug_bottom)
+            else:
+                scorebug_bottom = Text()
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "ON TARGET",
+                    "0.0/0.0",
+                    label_style="bold #eef3ff on #32578e",
+                    value_style="bold #dce9ff on #1c2d47",
+                    label_pad=3,
+                    value_pad=2,
+                )
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "LEFT ON TABLE",
+                    "0.0/0.0",
+                    label_style="bold #fff3db on #8a6635",
+                    value_style="bold #fff1d9 on #4a3720",
+                    label_pad=3,
+                    value_pad=2,
+                )
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "BAD CALLS",
+                    "0.0/0.0",
+                    label_style="bold #ffe9e2 on #8d4637",
+                    value_style="bold #ffe7de on #4f251f",
+                    label_pad=3,
+                    value_pad=2,
                 )
                 scorebug_rows.append(scorebug_bottom)
 
@@ -1546,7 +1585,7 @@ class PaintDryDisplay:
         drops_panel = None
         if self.drops:
             drops_text = Text(no_wrap=False, overflow="fold")
-            visible_drops = list(self.drops)[-_VISIBLE_HISTORY_ROWS:]
+            visible_drops = list(self.drops)[-_VISIBLE_DROP_LINES:]
             for i, (reason, label) in enumerate(visible_drops):
                 if i > 0:
                     drops_text.append("\n")
