@@ -3,6 +3,9 @@
 Usage:
     uv run python scripts/compare_runs.py runs/run-a runs/run-b
     uv run python scripts/compare_runs.py --label old-qwen runs/qwen-old --label new-qwen runs/qwen-new
+    uv run python scripts/compare_runs.py \
+        --query model=gemma-4,prompt_version=2026-04-08-condensed-v1,test_set_id=tricky-v1 \
+        --query model=qwen3p5-35B-A3B,prompt_version=2026-04-08-condensed-v1,test_set_id=tricky-v1
 
 Writes a CSV with one row per (exam_id, question_id), plus per-run
 columns for score, critic-adjusted score, confidence, declared
@@ -38,6 +41,18 @@ class RunRecord:
     if_dependent_then_consistent: bool | None
     reasoning_chars: int
     elapsed_s: int | None
+
+
+@dataclass(frozen=True)
+class RunManifest:
+    run_dir: Path
+    run_id: str
+    status: str
+    started_at: str
+    model: str
+    prompt_version: str
+    test_set_id: str
+    raw: dict[str, object]
 
 
 def _resolve_predictions_path(run_dir: Path) -> Path:
@@ -197,25 +212,160 @@ def _default_out_path(labels: list[str]) -> Path:
     return Path("runs") / "comparisons" / f"{joined}.csv"
 
 
+def _default_runs_root() -> Path:
+    return Path.home() / "dev" / "auto-grader-runs"
+
+
+def _parse_query(text: str) -> dict[str, str]:
+    selector: dict[str, str] = {}
+    for chunk in text.split(","):
+        part = chunk.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise ValueError(
+                f"invalid query selector {part!r}; expected key=value"
+            )
+        key, value = part.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            raise ValueError(
+                f"invalid query selector {part!r}; expected non-empty key=value"
+            )
+        selector[key] = value
+    if not selector:
+        raise ValueError("query selector must contain at least one key=value pair")
+    return selector
+
+
+def _load_manifest(manifest_path: Path) -> RunManifest:
+    raw = json.loads(manifest_path.read_text())
+    run_dir = Path(str(raw.get("run_dir") or manifest_path.parent))
+    return RunManifest(
+        run_dir=run_dir,
+        run_id=str(raw.get("run_id", run_dir.name)),
+        status=str(raw.get("status", "unknown")),
+        started_at=str(raw.get("started_at", "")),
+        model=str(raw.get("model", "")),
+        prompt_version=str(raw.get("prompt_version", "")),
+        test_set_id=str(raw.get("test_set_id", "")),
+        raw=raw,
+    )
+
+
+def _discover_manifests(runs_root: Path) -> list[RunManifest]:
+    manifests: list[RunManifest] = []
+    for manifest_path in sorted(runs_root.glob("*/manifest.json")):
+        try:
+            manifests.append(_load_manifest(manifest_path))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{manifest_path} is not valid JSON") from exc
+    return manifests
+
+
+def _matches_query(manifest: RunManifest, selector: dict[str, str]) -> bool:
+    for key, value in selector.items():
+        candidate = manifest.raw.get(key)
+        if candidate is None:
+            return False
+        if str(candidate) != value:
+            return False
+    return True
+
+
+def _selector_label(selector: dict[str, str]) -> str:
+    return ",".join(f"{key}={value}" for key, value in selector.items())
+
+
+def resolve_query_run(
+    *,
+    runs_root: Path,
+    query: str,
+) -> Path:
+    selector = _parse_query(query)
+    matches = [
+        manifest
+        for manifest in _discover_manifests(runs_root)
+        if manifest.status == "completed" and _matches_query(manifest, selector)
+    ]
+    if not matches:
+        raise FileNotFoundError(
+            f"no completed run matched query {query!r} under {runs_root}"
+        )
+    latest = max(
+        matches,
+        key=lambda manifest: (manifest.started_at, manifest.run_dir.name),
+    )
+    return latest.run_dir
+
+
+def resolve_labeled_runs(
+    *,
+    run_args: list[str],
+    query_args: list[str],
+    label_args: list[str],
+    runs_root: Path,
+) -> list[tuple[str, Path]]:
+    resolved_paths = [Path(arg) for arg in run_args]
+    resolved_paths.extend(
+        resolve_query_run(runs_root=runs_root, query=query)
+        for query in query_args
+    )
+    if not resolved_paths:
+        raise ValueError("must provide at least one run path or --query selector")
+
+    if label_args and len(label_args) != len(resolved_paths):
+        raise ValueError(
+            "--label must be provided exactly once per run or query, in order"
+        )
+
+    default_labels = [path.name for path in map(Path, run_args)]
+    default_labels.extend(
+        _selector_label(_parse_query(query)) for query in query_args
+    )
+    labels = label_args or default_labels
+    return list(zip(labels, resolved_paths, strict=True))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Compare run artifacts item-by-item across prompts or models. "
-            "Each positional arg is a run directory containing predictions.jsonl."
+            "Each positional arg is a run directory containing predictions.jsonl, "
+            "or use --query to resolve the latest completed run by manifest metadata."
         )
     )
     parser.add_argument(
         "runs",
-        nargs="+",
+        nargs="*",
         help="Run directories to compare",
+    )
+    parser.add_argument(
+        "--query",
+        action="append",
+        default=[],
+        help=(
+            "Select the latest completed run whose manifest matches a "
+            "comma-separated key=value selector, e.g. "
+            "model=gemma-4,prompt_version=2026-04-08-condensed-v1,test_set_id=tricky-v1"
+        ),
+    )
+    parser.add_argument(
+        "--runs-root",
+        default=str(_default_runs_root()),
+        help=(
+            "Durable runs root to scan for manifest-backed query resolution "
+            f"(default: {_default_runs_root()})"
+        ),
     )
     parser.add_argument(
         "--label",
         action="append",
         default=[],
         help=(
-            "Optional label for a run. Supply once per positional run, "
-            "in the same order. Defaults to the run directory basename."
+            "Optional label for a run. Supply once per positional run or query, "
+            "in the same order. Defaults to the run directory basename or query selector."
         ),
     )
     parser.add_argument(
@@ -225,16 +375,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    run_paths = [Path(arg) for arg in args.runs]
-    if args.label and len(args.label) != len(run_paths):
-        print(
-            "error: --label must be provided exactly once per run, in order",
-            file=sys.stderr,
+    try:
+        labeled_runs = resolve_labeled_runs(
+            run_args=args.runs,
+            query_args=args.query,
+            label_args=args.label,
+            runs_root=Path(args.runs_root),
         )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    labels = args.label or [path.name for path in run_paths]
-    labeled_runs = list(zip(labels, run_paths, strict=True))
+    labels = [label for label, _ in labeled_runs]
     rows = build_comparison_rows(
         [(label, path) for label, path in labeled_runs]
     )
