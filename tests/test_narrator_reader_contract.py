@@ -489,6 +489,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("╔", top)
         self.assertIn("║", middle)
         self.assertIn("╝", bottom)
+        self.assertIn("╔═╝", middle, "the 2 glyph should have a chunky middle shoulder, not a skinny bend")
         self.assertNotIn("╱", top)
         self.assertIn("╱", middle + bottom)
         self.assertIn("▪", bottom)
