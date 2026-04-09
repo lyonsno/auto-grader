@@ -72,6 +72,11 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # not logical entries. Keep the old overall
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
+_HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
+                                   # descending deeper into the stack before
+                                   # it settles at the floor.
+_HISTORY_TIER_DIM_EASE_POWER = 1.72  # fast initial drop, then a slower tail
+                                     # instead of a purely linear ramp.
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
@@ -397,10 +402,11 @@ def _history_tier_dim_factor(layer_index: int) -> float:
     """
     if layer_index <= 0:
         return 1.0
-    return max(
-        _HISTORY_TIER_DIM_MIN,
-        1.0 - (_HISTORY_GROUP_DIM_STEP * layer_index),
-    )
+    if layer_index >= _HISTORY_TIER_DIM_FLOOR_DEPTH:
+        return _HISTORY_TIER_DIM_MIN
+    t = layer_index / _HISTORY_TIER_DIM_FLOOR_DEPTH
+    eased = (1.0 - t) ** _HISTORY_TIER_DIM_EASE_POWER
+    return _HISTORY_TIER_DIM_MIN + ((1.0 - _HISTORY_TIER_DIM_MIN) * eased)
 
 
 def _render_layer_index(kind: str, group_depth: int) -> int:

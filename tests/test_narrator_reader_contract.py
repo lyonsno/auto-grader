@@ -579,6 +579,16 @@ class NarratorReaderContract(unittest.TestCase):
     def test_local_group_dim_factor_descends_materially_per_line(self):
         self.assertEqual(_history_tier_dim_factor(0), 1.0)
         self.assertLess(_history_tier_dim_factor(1), 0.96)
+        self.assertLess(
+            _history_tier_dim_factor(2),
+            0.87,
+            "the first couple thought lines should still fall off quickly",
+        )
+        self.assertLess(
+            _history_tier_dim_factor(3),
+            0.80,
+            "the early fade should keep the old sharper drop before the tail eases out",
+        )
         self.assertLess(_history_tier_dim_factor(2), _history_tier_dim_factor(1))
         self.assertLess(_history_tier_dim_factor(3), _history_tier_dim_factor(2))
         self.assertLess(_history_tier_dim_factor(4), _history_tier_dim_factor(3))
