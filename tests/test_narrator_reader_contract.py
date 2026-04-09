@@ -484,11 +484,12 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(len(top), len(middle))
         self.assertEqual(len(middle), len(bottom))
-        self.assertIn("┌", top)
-        self.assertIn("│", middle)
-        self.assertIn("┘", bottom)
-        self.assertIn("╱", top + middle + bottom)
-        self.assertIn("•", bottom)
+        self.assertIn("╔", top)
+        self.assertIn("║", middle)
+        self.assertIn("╝", bottom)
+        self.assertNotIn("╱", top)
+        self.assertIn("╱", middle + bottom)
+        self.assertIn("▪", bottom)
 
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
         display = self._make_display()
