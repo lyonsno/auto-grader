@@ -1,10 +1,11 @@
 """Thinking narrator — ported from spoke/narrator.py for the auto-grader.
 
 Reads streaming reasoning tokens from the VLM and produces short
-present-participle status lines via Bonsai. Architecture A: each summary
-becomes an assistant turn in a growing chat history so the narrator
-naturally CONTINUES its own summary stream — every new line zooms in on
-something different from the previous lines, instead of repeating.
+first-person thinking lines via Bonsai, with a present-participle
+status-mode fallback when the first-person line would just repeat
+the prior thought. Architecture A: each summary becomes an assistant
+turn in a growing chat history so the narrator naturally CONTINUES
+its own summary stream.
 
 Spoke-specific bits (loading vamp, OMLX status polling, command URL
 plumbing) are stripped. The chunking heuristics, dispatch state machine,
@@ -135,6 +136,24 @@ REASONING-STYLE / META:
 - "I'm second-guessing myself on the unit — let me re-read what they wrote."
 """
 
+_STATUS_SYSTEM_PROMPT = """\
+You narrate a chemistry grader's ongoing thought as a SHORT present-participle status line.
+
+Write a short present-participle line for moments when the reasoning is \
+continuing on the SAME point and there is no materially new angle yet.
+
+Rules:
+- ONE fragment or short sentence. 3-8 words.
+- Start with a present participle: Rechecking, Tracing, Revisiting, \
+Weighing, Comparing, Checking, Squinting at, Staying on, etc.
+- Do NOT use "I".
+- Do NOT give a final verdict or score.
+- Be concrete: mention the actual issue, quantity, unit, species, or \
+rubric criterion when possible.
+- This is an IN-PROGRESS state line, not a new thought and not a conclusion.
+- No preamble, no quotes. Output ONLY the status line.
+"""
+
 
 # Chunking parameters — denser than spoke's defaults so we get a real
 # play-by-play feel. The dedup + grounding fix means we can dispatch more
@@ -172,6 +191,10 @@ _SIMILARITY_THRESHOLD = 0.55  # reject lines that overlap > this with prior
                               # with different surface words but the same
                               # underlying observation, and 0.70 was too
                               # generous to catch them as duplicates)
+_STATUS_SIMILARITY_THRESHOLD = 0.90  # status-mode lines are ALLOWED to stay
+                                     # on the same semantic point; only drop
+                                     # them when they are basically the exact
+                                     # same line again
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -363,6 +386,7 @@ class ThinkingNarrator:
         ]
         self._active = False
         self._thinking_start = 0.0
+        self._item_header: str | None = None
         self._pending_dispatch = False
         # Wall-clock time the current pending dispatch started, or None
         # if no dispatch is in flight. Used by feed() to detect a wedged
@@ -412,13 +436,8 @@ class ThinkingNarrator:
             self._buffer = ""
             self._thinking_start = 0.0
             self._last_dispatch = time.monotonic()
-            system_content = _SYSTEM_PROMPT
-            if item_header:
-                system_content = (
-                    _SYSTEM_PROMPT
-                    + "\n\nCONTEXT for the play you're calling:\n"
-                    + item_header
-                )
+            self._item_header = item_header
+            system_content = self._compose_system_prompt()
             self._messages = [
                 {"role": "system", "content": system_content}
             ]
@@ -438,6 +457,74 @@ class ThinkingNarrator:
             self._cur_item_dispatches = 0
             self._stat_items_started += 1
         logger.info("Narrator session started")
+
+    def _compose_system_prompt(self, *, status_mode: bool = False) -> str:
+        base = _STATUS_SYSTEM_PROMPT if status_mode else _SYSTEM_PROMPT
+        if self._item_header:
+            return base + "\n\nCONTEXT for the play you're calling:\n" + self._item_header
+        return base
+
+    @staticmethod
+    def _build_user_content(
+        chunk: str,
+        prior: list[str],
+        *,
+        status_mode: bool = False,
+    ) -> str:
+        if not prior:
+            return f"Current reasoning excerpt:\n\n{chunk}"
+
+        if status_mode:
+            avoid_block = (
+                "\n\nRecent prior calls:\n"
+                + "\n".join(f"- {s}" for s in prior[-5:])
+                + "\n\nYou are still on the SAME point. Do not invent a new "
+                "angle. Compress the ongoing state into one short "
+                "present-participle status line."
+            )
+        else:
+            avoid_block = (
+                "\n\nYour previous calls (do NOT repeat or paraphrase):\n"
+                + "\n".join(f"- {s}" for s in prior[-5:])
+                + "\n\nYour next call MUST describe a NEW detail "
+                "from this excerpt — a different number, molecule, "
+                "step, or angle that you haven't called yet."
+            )
+        return f"Current reasoning excerpt:\n\n{chunk}{avoid_block}"
+
+    def _retry_duplicate_as_status(
+        self,
+        chunk: str,
+        prior: list[str],
+    ) -> tuple[str | None, str]:
+        status_user_content = self._build_user_content(
+            chunk, prior, status_mode=True
+        )
+        with self._lock:
+            history_without_system = list(self._messages[1:-1])
+        messages = [
+            {"role": "system", "content": self._compose_system_prompt(status_mode=True)},
+            *history_without_system,
+            {"role": "user", "content": status_user_content},
+        ]
+
+        self._sink.rollback_live()
+        full = self._chat_completion_stream(messages, on_delta=self._sink.write_delta)
+        full = full.strip()
+        if not full:
+            self._sink.rollback_live()
+            return None, status_user_content
+
+        if any(
+            self._lines_too_similar(
+                full, prev, threshold=_STATUS_SIMILARITY_THRESHOLD
+            )
+            for prev in prior
+        ):
+            self._sink.rollback_live()
+            return None, status_user_content
+
+        return full, status_user_content
 
     def stop(self) -> None:
         with self._lock:
@@ -818,18 +905,7 @@ class ThinkingNarrator:
             # needs the prior list spelled out, not just system-prompt rules.
             with self._lock:
                 prior = list(self._prior_summaries)
-            avoid_block = ""
-            if prior:
-                avoid_block = (
-                    "\n\nYour previous calls (do NOT repeat or paraphrase):\n"
-                    + "\n".join(f"- {s}" for s in prior[-5:])
-                    + "\n\nYour next call MUST describe a NEW detail "
-                    "from this excerpt — a different number, molecule, "
-                    "step, or angle that you haven't called yet."
-                )
-            user_content = (
-                f"Current reasoning excerpt:\n\n{chunk}{avoid_block}"
-            )
+            user_content = self._build_user_content(chunk, prior)
             with self._lock:
                 self._messages.append(
                     {"role": "user", "content": user_content}
@@ -869,15 +945,29 @@ class ThinkingNarrator:
                 self._lines_too_similar(full, prev)
                 for prev in prior
             ):
-                with self._stats_lock:
-                    self._stat_drops_dedup += 1
-                self._sink.rollback_live()
-                self._sink.write_drop("dedup", full)
-                logger.info("Narrator: dropped repetitive summary: %s", full)
+                logger.info(
+                    "Narrator: first-person summary was repetitive, retrying in status mode: %s",
+                    full,
+                )
+                status_full, status_user_content = self._retry_duplicate_as_status(
+                    chunk, prior
+                )
+                if not status_full:
+                    with self._stats_lock:
+                        self._stat_drops_dedup += 1
+                    self._sink.write_drop("dedup", full)
+                    logger.info("Narrator: dropped repetitive summary: %s", full)
+                    with self._lock:
+                        if self._messages and self._messages[-1]["role"] == "user":
+                            self._messages.pop()
+                    return
+                full = status_full
                 with self._lock:
                     if self._messages and self._messages[-1]["role"] == "user":
-                        self._messages.pop()
-                return
+                        self._messages[-1] = {
+                            "role": "user",
+                            "content": status_user_content,
+                        }
 
             # Accept — commit the live line to history
             self._sink.commit_live()
