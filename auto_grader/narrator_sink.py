@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -262,6 +263,26 @@ class NarratorSink:
         os.mkfifo(fifo)
         return fifo
 
+    @staticmethod
+    def _resolve_wezterm_executable() -> str:
+        """Find the WezTerm CLI binary.
+
+        Prefer the shell PATH, but fall back to the standard macOS app-bundle
+        binary when the CLI shim is not installed.
+        """
+        from_path = shutil.which("wezterm")
+        if from_path:
+            return from_path
+
+        macos_app_binary = "/Applications/WezTerm.app/Contents/MacOS/wezterm"
+        if Path(macos_app_binary).exists():
+            return macos_app_binary
+
+        raise FileNotFoundError(
+            "wezterm not found on PATH and macOS app binary is missing at "
+            f"{macos_app_binary}"
+        )
+
     def _spawn_terminal_window(self, fifo: Path) -> None:
         """Open a WezTerm window running the rich reader script.
 
@@ -298,9 +319,10 @@ class NarratorSink:
         self._owns_tmpdir = fifo.parent
 
         try:
+            wezterm = self._resolve_wezterm_executable()
             subprocess.run(
                 [
-                    "wezterm", "cli", "spawn", "--new-window",
+                    wezterm, "cli", "spawn", "--new-window",
                     "--", str(runner),
                 ],
                 check=True,
@@ -312,5 +334,5 @@ class NarratorSink:
             raise RuntimeError(
                 f"Could not spawn WezTerm window for narrator: {e}\n"
                 f"stderr: {stderr}\n"
-                f"(requires `wezterm` on PATH and a running WezTerm instance)"
+                "(requires WezTerm installed and a running WezTerm instance)"
             )
