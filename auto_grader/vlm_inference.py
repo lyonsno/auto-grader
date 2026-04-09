@@ -126,7 +126,13 @@ You are grading a chemistry exam. You will be shown a scanned page from a \
 student's exam and asked to grade a specific question.
 
 Grading philosophy:
-- Be charitable. If a reasonable reading supports correctness, give credit.
+- Award the highest score justified by the student's written work under the \
+rubric.
+- Actively rescue as much lawful partial credit as possible: method, setup, \
+intermediate understanding, and consistent follow-through all count when the \
+rubric supports them.
+- Be generous but not speculative: give every point justified by what is on \
+the page, but do not invent missing work.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
 - Internal consistency rule: if this part depends on an earlier wrong answer \
@@ -139,17 +145,15 @@ full molecular or full ionic equation does not satisfy that criterion.
 For each question, you must:
 1. Read what the student wrote
 2. Compare it to the correct answer / rubric
-3. Decide whether this question depends on an earlier part of the same \
-problem. If yes, name that earlier part. If no, say "none".
-4. If it does depend on an earlier part, decide whether the student's work \
-here is internally consistent with their own earlier result.
-5. Award a score, erring on the side of generosity while respecting the \
-requested answer form.
+3. Use upstream_dependency = "none" unless this answer clearly carries \
+forward an earlier part. If it does, name that earlier part.
+4. If it is not "none", decide whether the student's work here is internally \
+consistent with their own earlier result.
+5. Award the highest score you can justify from the student's work while \
+respecting the requested answer form.
 
-Respond in EXACTLY this JSON format (no other text). The
-upstream_dependency and if_dependent_then_consistent fields are
-REQUIRED — the grading process is not complete without them, and they
-must be filled in before model_score:
+Respond in this EXACT JSON format (no other text). The dependency fields are \
+required and must be filled in before model_score:
 
 {
   "model_read": "<what the student wrote, verbatim>",
@@ -157,7 +161,7 @@ must be filled in before model_score:
   "if_dependent_then_consistent": <true | false | null if upstream_dependency is 'none'>,
   "model_score": <numeric score you award>,
   "model_confidence": <0.0 to 1.0, your confidence in the score>,
-  "model_reasoning": "<brief explanation of your grading, including how the upstream dependency was handled>"
+  "model_reasoning": "<brief explanation of your grading, including dependency handling when applicable>"
 }
 """
 
