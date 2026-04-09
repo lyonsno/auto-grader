@@ -91,6 +91,11 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # keeps the structural pulse visible all
                                 # the way down the stack instead of just
                                 # on the most recent few items
+_HISTORY_TIER_DIM_MIN = 0.58    # explicit per-tier palette fade. Top tier
+                                 # stays full-strength; deepest visible
+                                 # history tier settles at 58% brightness.
+                                 # This is the intentional "older lines sink
+                                 # into memory" cue, separate from shimmer.
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
 # Sumi-e palette: a Japanese garden floor in two desaturated rows
@@ -281,6 +286,11 @@ _LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
 _LIVE_FREEZE_FADE_S = 2.5
 _LIVE_FROZEN_SAT_MUL = 0.70
 _LIVE_FROZEN_VAL_MUL = 0.85
+_ACTIVE_ANIMATION_FPS = 12.0  # full-screen forced repaints are expensive
+                              # in WezTerm; animate only while something is
+                              # actually changing, and at a saner cadence
+_IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
+                              # messages quickly, but doesn't need redraw spam
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
@@ -304,6 +314,29 @@ def _interp_rgb(
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+def _scale_rgb(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+    """Scale an RGB triple by factor, preserving channel bounds."""
+    factor = max(0.0, factor)
+    return tuple(
+        max(0, min(255, int(round(channel * factor))))
+        for channel in rgb
+    )
+
+
+def _history_tier_dim_factor(layer_index: int) -> float:
+    """Return the explicit brightness factor for a visible history tier.
+
+    Topmost history tier stays at full brightness. Lower tiers fade
+    linearly until the deepest visible tier reaches
+    _HISTORY_TIER_DIM_MIN, then clamp there.
+    """
+    if layer_index <= 0 or _VISIBLE_HISTORY_LINES <= 1:
+        return 1.0
+    capped_index = min(layer_index, _VISIBLE_HISTORY_LINES - 1)
+    position = capped_index / (_VISIBLE_HISTORY_LINES - 1)
+    return 1.0 - (1.0 - _HISTORY_TIER_DIM_MIN) * position
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -376,8 +409,12 @@ def _apply_shimmer(
     if not content:
         return text_obj
 
-    base_rgb = _BASE_RGB.get(kind, _BASE_RGB["line"])
-    peak_rgb = _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB)
+    tier_dim = _history_tier_dim_factor(layer_index)
+    base_rgb = _scale_rgb(_BASE_RGB.get(kind, _BASE_RGB["line"]), tier_dim)
+    peak_rgb = _scale_rgb(
+        _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB),
+        tier_dim,
+    )
     kind_intensity = _SHIMMER_KIND_INTENSITY.get(kind, 1.0)
 
     # Recency dimming — top is full, fades to zero at MAX_LAYERS.
@@ -660,13 +697,27 @@ class PaintDryDisplay:
     def __rich__(self) -> Group:
         return self.render()
 
-    def should_animate(self) -> bool:
-        """Whether the display should keep driving the expensive refresh loop.
+    def should_animate(self, now: float | None = None) -> bool:
+        """Return whether the UI needs timer-driven repainting.
 
-        Finished sessions keep a static final frame on screen while waiting
-        for Enter, but they no longer need shimmer updates at 30 FPS.
+        Static state changes are pushed directly from the fifo/message
+        loop. The background animation thread is only needed while the
+        live field is actively streaming, while the frozen-line fade is
+        still settling, or while the wrap-up pending timer is ticking.
+        Once the session has ended, keep the final frame static while
+        waiting for Enter instead of repainting forever.
         """
-        return not self.session_ended
+        if self.session_ended:
+            return False
+        if self.streaming_line or self.wrap_up_pending:
+            return True
+        if (
+            self.frozen_line
+            and self._freeze_started_at is not None
+        ):
+            current = time.monotonic() if now is None else now
+            return (current - self._freeze_started_at) < _LIVE_FREEZE_FADE_S
+        return False
 
     def _build_display_entries(self) -> list[tuple[tuple, bool]]:
         """Group history into items, reverse so newest item is first,
@@ -1243,22 +1294,22 @@ def main() -> int:
         with Live(
             display.render(),
             console=console,
-            refresh_per_second=30,
+            refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
             screen=False,
             auto_refresh=False,
         ) as live:
             def _animation_tick():
                 while not animation_stop.is_set():
-                    if not display.should_animate():
-                        time.sleep(0.25)
-                        continue
-                    try:
-                        live.update(display.render(), refresh=True)
-                    except Exception:
-                        # Transient race with the message loop mutating
-                        # display state — next tick will recover.
-                        pass
-                    time.sleep(1.0 / 30)
+                    if display.should_animate():
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            # Transient race with the message loop mutating
+                            # display state — next tick will recover.
+                            pass
+                        time.sleep(1.0 / _ACTIVE_ANIMATION_FPS)
+                    else:
+                        time.sleep(_IDLE_POLL_S)
 
             anim_thread = threading.Thread(
                 target=_animation_tick,
@@ -1308,30 +1359,24 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
-                        # Flag the display so render() shows a "press
-                        # Enter" footer. Re-render once, then stop the
-                        # expensive animation loop; a static final frame
-                        # is enough while the user reads the end state.
+                        # Final frame is static. Keeping the old
+                        # 30fps repaint loop alive while waiting for
+                        # Enter was enough to pin WezTerm at high CPU
+                        # long after the run had effectively ended.
                         display.session_ended = True
-                        live.update(display.render(), refresh=True)
-                        enter_event = threading.Event()
-
-                        def _wait_enter():
-                            try:
-                                sys.stdin.readline()
-                            except Exception:
-                                pass
-                            enter_event.set()
-
-                        threading.Thread(
-                            target=_wait_enter,
-                            name="paint-dry-enter-wait",
-                            daemon=True,
-                        ).start()
                         animation_stop.set()
                         anim_thread.join(timeout=0.5)
-                        enter_event.wait()
+                        live.update(display.render(), refresh=True)
+                        try:
+                            sys.stdin.readline()
+                        except Exception:
+                            pass
                         return 0
+
+                    try:
+                        live.update(display.render(), refresh=True)
+                    except Exception:
+                        pass
     finally:
         animation_stop.set()
         try:
