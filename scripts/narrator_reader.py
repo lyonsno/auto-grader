@@ -343,19 +343,19 @@ _EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
                                      # without a full verdict signal
 
 _SCOREBUG_BIG_DIGITS = {
-    "0": ("╭ ╮", "╰ ╯"),
-    "1": (" ╷ ", " ╵ "),
-    "2": ("╭─╮", "╰─ "),
-    "3": ("╭─╮", " ╰╯"),
-    "4": ("╷ ╷", "╰─╯"),
-    "5": ("╭─ ", " ╰╯"),
-    "6": ("╭─ ", "╰─╯"),
-    "7": ("╶─╮", "  │"),
-    "8": ("╭─╮", "├─┤"),
-    "9": ("╭─╮", " ╰╯"),
-    ".": ("   ", " • "),
-    "/": ("  ╱", "╱  "),
-    "-": ("   ", "───"),
+    "0": ("┌─┐", "│ │", "└─┘"),
+    "1": (" ┐ ", " │ ", " ┴ "),
+    "2": ("┌─┐", " ─┤", "└─ "),
+    "3": ("┌─┐", " ─┤", "└─┘"),
+    "4": ("│ │", "└─┤", "  ┴"),
+    "5": ("┌─┐", "├─ ", "└─┘"),
+    "6": ("┌─ ", "├─┐", "└─┘"),
+    "7": ("┌─┐", "  │", "  ╵"),
+    "8": ("┌─┐", "├─┤", "└─┘"),
+    "9": ("┌─┐", "└─┤", "  ┘"),
+    ".": ("   ", "   ", " • "),
+    "/": ("  ╱", " ╱ ", "╱  "),
+    "-": ("   ", "───", "   "),
 }
 
 
@@ -396,14 +396,23 @@ def _blend_rgb(
     )
 
 
-def _scorebug_big_value_rows(value: str) -> tuple[str, str]:
+def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
     top_parts: list[str] = []
+    middle_parts: list[str] = []
     bottom_parts: list[str] = []
     for ch in value:
-        top, bottom = _SCOREBUG_BIG_DIGITS.get(ch, ("   ", f" {ch} "))
+        top, middle, bottom = _SCOREBUG_BIG_DIGITS.get(
+            ch,
+            ("   ", f" {ch} ", "   "),
+        )
         top_parts.append(top)
+        middle_parts.append(middle)
         bottom_parts.append(bottom)
-    return (" ".join(top_parts), " ".join(bottom_parts))
+    return (
+        " ".join(top_parts),
+        " ".join(middle_parts),
+        " ".join(bottom_parts),
+    )
 
 
 def _live_placeholder(now_s: float) -> str:
@@ -1006,6 +1015,7 @@ class PaintDryDisplay:
     def _append_scorebug_big_value_cell(
         label_row: Text,
         value_top_row: Text,
+        value_middle_row: Text,
         value_bottom_row: Text,
         label: str,
         value: str,
@@ -1018,14 +1028,19 @@ class PaintDryDisplay:
         if label_row.plain:
             label_row.append("  ", style="dim")
             value_top_row.append("  ", style="dim")
+            value_middle_row.append("  ", style="dim")
             value_bottom_row.append("  ", style="dim")
         label_row.append(
             f"{' ' * label_pad}{label}{' ' * label_pad}",
             style=label_style,
         )
-        top, bottom = _scorebug_big_value_rows(value)
+        top, middle, bottom = _scorebug_big_value_rows(value)
         value_top_row.append(
             f"{' ' * value_pad}{top}{' ' * value_pad}",
+            style=value_style,
+        )
+        value_middle_row.append(
+            f"{' ' * value_pad}{middle}{' ' * value_pad}",
             style=value_style,
         )
         value_bottom_row.append(
@@ -1307,10 +1322,12 @@ class PaintDryDisplay:
             if self.score_points_possible > 0:
                 scorebug_labels = Text()
                 scorebug_values_top = Text()
+                scorebug_values_middle = Text()
                 scorebug_values_bottom = Text()
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
+                    scorebug_values_middle,
                     scorebug_values_bottom,
                     "ON TARGET",
                     (
@@ -1323,6 +1340,7 @@ class PaintDryDisplay:
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
+                    scorebug_values_middle,
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     (
@@ -1335,6 +1353,7 @@ class PaintDryDisplay:
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
+                    scorebug_values_middle,
                     scorebug_values_bottom,
                     "BAD CALLS",
                     (
@@ -1345,15 +1364,22 @@ class PaintDryDisplay:
                     value_style="bold #ffe7de on #4f251f",
                 )
                 scorebug_rows.extend(
-                    [scorebug_labels, scorebug_values_top, scorebug_values_bottom]
+                    [
+                        scorebug_labels,
+                        scorebug_values_top,
+                        scorebug_values_middle,
+                        scorebug_values_bottom,
+                    ]
                 )
             else:
                 scorebug_labels = Text()
                 scorebug_values_top = Text()
+                scorebug_values_middle = Text()
                 scorebug_values_bottom = Text()
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
+                    scorebug_values_middle,
                     scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
@@ -1363,6 +1389,7 @@ class PaintDryDisplay:
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
+                    scorebug_values_middle,
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
@@ -1372,6 +1399,7 @@ class PaintDryDisplay:
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
+                    scorebug_values_middle,
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
@@ -1379,7 +1407,12 @@ class PaintDryDisplay:
                     value_style="bold #ffe7de on #4f251f",
                 )
                 scorebug_rows.extend(
-                    [scorebug_labels, scorebug_values_top, scorebug_values_bottom]
+                    [
+                        scorebug_labels,
+                        scorebug_values_top,
+                        scorebug_values_middle,
+                        scorebug_values_bottom,
+                    ]
                 )
 
             scorebug_panel = Panel(

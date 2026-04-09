@@ -445,7 +445,8 @@ class NarratorReaderContract(unittest.TestCase):
         scorebug_text_obj = scorebug_renderable.renderables[0]
         tally_text_obj = scorebug_renderable.renderables[1]
         tally_value_top = scorebug_renderable.renderables[2]
-        tally_value_bottom = scorebug_renderable.renderables[3]
+        tally_value_mid = scorebug_renderable.renderables[3]
+        tally_value_bottom = scorebug_renderable.renderables[4]
         expected_on_target = _scorebug_big_value_rows("2.0/9.0")
         expected_left = _scorebug_big_value_rows("1.0/1.0")
         expected_bad = _scorebug_big_value_rows("1.5/1.5")
@@ -459,11 +460,14 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
         self.assertIn(expected_on_target[0], tally_value_top.plain)
-        self.assertIn(expected_on_target[1], tally_value_bottom.plain)
+        self.assertIn(expected_on_target[1], tally_value_mid.plain)
+        self.assertIn(expected_on_target[2], tally_value_bottom.plain)
         self.assertIn(expected_left[0], tally_value_top.plain)
-        self.assertIn(expected_left[1], tally_value_bottom.plain)
+        self.assertIn(expected_left[1], tally_value_mid.plain)
+        self.assertIn(expected_left[2], tally_value_bottom.plain)
         self.assertIn(expected_bad[0], tally_value_top.plain)
-        self.assertIn(expected_bad[1], tally_value_bottom.plain)
+        self.assertIn(expected_bad[1], tally_value_mid.plain)
+        self.assertIn(expected_bad[2], tally_value_bottom.plain)
         self.assertIn(
             "on #",
             self._style_for_substring(scorebug_text_obj, "SET"),
@@ -475,13 +479,15 @@ class NarratorReaderContract(unittest.TestCase):
             "running tally labels should render as scorebug cells, not plain text",
         )
 
-    def test_scorebug_big_value_rows_render_two_line_flip_digits(self):
-        top, bottom = _scorebug_big_value_rows("2.0/9.0")
+    def test_scorebug_big_value_rows_render_three_line_scoreboard_digits(self):
+        top, middle, bottom = _scorebug_big_value_rows("2.0/9.0")
 
-        self.assertEqual(len(top), len(bottom))
-        self.assertIn("╭", top)
-        self.assertIn("╯", bottom)
-        self.assertIn("╱", top + bottom)
+        self.assertEqual(len(top), len(middle))
+        self.assertEqual(len(middle), len(bottom))
+        self.assertIn("┌", top)
+        self.assertIn("│", middle)
+        self.assertIn("┘", bottom)
+        self.assertIn("╱", top + middle + bottom)
         self.assertIn("•", bottom)
 
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
@@ -500,7 +506,8 @@ class NarratorReaderContract(unittest.TestCase):
         if isinstance(scorebug_renderable, Align):
             scorebug_renderable = scorebug_renderable.renderable
         tally_value_top = scorebug_renderable.renderables[2]
-        tally_value_bottom = scorebug_renderable.renderables[3]
+        tally_value_mid = scorebug_renderable.renderables[3]
+        tally_value_bottom = scorebug_renderable.renderables[4]
         zero_rows = _scorebug_big_value_rows("0.0/0.0")
 
         self.assertIn("CURRENT MODEL", scorebug_text)
@@ -510,7 +517,8 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
         self.assertIn(zero_rows[0], tally_value_top.plain)
-        self.assertIn(zero_rows[1], tally_value_bottom.plain)
+        self.assertIn(zero_rows[1], tally_value_mid.plain)
+        self.assertIn(zero_rows[2], tally_value_bottom.plain)
 
     def test_live_undulation_drifts_leftward(self):
         dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
