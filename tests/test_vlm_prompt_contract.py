@@ -99,6 +99,16 @@ class GradingPromptContract(unittest.TestCase):
             "easy wrong-form items should not invite long re-litigation after the missing form is already clear",
         )
 
+    def test_system_prompt_tells_genuine_ambiguity_cases_to_stop_cleanly(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "If genuine ambiguity remains after one careful pass, lower model_confidence, explain the ambiguity in model_reasoning, choose the best-supported reading, and stop.",
+            prompt,
+            "hard ambiguous items should surface uncertainty and stop instead of reasoning forever",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,23 +114,25 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-Grade one question from one scanned chemistry exam page.
+Grade one question from one chemistry exam page.
 
 Grading philosophy:
 - Award the highest score justified by the student's written work under the \
 rubric.
 - Actively rescue as much lawful partial credit as possible: method, setup, \
-and consistent follow-through all count when the rubric supports them.
-- Be generous but not speculative: give every justified point, \
-but do not invent missing work.
+and consistent follow-through all count.
+- Be generous but not speculative: do not invent missing work.
 - Grade what is written, not a more favorable answer you can imagine.
 - If two readings are plausible and neither is clearly better supported, \
 choose the best-supported reading and move on.
+- If genuine ambiguity remains after one careful pass, lower \
+model_confidence, explain the ambiguity in model_reasoning, choose the \
+best-supported reading, and stop.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
 - Internal consistency rule: if this part carries forward an earlier wrong \
 answer but uses that earlier result correctly here, award full credit for the \
-method here. Do not double-penalize one earlier error.
+method here.
 - Answered-form rule: if the question asks for a specific form, grade the \
 requested form. Example: a net ionic equation must actually be net ionic; \
 full molecular or full ionic forms do not satisfy it.
@@ -147,7 +149,7 @@ student's own earlier result.
 5. Award the highest justified score while respecting the requested answer \
 form.
 
-Respond in this EXACT JSON only. Fill dependency fields before model_score:
+Respond in this EXACT JSON only:
 
 {
   "model_read": "<what the student wrote, verbatim>",
@@ -155,7 +157,7 @@ Respond in this EXACT JSON only. Fill dependency fields before model_score:
   "if_dependent_then_consistent": <true | false | null if upstream_dependency is 'none'>,
   "model_score": <numeric score you award>,
   "model_confidence": <0.0 to 1.0, your confidence in the score>,
-  "model_reasoning": "<brief explanation of your grading, including dependency handling when applicable>"
+  "model_reasoning": "<brief explanation of your grading>"
 }
 """
 
