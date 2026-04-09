@@ -757,14 +757,20 @@ class PaintDryDisplay:
         if current_group:
             groups.append(current_group)
 
-        # Newest item on top, but entries within each group stay in
-        # their natural (commit) order so header > lines > topic
+        # Newest item on top. Within each group, keep the header first
+        # and topic last, but flip narrator lines so the freshest
+        # thought sits closest to the header and older thoughts descend.
         groups.reverse()
 
         # Flat list of (entry, deque_idx) in display order (top-down)
         flat: list[tuple[tuple, int]] = []
         for group in groups:
-            flat.extend(group)
+            header = [pair for pair in group if pair[0][0] == "header"]
+            lines = [pair for pair in group if pair[0][0] == "line"]
+            rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
+            flat.extend(header)
+            flat.extend(reversed(lines))
+            flat.extend(rest)
 
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget

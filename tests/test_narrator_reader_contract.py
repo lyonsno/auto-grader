@@ -109,6 +109,26 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(depths[3], ("line", "second line", 1))
         self.assertEqual(depths[4], ("topic", "second topic", 2))
 
+    def test_lines_render_newest_first_within_each_header(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("line", "older line", 0))
+        display.history.append(("line", "newer line", 1))
+        display.history.append(("topic", "topic line", "match"))
+
+        entries = display._build_display_entries()
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("line", "newer line"),
+                ("line", "older line"),
+                ("topic", "topic line"),
+            ],
+        )
+
     def test_top_panel_uses_cool_status_and_warm_live_colors(self):
         display = self._make_display()
         display.status_line = "Tracing the stoichiometry setup."
