@@ -25,6 +25,7 @@ below live), pushing older lines down.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -37,6 +38,7 @@ from collections import deque
 from pathlib import Path
 from typing import Deque
 
+import fitz
 from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
@@ -73,6 +75,9 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
+_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 38
+_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 14
+_FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
 _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
                                    # descending deeper into the stack before
                                    # it settles at the floor.
@@ -463,7 +468,86 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     idle and active motion feel consistent. Only boundary moments that would
     feel laggy at 12 FPS get an immediate forced refresh.
     """
-    return msg_type in {"session_meta", "wrap_up", "end"}
+    return msg_type in {"session_meta", "focus_preview", "wrap_up", "end"}
+
+
+def _render_focus_preview_terminal(
+    png_bytes: bytes,
+    *,
+    max_width_chars: int = _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
+    max_height_rows: int = _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
+) -> Group:
+    """Render a PNG preview as terminal-safe truecolor half-block rows."""
+    pix = fitz.Pixmap(png_bytes)
+    target_width, target_height = _scaled_preview_size(
+        pix.width,
+        pix.height,
+        max_width_chars=max_width_chars,
+        max_height_rows=max_height_rows,
+    )
+    rows: list[Text] = []
+    for char_row in range(0, target_height, 2):
+        row = Text(no_wrap=True, overflow="ignore")
+        for col in range(target_width):
+            top_rgb = _sample_preview_rgb(pix, col, char_row, target_width, target_height)
+            if char_row + 1 < target_height:
+                bottom_rgb = _sample_preview_rgb(
+                    pix,
+                    col,
+                    char_row + 1,
+                    target_width,
+                    target_height,
+                )
+            else:
+                bottom_rgb = _FOCUS_PREVIEW_BG_RGB
+            row.append(
+                "▀",
+                style=f"{_rgb_to_hex(top_rgb)} on {_rgb_to_hex(bottom_rgb)}",
+            )
+        rows.append(row)
+    return Group(*rows)
+
+
+def _scaled_preview_size(
+    source_width: int,
+    source_height: int,
+    *,
+    max_width_chars: int,
+    max_height_rows: int,
+) -> tuple[int, int]:
+    max_pixel_height = max_height_rows * 2
+    scale = min(
+        max_width_chars / max(1, source_width),
+        max_pixel_height / max(1, source_height),
+        1.0,
+    )
+    width = max(1, int(round(source_width * scale)))
+    height = max(1, int(round(source_height * scale)))
+    return width, height
+
+
+def _sample_preview_rgb(
+    pix: fitz.Pixmap,
+    x: int,
+    y: int,
+    target_width: int,
+    target_height: int,
+) -> tuple[int, int, int]:
+    src_x = min(
+        pix.width - 1,
+        max(0, int(((x + 0.5) / target_width) * pix.width)),
+    )
+    src_y = min(
+        pix.height - 1,
+        max(0, int(((y + 0.5) / target_height) * pix.height)),
+    )
+    offset = ((src_y * pix.width) + src_x) * pix.n
+    samples = pix.samples
+    return (
+        samples[offset],
+        samples[offset + 1],
+        samples[offset + 2],
+    )
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -981,6 +1065,9 @@ class PaintDryDisplay:
         # and working on the wrap-up rather than hung.
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
+        self.focus_preview_png: bytes | None = None
+        self.focus_preview_label: str = ""
+        self.focus_preview_source: str = ""
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
@@ -1511,6 +1598,22 @@ class PaintDryDisplay:
             height=_TOP_PANEL_CONTENT_LINES + 2,
         )
 
+        focus_preview_panel = None
+        if self.focus_preview_png:
+            preview_title = "[grey50]focus preview"
+            if self.focus_preview_label:
+                preview_title += f" · {self.focus_preview_label}"
+            preview_title += "[/grey50]"
+            focus_preview_panel = Panel(
+                Align.center(
+                    _render_focus_preview_terminal(self.focus_preview_png)
+                ),
+                border_style="#3d4458",
+                padding=(0, 1),
+                title=preview_title,
+                title_align="left",
+            )
+
         # History panel — items grouped by header. Each item is a
         # group: header at the top, decision/topic directly below it,
         # then narrator lines newest-first beneath that. Groups are
@@ -1739,7 +1842,10 @@ class PaintDryDisplay:
         panels = [header]
         if scorebug_panel is not None:
             panels.append(scorebug_panel)
-        panels.extend([live_panel, history_panel])
+        panels.append(live_panel)
+        if focus_preview_panel is not None:
+            panels.append(focus_preview_panel)
+        panels.append(history_panel)
         if wrap_panel is not None:
             panels.append(wrap_panel)
         if drops_panel is not None:
@@ -1767,6 +1873,9 @@ class PaintDryDisplay:
         self.streaming_line = ""
         self.frozen_line = ""
         self._freeze_started_at = None
+        self.focus_preview_png = None
+        self.focus_preview_label = ""
+        self.focus_preview_source = ""
         m = _HEADER_INDEX_RE.match(text)
         if m:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
@@ -1841,6 +1950,17 @@ class PaintDryDisplay:
         """Final post-game commentary from bonsai."""
         self.wrap_up_text = text
         self.wrap_up_pending = False
+
+    def on_focus_preview(
+        self,
+        png_bytes: bytes,
+        *,
+        label: str = "",
+        source: str = "",
+    ) -> None:
+        self.focus_preview_png = png_bytes
+        self.focus_preview_label = label
+        self.focus_preview_source = source
 
     def on_topic(
         self,
@@ -1988,6 +2108,19 @@ def main() -> int:
                             set_label=msg.get("set_label"),
                             subset_count=msg.get("subset_count"),
                         )
+                    elif msg_type == "focus_preview":
+                        try:
+                            png_bytes = base64.b64decode(
+                                msg.get("png_base64", ""),
+                            )
+                        except Exception:
+                            png_bytes = b""
+                        if png_bytes:
+                            display.on_focus_preview(
+                                png_bytes,
+                                label=msg.get("label", ""),
+                                source=msg.get("source", ""),
+                            )
                     elif msg_type == "delta":
                         display.on_delta(
                             msg.get("text", ""),

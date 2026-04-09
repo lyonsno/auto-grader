@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from auto_grader.eval_harness import EvalItem, FocusRegion
 from auto_grader.thinking_narrator import ThinkingNarrator
 from scripts import smoke_vlm
 
@@ -80,6 +81,52 @@ class SmokeVlmContract(unittest.TestCase):
                 "subset_count": 6,
             },
         )
+
+    def test_resolve_preview_focus_region_falls_back_to_mock_tricky_map(self) -> None:
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-12a",
+            answer_type="lewis_structure",
+            page=4,
+            professor_score=1.0,
+            max_points=2.0,
+            professor_mark="partial",
+            student_answer="O3 Lewis structure drawn",
+            notes="Half annotation.",
+        )
+
+        focus = smoke_vlm._resolve_preview_focus_region(item, template_document=None)
+
+        self.assertIsNotNone(focus)
+        assert focus is not None
+        self.assertEqual(focus.source, "mock_tricky")
+        self.assertGreater(focus.width, 0.0)
+        self.assertGreater(focus.height, 0.0)
+
+    def test_resolve_preview_focus_region_prefers_item_metadata_over_mock(self) -> None:
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-12a",
+            answer_type="lewis_structure",
+            page=4,
+            professor_score=1.0,
+            max_points=2.0,
+            professor_mark="partial",
+            student_answer="O3 Lewis structure drawn",
+            notes="Half annotation.",
+            focus_region=FocusRegion(
+                page=4,
+                x=0.1,
+                y=0.2,
+                width=0.3,
+                height=0.4,
+                source="ground_truth",
+            ),
+        )
+
+        focus = smoke_vlm._resolve_preview_focus_region(item, template_document=None)
+
+        self.assertEqual(focus, item.focus_region)
 
 
 if __name__ == "__main__":

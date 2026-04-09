@@ -665,6 +665,7 @@ def grade_all_items(
     progress_callback: Any = None,
     narrator: Any = None,
     sink: Any = None,
+    focus_preview_callback: Any = None,
 ) -> list[Prediction]:
     """Grade all ground truth items against VLM, returning predictions.
 
@@ -731,6 +732,15 @@ def grade_all_items(
             )
             narrator_context = "\n".join(narrator_context_parts)
             sink.write_header(header)
+            if focus_preview_callback is not None:
+                try:
+                    focus_preview_callback(
+                        item=item,
+                        page_image=page_cache[cache_key],
+                        template_question=tq,
+                    )
+                except Exception:
+                    pass
             narrator.start(item_header=narrator_context)
             on_delta = narrator.feed
         else:

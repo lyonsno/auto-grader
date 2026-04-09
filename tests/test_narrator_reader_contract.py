@@ -5,6 +5,7 @@ import time
 import unittest
 from unittest import mock
 
+import fitz
 from rich.align import Align
 from rich.console import Console, Group
 from rich.text import Text
@@ -57,6 +58,22 @@ class NarratorReaderContract(unittest.TestCase):
                 force_terminal=True,
             )
         )
+
+    @staticmethod
+    def _make_png(
+        *,
+        width: int = 16,
+        height: int = 10,
+        rgb: tuple[int, int, int] = (180, 150, 120),
+    ) -> bytes:
+        pix = fitz.Pixmap(
+            fitz.csRGB,
+            width,
+            height,
+            bytes(rgb * (width * height)),
+            False,
+        )
+        return pix.tobytes("png")
 
     @staticmethod
     def _rgb_from_hex(style: str) -> tuple[int, int, int]:
@@ -150,6 +167,33 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(
             panel_text.index("TRACING THE STOICHIOMETRY SETUP."),
             panel_text.index("I'm tracing the stoichiometry."),
+        )
+
+    def test_focus_preview_panel_renders_between_live_and_history(self):
+        display = self._make_display()
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+
+        group = display.render()
+        titled_panels = [
+            getattr(panel, "title", None)
+            for panel in group.renderables
+            if getattr(panel, "title", None) is not None
+        ]
+
+        self.assertIn("[grey50]status + live[/grey50]", titled_panels)
+        self.assertIn("[grey50]focus preview · 15-blue/fr-12a[/grey50]", titled_panels)
+        self.assertIn("[grey50]history[/grey50]", titled_panels)
+        self.assertLess(
+            titled_panels.index("[grey50]status + live[/grey50]"),
+            titled_panels.index("[grey50]focus preview · 15-blue/fr-12a[/grey50]"),
+        )
+        self.assertLess(
+            titled_panels.index("[grey50]focus preview · 15-blue/fr-12a[/grey50]"),
+            titled_panels.index("[grey50]history[/grey50]"),
         )
 
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
@@ -259,6 +303,9 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(depths[2], ("header", "[item 2/6] second", 0))
         self.assertEqual(depths[3], ("topic", "second topic", 1))
         self.assertEqual(depths[4], ("line", "second line", 2))
+
+    def test_focus_preview_requires_immediate_refresh(self):
+        self.assertTrue(_message_requires_immediate_refresh("focus_preview"))
 
     def test_lines_render_newest_first_beneath_topic_within_each_header(self):
         display = self._make_display()
