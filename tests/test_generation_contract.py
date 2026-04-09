@@ -209,6 +209,32 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
                 "needs enough horizontal breathing room for humans and later scan review.",
             )
 
+    def test_question_rows_leave_vertical_room_for_prompt_and_stacked_choices(self):
+        artifact = self._build_one()
+
+        page = artifact["pages"][0]
+        question_tops = []
+        for question in artifact["mc_questions"]:
+            question_regions = [
+                region
+                for region in page["bubble_regions"]
+                if region["question_id"] == question["question_id"]
+            ]
+            question_tops.append(min(region["y"] for region in question_regions))
+
+        row_gaps = [
+            later - earlier
+            for earlier, later in zip(question_tops, question_tops[1:], strict=False)
+        ]
+        self.assertTrue(row_gaps)
+        for gap in row_gaps:
+            self.assertGreaterEqual(
+                gap,
+                88,
+                "Question rows need enough vertical room for a prompt line plus a "
+                "stacked choice list under it without the next question crowding in.",
+            )
+
     def test_blank_student_identifier_is_rejected(self):
         from auto_grader.generation import build_mc_answer_sheet
 

@@ -15,7 +15,7 @@ from typing import Any
 
 
 _PROMPT_OFFSET = 96
-_PROMPT_LINE_GAP = 18
+_PROMPT_LINE_GAP = 28
 _HEADER_LEFT = 60
 _HEADER_TITLE_TOP = 32
 _HEADER_INSTANCE_TOP = 50
@@ -24,9 +24,10 @@ _HEADER_TITLE_FONT_SIZE = 11
 _HEADER_META_FONT_SIZE = 8
 _CHOICE_LEGEND_FONT_SIZE = 8
 _BUBBLE_LABEL_FONT_SIZE = 8
-_BUBBLE_LABEL_TOP_OFFSET = 4
-_CHOICE_LEGEND_LEFT = 340
-_CHOICE_LEGEND_LINE_SPACING = 11
+_BUBBLE_LABEL_TOP_OFFSET = 6
+_CHOICE_LEGEND_LEFT_OFFSET = 12
+_CHOICE_LEGEND_TOP_OFFSET = 2
+_CHOICE_LEGEND_LINE_SPACING = 12
 
 
 def render_mc_answer_sheet_pdf(artifact: Mapping[str, Any]) -> bytes:
@@ -174,14 +175,33 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
         prompt_y_top = min(
             _require_number(region["y"], "bubble_region.y") for region in question_regions
         )
+        prompt_left = max(36, prompt_x)
         content_lines.extend(
             _text_block(
-                max(36, prompt_x),
+                prompt_left,
                 _pdf_text_y(height, prompt_y_top - _PROMPT_LINE_GAP),
                 10,
                 f"{question_number}. {question.get('prompt', '')}",
             )
         )
+
+        first_bubble_x = min(
+            _require_number(region["x"], "bubble_region.x") for region in question_regions
+        )
+        choice_legend_left = prompt_left + _CHOICE_LEGEND_LEFT_OFFSET
+
+        for index, choice in enumerate(choices):
+            content_lines.extend(
+                _text_block(
+                    choice_legend_left,
+                    _pdf_text_y(
+                        height,
+                        prompt_y_top + _CHOICE_LEGEND_TOP_OFFSET + (index * _CHOICE_LEGEND_LINE_SPACING),
+                    ),
+                    _CHOICE_LEGEND_FONT_SIZE,
+                    f"{choice['bubble_label']}. {choice.get('text', '')}",
+                )
+            )
 
         for choice in choices:
             bubble_label = str(choice["bubble_label"])
@@ -190,7 +210,14 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
             region_y = _require_number(region["y"], "bubble_region.y")
             region_width = _require_number(region["width"], "bubble_region.width")
             region_height = _require_number(region["height"], "bubble_region.height")
-            content_lines.append(_circle_path(region_x, _pdf_rect_y(height, region_y, region_height), region_width, region_height))
+            content_lines.append(
+                _circle_path(
+                    region_x,
+                    _pdf_rect_y(height, region_y, region_height),
+                    region_width,
+                    region_height,
+                )
+            )
             center_x = region_x + (region_width / 2)
             content_lines.extend(
                 _text_block(
@@ -200,15 +227,8 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
                     bubble_label,
                 )
             )
-        for index, choice in enumerate(choices):
-            content_lines.extend(
-                _text_block(
-                    _CHOICE_LEGEND_LEFT,
-                    _pdf_text_y(height, prompt_y_top + (index * _CHOICE_LEGEND_LINE_SPACING)),
-                    _CHOICE_LEGEND_FONT_SIZE,
-                    f"{choice['bubble_label']}. {choice.get('text', '')}",
-                )
-            )
+        if choice_legend_left >= first_bubble_x:
+            raise ValueError("Choice legend must stay to the left of the bubble row")
 
     return {"width": width, "height": height, "stream": "\n".join(content_lines)}
 

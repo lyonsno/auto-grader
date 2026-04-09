@@ -150,7 +150,7 @@ class PdfRenderingContractTests(unittest.TestCase):
         pdf_bytes = render_mc_answer_sheet_pdf(artifact)
 
         prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
-        prompt_y = _pdf_number(page["height"] - (min(region["y"] for region in first_question_regions) - 18) - 10)
+        prompt_y = _pdf_number(page["height"] - (min(region["y"] for region in first_question_regions) - 28) - 10)
         prompt_command = (
             f"BT\n/F1 10 Tf\n{_pdf_number(prompt_x)} {prompt_y} Td\n"
             f"({_escape_pdf_text('1. ' + first_question['prompt'])}) Tj\nET"
@@ -201,7 +201,7 @@ class PdfRenderingContractTests(unittest.TestCase):
             center_x = region["x"] + (region["width"] / 2)
             label_command = (
                 f"BT\n/F1 8 Tf\n{_pdf_number(center_x - 2)} "
-                f"{_pdf_number(page['height'] - (region['y'] + region['height'] + 4) - 10)} Td\n"
+                f"{_pdf_number(page['height'] - (region['y'] + region['height'] + 6) - 10)} Td\n"
                 f"({_escape_pdf_text(region['bubble_label'])}) Tj\nET"
             ).encode("utf-8")
             self.assertIn(
@@ -211,7 +211,7 @@ class PdfRenderingContractTests(unittest.TestCase):
                 "is readable without forcing the option text onto the same line.",
             )
 
-    def test_renderer_stacks_choice_text_vertically_beside_bubble_row(self) -> None:
+    def test_renderer_stacks_choice_text_below_question_and_left_of_bubbles(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
         artifact = _build_artifact()
         page = artifact["pages"][0]
@@ -224,21 +224,27 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         pdf_bytes = render_mc_answer_sheet_pdf(artifact)
 
-        legend_x = 340
-        line_spacing = 11
+        prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
+        legend_x = prompt_x + 12
+        line_spacing = 12
         first_row_top = min(region["y"] for region in first_question_regions)
+        first_bubble_x = min(region["x"] for region in first_question_regions)
+        prompt_y = page["height"] - (first_row_top - 28) - 10
         for index, choice in enumerate(first_question["choices"]):
+            legend_y = page["height"] - (first_row_top + 2 + index * line_spacing) - 10
             legend_command = (
                 f"BT\n/F1 8 Tf\n{legend_x} "
-                f"{_pdf_number(page['height'] - (first_row_top + index * line_spacing) - 10)} Td\n"
+                f"{_pdf_number(legend_y)} Td\n"
                 f"({_escape_pdf_text(choice['bubble_label'] + '. ' + choice['text'])}) Tj\nET"
             ).encode("utf-8")
             self.assertIn(
                 legend_command,
                 pdf_bytes,
-                "Choice text should be stacked vertically beside the bubble row "
-                "instead of flowing together on one line.",
+                "Choice text should stack under the question prompt and sit to the "
+                "left of the bubble row instead of being shoved off to the side.",
             )
+            self.assertLess(legend_x, first_bubble_x)
+            self.assertLess(legend_y, prompt_y)
 
     def test_renderer_draws_registration_markers_at_artifact_coordinates(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
