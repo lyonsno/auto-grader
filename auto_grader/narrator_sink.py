@@ -173,18 +173,34 @@ class NarratorSink:
                 self._fallback.flush()
             self._live_buffer = ""
 
-    def write_topic(self, text: str, verdict: str | None = None) -> None:
+    def write_topic(
+        self,
+        text: str,
+        verdict: str | None = None,
+        *,
+        grader_score: float | None = None,
+        truth_score: float | None = None,
+        max_points: float | None = None,
+    ) -> None:
         """Write the per-item collapsed 'Thought for Xs · topic' line.
 
         verdict is one of "match", "overshoot", "undershoot", or None
         (when unknown). The reader uses it to color the topic line —
         cool sage for match, warm coral for overshoot, warm amber for
-        undershoot, dusty plum for unknown.
+        undershoot, dusty plum for unknown. Optional structured scoring
+        metadata lets the reader maintain a running scoreboard without
+        reverse-engineering numbers back out of the prose after-action line.
         """
         with self._lock:
             msg = {"type": "topic", "text": text}
             if verdict is not None:
                 msg["verdict"] = verdict
+            if grader_score is not None:
+                msg["grader_score"] = grader_score
+            if truth_score is not None:
+                msg["truth_score"] = truth_score
+            if max_points is not None:
+                msg["max_points"] = max_points
             self._emit(msg)
             if self._txt_file is not None:
                 self._txt_file.write(f"  -> {text}\n")

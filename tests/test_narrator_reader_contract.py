@@ -5,11 +5,14 @@ import time
 import unittest
 from unittest import mock
 
+from rich.align import Align
 from rich.console import Console, Group
 from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _SESSION_END_ANIMATION_LINGER_S,
+    _VISIBLE_HISTORY_ROWS,
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
     _LIVE_PER_CHAR_PHASE_OFFSET,
@@ -17,6 +20,7 @@ from scripts.narrator_reader import (
     _STATUS_PER_CHAR_PHASE_OFFSET,
     _STATUS_UNDULATION_CYCLE_S,
     _apply_shimmer,
+    _render_status_undulating,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
     _undulation_hue_deg,
@@ -73,6 +77,25 @@ class NarratorReaderContract(unittest.TestCase):
                 return span.style
         raise AssertionError("no hex content style found after cursor")
 
+    @staticmethod
+    def _style_for_substring(text: Text, needle: str) -> str:
+        start = text.plain.index(needle)
+        for span in text.spans:
+            if (
+                isinstance(span.style, str)
+                and span.start <= start < span.end
+            ):
+                return span.style
+        raise AssertionError(f"no style span found for substring {needle!r}")
+
+    @staticmethod
+    def _content_hexes(text: Text) -> list[str]:
+        return [
+            span.style
+            for span in text.spans
+            if isinstance(span.style, str) and span.style.startswith("#")
+        ]
+
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
         display = PaintDryDisplay()
         display.on_delta("I'm tracing the stoichiometry.")
@@ -128,6 +151,23 @@ class NarratorReaderContract(unittest.TestCase):
             panel_text.index("I'm tracing the stoichiometry."),
         )
 
+    def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
+        display = self._make_display()
+        display.frozen_line = "I'm tracing the previous item."
+
+        display.on_header("[item 2/6] 15-blue/fr-2")
+
+        group = display.render()
+        live_panel = next(
+            panel for panel in group.renderables
+            if getattr(panel, "title", None) == "[grey50]status + live[/grey50]"
+        )
+        panel_text = _extract_plain(live_panel.renderable)
+
+        self.assertEqual(display.frozen_line, "")
+        self.assertIn("AWAITING STATUS", panel_text)
+        self.assertNotIn("I'm tracing the previous item.", panel_text)
+
     def test_status_renders_in_all_caps_without_mutating_stored_text(self):
         display = self._make_display()
         display.status_line = "Rechecking the stoichiometry setup."
@@ -139,6 +179,68 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.status_line, "Rechecking the stoichiometry setup.")
         self.assertIn("RECHECKING THE STOICHIOMETRY SETUP.", panel_text)
         self.assertNotIn("Rechecking the stoichiometry setup.", panel_text)
+
+    def test_status_rail_uses_ember_body_with_cool_and_bone_glints(self):
+        status_text = Text(no_wrap=False, overflow="fold")
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            _render_status_undulating(
+                status_text,
+                "RECHECKING THE STUDENT'S CALCULATION.",
+                indent_width=2,
+                wrap_width=80,
+            )
+
+        content_hexes = self._content_hexes(status_text)
+        rgbs = [self._rgb_from_hex(style) for style in content_hexes]
+
+        self.assertTrue(
+            any(red > green > blue for red, green, blue in rgbs),
+            "status rail should keep an ember-led body rather than flattening into cool-only text",
+        )
+        self.assertTrue(
+            any(blue > green > red for red, green, blue in rgbs),
+            "status rail should pick up restrained deep-blue glints inside the warm wave",
+        )
+        self.assertTrue(
+            any(
+                max(red, green, blue) >= 160
+                and (max(red, green, blue) - min(red, green, blue)) <= 55
+                for red, green, blue in rgbs
+            ),
+            "status rail should also catch pale bone highlights rather than only warm/cool saturated colors",
+        )
+
+    def test_empty_live_lane_shows_rotating_placeholder_copy(self):
+        display = self._make_display()
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            first_panel = display.render().renderables[1]
+            first_text = _extract_plain(first_panel.renderable)
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=19.0):
+            later_panel = display.render().renderables[1]
+            later_text = _extract_plain(later_panel.renderable)
+
+        self.assertNotEqual(first_text, later_text)
+        self.assertTrue(
+            any(
+                phrase in first_text
+                for phrase in (
+                    "thinking",
+                    "review",
+                    "grading",
+                    "replay",
+                    "chain-of-thought",
+                )
+            ),
+            "empty live lane should use mildly witty waiting copy instead of a dead cursor",
+        )
+
+    def test_history_visual_row_budget_is_reduced_for_scorebug_strip(self):
+        self.assertEqual(
+            _VISIBLE_HISTORY_ROWS,
+            30,
+            "history budget should return to the original length while staying wrap-aware",
+        )
 
     def test_group_depth_resets_at_each_header(self):
         display = self._make_display()
@@ -197,6 +299,26 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_wrapped_history_lines_consume_visual_row_budget(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "brief topic", "match"))
+        display.history.append(("line", "x" * 620, 0))
+        display.history.append(("line", "newest short line", 1))
+
+        entries = display._build_display_entries(wrap_width=20)
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("topic", "brief topic"),
+                ("line", "newest short line"),
+            ],
+            "a heavily wrapped older line should consume the visual-row budget and drop before pushing out newer visible context",
+        )
+
     def test_top_panel_uses_warm_status_gutter_with_umber_status_and_cool_live_text(self):
         display = self._make_display()
         display.status_line = "Tracing the stoichiometry setup."
@@ -208,9 +330,10 @@ class NarratorReaderContract(unittest.TestCase):
         status_text, live_text = live_panel.renderable.renderables
 
         status_gutter = status_text.spans[0].style
-        status_red, status_green, status_blue = self._rgb_from_hex(
-            self._first_content_hex(status_text)
-        )
+        status_rgbs = [
+            self._rgb_from_hex(style)
+            for style in self._content_hexes(status_text)
+        ]
         live_red, live_green, live_blue = self._rgb_from_hex(
             self._first_content_hex(live_text)
         )
@@ -226,15 +349,13 @@ class NarratorReaderContract(unittest.TestCase):
             gutter_blue,
             "status gutter should read as ember/umber rather than magenta or blue",
         )
-        self.assertGreater(
-            status_green,
-            status_blue,
-            "sticky status text should stay umber-forward, not bright red or burgundy-purple",
+        self.assertTrue(
+            any(red > green > blue for red, green, blue in status_rgbs),
+            "sticky status text should still contain an ember-led body, not only cool glints",
         )
-        self.assertLess(
-            status_red - status_green,
-            95,
-            "sticky status text should shed some of the bright-red spike and keep more umber heft",
+        self.assertTrue(
+            any(blue > green > red for red, green, blue in status_rgbs),
+            "sticky status text should be allowed to pick up restrained cool glints inside the warmer rail",
         )
         self.assertGreater(
             live_blue,
@@ -245,6 +366,11 @@ class NarratorReaderContract(unittest.TestCase):
             live_green,
             live_red,
             "live first-person line should pick up some moss/green body instead of fiery red",
+        )
+        self.assertGreater(
+            live_blue,
+            live_green,
+            "live first-person line should lean more steel-blue than moss-green",
         )
 
     def test_render_inserts_scorebug_strip_between_header_and_status_when_model_known(self):
@@ -257,11 +383,88 @@ class NarratorReaderContract(unittest.TestCase):
         scorebug_panel = group.renderables[1]
         live_panel = group.renderables[2]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        scorebug_text_obj = scorebug_renderable.renderables[0]
 
         self.assertIn("CURRENT MODEL", scorebug_text)
         self.assertIn("qwen3p5-35B-A3B", scorebug_text)
-        self.assertIn("ITEM 3/6", scorebug_text)
+        self.assertIn("ITEM", scorebug_text)
+        self.assertIn("3/6", scorebug_text)
         self.assertIn("status + live", live_panel.title)
+        self.assertIn(
+            "on #",
+            self._style_for_substring(scorebug_text_obj, "CURRENT MODEL"),
+            "scorebug labels should now read like scoreboard capsules, not plain metadata text",
+        )
+        self.assertIn(
+            "on #",
+            self._style_for_substring(scorebug_text_obj, "ITEM"),
+            "item indicator should live in its own scorebug cell",
+        )
+
+    def test_scorebug_can_render_set_and_running_tally_cells(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="gemma-4-26b-a4b-it-bf16",
+            set_label="TRICKY",
+            subset_count=6,
+        )
+        display.on_header("[item 4/6] 15-blue/fr-10a")
+        display.on_topic(
+            "35s · Grader: 2/2. Prof: 2/2.",
+            verdict="match",
+            grader_score=2.0,
+            truth_score=2.0,
+            max_points=2.0,
+        )
+        display.on_topic(
+            "53s · Grader: 0/4. Prof: 1/4.",
+            verdict="undershoot",
+            grader_score=0.0,
+            truth_score=1.0,
+            max_points=4.0,
+        )
+        display.on_topic(
+            "82s · Grader: 3/3. Prof: 1.5/3.",
+            verdict="overshoot",
+            grader_score=3.0,
+            truth_score=1.5,
+            max_points=3.0,
+        )
+
+        group = display.render()
+
+        scorebug_panel = group.renderables[1]
+        scorebug_text = _extract_plain(scorebug_panel.renderable)
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        scorebug_text_obj = scorebug_renderable.renderables[0]
+        tally_text_obj = scorebug_renderable.renderables[1]
+
+        self.assertIn("CURRENT MODEL", scorebug_text)
+        self.assertIn("SET", scorebug_text)
+        self.assertIn("TRICKY", scorebug_text)
+        self.assertIn("ITEM", scorebug_text)
+        self.assertIn("4/6", scorebug_text)
+        self.assertIn("ON TARGET", scorebug_text)
+        self.assertIn("2.0/9.0", scorebug_text)
+        self.assertIn("LEFT ON TABLE", scorebug_text)
+        self.assertIn("1.0/1.0", scorebug_text)
+        self.assertIn("BAD CALLS", scorebug_text)
+        self.assertIn("1.5/1.5", scorebug_text)
+        self.assertIn(
+            "on #",
+            self._style_for_substring(scorebug_text_obj, "SET"),
+            "set label should also read like a scoreboard cell",
+        )
+        self.assertIn(
+            "on #",
+            self._style_for_substring(tally_text_obj, "ON TARGET"),
+            "running tally labels should render as scorebug cells, not plain text",
+        )
 
     def test_live_undulation_drifts_leftward(self):
         dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
@@ -375,13 +578,15 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_local_group_dim_factor_descends_materially_per_line(self):
         self.assertEqual(_history_tier_dim_factor(0), 1.0)
-        self.assertLess(_history_tier_dim_factor(1), 0.93)
+        self.assertLess(_history_tier_dim_factor(1), 0.96)
         self.assertLess(_history_tier_dim_factor(2), _history_tier_dim_factor(1))
         self.assertLess(_history_tier_dim_factor(3), _history_tier_dim_factor(2))
         self.assertLess(_history_tier_dim_factor(4), _history_tier_dim_factor(3))
         self.assertLess(_history_tier_dim_factor(5), _history_tier_dim_factor(4))
         self.assertLess(_history_tier_dim_factor(6), _history_tier_dim_factor(5))
-        self.assertEqual(_history_tier_dim_factor(6), _history_tier_dim_factor(7))
+        self.assertLess(_history_tier_dim_factor(7), _history_tier_dim_factor(6))
+        self.assertLess(_history_tier_dim_factor(8), _history_tier_dim_factor(7))
+        self.assertEqual(_history_tier_dim_factor(9), _history_tier_dim_factor(10))
 
     def test_only_reasoning_lines_use_group_depth_for_fade(self):
         self.assertEqual(_render_layer_index("line", 2), 2)
@@ -465,8 +670,14 @@ class NarratorReaderContract(unittest.TestCase):
         display.on_delta("fresh line")
         display.on_commit()
         display.session_ended = True
+        display._session_ended_at = 100.0
 
-        self.assertFalse(display.should_animate(now=time.monotonic()))
+        self.assertTrue(display.should_animate(now=100.0 + 60.0))
+        self.assertFalse(
+            display.should_animate(
+                now=100.0 + _SESSION_END_ANIMATION_LINGER_S + 0.1
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -64,6 +64,21 @@ class GradingPromptContract(unittest.TestCase):
             "prompt should explicitly say to rescue rubric-grounded partial credit",
         )
 
+    def test_system_prompt_prefers_lawful_full_credit_and_equivalent_units(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "If the student's work supports a lawful full-credit interpretation, take it and stop.",
+            prompt,
+            "prompt should prefer a supportable full-credit reading over continued nitpicking",
+        )
+        self.assertIn(
+            "Equivalent volume units such as mL and cm³ count as the same quantity unless the question explicitly tests a specific form.",
+            prompt,
+            "prompt should treat mL and cm³ as equivalent when the form itself is not being tested",
+        )
+
     def test_system_prompt_defaults_dependency_to_none_unless_clear(self):
         from auto_grader import vlm_inference
 
@@ -97,6 +112,41 @@ class GradingPromptContract(unittest.TestCase):
             "If the student plainly did not provide the requested answer form, stop once that is established and score only what is actually on the page.",
             prompt,
             "easy wrong-form items should not invite long re-litigation after the missing form is already clear",
+        )
+
+    def test_system_prompt_uses_bounded_effort_handoff_for_hard_ambiguity(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "If ambiguity still materially affects the score after one careful pass, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.",
+            prompt,
+            "hard ambiguous items should hand off cleanly once bounded effort is exhausted",
+        )
+
+    def test_system_prompt_declares_obvious_correctness_buckets(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Use is_obviously_fully_correct = true only when the answer is clearly correct and needs no human rescue.",
+            prompt,
+            "prompt should expose a high-trust obvious-full-credit bucket",
+        )
+        self.assertIn(
+            "Use is_obviously_wrong = true only when the answer is clearly wrong and no lawful rescue path remains.",
+            prompt,
+            "prompt should expose a high-trust obvious-wrong bucket",
+        )
+        self.assertIn(
+            '"is_obviously_fully_correct": <true | false | null>',
+            prompt,
+            "the JSON schema should persist the obvious-full-credit bucket",
+        )
+        self.assertIn(
+            '"is_obviously_wrong": <true | false | null>',
+            prompt,
+            "the JSON schema should persist the obvious-wrong bucket",
         )
 
 

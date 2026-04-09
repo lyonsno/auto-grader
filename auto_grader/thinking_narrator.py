@@ -906,9 +906,13 @@ class ThinkingNarrator:
                     max_points=item.max_points,
                 )
                 logger.info("After-action: %s", text)
+                truth_score = getattr(item, "truth_score", item.professor_score)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · {text}",
                     verdict=verdict_short,
+                    grader_score=prediction.model_score,
+                    truth_score=truth_score,
+                    max_points=item.max_points,
                 )
             else:
                 # Fallback: bonsai returned empty or raised. Always
@@ -922,9 +926,13 @@ class ThinkingNarrator:
                     "After-action empty for %s/%s — emitting bare timing fallback",
                     item.exam_id, item.question_id,
                 )
+                truth_score = getattr(item, "truth_score", item.professor_score)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · (after-action unavailable)",
                     verdict=verdict_short,
+                    grader_score=prediction.model_score,
+                    truth_score=truth_score,
+                    max_points=item.max_points,
                 )
         except Exception:
             logger.exception("Failed to produce after-action summary")

@@ -96,6 +96,8 @@ class Prediction:
     model_read: str  # what model thinks student wrote
     raw_assistant: str = ""  # full assistant content string before JSON parse
     raw_reasoning: str = ""  # full reasoning_content stream (verbatim <think>)
+    is_obviously_fully_correct: bool | None = None
+    is_obviously_wrong: bool | None = None
     # Upstream-dependency forcing fields. The grader is required to fill
     # these in BEFORE committing to a score; their presence in the schema
     # is the structural lever for the consistency-rule failure mode that
@@ -129,6 +131,10 @@ class EvalReport:
     unclear_excluded: int = 0
     total_points_possible: float = 0.0
     total_points_professor: float = 0.0
+    obvious_full_credit_calls: int = 0
+    obvious_full_credit_precision: float | None = None
+    obvious_wrong_calls: int = 0
+    obvious_wrong_precision: float | None = None
     calibration_bins: list[CalibrationBin] = field(default_factory=list)
 
 
@@ -296,6 +302,10 @@ def score_predictions(
     false_negatives = 0
     total_points_possible = 0.0
     total_points_professor = 0.0
+    obvious_full_credit_calls = 0
+    obvious_full_credit_correct = 0
+    obvious_wrong_calls = 0
+    obvious_wrong_correct = 0
 
     # Per-answer-type tracking
     type_exact: dict[str, list[bool]] = {}
@@ -330,6 +340,16 @@ def score_predictions(
         total_points_possible += item.max_points
         total_points_professor += truth
 
+        if pred.is_obviously_fully_correct is True:
+            obvious_full_credit_calls += 1
+            if truth == item.max_points:
+                obvious_full_credit_correct += 1
+
+        if pred.is_obviously_wrong is True:
+            obvious_wrong_calls += 1
+            if truth == 0:
+                obvious_wrong_correct += 1
+
         # Per-type tracking
         atype = item.answer_type
         type_exact.setdefault(atype, []).append(exact)
@@ -351,6 +371,17 @@ def score_predictions(
         for atype, matches in type_tolerance.items()
     }
 
+    obvious_full_credit_precision = (
+        obvious_full_credit_correct / obvious_full_credit_calls
+        if obvious_full_credit_calls
+        else None
+    )
+    obvious_wrong_precision = (
+        obvious_wrong_correct / obvious_wrong_calls
+        if obvious_wrong_calls
+        else None
+    )
+
     calibration_bins = _compute_calibration_bins(calibration_data)
 
     return EvalReport(
@@ -364,6 +395,10 @@ def score_predictions(
         unclear_excluded=unclear_count,
         total_points_possible=total_points_possible,
         total_points_professor=total_points_professor,
+        obvious_full_credit_calls=obvious_full_credit_calls,
+        obvious_full_credit_precision=obvious_full_credit_precision,
+        obvious_wrong_calls=obvious_wrong_calls,
+        obvious_wrong_precision=obvious_wrong_precision,
         calibration_bins=calibration_bins,
     )
 

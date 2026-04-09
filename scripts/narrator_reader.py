@@ -29,6 +29,7 @@ import json
 import math
 import os
 import re
+import select
 import sys
 import threading
 import time
@@ -67,7 +68,10 @@ _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
 
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
-_VISIBLE_HISTORY_LINES = 30  # how many to actually render
+_VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
+                            # not logical entries. Keep the old overall
+                            # depth, but count it coherently now that the
+                            # scorebug and long wrapped lines exist.
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
@@ -95,10 +99,11 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # the way down the stack instead of just
                                 # on the most recent few items
 _HISTORY_TIER_DIM_MIN = 0.58    # floor for within-item fade.
-_HISTORY_GROUP_DIM_STEP = 0.08  # each successive thought line under a header
+_HISTORY_GROUP_DIM_STEP = 0.05  # each successive thought line under a header
                                  # should visibly dim, but the fade should
-                                 # stair-step across ~5 lines before it
-                                 # settles at the floor.
+                                 # take longer to settle so deeper within-item
+                                 # stacks still read as a gradient instead of
+                                 # flattening by line 6.
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
 # Sumi-e palette: a Japanese garden floor in two desaturated rows
@@ -244,11 +249,10 @@ _TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 # palette without losing fire feel.
 _LIVE_UNDULATION_CYCLE_S = 3.8    # lively enough to read as motion, but
                                    # still slower than token streaming
-_LIVE_HUE_CENTER_DEG = 176         # cool blue-moss center — split the
-                                   # difference between the structural blue
-                                   # family and the mossy narrator rows
-_LIVE_HUE_RANGE_DEG = 28           # lets the band travel from moss-green
-                                    # through blue-steel into indigo wash
+_LIVE_HUE_CENTER_DEG = 204         # pushed a little deeper into indigo-blue
+                                   # so the live band stays clearly cool
+_LIVE_HUE_RANGE_DEG = 18           # tighter swing keeps a hint of green
+                                    # without letting the band settle there
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
 _LIVE_PHASE_OFFSET_RAD = 0.0
 _LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
@@ -282,8 +286,18 @@ _STATUS_PHASE_OFFSET_RAD = 0.85     # keep status related to live, but out of
                                     # lockstep so they do not breathe as one
 _STATUS_UNDULATION_DIRECTION = 1.0
 _STATUS_BASE_SAT = 0.66
-_STATUS_BASE_VAL = 0.62
+_STATUS_BASE_VAL = 0.58
 _STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
+_STATUS_COOL_GLINT_RGB = (70, 108, 184)   # restrained deep-indigo glint
+                                           # inside the ember rail
+_STATUS_BONE_GLINT_RGB = (224, 210, 190)   # pale bone lift so the rail
+                                           # can briefly catch ash-light
+_STATUS_COOL_GLINT_CYCLE_S = 7.8
+_STATUS_BONE_GLINT_CYCLE_S = 9.6
+_STATUS_COOL_GLINT_STRENGTH = 0.86
+_STATUS_BONE_GLINT_STRENGTH = 0.44
+_STATUS_COOL_GLINT_PHASE_OFFSET_RAD = 1.55
+_STATUS_BONE_GLINT_PHASE_OFFSET_RAD = 1.10
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
 # next dispatch starts. The settled state has slightly muted sat/val
@@ -301,6 +315,18 @@ _ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
                               # back to keep the overall feel restrained
 _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
                               # messages quickly, but doesn't need redraw spam
+_SESSION_END_ANIMATION_LINGER_S = 120.0  # keep the finished painting alive
+                                         # and animated for a while before
+                                         # letting it settle
+_LIVE_PLACEHOLDER_ROTATE_S = 6.0
+_LIVE_PLACEHOLDER_OPTIONS = (
+    "thinking through the tape...",
+    "review booth is checking the work...",
+    "grading engine warming up...",
+    "calling for the next replay...",
+    "waiting on the next chain-of-thought...",
+    "running the numbers upstairs...",
+)
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
@@ -327,6 +353,30 @@ def _interp_rgb(
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+def _blend_rgb(
+    base: tuple[int, int, int],
+    target: tuple[int, int, int],
+    weight: float,
+) -> tuple[int, int, int]:
+    """Blend base toward target by weight in [0, 1]."""
+    weight = max(0.0, min(1.0, weight))
+    return tuple(
+        max(
+            0,
+            min(
+                255,
+                int(round(channel + (target_channel - channel) * weight)),
+            ),
+        )
+        for channel, target_channel in zip(base, target, strict=True)
+    )
+
+
+def _live_placeholder(now_s: float) -> str:
+    idx = int(now_s // _LIVE_PLACEHOLDER_ROTATE_S) % len(_LIVE_PLACEHOLDER_OPTIONS)
+    return _LIVE_PLACEHOLDER_OPTIONS[idx]
 
 
 def _scale_rgb(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
@@ -702,27 +752,92 @@ def _render_status_undulating(
     indent_width: int,
     wrap_width: int | None,
 ) -> Text:
-    """Render the sticky status line as a darker ember wave."""
-    return _render_warm_undulating(
-        text_obj,
-        content,
-        indent_width,
-        wrap_width,
-        cycle_s=_STATUS_UNDULATION_CYCLE_S,
-        center_deg=_STATUS_HUE_CENTER_DEG,
-        range_deg=_STATUS_HUE_RANGE_DEG,
-        per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
-        phase_offset_rad=_STATUS_PHASE_OFFSET_RAD,
-        direction=_STATUS_UNDULATION_DIRECTION,
-        base_sat=_STATUS_BASE_SAT,
-        base_val=_STATUS_BASE_VAL,
-        luminance_correction_strength=_STATUS_LUMINANCE_CORRECTION_STRENGTH,
-        shimmer_cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
-        shimmer_width=_SHIMMER_WIDTH,
-        shimmer_v_boost=0.05,
-        shimmer_s_drop=0.24,
-        bold_active_head=False,
-    )
+    """Render the sticky status rail as ember heat with cooler ash glints."""
+    if not content:
+        return text_obj
+
+    now = time.monotonic()
+    shimmer_phase = (now % _SHIMMER_DEFAULT_CYCLE_S) / _SHIMMER_DEFAULT_CYCLE_S
+    if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
+        shimmer_head = (
+            shimmer_phase * (wrap_width + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        )
+    else:
+        shimmer_head = (
+            shimmer_phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        )
+
+    ref_r, ref_g, ref_b = _hsv_to_rgb(_STATUS_HUE_CENTER_DEG, _STATUS_BASE_SAT, 1.0)
+    ref_luminance = 0.2126 * ref_r + 0.7152 * ref_g + 0.0722 * ref_b
+
+    for i, ch in enumerate(content):
+        h = _undulation_hue_deg(
+            now,
+            i,
+            cycle_s=_STATUS_UNDULATION_CYCLE_S,
+            center_deg=_STATUS_HUE_CENTER_DEG,
+            range_deg=_STATUS_HUE_RANGE_DEG,
+            per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=_STATUS_PHASE_OFFSET_RAD,
+            direction=_STATUS_UNDULATION_DIRECTION,
+        )
+        s = _STATUS_BASE_SAT
+        v = _STATUS_BASE_VAL
+
+        test_r, test_g, test_b = _hsv_to_rgb(h, s, 1.0)
+        test_luminance = 0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
+        if test_luminance > 1:
+            raw_correction = ref_luminance / test_luminance
+            correction = 1.0 + (
+                raw_correction - 1.0
+            ) * _STATUS_LUMINANCE_CORRECTION_STRENGTH
+            v = max(0.0, min(1.0, v * correction))
+
+        if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
+            visual_col = (indent_width + i) % wrap_width
+            distance = shimmer_head - visual_col
+        else:
+            distance = shimmer_head - i
+
+        if 0 <= distance < _SHIMMER_WIDTH:
+            shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+            v = min(1.0, v + 0.09 * shimmer_intensity)
+            s = max(0.0, s - 0.18 * shimmer_intensity)
+
+        rgb = _hsv_to_rgb(h, s, v)
+        cool_glint = max(
+            0.0,
+            math.sin(
+                -now * (2 * math.pi / _STATUS_COOL_GLINT_CYCLE_S)
+                + _STATUS_COOL_GLINT_PHASE_OFFSET_RAD
+                + i * (_STATUS_PER_CHAR_PHASE_OFFSET * 0.72)
+            ),
+        )
+        bone_glint = max(
+            0.0,
+            math.sin(
+                now * (2 * math.pi / _STATUS_BONE_GLINT_CYCLE_S)
+                + _STATUS_BONE_GLINT_PHASE_OFFSET_RAD
+                + i * (_STATUS_PER_CHAR_PHASE_OFFSET * 0.46)
+            ),
+        )
+        cool_weight = (cool_glint ** 1.35) * _STATUS_COOL_GLINT_STRENGTH
+        bone_weight = (bone_glint ** 2.6) * _STATUS_BONE_GLINT_STRENGTH
+
+        if 0 <= distance < _SHIMMER_WIDTH:
+            shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+            cool_weight *= 1.0 - (0.35 * shimmer_intensity)
+            bone_weight += 0.10 * shimmer_intensity
+
+        rgb = _blend_rgb(rgb, _STATUS_COOL_GLINT_RGB, cool_weight)
+        rgb = _blend_rgb(
+            rgb,
+            _STATUS_BONE_GLINT_RGB,
+            bone_weight * (1.0 - 0.45 * cool_weight),
+        )
+        text_obj.append(ch, style=_rgb_to_hex(rgb))
+
+    return text_obj
 
 
 def _append_shimmer_char(
@@ -759,7 +874,15 @@ class PaintDryDisplay:
         self.title = "PROJECT PAINT DRY · sumi-e"
         self.subtitle = "bonsai narrator · live"
         self.current_model: str = ""
+        self.current_set_label: str = ""
+        self.current_subset_count: int | None = None
         self.current_item_bug: str = ""
+        self.score_on_target_points = 0.0
+        self.score_points_possible = 0.0
+        self.score_left_on_table_points = 0.0
+        self.score_left_on_table_potential = 0.0
+        self.score_bad_call_points = 0.0
+        self.score_bad_call_potential = 0.0
 
         # Sticky live: the thought lane has a streaming buffer plus a
         # frozen committed line. The status rail has its own separate
@@ -797,7 +920,7 @@ class PaintDryDisplay:
         # per render() call. The most-recently-committed entry uses
         # the legacy fast cycle and bypasses this state.
         self._shimmer_phases = ShimmerPhaseState(
-            num_layers=_VISIBLE_HISTORY_LINES,
+            num_layers=_VISIBLE_HISTORY_ROWS,
             base_cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
             layer_offset=_SHIMMER_LAYER_OFFSET,
         )
@@ -819,11 +942,30 @@ class PaintDryDisplay:
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
+        self._session_ended_at: float | None = None
         self._session_started_at: float | None = None
         self._turn_started_at: float | None = None
 
     def __rich__(self) -> Group:
         return self.render()
+
+    @staticmethod
+    def _format_scorebug_points(value: float) -> str:
+        return f"{value:.1f}"
+
+    @staticmethod
+    def _append_scorebug_cell(
+        row: Text,
+        label: str,
+        value: str,
+        *,
+        label_style: str,
+        value_style: str,
+    ) -> None:
+        if row.plain:
+            row.append("  ", style="dim")
+        row.append(f" {label} ", style=label_style)
+        row.append(f" {value} ", style=value_style)
 
     def should_animate(self, now: float | None = None) -> bool:
         """Return whether the UI should keep driving the shimmer loop.
@@ -835,10 +977,35 @@ class PaintDryDisplay:
         ended and the final frame is meant to stay still while waiting
         for Enter.
         """
-        _ = now
-        return not self.session_ended
+        if not self.session_ended:
+            return True
+        if self._session_ended_at is None:
+            return False
+        now = time.monotonic() if now is None else now
+        return now < (self._session_ended_at + _SESSION_END_ANIMATION_LINGER_S)
 
-    def _build_display_entries(self) -> list[tuple[tuple, bool, int]]:
+    @staticmethod
+    def _entry_visual_rows(entry: tuple, wrap_width: int | None) -> int:
+        """Estimate how many visual rows an entry will consume when wrapped."""
+        if wrap_width is None or wrap_width <= 0:
+            return 1
+
+        kind = entry[0]
+        text = entry[1]
+        if kind == "header":
+            prefix_width = len("─ ")
+        elif kind == "topic":
+            prefix_width = len("  · ")
+        else:
+            prefix_width = len("    ")
+
+        visual_cols = max(1, prefix_width + len(text))
+        return max(1, math.ceil(visual_cols / wrap_width))
+
+    def _build_display_entries(
+        self,
+        wrap_width: int | None = None,
+    ) -> list[tuple[tuple, bool, int]]:
         """Group history into items, reverse so newest item is first,
         and within each group keep entries in chronological order so
         the header sits ABOVE its narrator lines and topic.
@@ -900,8 +1067,9 @@ class PaintDryDisplay:
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget
         #   2. Narrator lines — keep newest-first to fill what's left
-        budget = _VISIBLE_HISTORY_LINES
+        budget = _VISIBLE_HISTORY_ROWS
         keep_positions: set[int] = set()
+        used_rows = 0
 
         # Pass 1: essentials in display order (newest items first since
         # we already reversed groups). If we'd overflow, oldest items'
@@ -909,9 +1077,13 @@ class PaintDryDisplay:
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
             if entry[0] in ("header", "topic"):
-                if len(keep_positions) >= budget:
+                row_cost = self._entry_visual_rows(entry, wrap_width)
+                if used_rows >= budget:
+                    break
+                if used_rows > 0 and used_rows + row_cost > budget:
                     break
                 keep_positions.add(pos)
+                used_rows += row_cost
 
         # Pass 2: narrator lines, sorted by RECENCY (highest deque idx
         # first), to fill the remaining budget. This drops oldest
@@ -925,9 +1097,13 @@ class PaintDryDisplay:
         optionals.sort(key=lambda t: -t[2])  # newest first
 
         for pos, _entry, _idx in optionals:
-            if len(keep_positions) >= budget:
+            row_cost = self._entry_visual_rows(_entry, wrap_width)
+            if used_rows >= budget:
                 break
+            if used_rows > 0 and used_rows + row_cost > budget:
+                continue
             keep_positions.add(pos)
+            used_rows += row_cost
 
         # Build the final list in original (top-to-bottom) display order
         display: list[tuple[tuple, bool, int]] = []
@@ -1034,17 +1210,70 @@ class PaintDryDisplay:
         )
 
         scorebug_panel = None
-        if self.current_model or self.current_item_bug:
-            scorebug_text = Text()
-            scorebug_text.append("CURRENT MODEL ", style="bold #7f95cf")
-            model_display = self.current_model or "—"
-            scorebug_text.append(model_display, style="bold #b9c9ef")
+        if self.current_model or self.current_item_bug or self.current_set_label:
+            scorebug_top = Text()
+            self._append_scorebug_cell(
+                scorebug_top,
+                "CURRENT MODEL",
+                self.current_model or "—",
+                label_style="bold #eaf2ff on #405a93",
+                value_style="bold #d8e5ff on #27344f",
+            )
+            if self.current_set_label:
+                set_value = self.current_set_label
+                self._append_scorebug_cell(
+                    scorebug_top,
+                    "SET",
+                    set_value,
+                    label_style="bold #eef6ff on #32506e",
+                    value_style="bold #d7e8ff on #1d3147",
+                )
             if self.current_item_bug:
-                scorebug_text.append("   ", style="dim")
-                scorebug_text.append("ITEM ", style="bold #7f95cf")
-                scorebug_text.append(self.current_item_bug, style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}")
+                self._append_scorebug_cell(
+                    scorebug_top,
+                    "ITEM",
+                    self.current_item_bug,
+                    label_style="bold #fff1e6 on #7d4a2e",
+                    value_style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
+
+            scorebug_rows: list[Text] = [scorebug_top]
+            if self.score_points_possible > 0:
+                scorebug_bottom = Text()
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "ON TARGET",
+                    (
+                        f"{self._format_scorebug_points(self.score_on_target_points)}"
+                        f"/{self._format_scorebug_points(self.score_points_possible)}"
+                    ),
+                    label_style="bold #eef3ff on #32578e",
+                    value_style="bold #dce9ff on #1c2d47",
+                )
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "LEFT ON TABLE",
+                    (
+                        f"{self._format_scorebug_points(self.score_left_on_table_points)}"
+                        f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
+                    ),
+                    label_style="bold #fff3db on #8a6635",
+                    value_style="bold #fff1d9 on #4a3720",
+                )
+                self._append_scorebug_cell(
+                    scorebug_bottom,
+                    "BAD CALLS",
+                    (
+                        f"{self._format_scorebug_points(self.score_bad_call_points)}"
+                        f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
+                    ),
+                    label_style="bold #ffe9e2 on #8d4637",
+                    value_style="bold #ffe7de on #4f251f",
+                )
+                scorebug_rows.append(scorebug_bottom)
+
             scorebug_panel = Panel(
-                Align.left(scorebug_text),
+                Align.left(Group(*scorebug_rows)),
                 border_style="#3d4458",
                 padding=(0, 1),
             )
@@ -1095,7 +1324,17 @@ class PaintDryDisplay:
                 freeze_age_s=freeze_age_s,
             )
         else:
-            live_text = Text("▌ ", style="grey39", overflow="fold")
+            live_text = Text(no_wrap=False, overflow="fold")
+            live_text.append("▌ ", style="grey39")
+            _render_live_undulating(
+                live_text,
+                _live_placeholder(now),
+                indent_width=2,
+                wrap_width=wrap_width,
+                is_active=False,
+                char_offset=0,
+                freeze_age_s=None,
+            )
 
         status_text = Text(no_wrap=False, overflow="fold")
         displayed_status = self.status_streaming_line or self.status_line
@@ -1114,7 +1353,8 @@ class PaintDryDisplay:
                 wrap_width=wrap_width,
             )
         else:
-            status_text.append("", style="grey39")
+            status_text.append("▌ ", style="grey39")
+            status_text.append("AWAITING STATUS", style="grey50")
 
         live_panel = Panel(
             Group(status_text, live_text),
@@ -1142,7 +1382,7 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._build_display_entries()
+        display_entries = self._build_display_entries(wrap_width=wrap_width)
         history_text = Text(no_wrap=False, overflow="fold")
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
@@ -1300,7 +1540,7 @@ class PaintDryDisplay:
         drops_panel = None
         if self.drops:
             drops_text = Text(no_wrap=False, overflow="fold")
-            visible_drops = list(self.drops)[-_VISIBLE_HISTORY_LINES:]
+            visible_drops = list(self.drops)[-_VISIBLE_HISTORY_ROWS:]
             for i, (reason, label) in enumerate(visible_drops):
                 if i > 0:
                     drops_text.append("\n")
@@ -1381,14 +1621,27 @@ class PaintDryDisplay:
         self._turn_started_at = header_now
         self.status_line = ""
         self.status_streaming_line = ""
+        self.streaming_line = ""
+        self.frozen_line = ""
+        self._freeze_started_at = None
         m = _HEADER_INDEX_RE.match(text)
         if m:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
         self.history.append(("header", text, None))
 
-    def on_session_meta(self, *, model: str | None = None) -> None:
+    def on_session_meta(
+        self,
+        *,
+        model: str | None = None,
+        set_label: str | None = None,
+        subset_count: int | None = None,
+    ) -> None:
         if model:
             self.current_model = model
+        if set_label:
+            self.current_set_label = set_label
+        if subset_count is not None:
+            self.current_subset_count = subset_count
 
     def on_delta(self, text: str, mode: str = "thought") -> None:
         if mode == "status":
@@ -1446,13 +1699,38 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
-    def on_topic(self, text: str, verdict: str | None = None) -> None:
+    def on_topic(
+        self,
+        text: str,
+        verdict: str | None = None,
+        *,
+        grader_score: float | None = None,
+        truth_score: float | None = None,
+        max_points: float | None = None,
+    ) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
         # buffers — frozen_line keeps showing the last bonsai line.
         # The verdict ("match" / "overshoot" / "undershoot" / None)
         # is stored in the third tuple slot so the renderer can pick
         # the right color variant for the topic line.
         self.history.append(("topic", text, verdict))
+        if (
+            grader_score is None
+            or truth_score is None
+            or max_points is None
+        ):
+            return
+        self.score_points_possible += max_points
+        if abs(grader_score - truth_score) < 1e-9:
+            self.score_on_target_points += truth_score
+            return
+        if grader_score < truth_score:
+            self.score_left_on_table_points += truth_score - grader_score
+            self.score_left_on_table_potential += truth_score
+            return
+        if grader_score > truth_score:
+            self.score_bad_call_points += grader_score - truth_score
+            self.score_bad_call_potential += max(0.0, max_points - truth_score)
 
 
 def main() -> int:
@@ -1498,6 +1776,29 @@ def main() -> int:
             screen=False,
             auto_refresh=False,
         ) as live:
+            def _wait_for_manual_close() -> int:
+                while True:
+                    if not display.should_animate():
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            pass
+                    try:
+                        ready, _, _ = select.select([sys.stdin], [], [], _IDLE_POLL_S)
+                    except Exception:
+                        time.sleep(_IDLE_POLL_S)
+                        continue
+                    if not ready:
+                        continue
+                    try:
+                        line = sys.stdin.readline()
+                    except Exception:
+                        line = ""
+                    if line:
+                        animation_stop.set()
+                        anim_thread.join(timeout=0.5)
+                        return 0
+
             def _animation_tick():
                 while not animation_stop.is_set():
                     if display.should_animate():
@@ -1539,7 +1840,11 @@ def main() -> int:
                     if msg_type == "header":
                         display.on_header(msg.get("text", ""))
                     elif msg_type == "session_meta":
-                        display.on_session_meta(model=msg.get("model"))
+                        display.on_session_meta(
+                            model=msg.get("model"),
+                            set_label=msg.get("set_label"),
+                            subset_count=msg.get("subset_count"),
+                        )
                     elif msg_type == "delta":
                         display.on_delta(
                             msg.get("text", ""),
@@ -1553,6 +1858,9 @@ def main() -> int:
                         display.on_topic(
                             msg.get("text", ""),
                             verdict=msg.get("verdict"),
+                            grader_score=msg.get("grader_score"),
+                            truth_score=msg.get("truth_score"),
+                            max_points=msg.get("max_points"),
                         )
                     elif msg_type == "drop":
                         display.on_drop(
@@ -1564,19 +1872,10 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
-                        # Final frame is static. Keeping the old
-                        # 30fps repaint loop alive while waiting for
-                        # Enter was enough to pin WezTerm at high CPU
-                        # long after the run had effectively ended.
                         display.session_ended = True
-                        animation_stop.set()
-                        anim_thread.join(timeout=0.5)
+                        display._session_ended_at = time.monotonic()
                         live.update(display.render(), refresh=True)
-                        try:
-                            sys.stdin.readline()
-                        except Exception:
-                            pass
-                        return 0
+                        return _wait_for_manual_close()
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:

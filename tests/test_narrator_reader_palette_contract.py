@@ -137,6 +137,20 @@ class NarratorReaderPaletteContract(unittest.TestCase):
         self.assertGreater(status_red, status_green)
         self.assertGreater(status_green, status_blue)
 
+    def test_status_and_live_top_band_keep_dark_fire_vs_cool_wash_roles(self):
+        module = _load_narrator_reader()
+
+        self.assertLessEqual(
+            module._STATUS_BASE_VAL,
+            0.60,
+            "status rail should keep a darker body so the fiery edge has somewhere to glow from",
+        )
+        self.assertGreaterEqual(
+            module._LIVE_HUE_CENTER_DEG,
+            200,
+            "live band should stay in the deeper blue/indigo family rather than sliding back toward teal",
+        )
+
     def test_live_field_is_tempered_below_the_old_hot_pass(self):
         module = _load_narrator_reader()
 
