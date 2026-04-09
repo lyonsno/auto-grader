@@ -126,6 +126,18 @@ Printed artifacts include:
 
 The goal is not fancy. The goal is "works under copier reality."
 
+Current implementation status on the MC/OpenCV prerequisite lane:
+
+- `auto_grader.generation` produces the canonical answer-sheet artifact
+- `auto_grader.pdf_rendering` now renders a minimal answer-sheet PDF directly
+  from that artifact
+- the rendered PDF currently carries visible instance/page recovery codes,
+  rendered prompt/choice text, and the exact bubble rectangles from the layout
+  contract
+- QR-code placement and alignment-marker rendering are still future work; they
+  should be added as explicit extensions of the same page artifact rather than
+  as a second layout truth
+
 ### 4. Ingestion (Scans -> Identified pages)
 
 The ingestion pipeline:
