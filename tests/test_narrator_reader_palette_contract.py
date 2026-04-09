@@ -46,6 +46,27 @@ class NarratorReaderPaletteContract(unittest.TestCase):
         self.assertGreater(blue, green)
         self.assertGreater(green, red)
 
+    def test_match_verdict_is_darker_and_more_indigo_than_header_index(self):
+        module = _load_narrator_reader()
+        match_red, match_green, match_blue = module._BASE_RGB["topic_match"]
+        index_red, index_green, index_blue = module._BASE_RGB["header_index"]
+
+        self.assertLess(
+            match_red,
+            index_red,
+            "match verdict should sit deeper in the indigo family than the index blue",
+        )
+        self.assertLess(
+            match_green,
+            index_green,
+            "match verdict should be darker than the header-index accent, not identical",
+        )
+        self.assertLess(
+            match_blue,
+            index_blue,
+            "match verdict should complement the header-index blue rather than duplicate it",
+        )
+
     def test_match_verdict_and_status_get_cool_steel_shimmer(self):
         module = _load_narrator_reader()
         self.assertGreater(

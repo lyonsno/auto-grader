@@ -138,10 +138,11 @@ _BASE_RGB = {
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (90, 115, 165),        # indigo-steel agreement —
-                                          # affirmative, but in the same
-                                          # cool family as the sticky
-                                          # status rail instead of aqua
+    "topic_match": (62, 84, 145),         # deep indigo agreement —
+                                          # affirmative, but darker than
+                                          # the header-index accent so it
+                                          # harmonizes without reading as
+                                          # the same structural blue
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -197,7 +198,7 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (156, 188, 238),     # brighter indigo-steel crest
+    "topic_match": (124, 152, 222),     # brighter deep-indigo crest
                                         # for agreement lines
     "status": (150, 180, 230),          # brightened indigo-steel crest
                                         # for the sticky status rail
@@ -1048,9 +1049,9 @@ class PaintDryDisplay:
                 # Pick the topic color variant based on the stored
                 # verdict (third tuple slot, named "parity" for line
                 # entries but reused as the verdict string for topic
-                # entries). Cool sage for matches, warm coral for
-                # grader-overshot, warm amber for grader-undershot,
-                # plain plum fallback when verdict is unknown.
+                # entries). Deep indigo for matches, warm vermilion
+                # for grader-overshot, warm ochre for grader-undershot,
+                # bone fallback when verdict is unknown.
                 topic_kind = {
                     "match": "topic_match",
                     "overshoot": "topic_overshoot",
