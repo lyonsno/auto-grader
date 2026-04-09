@@ -184,7 +184,7 @@ class PdfRenderingContractTests(unittest.TestCase):
             "Header text should clear the top-left registration marker instead of colliding with it.",
         )
 
-    def test_renderer_positions_choice_legend_below_bubble_row(self) -> None:
+    def test_renderer_draws_bubble_labels_below_circles(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
         artifact = _build_artifact()
         page = artifact["pages"][0]
@@ -197,20 +197,48 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         pdf_bytes = render_mc_answer_sheet_pdf(artifact)
 
-        legend_text = "   ".join(
-            f"{choice['bubble_label']}. {choice['text']}" for choice in first_question["choices"]
-        )
-        legend_command = (
-            f"BT\n/F1 8 Tf\n156 "
-            f"{_pdf_number(page['height'] - (min(region['y'] for region in first_question_regions) + 24) - 10)} Td\n"
-            f"({_escape_pdf_text(legend_text)}) Tj\nET"
-        ).encode("utf-8")
-        self.assertIn(
-            legend_command,
-            pdf_bytes,
-            "Choice labels should render on their own legend line below the bubble row "
-            "instead of being crammed into the marks themselves.",
-        )
+        for region in first_question_regions:
+            center_x = region["x"] + (region["width"] / 2)
+            label_command = (
+                f"BT\n/F1 8 Tf\n{_pdf_number(center_x - 2)} "
+                f"{_pdf_number(page['height'] - (region['y'] + region['height'] + 4) - 10)} Td\n"
+                f"({_escape_pdf_text(region['bubble_label'])}) Tj\nET"
+            ).encode("utf-8")
+            self.assertIn(
+                label_command,
+                pdf_bytes,
+                "Each bubble should be labeled directly underneath so the response row "
+                "is readable without forcing the option text onto the same line.",
+            )
+
+    def test_renderer_stacks_choice_text_vertically_beside_bubble_row(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        first_question = artifact["mc_questions"][0]
+        first_question_regions = [
+            region
+            for region in page["bubble_regions"]
+            if region["question_id"] == first_question["question_id"]
+        ]
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        legend_x = 340
+        line_spacing = 11
+        first_row_top = min(region["y"] for region in first_question_regions)
+        for index, choice in enumerate(first_question["choices"]):
+            legend_command = (
+                f"BT\n/F1 8 Tf\n{legend_x} "
+                f"{_pdf_number(page['height'] - (first_row_top + index * line_spacing) - 10)} Td\n"
+                f"({_escape_pdf_text(choice['bubble_label'] + '. ' + choice['text'])}) Tj\nET"
+            ).encode("utf-8")
+            self.assertIn(
+                legend_command,
+                pdf_bytes,
+                "Choice text should be stacked vertically beside the bubble row "
+                "instead of flowing together on one line.",
+            )
 
     def test_renderer_draws_registration_markers_at_artifact_coordinates(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)

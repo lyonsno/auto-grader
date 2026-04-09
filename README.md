@@ -132,9 +132,9 @@ Current implementation status on the MC/OpenCV prerequisite lane:
 - `auto_grader.pdf_rendering` now renders a minimal answer-sheet PDF directly
   from that artifact
 - the rendered PDF currently carries visible instance/page recovery codes,
-  rendered prompt/choice text, filled registration markers for scan
-  normalization, and circular answer bubbles whose bounding boxes come directly
-  from the layout contract
+  rendered prompt text, filled registration markers for scan normalization,
+  circular answer bubbles with direct `A/B/C/D` labels, and vertically stacked
+  option text whose geometry still derives from the same page contract
 - QR-code placement is still future work; it should be added as an explicit
   extension of the same page artifact rather than as a second layout truth
 
