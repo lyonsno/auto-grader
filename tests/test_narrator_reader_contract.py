@@ -42,6 +42,26 @@ class NarratorReaderContract(unittest.TestCase):
             )
         )
 
+    @staticmethod
+    def _rgb_from_hex(style: str) -> tuple[int, int, int]:
+        style = style.lstrip("#")
+        return (
+            int(style[0:2], 16),
+            int(style[2:4], 16),
+            int(style[4:6], 16),
+        )
+
+    @staticmethod
+    def _first_content_hex(text: Text) -> str:
+        for span in text.spans:
+            if (
+                isinstance(span.style, str)
+                and span.style.startswith("#")
+                and span.start >= 2
+            ):
+                return span.style
+        raise AssertionError("no hex content style found after cursor")
+
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
         display = PaintDryDisplay()
         display.streaming_line = "I'm tracing the stoichiometry."
@@ -69,6 +89,33 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(
             panel_text.index("Tracing the stoichiometry setup."),
             panel_text.index("I'm tracing the stoichiometry."),
+        )
+
+    def test_top_panel_uses_warm_status_and_cool_live_colors(self):
+        display = self._make_display()
+        display.status_line = "Tracing the stoichiometry setup."
+        display.frozen_line = "I'm tracing the stoichiometry."
+
+        group = display.render()
+        live_panel = group.renderables[1]
+        status_text, live_text = live_panel.renderable.renderables
+
+        status_red, status_green, status_blue = self._rgb_from_hex(
+            self._first_content_hex(status_text)
+        )
+        live_red, live_green, live_blue = self._rgb_from_hex(
+            self._first_content_hex(live_text)
+        )
+
+        self.assertGreater(
+            status_red,
+            status_blue,
+            "sticky status should carry the warmer red/orange treatment",
+        )
+        self.assertGreater(
+            live_blue,
+            live_red,
+            "live first-person line should use the calmer cool family",
         )
 
     def test_new_header_clears_sticky_status(self):

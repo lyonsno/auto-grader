@@ -873,16 +873,13 @@ class PaintDryDisplay:
             padding=(0, 1),
         )
 
-        # Top panel — cool sticky status rail above the warm live line.
+        # Top panel — warm sticky status rail above the cooler live line.
         # Status holds the current lane in a persistent, slower-moving
-        # register; the first-person line below it keeps streaming as
-        # the moment-to-moment voice. Status commits do not overwrite
-        # the frozen thought line.
-        #
-        # The displayed text gets a subtle yellow/orange shimmer
-        # overlay (via _apply_shimmer with kind="live") so the live
-        # field feels alive even between deltas. Subtle amplitude,
-        # vivid peak (orange-amber).
+        # register, so it can afford the hotter undulating treatment.
+        # The first-person line below it changes more often, so it now
+        # rides the calmer indigo-steel shimmer instead of the more
+        # aggressive red/yellow undulation. Status commits do not
+        # overwrite the frozen thought line.
         displayed_live = self.streaming_line or self.frozen_line
         is_active = bool(self.streaming_line)
 
@@ -909,37 +906,31 @@ class PaintDryDisplay:
 
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
-            cursor_style = "bright_cyan" if is_active else "grey50"
+            cursor_style = "#51627f" if is_active else "grey50"
             live_text.append("▌ ", style=cursor_style)
-            # Compute freeze age for the renderer's fade. Only meaningful
-            # when not actively streaming and we have a recorded freeze
-            # timestamp; otherwise the renderer treats sat/val as fully
-            # bright.
-            freeze_age_s = None
-            if not is_active and self._freeze_started_at is not None:
-                freeze_age_s = time.monotonic() - self._freeze_started_at
-            _render_live_undulating(
-                live_text, displayed_live,
-                indent_width=2,  # cursor glyph "▌ "
+            _apply_shimmer(
+                live_text,
+                displayed_live,
+                "status",
+                layer_index=0,
+                indent_width=2,
                 wrap_width=wrap_width,
-                is_active=is_active,
-                char_offset=live_char_offset,
-                freeze_age_s=freeze_age_s,
+                cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
 
         status_text = Text(no_wrap=False, overflow="fold")
         if self.status_line:
-            status_text.append("▌ ", style="#51627f")
-            _apply_shimmer(
+            status_text.append("▌ ", style="orange3")
+            _render_live_undulating(
                 status_text,
                 self.status_line,
-                "status",
-                layer_index=0,
                 indent_width=2,
                 wrap_width=wrap_width,
-                cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+                is_active=True,
+                char_offset=0,
+                freeze_age_s=None,
             )
         else:
             status_text.append("", style="grey39")
