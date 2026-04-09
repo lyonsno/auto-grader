@@ -74,6 +74,21 @@ class NarratorReaderPaletteContract(unittest.TestCase):
             "status rail should stay auburn/umber, not purple-burgundy",
         )
 
+    def test_status_rail_pushes_darker_toward_coal_ember_umber(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._BASE_RGB["status"]
+
+        self.assertLess(
+            green,
+            80,
+            "status rail should sit deeper in the coal/umber band, not a rosy midtone",
+        )
+        self.assertLess(
+            blue,
+            50,
+            "status rail should stay out of pink-magenta territory and keep a dark ember base",
+        )
+
     def test_status_rail_is_darker_than_header_title(self):
         module = _load_narrator_reader()
         status_red, status_green, status_blue = module._BASE_RGB["status"]
@@ -134,6 +149,20 @@ class NarratorReaderPaletteContract(unittest.TestCase):
             module._LIVE_BASE_VAL,
             0.92,
             "live field should be slightly dimmer than the earlier glare-prone pass",
+        )
+
+    def test_top_band_counterflow_cycles_are_materially_faster_than_the_slow_pass(self):
+        module = _load_narrator_reader()
+
+        self.assertLessEqual(
+            module._LIVE_UNDULATION_CYCLE_S,
+            4.0,
+            "live counterflow should move materially faster than the slow 6.0s pass",
+        )
+        self.assertLessEqual(
+            module._STATUS_UNDULATION_CYCLE_S,
+            5.7,
+            "status counterflow should also speed up materially while staying slower than live",
         )
 
 

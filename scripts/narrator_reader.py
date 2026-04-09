@@ -127,9 +127,10 @@ _BASE_RGB = {
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
-    "status": (118, 82, 60),     # dark auburn-umber — persistent status
-                                  # rail, intentionally darker and more
-                                  # structural than the brighter live ember
+    "status": (108, 72, 42),     # dark coal-ember umber — persistent status
+                                  # rail, pushed a step deeper so it feels
+                                  # less rosy and more like banked heat
+                                  # under ash
     # Topic verdict variants — full-saturation garden colors. The
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
@@ -195,8 +196,10 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-fired earth
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "status": (190, 132, 100),          # ember-lit auburn crest for the
-                                        # sticky status rail
+    "status": (214, 126, 74),           # ember-lit umber crest for the
+                                        # sticky status rail — brighter
+                                        # orange note without losing the
+                                        # darker coal base
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
@@ -236,15 +239,9 @@ _TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 # Pulled toward orange (away from yellow) and slightly desaturated
 # from the previous values to harmonize with the rest of the sunset
 # palette without losing fire feel.
-_LIVE_UNDULATION_CYCLE_S = 6.0    # bumped from 3.5 (~1.7x) so the
-                                   # hue undulation cycles slower per
-                                   # unit time. Combined with the
-                                   # per-hue luminance compensation,
-                                   # this attacks the "hard on the
-                                   # eyes" problem from the temporal
-                                   # axis — fewer flicker cycles per
-                                   # second = less perceptual fatigue
-                                   # while reading the live line
+_LIVE_UNDULATION_CYCLE_S = 3.8    # sped back up into the lively zone:
+                                   # still readable, but now clearly
+                                   # moving rather than glacial
 _LIVE_HUE_CENTER_DEG = 18          # pulled toward persimmon red-orange
 _LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
                                     # more travel through the persimmon
@@ -276,9 +273,8 @@ _LIVE_BASE_VAL = 0.92              # slightly dimmer than the glare-prone
 # kill the "darker red, lighter yellow" harshness without flattening
 # the hue motion into a static orange band.
 _LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
-_STATUS_UNDULATION_CYCLE_S = 8.5   # status should move more slowly than the
-                                    # live line; it is the stable rail, not
-                                    # the volatile thought stream
+_STATUS_UNDULATION_CYCLE_S = 5.2   # still slower than live, but materially
+                                    # faster than the prior sleepy pass
 _STATUS_HUE_CENTER_DEG = 12         # darker ember-red center
 _STATUS_HUE_RANGE_DEG = 14          # enough visible orange travel to feel
                                     # alive without pushing into yellow
@@ -286,8 +282,8 @@ _STATUS_PER_CHAR_PHASE_OFFSET = 0.14
 _STATUS_PHASE_OFFSET_RAD = 0.85     # keep status related to live, but out of
                                     # lockstep so they do not breathe as one
 _STATUS_UNDULATION_DIRECTION = -1.0
-_STATUS_BASE_SAT = 0.70
-_STATUS_BASE_VAL = 0.72
+_STATUS_BASE_SAT = 0.76
+_STATUS_BASE_VAL = 0.68
 _STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
