@@ -251,6 +251,10 @@ _LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
                                     # / vermilion family so the per-char
                                     # undulation is actually visible
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
+_LIVE_PHASE_OFFSET_RAD = 0.0
+_LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
+                                    # shimmer sweep, so the top band feels
+                                    # like its own counter-current
 _LIVE_BASE_SAT = 0.72              # tempered from the hotter pass so the
                                     # live line stays warm/current without
                                     # overpowering the rest of the panel
@@ -272,6 +276,19 @@ _LIVE_BASE_VAL = 0.92              # slightly dimmer than the glare-prone
 # kill the "darker red, lighter yellow" harshness without flattening
 # the hue motion into a static orange band.
 _LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
+_STATUS_UNDULATION_CYCLE_S = 8.5   # status should move more slowly than the
+                                    # live line; it is the stable rail, not
+                                    # the volatile thought stream
+_STATUS_HUE_CENTER_DEG = 12         # darker ember-red center
+_STATUS_HUE_RANGE_DEG = 14          # enough visible orange travel to feel
+                                    # alive without pushing into yellow
+_STATUS_PER_CHAR_PHASE_OFFSET = 0.14
+_STATUS_PHASE_OFFSET_RAD = 0.85     # keep status related to live, but out of
+                                    # lockstep so they do not breathe as one
+_STATUS_UNDULATION_DIRECTION = -1.0
+_STATUS_BASE_SAT = 0.70
+_STATUS_BASE_VAL = 0.72
+_STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
 # next dispatch starts. The settled state has slightly muted sat/val
@@ -499,6 +516,129 @@ def _apply_shimmer(
     return text_obj
 
 
+def _undulation_hue_deg(
+    now_s: float,
+    global_i: int,
+    *,
+    cycle_s: float,
+    center_deg: float,
+    range_deg: float,
+    per_char_phase_offset: float,
+    phase_offset_rad: float = 0.0,
+    direction: float = 1.0,
+) -> float:
+    """Return the per-character warm-band hue at a given time and position."""
+    phase = (
+        -direction * now_s * (2 * math.pi / cycle_s)
+        + phase_offset_rad
+        + global_i * per_char_phase_offset
+    )
+    return center_deg + range_deg * math.sin(phase)
+
+
+def _render_warm_undulating(
+    text_obj: Text,
+    content: str,
+    indent_width: int,
+    wrap_width: int | None,
+    *,
+    cycle_s: float,
+    center_deg: float,
+    range_deg: float,
+    per_char_phase_offset: float,
+    phase_offset_rad: float,
+    direction: float,
+    base_sat: float,
+    base_val: float,
+    luminance_correction_strength: float,
+    char_offset: int = 0,
+    freeze_age_s: float | None = None,
+    frozen_sat_mul: float = 1.0,
+    frozen_val_mul: float = 1.0,
+    freeze_fade_s: float | None = None,
+    shimmer_cycle_s: float | None = None,
+    shimmer_width: int = _SHIMMER_WIDTH,
+    shimmer_v_boost: float = 0.08,
+    shimmer_s_drop: float = 0.40,
+    bold_active_head: bool = False,
+) -> Text:
+    """Render a warm per-character undulation with an optional shimmer crest."""
+    if not content:
+        return text_obj
+
+    now = time.monotonic()
+    cycle = shimmer_cycle_s if shimmer_cycle_s is not None else _SHIMMER_RECENT_CYCLE_S
+    shimmer_phase = (now % cycle) / cycle
+    if wrap_width is not None and wrap_width > shimmer_width:
+        shimmer_head = (
+            shimmer_phase * (wrap_width + shimmer_width) - shimmer_width
+        )
+    else:
+        shimmer_head = (
+            shimmer_phase * (len(content) + shimmer_width) - shimmer_width
+        )
+
+    if freeze_age_s is None or freeze_fade_s is None:
+        sat_mul = 1.0
+        val_mul = 1.0
+    else:
+        fade = max(0.0, min(1.0, freeze_age_s / freeze_fade_s))
+        sat_mul = 1.0 - fade * (1.0 - frozen_sat_mul)
+        val_mul = 1.0 - fade * (1.0 - frozen_val_mul)
+
+    s_for_ref = base_sat * sat_mul
+    ref_r, ref_g, ref_b = _hsv_to_rgb(center_deg, s_for_ref, 1.0)
+    ref_luminance = 0.2126 * ref_r + 0.7152 * ref_g + 0.0722 * ref_b
+
+    for i, ch in enumerate(content):
+        global_i = char_offset + i
+        h = _undulation_hue_deg(
+            now,
+            global_i,
+            cycle_s=cycle_s,
+            center_deg=center_deg,
+            range_deg=range_deg,
+            per_char_phase_offset=per_char_phase_offset,
+            phase_offset_rad=phase_offset_rad,
+            direction=direction,
+        )
+        s = base_sat * sat_mul
+        v = base_val * val_mul
+
+        test_r, test_g, test_b = _hsv_to_rgb(h, s, 1.0)
+        test_luminance = (
+            0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
+        )
+        if test_luminance > 1:
+            raw_correction = ref_luminance / test_luminance
+            correction = 1.0 + (
+                raw_correction - 1.0
+            ) * luminance_correction_strength
+            v = max(0.0, min(1.0, v * correction))
+
+        if wrap_width is not None and wrap_width > shimmer_width:
+            visual_col = (indent_width + i) % wrap_width
+            distance = shimmer_head - visual_col
+        else:
+            distance = shimmer_head - i
+
+        bold_head = False
+        if 0 <= distance < shimmer_width:
+            shimmer_intensity = 1.0 - (distance / shimmer_width)
+            v = min(1.0, v + shimmer_v_boost * shimmer_intensity)
+            s = max(0.0, s - shimmer_s_drop * shimmer_intensity)
+            if -0.5 <= distance < 1.5:
+                bold_head = bold_active_head
+
+        r, g, b = _hsv_to_rgb(h, s, v)
+        style = f"#{r:02x}{g:02x}{b:02x}"
+        if bold_head:
+            style = f"bold {style}"
+        text_obj.append(ch, style=style)
+
+    return text_obj
+
+
 def _render_live_undulating(
     text_obj: Text,
     content: str,
@@ -534,95 +674,60 @@ def _render_live_undulating(
     if not content:
         return text_obj
 
-    now = time.monotonic()
-    undulation_phase_base = now * (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
+    return _render_warm_undulating(
+        text_obj,
+        content,
+        indent_width,
+        wrap_width,
+        cycle_s=_LIVE_UNDULATION_CYCLE_S,
+        center_deg=_LIVE_HUE_CENTER_DEG,
+        range_deg=_LIVE_HUE_RANGE_DEG,
+        per_char_phase_offset=_LIVE_PER_CHAR_PHASE_OFFSET,
+        phase_offset_rad=_LIVE_PHASE_OFFSET_RAD,
+        direction=_LIVE_UNDULATION_DIRECTION,
+        base_sat=_LIVE_BASE_SAT,
+        base_val=_LIVE_BASE_VAL,
+        luminance_correction_strength=_LIVE_LUMINANCE_CORRECTION_STRENGTH,
+        char_offset=char_offset,
+        freeze_age_s=None if is_active else freeze_age_s,
+        frozen_sat_mul=_LIVE_FROZEN_SAT_MUL,
+        frozen_val_mul=_LIVE_FROZEN_VAL_MUL,
+        freeze_fade_s=_LIVE_FREEZE_FADE_S,
+        shimmer_cycle_s=_SHIMMER_RECENT_CYCLE_S,
+        shimmer_width=_SHIMMER_WIDTH,
+        shimmer_v_boost=0.08,
+        shimmer_s_drop=0.40,
+        bold_active_head=is_active,
+    )
 
-    # Shimmer head — uses the recent cycle so the live field moves
-    # at the same pace as the most recent line in history (the
-    # other "live-feeling" element).
-    cycle = _SHIMMER_RECENT_CYCLE_S
-    shimmer_phase = (now % cycle) / cycle
-    if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
-        shimmer_head = (
-            shimmer_phase * (wrap_width + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
-        )
-    else:
-        shimmer_head = (
-            shimmer_phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
-        )
 
-    # Sat/val multipliers fade smoothly from active brightness toward
-    # the settled past-tense state over _LIVE_FREEZE_FADE_S after the
-    # streaming dispatch finishes. While streaming, both stay at 1.0.
-    if is_active or freeze_age_s is None:
-        sat_mul = 1.0
-        val_mul = 1.0
-    else:
-        fade = max(0.0, min(1.0, freeze_age_s / _LIVE_FREEZE_FADE_S))
-        sat_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_SAT_MUL)
-        val_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_VAL_MUL)
-
-    # Reference luminance: the BT.709 perceived brightness at the hue
-    # CENTER, computed at the current saturation. Used as the target
-    # that all per-char luminances are scaled toward, so the hue
-    # undulation no longer reads as a brightness flicker. Computed
-    # once per frame outside the per-char loop.
-    s_for_ref = _LIVE_BASE_SAT * sat_mul
-    ref_r, ref_g, ref_b = _hsv_to_rgb(_LIVE_HUE_CENTER_DEG, s_for_ref, 1.0)
-    ref_luminance = 0.2126 * ref_r + 0.7152 * ref_g + 0.0722 * ref_b
-
-    for i, ch in enumerate(content):
-        # Per-character undulating hue. Use the GLOBAL position
-        # (visible index + char_offset) so the phase pattern stays
-        # stable across truncation — characters don't change color
-        # as the front of the buffer falls off.
-        global_i = char_offset + i
-        char_phase = (
-            undulation_phase_base + global_i * _LIVE_PER_CHAR_PHASE_OFFSET
-        )
-        h = _LIVE_HUE_CENTER_DEG + _LIVE_HUE_RANGE_DEG * math.sin(char_phase)
-        s = _LIVE_BASE_SAT * sat_mul
-        v = _LIVE_BASE_VAL * val_mul
-
-        # Per-hue luminance compensation. At constant V, BT.709 weights
-        # mean amber/yellow chars are perceived ~3-4× brighter than
-        # red chars, which makes the hue undulation read as a luminance
-        # flicker that resists passive reading. Scale V inversely with
-        # the per-char perceived luminance, blended toward neutral by
-        # _LIVE_LUMINANCE_CORRECTION_STRENGTH. The result is the same
-        # hue motion at roughly the same perceived brightness.
-        test_r, test_g, test_b = _hsv_to_rgb(h, s, 1.0)
-        test_luminance = (
-            0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
-        )
-        if test_luminance > 1:
-            raw_correction = ref_luminance / test_luminance
-            correction = 1.0 + (raw_correction - 1.0) * _LIVE_LUMINANCE_CORRECTION_STRENGTH
-            v = max(0.0, min(1.0, v * correction))
-
-        # Shimmer overlay: brighten and de-saturate at the head
-        if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
-            visual_col = (indent_width + i) % wrap_width
-            distance = shimmer_head - visual_col
-        else:
-            distance = shimmer_head - i
-
-        bold_head = False
-        if 0 <= distance < _SHIMMER_WIDTH:
-            shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
-            # Push toward white-hot at the head (boost V, drop S)
-            v = min(1.0, v + 0.08 * shimmer_intensity)
-            s = max(0.0, s - 0.40 * shimmer_intensity)
-            if -0.5 <= distance < 1.5:
-                bold_head = is_active
-
-        r, g, b = _hsv_to_rgb(h, s, v)
-        style = f"#{r:02x}{g:02x}{b:02x}"
-        if bold_head:
-            style = f"bold {style}"
-        text_obj.append(ch, style=style)
-
-    return text_obj
+def _render_status_undulating(
+    text_obj: Text,
+    content: str,
+    indent_width: int,
+    wrap_width: int | None,
+) -> Text:
+    """Render the sticky status line as a darker ember wave."""
+    return _render_warm_undulating(
+        text_obj,
+        content,
+        indent_width,
+        wrap_width,
+        cycle_s=_STATUS_UNDULATION_CYCLE_S,
+        center_deg=_STATUS_HUE_CENTER_DEG,
+        range_deg=_STATUS_HUE_RANGE_DEG,
+        per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
+        phase_offset_rad=_STATUS_PHASE_OFFSET_RAD,
+        direction=_STATUS_UNDULATION_DIRECTION,
+        base_sat=_STATUS_BASE_SAT,
+        base_val=_STATUS_BASE_VAL,
+        luminance_correction_strength=_STATUS_LUMINANCE_CORRECTION_STRENGTH,
+        shimmer_cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+        shimmer_width=_SHIMMER_WIDTH,
+        shimmer_v_boost=0.05,
+        shimmer_s_drop=0.24,
+        bold_active_head=False,
+    )
 
 
 def _append_shimmer_char(
@@ -983,14 +1088,11 @@ class PaintDryDisplay:
         displayed_status = self.status_streaming_line or self.status_line
         if displayed_status:
             status_text.append("▌ ", style="#6f87c7")
-            _apply_shimmer(
+            _render_status_undulating(
                 status_text,
                 displayed_status,
-                "status",
-                layer_index=0,
                 indent_width=2,
                 wrap_width=wrap_width,
-                cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
             )
         else:
             status_text.append("", style="grey39")
