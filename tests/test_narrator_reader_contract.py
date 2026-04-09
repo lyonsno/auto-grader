@@ -171,7 +171,7 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
-    def test_top_panel_uses_cool_status_and_warm_live_colors(self):
+    def test_top_panel_uses_cool_status_gutter_with_warm_status_and_live_text(self):
         display = self._make_display()
         display.status_line = "Tracing the stoichiometry setup."
         display.frozen_line = "I'm tracing the stoichiometry."
@@ -180,6 +180,7 @@ class NarratorReaderContract(unittest.TestCase):
         live_panel = group.renderables[1]
         status_text, live_text = live_panel.renderable.renderables
 
+        status_gutter = status_text.spans[0].style
         status_red, status_green, status_blue = self._rgb_from_hex(
             self._first_content_hex(status_text)
         )
@@ -187,10 +188,20 @@ class NarratorReaderContract(unittest.TestCase):
             self._first_content_hex(live_text)
         )
 
+        self.assertEqual(
+            status_gutter,
+            "#6f87c7",
+            "status gutter should preserve a cool top-panel anchor",
+        )
         self.assertGreater(
-            status_blue,
             status_red,
-            "sticky status should read as the calmer cool rail",
+            status_green,
+            "sticky status text should now sit in the darker warm structural family",
+        )
+        self.assertGreater(
+            status_green,
+            status_blue,
+            "sticky status text should stay auburn/umber, not burgundy-purple",
         )
         self.assertGreater(
             live_red,
