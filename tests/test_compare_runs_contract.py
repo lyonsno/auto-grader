@@ -286,6 +286,37 @@ class CompareRunsContract(unittest.TestCase):
                 "query resolution should treat the discovered manifest location as authoritative, not a stale embedded absolute path",
             )
 
+    def test_resolve_query_run_uses_discovered_manifest_parent_for_copied_runs(self):
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_root = Path(tmpdir) / "runs-root"
+            runs_root.mkdir()
+            copied_run = self._write_run(
+                runs_root,
+                run_name="copied-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-08T21:00:00",
+                score=2.0,
+            )
+
+            manifest_path = copied_run / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["run_dir"] = "/old/box/auto-grader-runs/copied-run"
+            manifest_path.write_text(json.dumps(manifest) + "\n")
+
+            resolved = module.resolve_query_run(
+                runs_root=runs_root,
+                query="model=gemma-test,prompt_version=prompt-v2,test_set_id=tricky-v1",
+            )
+
+            self.assertEqual(
+                resolved,
+                copied_run,
+                "query resolution should treat the discovered manifest location as authoritative, not a stale embedded absolute path",
+            )
+
     def test_main_can_resolve_latest_runs_by_manifest_metadata(self):
         module = _load_compare_runs()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -491,7 +522,6 @@ class CompareRunsContract(unittest.TestCase):
                 2.0,
                 "truth_score must equal professor_score when no correction is recorded",
             )
-
     def test_main_rejects_mixed_path_and_query_mode_until_order_is_preserved(self):
         module = _load_compare_runs()
         with tempfile.TemporaryDirectory() as tmpdir:
