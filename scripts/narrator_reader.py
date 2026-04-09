@@ -287,6 +287,16 @@ _STATUS_UNDULATION_DIRECTION = 1.0
 _STATUS_BASE_SAT = 0.66
 _STATUS_BASE_VAL = 0.58
 _STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
+_STATUS_COOL_GLINT_RGB = (70, 108, 184)   # restrained deep-indigo glint
+                                           # inside the ember rail
+_STATUS_BONE_GLINT_RGB = (224, 210, 190)   # pale bone lift so the rail
+                                           # can briefly catch ash-light
+_STATUS_COOL_GLINT_CYCLE_S = 7.8
+_STATUS_BONE_GLINT_CYCLE_S = 9.6
+_STATUS_COOL_GLINT_STRENGTH = 0.86
+_STATUS_BONE_GLINT_STRENGTH = 0.44
+_STATUS_COOL_GLINT_PHASE_OFFSET_RAD = 1.55
+_STATUS_BONE_GLINT_PHASE_OFFSET_RAD = 1.10
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
 # next dispatch starts. The settled state has slightly muted sat/val
@@ -342,6 +352,25 @@ def _interp_rgb(
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+def _blend_rgb(
+    base: tuple[int, int, int],
+    target: tuple[int, int, int],
+    weight: float,
+) -> tuple[int, int, int]:
+    """Blend base toward target by weight in [0, 1]."""
+    weight = max(0.0, min(1.0, weight))
+    return tuple(
+        max(
+            0,
+            min(
+                255,
+                int(round(channel + (target_channel - channel) * weight)),
+            ),
+        )
+        for channel, target_channel in zip(base, target, strict=True)
+    )
 
 
 def _live_placeholder(now_s: float) -> str:
@@ -722,27 +751,92 @@ def _render_status_undulating(
     indent_width: int,
     wrap_width: int | None,
 ) -> Text:
-    """Render the sticky status line as a darker ember wave."""
-    return _render_warm_undulating(
-        text_obj,
-        content,
-        indent_width,
-        wrap_width,
-        cycle_s=_STATUS_UNDULATION_CYCLE_S,
-        center_deg=_STATUS_HUE_CENTER_DEG,
-        range_deg=_STATUS_HUE_RANGE_DEG,
-        per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
-        phase_offset_rad=_STATUS_PHASE_OFFSET_RAD,
-        direction=_STATUS_UNDULATION_DIRECTION,
-        base_sat=_STATUS_BASE_SAT,
-        base_val=_STATUS_BASE_VAL,
-        luminance_correction_strength=_STATUS_LUMINANCE_CORRECTION_STRENGTH,
-        shimmer_cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
-        shimmer_width=_SHIMMER_WIDTH,
-        shimmer_v_boost=0.05,
-        shimmer_s_drop=0.24,
-        bold_active_head=False,
-    )
+    """Render the sticky status rail as ember heat with cooler ash glints."""
+    if not content:
+        return text_obj
+
+    now = time.monotonic()
+    shimmer_phase = (now % _SHIMMER_DEFAULT_CYCLE_S) / _SHIMMER_DEFAULT_CYCLE_S
+    if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
+        shimmer_head = (
+            shimmer_phase * (wrap_width + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        )
+    else:
+        shimmer_head = (
+            shimmer_phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        )
+
+    ref_r, ref_g, ref_b = _hsv_to_rgb(_STATUS_HUE_CENTER_DEG, _STATUS_BASE_SAT, 1.0)
+    ref_luminance = 0.2126 * ref_r + 0.7152 * ref_g + 0.0722 * ref_b
+
+    for i, ch in enumerate(content):
+        h = _undulation_hue_deg(
+            now,
+            i,
+            cycle_s=_STATUS_UNDULATION_CYCLE_S,
+            center_deg=_STATUS_HUE_CENTER_DEG,
+            range_deg=_STATUS_HUE_RANGE_DEG,
+            per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=_STATUS_PHASE_OFFSET_RAD,
+            direction=_STATUS_UNDULATION_DIRECTION,
+        )
+        s = _STATUS_BASE_SAT
+        v = _STATUS_BASE_VAL
+
+        test_r, test_g, test_b = _hsv_to_rgb(h, s, 1.0)
+        test_luminance = 0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
+        if test_luminance > 1:
+            raw_correction = ref_luminance / test_luminance
+            correction = 1.0 + (
+                raw_correction - 1.0
+            ) * _STATUS_LUMINANCE_CORRECTION_STRENGTH
+            v = max(0.0, min(1.0, v * correction))
+
+        if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
+            visual_col = (indent_width + i) % wrap_width
+            distance = shimmer_head - visual_col
+        else:
+            distance = shimmer_head - i
+
+        if 0 <= distance < _SHIMMER_WIDTH:
+            shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+            v = min(1.0, v + 0.09 * shimmer_intensity)
+            s = max(0.0, s - 0.18 * shimmer_intensity)
+
+        rgb = _hsv_to_rgb(h, s, v)
+        cool_glint = max(
+            0.0,
+            math.sin(
+                -now * (2 * math.pi / _STATUS_COOL_GLINT_CYCLE_S)
+                + _STATUS_COOL_GLINT_PHASE_OFFSET_RAD
+                + i * (_STATUS_PER_CHAR_PHASE_OFFSET * 0.72)
+            ),
+        )
+        bone_glint = max(
+            0.0,
+            math.sin(
+                now * (2 * math.pi / _STATUS_BONE_GLINT_CYCLE_S)
+                + _STATUS_BONE_GLINT_PHASE_OFFSET_RAD
+                + i * (_STATUS_PER_CHAR_PHASE_OFFSET * 0.46)
+            ),
+        )
+        cool_weight = (cool_glint ** 1.35) * _STATUS_COOL_GLINT_STRENGTH
+        bone_weight = (bone_glint ** 2.6) * _STATUS_BONE_GLINT_STRENGTH
+
+        if 0 <= distance < _SHIMMER_WIDTH:
+            shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+            cool_weight *= 1.0 - (0.35 * shimmer_intensity)
+            bone_weight += 0.10 * shimmer_intensity
+
+        rgb = _blend_rgb(rgb, _STATUS_COOL_GLINT_RGB, cool_weight)
+        rgb = _blend_rgb(
+            rgb,
+            _STATUS_BONE_GLINT_RGB,
+            bone_weight * (1.0 - 0.45 * cool_weight),
+        )
+        text_obj.append(ch, style=_rgb_to_hex(rgb))
+
+    return text_obj
 
 
 def _append_shimmer_char(

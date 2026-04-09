@@ -19,6 +19,7 @@ from scripts.narrator_reader import (
     _STATUS_PER_CHAR_PHASE_OFFSET,
     _STATUS_UNDULATION_CYCLE_S,
     _apply_shimmer,
+    _render_status_undulating,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
     _undulation_hue_deg,
@@ -85,6 +86,14 @@ class NarratorReaderContract(unittest.TestCase):
             ):
                 return span.style
         raise AssertionError(f"no style span found for substring {needle!r}")
+
+    @staticmethod
+    def _content_hexes(text: Text) -> list[str]:
+        return [
+            span.style
+            for span in text.spans
+            if isinstance(span.style, str) and span.style.startswith("#")
+        ]
 
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
         display = PaintDryDisplay()
@@ -169,6 +178,37 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.status_line, "Rechecking the stoichiometry setup.")
         self.assertIn("RECHECKING THE STOICHIOMETRY SETUP.", panel_text)
         self.assertNotIn("Rechecking the stoichiometry setup.", panel_text)
+
+    def test_status_rail_uses_ember_body_with_cool_and_bone_glints(self):
+        status_text = Text(no_wrap=False, overflow="fold")
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            _render_status_undulating(
+                status_text,
+                "RECHECKING THE STUDENT'S CALCULATION.",
+                indent_width=2,
+                wrap_width=80,
+            )
+
+        content_hexes = self._content_hexes(status_text)
+        rgbs = [self._rgb_from_hex(style) for style in content_hexes]
+
+        self.assertTrue(
+            any(red > green > blue for red, green, blue in rgbs),
+            "status rail should keep an ember-led body rather than flattening into cool-only text",
+        )
+        self.assertTrue(
+            any(blue > green > red for red, green, blue in rgbs),
+            "status rail should pick up restrained deep-blue glints inside the warm wave",
+        )
+        self.assertTrue(
+            any(
+                max(red, green, blue) >= 160
+                and (max(red, green, blue) - min(red, green, blue)) <= 55
+                for red, green, blue in rgbs
+            ),
+            "status rail should also catch pale bone highlights rather than only warm/cool saturated colors",
+        )
 
     def test_empty_live_lane_shows_rotating_placeholder_copy(self):
         display = self._make_display()
@@ -289,9 +329,10 @@ class NarratorReaderContract(unittest.TestCase):
         status_text, live_text = live_panel.renderable.renderables
 
         status_gutter = status_text.spans[0].style
-        status_red, status_green, status_blue = self._rgb_from_hex(
-            self._first_content_hex(status_text)
-        )
+        status_rgbs = [
+            self._rgb_from_hex(style)
+            for style in self._content_hexes(status_text)
+        ]
         live_red, live_green, live_blue = self._rgb_from_hex(
             self._first_content_hex(live_text)
         )
@@ -307,15 +348,13 @@ class NarratorReaderContract(unittest.TestCase):
             gutter_blue,
             "status gutter should read as ember/umber rather than magenta or blue",
         )
-        self.assertGreater(
-            status_green,
-            status_blue,
-            "sticky status text should stay umber-forward, not bright red or burgundy-purple",
+        self.assertTrue(
+            any(red > green > blue for red, green, blue in status_rgbs),
+            "sticky status text should still contain an ember-led body, not only cool glints",
         )
-        self.assertLess(
-            status_red - status_green,
-            95,
-            "sticky status text should shed some of the bright-red spike and keep more umber heft",
+        self.assertTrue(
+            any(blue > green > red for red, green, blue in status_rgbs),
+            "sticky status text should be allowed to pick up restrained cool glints inside the warmer rail",
         )
         self.assertGreater(
             live_blue,
