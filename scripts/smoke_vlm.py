@@ -34,6 +34,8 @@ _TEMPLATE = (
     / "chm141-final-fall2023.yaml"
 )
 
+_DEFAULT_NARRATOR_URL = "http://nlmb2p.local:8002"
+
 
 def _progress(i: int, total: int, item, pred):
     mark = "=" if pred.model_score == item.professor_score else "X"
@@ -141,7 +143,7 @@ class _PredictionWriter:
         return False  # never swallow exceptions
 
 
-def main():
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="qwen3p5-35B-A3B")
     parser.add_argument("--items", type=int, default=8,
@@ -178,7 +180,7 @@ def main():
                         help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
     parser.add_argument("--narrate-stderr", action="store_true",
                         help="Plain-text narrator output to stderr (no Terminal window) — for dev")
-    parser.add_argument("--narrator-url", default="http://localhost:8001",
+    parser.add_argument("--narrator-url", default=_DEFAULT_NARRATOR_URL,
                         help="Bonsai narrator OMLX server URL")
     parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
     parser.add_argument(
@@ -198,6 +200,11 @@ def main():
     )
     parser.add_argument("--run-dir", default=None,
                         help="Directory to write narrator.jsonl/.txt logs (default: runs/<ts>-<model>/)")
+    return parser
+
+
+def main():
+    parser = _build_arg_parser()
     args = parser.parse_args()
 
     gt = load_ground_truth(_GROUND_TRUTH)
