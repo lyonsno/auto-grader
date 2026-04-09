@@ -91,7 +91,24 @@ class NarratorReaderContract(unittest.TestCase):
             panel_text.index("I'm tracing the stoichiometry."),
         )
 
-    def test_top_panel_uses_warm_status_and_cool_live_colors(self):
+    def test_group_depth_resets_at_each_header(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 2/6] second", None))
+        display.history.append(("line", "second line", 0))
+        display.history.append(("topic", "second topic", "match"))
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("line", "first line", 0))
+
+        entries = display._build_display_entries()
+        depths = [(entry[0], entry[1], group_depth) for entry, _recent, group_depth in entries]
+
+        self.assertEqual(depths[0], ("header", "[item 1/6] first", 0))
+        self.assertEqual(depths[1], ("line", "first line", 1))
+        self.assertEqual(depths[2], ("header", "[item 2/6] second", 0))
+        self.assertEqual(depths[3], ("line", "second line", 1))
+        self.assertEqual(depths[4], ("topic", "second topic", 2))
+
+    def test_top_panel_uses_cool_status_and_warm_live_colors(self):
         display = self._make_display()
         display.status_line = "Tracing the stoichiometry setup."
         display.frozen_line = "I'm tracing the stoichiometry."
@@ -108,14 +125,19 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
         self.assertGreater(
-            status_red,
             status_blue,
-            "sticky status should carry the warmer red/orange treatment",
+            status_red,
+            "sticky status should read as the calmer cool rail",
         )
         self.assertGreater(
-            live_blue,
             live_red,
-            "live first-person line should use the calmer cool family",
+            status_blue,
+            "live first-person line should carry the warmer active treatment",
+        )
+        self.assertGreater(
+            live_red,
+            live_blue,
+            "live first-person line should stay on the warm ember side, not cool blue",
         )
 
     def test_new_header_clears_sticky_status(self):

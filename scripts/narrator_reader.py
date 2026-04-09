@@ -130,19 +130,17 @@ _BASE_RGB = {
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
-    "status": (82, 105, 150),    # deep indigo-steel — sticky status rail,
-                                  # cooler and darker than the old aqua
-                                  # so it harmonizes with the existing
-                                  # indigo/steel chrome
+    "status": (96, 124, 188),    # brighter indigo-steel — persistent
+                                  # status rail that stays legible even
+                                  # when the warmer live line is moving
     # Topic verdict variants — full-saturation garden colors. The
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (62, 84, 145),         # deep indigo agreement —
-                                          # affirmative, but darker than
-                                          # the header-index accent so it
-                                          # harmonizes without reading as
-                                          # the same structural blue
+    "topic_match": (112, 146, 218),       # brighter deep indigo agreement —
+                                          # still blue-forward, but now
+                                          # visibly positive instead of
+                                          # merely severe
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -198,9 +196,9 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (124, 152, 222),     # brighter deep-indigo crest
-                                        # for agreement lines
-    "status": (150, 180, 230),          # brightened indigo-steel crest
+    "topic_match": (170, 206, 255),     # rain-lit affirmative crest for
+                                        # agreement lines
+    "status": (160, 194, 248),          # brightened indigo-steel crest
                                         # for the sticky status rail
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
@@ -714,7 +712,7 @@ class PaintDryDisplay:
         _ = now
         return not self.session_ended
 
-    def _build_display_entries(self) -> list[tuple[tuple, bool]]:
+    def _build_display_entries(self) -> list[tuple[tuple, bool, int]]:
         """Group history into items, reverse so newest item is first,
         and within each group keep entries in chronological order so
         the header sits ABOVE its narrator lines and topic.
@@ -731,9 +729,12 @@ class PaintDryDisplay:
         here's the verdict" for every visible item; the play-by-play
         between them is the part that compresses.
 
-        Returns a list of (entry, is_most_recent) tuples in display
-        order. is_most_recent is True for exactly the entry at the
-        back of the deque (the most-recently-committed thing).
+        Returns a list of (entry, is_most_recent, group_depth) tuples
+        in display order. group_depth is the per-item depth that resets
+        at each header, so visual fading can restart from every item
+        heading instead of running as one global downhill wash.
+        is_most_recent is True for exactly the entry at the back of the
+        deque (the most-recently-committed thing).
         """
         history_list = list(self.history)
         if not history_list:
@@ -796,10 +797,15 @@ class PaintDryDisplay:
             keep_positions.add(pos)
 
         # Build the final list in original (top-to-bottom) display order
-        display: list[tuple[tuple, bool]] = []
+        display: list[tuple[tuple, bool, int]] = []
+        group_depth = -1
         for pos, (entry, idx) in enumerate(flat):
             if pos in keep_positions:
-                display.append((entry, idx == most_recent_idx))
+                if entry[0] == "header":
+                    group_depth = 0
+                else:
+                    group_depth = max(0, group_depth + 1)
+                display.append((entry, idx == most_recent_idx, group_depth))
         return display
 
     def _compute_wrap_width(self) -> int | None:
@@ -874,13 +880,11 @@ class PaintDryDisplay:
             padding=(0, 1),
         )
 
-        # Top panel — warm sticky status rail above the cooler live line.
-        # Status holds the current lane in a persistent, slower-moving
-        # register, so it can afford the hotter undulating treatment.
-        # The first-person line below it changes more often, so it now
-        # rides the calmer indigo-steel shimmer instead of the more
-        # aggressive red/yellow undulation. Status commits do not
-        # overwrite the frozen thought line.
+        # Top panel — cool sticky status rail above the warmer live line.
+        # Status is persistent and structural, so it gets the calmer
+        # indigo-steel shimmer. The live first-person line below it is
+        # the more volatile surface, so it carries the warmer active
+        # treatment without overwriting the sticky status.
         displayed_live = self.streaming_line or self.frozen_line
         is_active = bool(self.streaming_line)
 
@@ -907,31 +911,34 @@ class PaintDryDisplay:
 
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
-            cursor_style = "#51627f" if is_active else "grey50"
+            cursor_style = "orange3" if is_active else "grey50"
             live_text.append("▌ ", style=cursor_style)
-            _apply_shimmer(
+            freeze_age_s = None
+            if not is_active and self._freeze_started_at is not None:
+                freeze_age_s = time.monotonic() - self._freeze_started_at
+            _render_live_undulating(
                 live_text,
                 displayed_live,
-                "status",
-                layer_index=0,
                 indent_width=2,
                 wrap_width=wrap_width,
-                cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
+                is_active=is_active,
+                char_offset=live_char_offset,
+                freeze_age_s=freeze_age_s,
             )
         else:
             live_text = Text("▌ ", style="grey39", overflow="fold")
 
         status_text = Text(no_wrap=False, overflow="fold")
         if self.status_line:
-            status_text.append("▌ ", style="orange3")
-            _render_live_undulating(
+            status_text.append("▌ ", style="#6f87c7")
+            _apply_shimmer(
                 status_text,
                 self.status_line,
+                "status",
+                layer_index=0,
                 indent_width=2,
                 wrap_width=wrap_width,
-                is_active=True,
-                char_offset=0,
-                freeze_age_s=None,
+                cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
             )
         else:
             status_text.append("", style="grey39")
@@ -967,7 +974,7 @@ class PaintDryDisplay:
         # the wrap.
         display_entries = self._build_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
-        for i, (entry, is_most_recent) in enumerate(display_entries):
+        for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
@@ -1000,7 +1007,7 @@ class PaintDryDisplay:
                 # width is 0 here because the dash IS the leading edge.
                 _apply_shimmer(
                     history_text, indent, "header_dash",
-                    layer_index=i,
+                    layer_index=group_depth,
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
@@ -1019,7 +1026,7 @@ class PaintDryDisplay:
                     rest_part = m.group(2)
                     _apply_shimmer(
                         history_text, index_part, "header_index",
-                        layer_index=i,
+                        layer_index=group_depth,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1028,7 +1035,7 @@ class PaintDryDisplay:
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
                         history_text, rest_part, "header",
-                        layer_index=i,
+                        layer_index=group_depth,
                         indent_width=len(indent) + len(index_part) + 1,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1037,7 +1044,7 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, "header",
-                        layer_index=i,
+                        layer_index=group_depth,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1069,7 +1076,7 @@ class PaintDryDisplay:
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
                         history_text, rest, topic_kind,
-                        layer_index=i,
+                        layer_index=group_depth,
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1078,7 +1085,7 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, topic_kind,
-                        layer_index=i,
+                        layer_index=group_depth,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1094,7 +1101,7 @@ class PaintDryDisplay:
                 line_kind = "line_alt" if parity == 1 else "line"
                 _apply_shimmer(
                     history_text, text, line_kind,
-                    layer_index=i,
+                    layer_index=group_depth,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
