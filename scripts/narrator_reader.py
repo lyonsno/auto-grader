@@ -129,7 +129,13 @@ _BASE_RGB = {
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (125, 170, 140),       # celadon (青磁) — calm match
+    "topic_match": (150, 208, 214),       # electric celadon — cooler,
+                                          # brighter affirmative read.
+                                          # Still garden-adjacent, but
+                                          # pulled toward aqua so
+                                          # agreement feels cleaner and
+                                          # more "alive" than the old
+                                          # mossy celadon
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -150,7 +156,9 @@ _SHIMMER_KIND_INTENSITY = {
                           # coupled-oscillator phase ripple more
                           # presence on the largest visual surface
     "topic": 1.00,
-    "topic_match": 1.00,        # match topic intensity for verdict variants
+    "topic_match": 1.10,        # slight extra shimmer lift so agreement
+                                # gets its own pulse instead of reading
+                                # like a neutral fallback
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
     "header": 1.40,      # cranked — section markers pop
@@ -182,10 +190,11 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (170, 215, 180),     # glazed celadon (matches the
-                                         # glazed-celadon line peak so
-                                         # the verdict reads as the
-                                         # row's own family lighting up)
+    "topic_match": (195, 232, 255),     # rain-lit sky celadon — borrows
+                                        # the cooler blue family we
+                                        # weren't using enough, so the
+                                        # match shimmer reads electric
+                                        # rather than ochre-warm
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
