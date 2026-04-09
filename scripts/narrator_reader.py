@@ -662,8 +662,8 @@ class PaintDryDisplay:
 
     def _build_display_entries(self) -> list[tuple[tuple, bool]]:
         """Group history into items, reverse so newest item is first,
-        and within each group keep entries in chronological order so
-        the header sits ABOVE its narrator lines and topic.
+        and within each group keep the header at the top while placing
+        the freshest narrator lines closest to that header.
 
         Then fill the visible budget by priority:
           1. All headers and topics (ESSENTIAL — structural anchors).
@@ -700,14 +700,26 @@ class PaintDryDisplay:
         if current_group:
             groups.append(current_group)
 
-        # Newest item on top, but entries within each group stay in
-        # their natural (commit) order so header > lines > topic
+        # Newest item on top. Within each group, keep the header first,
+        # then reverse the narrator lines so fresher summaries stay
+        # nearest the header, then keep topics at the bottom as the
+        # item's settled after-action anchor.
         groups.reverse()
 
         # Flat list of (entry, deque_idx) in display order (top-down)
         flat: list[tuple[tuple, int]] = []
         for group in groups:
-            flat.extend(group)
+            headers = [item for item in group if item[0][0] == "header"]
+            topics = [item for item in group if item[0][0] == "topic"]
+            lines = [
+                item
+                for item in group
+                if item[0][0] not in ("header", "topic")
+            ]
+            lines.reverse()
+            flat.extend(headers)
+            flat.extend(lines)
+            flat.extend(topics)
 
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget
