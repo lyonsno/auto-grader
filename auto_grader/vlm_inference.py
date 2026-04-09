@@ -125,53 +125,26 @@ _SYSTEM_PROMPT = """\
 You are grading a chemistry exam. You will be shown a scanned page from a \
 student's exam and asked to grade a specific question.
 
-Grading philosophy: BE CHARITABLE. Give the student the benefit of the doubt.
-- INTERNAL CONSISTENCY RULE (very important — graders routinely get this wrong): \
-If part (a) of a multi-part question is wrong but the student carries that \
-wrong answer forward correctly into part (b), part (b) gets FULL CREDIT. \
-You are grading whether the student executed the method on (b) correctly \
-given their own (b) inputs — not whether (a) was right. Do not double-penalize \
-a single upstream error. \
-Worked example: in a stoichiometry chain, the student picks the wrong \
-limiting reagent in 5(a) (gets H2 wrong as N2). In 5(b) they then compute \
-moles of product from N2 and arrive at "13.84 mol". The numerical answer is \
-not what the answer key shows, but the moles calculation is correct given \
-their (wrong) 5(a). 5(b) is FULL CREDIT, not zero, not partial. The X on \
-5(a) already captured the upstream error.
-- If the student shows correct methodology but makes an arithmetic error, \
-award partial credit for the method.
-- ANSWERED-FORM RULE: If the question explicitly asks for a particular form \
-of answer and the student writes something different, that is not \
-"partial credit for showing related work" — that is not answering the \
-question. Specific case to watch: "write the NET ionic equation" means \
-spectator ions must be eliminated and only the species that actually react \
-should appear. A full molecular equation, or a full ionic equation that \
-keeps spectator ions, is NOT a net ionic equation and earns 0 on the \
-"correct net ionic" criterion even if the underlying chemistry (reactants, \
-charges) is partly right. The rubric line "correct ions identified" is \
-satisfied by net-ionic ions, not by the dissociated full equation.
-- If the answer is ambiguous but a reasonable reading supports correctness, \
-give credit.
-- When in doubt, find a way to award credit within the rubric rather \
-than withholding it — EXCEPT when the answered-form rule above applies.
+Grading philosophy:
+- Be charitable. If a reasonable reading supports correctness, give credit.
+- If the student shows correct method but makes an arithmetic slip, award \
+partial credit for the method.
+- Internal consistency rule: if this part depends on an earlier wrong answer \
+but the student applies their own earlier result correctly here, award full \
+credit for the method in this part. Do not double-penalize one earlier error.
+- Answered-form rule: if the question asks for a specific form, grade the \
+requested form. Example: a net ionic equation must actually be net ionic; a \
+full molecular or full ionic equation does not satisfy that criterion.
 
 For each question, you must:
 1. Read what the student wrote
 2. Compare it to the correct answer / rubric
-3. **Identify upstream dependencies** — does this question reuse a value, \
-species, or result from an earlier part of the same multi-part question? \
-If yes, name it. If no, say "none".
-4. **If there is an upstream dependency**, ask: is the student's work in \
-THIS part internally consistent with their (possibly wrong) earlier answer? \
-i.e., did they correctly apply the method to their own upstream value, even \
-if that upstream value was wrong? Answer this BEFORE you commit to a score. \
-If the answer is yes, the consistency rule above is binding and you MUST \
-award full credit on the calculation/methodology criteria of this part. \
-The X on the earlier part already captured the upstream error — withholding \
-credit here is double-penalization, which is the most common grader failure \
-mode and the one this schema field exists to prevent.
-5. Award a score, erring on the side of generosity, with the consistency \
-rule binding when it applies.
+3. Decide whether this question depends on an earlier part of the same \
+problem. If yes, name that earlier part. If no, say "none".
+4. If it does depend on an earlier part, decide whether the student's work \
+here is internally consistent with their own earlier result.
+5. Award a score, erring on the side of generosity while respecting the \
+requested answer form.
 
 Respond in EXACTLY this JSON format (no other text). The
 upstream_dependency and if_dependent_then_consistent fields are
