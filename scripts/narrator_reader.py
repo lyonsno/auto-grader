@@ -1414,29 +1414,89 @@ class PaintDryDisplay:
             if self._turn_started_at is not None
             else None
         )
-        header_text.append(
-            f"total={total_elapsed_s}s",
-            style="#7f95cf" if self._session_started_at is not None else "grey50",
+
+        # Scoreboard-dial treatment for the five run counters. Each
+        # quantity renders through `_append_scorebug_cell` so it reuses
+        # the same capsule-and-value language the Liquid Varnish
+        # Squadron scorebug panel below uses for CURRENT MODEL / ITEM /
+        # ON TARGET etc., instead of sitting in the top chrome as a
+        # flat telemetry tail. The time dials stay on cool structural
+        # capsules (TOTAL indigo, TURN ember to pair with the warm ITEM
+        # tag), and the event-count dials light up on green/amber/red
+        # capsules only when nonzero — at zero they fall back to a
+        # muted grey capsule so a quiet run doesn't scream color.
+        _dead_label = "bold #9aa0ac on #2a2d34"
+        _dead_value = "bold #cdd1da on #1a1c22"
+        self._append_scorebug_cell(
+            header_text,
+            "TOTAL",
+            f"{total_elapsed_s}s",
+            label_style=(
+                "bold #e6ebff on #2e3a66"
+                if self._session_started_at is not None
+                else _dead_label
+            ),
+            value_style=(
+                "bold #d7dff5 on #1d2440"
+                if self._session_started_at is not None
+                else _dead_value
+            ),
         )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"turn={turn_elapsed_s}s" if turn_elapsed_s is not None else "turn=--",
-            style=_rgb_to_hex(_EMBER_ACCENT_RGB) if turn_elapsed_s is not None else "grey50",
+        self._append_scorebug_cell(
+            header_text,
+            "TURN",
+            f"{turn_elapsed_s}s" if turn_elapsed_s is not None else "--",
+            label_style=(
+                "bold #ffe9d6 on #5a3a1e"
+                if turn_elapsed_s is not None
+                else _dead_label
+            ),
+            value_style=(
+                f"bold #ffd9b8 on {_rgb_to_hex(_EMBER_ACCENT_RGB)}"
+                if turn_elapsed_s is not None
+                else _dead_value
+            ),
         )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"emitted={self.stat_emitted}",
-            style="green4" if self.stat_emitted > 0 else "grey50",
+        self._append_scorebug_cell(
+            header_text,
+            "EMITTED",
+            f"{self.stat_emitted}",
+            label_style=(
+                "bold #e0f5dc on #2b4e2a" if self.stat_emitted > 0 else _dead_label
+            ),
+            value_style=(
+                "bold #c7e6c0 on #1a3519" if self.stat_emitted > 0 else _dead_value
+            ),
         )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"dedup={self.stat_dropped_dedup}",
-            style="yellow4" if self.stat_dropped_dedup > 0 else "grey50",
+        self._append_scorebug_cell(
+            header_text,
+            "DEDUP",
+            f"{self.stat_dropped_dedup}",
+            label_style=(
+                "bold #fff1cc on #5a4420"
+                if self.stat_dropped_dedup > 0
+                else _dead_label
+            ),
+            value_style=(
+                "bold #f2dfa8 on #3d2d13"
+                if self.stat_dropped_dedup > 0
+                else _dead_value
+            ),
         )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"empty={self.stat_dropped_empty}",
-            style="red3" if self.stat_dropped_empty > 0 else "grey50",
+        self._append_scorebug_cell(
+            header_text,
+            "EMPTY",
+            f"{self.stat_dropped_empty}",
+            label_style=(
+                "bold #ffd6d0 on #5a2620"
+                if self.stat_dropped_empty > 0
+                else _dead_label
+            ),
+            value_style=(
+                "bold #f2b6ad on #3d1813"
+                if self.stat_dropped_empty > 0
+                else _dead_value
+            ),
         )
         header = Panel(
             Align.left(header_text),
@@ -1932,15 +1992,15 @@ class PaintDryDisplay:
                 drops_text.append("  ✗ ", style="grey39")
                 drops_text.append(f"[{reason}] ", style="grey39")
                 drops_text.append(label, style="grey42 strike")
+            # The DEDUP/EMPTY dials in the top header are now
+            # authoritative for the counts, so the drops panel title
+            # drops the flat ``dedup=N empty=N`` telemetry tail and just
+            # carries the label.
             drops_panel = Panel(
                 drops_text,
                 border_style="grey30",
                 padding=(0, 1),
-                title=(
-                    f"[grey42]rejected · "
-                    f"dedup={self.stat_dropped_dedup} "
-                    f"empty={self.stat_dropped_empty}[/grey42]"
-                ),
+                title="[grey42]rejected[/grey42]",
                 title_align="left",
             )
 

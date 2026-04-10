@@ -888,8 +888,12 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_header("[item 1/6] 15-blue/fr-1")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
             header_text = _extract_plain(display.render().renderables[1].renderable)
-        self.assertIn("total=7s", header_text)
-        self.assertIn("turn=7s", header_text)
+        # Dial-language migration: TOTAL and TURN dials both carry the
+        # 7s value in their value cells instead of a flat
+        # ``total=7s``/``turn=7s`` telemetry tail.
+        self.assertIn("TOTAL", header_text)
+        self.assertIn("TURN", header_text)
+        self.assertEqual(header_text.count("7s"), 2)
 
     def test_turn_timer_persists_within_item_and_resets_on_next_header(self):
         display = self._make_display()
@@ -901,28 +905,167 @@ class NarratorReaderContract(unittest.TestCase):
         display.on_commit("status")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
             header_text = _extract_plain(display.render().renderables[1].renderable)
-        self.assertIn("turn=5s", header_text)
+        # TURN dial at 5s, TOTAL dial at 5s too (both started at 200.0).
+        self.assertIn("TURN", header_text)
+        self.assertEqual(header_text.count("5s"), 2)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=206.0):
             display.on_delta("Rechecking")
         display.on_drop("dedup", "Rechecking the same unit conversion.")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
             header_text = _extract_plain(display.render().renderables[1].renderable)
-        self.assertIn("turn=8s", header_text)
+        # At t=208.0, TURN=8s and TOTAL=8s (both 200.0).
+        self.assertEqual(header_text.count("8s"), 2)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=209.0):
             display.on_delta("Tracing")
         display.on_rollback_live()
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
             header_text = _extract_plain(display.render().renderables[1].renderable)
-        self.assertIn("turn=11s", header_text)
+        # At t=211.0, TURN=11s and TOTAL=11s.
+        self.assertEqual(header_text.count("11s"), 2)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=212.0):
             display.on_header("[item 2/6] 15-blue/fr-2")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
             header_text = _extract_plain(display.render().renderables[1].renderable)
-        self.assertIn("total=15s", header_text)
-        self.assertIn("turn=3s", header_text)
+        # After the fr-2 header at t=212.0, TURN resets so at t=215.0
+        # we have TOTAL=15s but TURN=3s — values now sit in distinct
+        # dial cells instead of a shared flat line.
+        self.assertIn("TOTAL", header_text)
+        self.assertIn("15s", header_text)
+        self.assertIn("TURN", header_text)
+        self.assertIn("3s", header_text)
+
+    def test_run_counters_render_as_scoreboard_dials_not_flat_telemetry(self):
+        """The five top-band run quantities (total, turn, emitted, dedup,
+        empty) should read as scoreboard-language dials that harmonize
+        with the existing scorebug capsules, not as a flat
+        ``total=...s  turn=...s  emitted=...`` telemetry tail.
+
+        Falsifiable shape:
+          * Each of the five quantities carries an uppercase dial label
+            (TOTAL / TURN / EMITTED / DEDUP / EMPTY) in the header
+            panel's plain text.
+          * The legacy flat ``total=``/``turn=``/``emitted=``/``dedup=``/
+            ``empty=`` substring prefixes are gone from the header panel
+            plain text — they are the exact shape the attractor is
+            retiring.
+          * The five dial labels each live inside a capsule cell (same
+            ``on #...`` background idiom used by the existing scorebug
+            cells like CURRENT MODEL / ITEM / SET), so a future pass
+            cannot silently collapse the dials back into unstyled flat
+            text.
+          * The underlying values are still legible: the runtime seconds
+            and the event counts still appear somewhere in the header
+            panel plain text.
+          * The rejected/drops panel title no longer carries the literal
+            ``dedup=``/``empty=`` flat telemetry either, because the
+            attractor condition #1 covers the whole "flat line of plain
+            telemetry" surface rather than only the top-band header.
+        """
+        display = self._make_display()
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=500.0):
+            display.on_header("[item 1/6] 15-blue/fr-1")
+
+        # Emit some activity so all five counters are nonzero.
+        display.on_delta("I'm tracing the stoichiometry.")
+        display.on_commit("thought")
+        display.on_delta("Tracing the stoichiometry setup.", mode="status")
+        display.on_commit("status")
+        display.on_drop("dedup", "Rechecking the same unit conversion.")
+        display.on_drop("dedup", "Rechecking the same unit conversion.")
+        display.on_drop("empty", "")
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=507.0):
+            group = display.render()
+
+        # Layout: scorebug at [0], header at [1]. This matches the
+        # existing timer tests which assume the scorebug is present
+        # because _make_display() sets current_model via on_header.
+        header_panel = group.renderables[1]
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+        header_text_obj = header_renderable
+        # Some future refactor might wrap header content in a Group;
+        # if so, pull the first Text child out.
+        if isinstance(header_text_obj, Group):
+            header_text_obj = header_text_obj.renderables[0]
+        self.assertIsInstance(
+            header_text_obj,
+            Text,
+            "header panel should still render a Text row carrying the dial labels",
+        )
+        header_plain = header_text_obj.plain
+
+        # Dial labels present in scoreboard language.
+        for label in ("TOTAL", "TURN", "EMITTED", "DEDUP", "EMPTY"):
+            self.assertIn(
+                label,
+                header_plain,
+                f"run counter {label!r} should render as a scoreboard dial "
+                f"label, not as flat telemetry",
+            )
+
+        # Flat telemetry prefixes are retired.
+        for legacy in ("total=", "turn=", "emitted=", "dedup=", "empty="):
+            self.assertNotIn(
+                legacy,
+                header_plain,
+                f"legacy flat telemetry prefix {legacy!r} should no longer "
+                f"appear in the header panel — it is the exact shape the "
+                f"scoreboard-dials attractor is retiring",
+            )
+
+        # Values are still legible (honest affordance).
+        self.assertIn(
+            "7",
+            header_plain,
+            "total runtime value (7s) should still be visible after dial treatment",
+        )
+        self.assertIn(
+            "1",
+            header_plain,
+            "emitted count (1) should still be visible after dial treatment",
+        )
+        self.assertIn(
+            "2",
+            header_plain,
+            "dedup count (2) should still be visible after dial treatment",
+        )
+
+        # Each dial label lives inside a capsule cell with a
+        # background, matching the scorebug ``on #...`` idiom.
+        for label in ("TOTAL", "TURN", "EMITTED", "DEDUP", "EMPTY"):
+            style = self._style_for_substring(header_text_obj, label)
+            self.assertIn(
+                "on #",
+                style,
+                f"dial label {label!r} should live inside a capsule cell "
+                f"(``fg on #bghex`` style), matching the scorebug label "
+                f"capsules — a future pass should not be able to silently "
+                f"collapse it back into unstyled telemetry text",
+            )
+
+        # Rejected/drops panel title should also stop speaking flat
+        # telemetry — attractor condition #1 covers the whole flat
+        # telemetry surface, not only the top-band header.
+        drops_panel = group.renderables[-1]
+        drops_title = drops_panel.title or ""
+        self.assertNotIn(
+            "dedup=",
+            drops_title,
+            "drops panel title should stop emitting flat ``dedup=`` telemetry "
+            "once the counters are promoted into scoreboard dials",
+        )
+        self.assertNotIn(
+            "empty=",
+            drops_title,
+            "drops panel title should stop emitting flat ``empty=`` telemetry "
+            "once the counters are promoted into scoreboard dials",
+        )
 
     def test_local_group_dim_factor_descends_materially_per_line(self):
         self.assertEqual(_history_tier_dim_factor(0), 1.0)
