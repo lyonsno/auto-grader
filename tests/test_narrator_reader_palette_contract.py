@@ -162,6 +162,31 @@ class NarratorReaderPaletteContract(unittest.TestCase):
         self.assertGreater(status_red, status_green)
         self.assertGreater(status_green, status_blue)
 
+    def test_undershoot_verdict_shifts_toward_wheat_ale_instead_of_hard_gold(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._BASE_RGB["topic_undershoot"]
+
+        self.assertGreater(
+            red,
+            green,
+            "undershoot should stay warm-led rather than drifting olive",
+        )
+        self.assertGreater(
+            green,
+            blue,
+            "undershoot should still read as a warm wheat/ale family rather than pink or grey",
+        )
+        self.assertLess(
+            red - green,
+            42,
+            "undershoot should soften toward wheat/ale and stop reading like a failed gold signal",
+        )
+        self.assertGreaterEqual(
+            blue,
+            85,
+            "undershoot should carry more brown/amber depth than the earlier goldier pass",
+        )
+
     def test_status_and_live_top_band_keep_dark_fire_vs_cool_wash_roles(self):
         module = _load_narrator_reader()
 

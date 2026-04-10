@@ -169,7 +169,9 @@ _BASE_RGB = {
                                           # checkpoint doesn't begin with a
                                           # dead grey gutter
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
-    "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
+    "topic_undershoot": (188, 154, 98),   # wheat ale — too strict,
+                                          # softened away from signal-gold
+                                          # toward a browner paper-earth
     # Header dash — vermilion stroke at the start of every item header.
     # Gives vermilion a STRUCTURAL home (was the only verdict color
     # appearing purely as a verdict indicator) and pulses in sync with
@@ -243,7 +245,8 @@ _SHIMMER_KIND_PEAK_RGB = {
                                         # darker coal base
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
-    "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
+    "topic_undershoot": (228, 192, 136), # wheat-lit earth — warm,
+                                         # but no longer a bright gold flare
     "header_dash": (234, 152, 108),      # fired apricot-vermilion — the dash
                                           # brightens toward the same
                                           # bright lacquer that the
@@ -294,13 +297,17 @@ _LIVE_PHASE_OFFSET_RAD = 0.0
 _LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
                                     # shimmer sweep, so the top band feels
                                     # like its own counter-current
-_LIVE_BASE_SAT = 0.34              # still soft, but with a more visible wash
-_LIVE_BASE_VAL = 0.86              # slightly less white, a little more pigment
+_LIVE_BASE_SAT = 0.28              # softened back down so the cool lane reads
+                                   # like washed mineral color, not electric light
+_LIVE_BASE_VAL = 0.80              # dimmer for legibility and to sit inside the
+                                   # paper/ink world instead of above it
 _LIVE_WARM_HUE_CENTER_DEG = 22     # yellow-red sibling, friendlier than a hot
                                    # alarm band but more chromatic than before
 _LIVE_WARM_HUE_RANGE_DEG = 18
-_LIVE_WARM_BASE_SAT = 0.30
-_LIVE_WARM_BASE_VAL = 0.87
+_LIVE_WARM_BASE_SAT = 0.34         # a touch more pigment so the warm lane reads
+                                   # as color instead of almost-white
+_LIVE_WARM_BASE_VAL = 0.82         # still pastel, but no longer teasing the eye
+                                   # from the edge of white
 _LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH = 0.30
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
@@ -1458,14 +1465,14 @@ class PaintDryDisplay:
         if self.current_model or self.current_item_bug or self.current_set_label:
             meta_bg = "#383530"
             meta_separator_style = "bold #585149 on #383530"
-            tally_label_bg = "#3a3732"
-            tally_label_separator_style = "bold #5b554d on #3a3732"
-            tally_top_bg = "#35322f"
-            tally_mid_bg = "#2f2d2a"
-            tally_bottom_bg = "#2a2826"
-            tally_top_separator_style = "bold #555048 on #35322f"
-            tally_mid_separator_style = "bold #4d4841 on #2f2d2a"
-            tally_bottom_separator_style = "bold #46413b on #2a2826"
+            tally_label_bg = "#36342f"
+            tally_label_separator_style = "bold #575149 on #36342f"
+            tally_top_bg = "#35332f"
+            tally_mid_bg = "#33312d"
+            tally_bottom_bg = "#302e2b"
+            tally_top_separator_style = "bold #545048 on #35332f"
+            tally_mid_separator_style = "bold #514c45 on #33312d"
+            tally_bottom_separator_style = "bold #4c4741 on #302e2b"
             scorebug_top = Text()
             self._append_scorebug_cell(
                 scorebug_top,
