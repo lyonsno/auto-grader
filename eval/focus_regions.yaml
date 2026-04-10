@@ -1,0 +1,101 @@
+# Canonical focus-region annotations for the eval harness.
+#
+# Read by scripts/smoke_vlm.py (default path; overridable with
+# --focus-regions PATH for concurrent sessions working against different
+# copies of this file). Written by scripts/annotate_focus_regions.py.
+#
+# Keys: "exam_id/question_id" flat strings. Values mirror FocusRegion.
+# The `source` field carries provenance — currently every entry here is
+# `mock_tricky` / `mock_tricky_plus` because it was migrated from a
+# Python dict literal. Once the annotation tool has been run, entries
+# it touches flip to `operator_annotated`.
+#
+# NOTE: regions in this file may point at the wrong part of the page.
+# The old mush renderer hid this; the legibility-first renderer exposed
+# it. See attractor: auto-grader_visual-focus-region-annotation_2026-04-10.
+
+regions:
+  27-blue-2023/fr-3:
+    page: 1
+    x: 0.14
+    y: 0.18
+    width: 0.66
+    height: 0.24
+    source: mock_tricky_plus
+  27-blue-2023/fr-5b:
+    page: 1
+    x: 0.14
+    y: 0.42
+    width: 0.66
+    height: 0.28
+    source: mock_tricky_plus
+  27-blue-2023/fr-12a:
+    page: 4
+    x: 0.16
+    y: 0.08
+    width: 0.46
+    height: 0.20
+    source: mock_tricky_plus
+  39-blue-redacted/fr-10a:
+    page: 3
+    x: 0.14
+    y: 0.20
+    width: 0.62
+    height: 0.24
+    source: mock_tricky_plus
+  34-blue/fr-8:
+    page: 2
+    x: 0.16
+    y: 0.32
+    width: 0.58
+    height: 0.24
+    source: mock_tricky_plus
+  34-blue/fr-12a:
+    page: 4
+    x: 0.18
+    y: 0.07
+    width: 0.50
+    height: 0.18
+    source: mock_tricky_plus
+  15-blue/fr-1:
+    page: 1
+    x: 0.16
+    y: 0.05
+    width: 0.60
+    height: 0.22
+    source: mock_tricky
+  15-blue/fr-3:
+    page: 1
+    x: 0.14
+    y: 0.18
+    width: 0.64
+    height: 0.24
+    source: mock_tricky
+  15-blue/fr-5b:
+    page: 1
+    x: 0.14
+    y: 0.42
+    width: 0.66
+    height: 0.28
+    source: mock_tricky
+  15-blue/fr-10a:
+    page: 3
+    x: 0.14
+    y: 0.20
+    width: 0.62
+    height: 0.24
+    source: mock_tricky
+  15-blue/fr-11a:
+    page: 3
+    x: 0.16
+    y: 0.40
+    width: 0.58
+    height: 0.22
+    source: mock_tricky
+  15-blue/fr-12a:
+    page: 4
+    x: 0.16
+    y: 0.08
+    width: 0.48
+    height: 0.19
+    source: mock_tricky
