@@ -1304,25 +1304,26 @@ class NarratorReaderContract(unittest.TestCase):
         )
         cell_width = len(f" {expected_on_target[0]} ")
         separator_width = 2
-        self.assertEqual(
-            tally_text_obj.plain.index("ON TARGET"),
-            0,
-            "ON TARGET label should start at the left edge of its score cell",
-        )
+        # Gauge Saints II: TOTAL and TURN now sit leftmost in the
+        # big-value strip as their own scoreboard plates, so ON TARGET
+        # no longer starts at offset 0. This test only cares about the
+        # relative layout of the three grading plates, so it anchors
+        # on wherever ON TARGET lands and walks from there.
+        on_target_start = tally_text_obj.plain.index("ON TARGET")
         self.assertEqual(
             tally_text_obj.plain.index("LEFT ON TABLE"),
-            cell_width + separator_width,
+            on_target_start + cell_width + separator_width,
             "LEFT ON TABLE label should start at the left edge of its score cell",
         )
         self.assertEqual(
             tally_text_obj.plain.index("BAD CALLS"),
-            (2 * cell_width) + (2 * separator_width),
+            on_target_start + (2 * cell_width) + (2 * separator_width),
             "BAD CALLS label should start at the left edge of its score cell",
         )
         on_target_styles = self._styles_in_range(
             tally_value_top,
-            0,
-            cell_width,
+            on_target_start,
+            on_target_start + cell_width,
         )
         left_top_style = self._style_for_substring(
             tally_value_top,
@@ -1368,7 +1369,25 @@ class NarratorReaderContract(unittest.TestCase):
             6,
             "the score field should still have some subtle tonal breathing room instead of collapsing to one dead flat slab",
         )
-        on_target_top_strong = tally_value_top.spans[1].style
+        # Find the first two strong-stroke spans inside the ON TARGET
+        # cell by walking the tally_value_top spans from on_target_start
+        # rather than indexing by absolute span index (which would now
+        # point at the TOTAL/TURN plates' spans).
+        on_target_spans = [
+            span
+            for span in tally_value_top.spans
+            if (
+                isinstance(span.style, str)
+                and span.start >= on_target_start
+                and span.end <= on_target_start + cell_width
+            )
+        ]
+        self.assertGreaterEqual(
+            len(on_target_spans),
+            3,
+            "ON TARGET value cell should carry multiple styled spans",
+        )
+        on_target_top_strong = on_target_spans[1].style
         on_target_bottom_style = self._style_for_substring(
             tally_value_bottom,
             expected_on_target[2].strip(),
@@ -1408,7 +1427,7 @@ class NarratorReaderContract(unittest.TestCase):
             "each scorebug cell should carry its own numeral-stroke family so the human can compare three mockup directions at once",
         )
         self.assertEqual(
-            tally_value_top.spans[2].style,
+            on_target_spans[2].style,
             on_target_top_strong,
             "top-row horizontal bars should stay on the strong stroke tier so the numerals read chunkier",
         )
@@ -1667,15 +1686,98 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("drop line 2", drops_text)
         self.assertIn("drop line 5", drops_text)
 
+    @staticmethod
+    def _scorebug_plain(display) -> str:
+        """Concat every row of the scorebug panel into one plain string."""
+        scorebug_panel = display.render().renderables[1]
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        return "\n".join(
+            row.plain if isinstance(row, Text) else ""
+            for row in scorebug_renderable.renderables
+        )
+
+    @staticmethod
+    def _scorebug_value_rows(display) -> tuple[Text, Text, Text, Text]:
+        """Return the (labels, value_top, value_middle, value_bottom)
+        row Text objects for the big-value plate strip."""
+        scorebug_panel = display.render().renderables[1]
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        rows = scorebug_renderable.renderables
+        # rows[0] = model/set/item, rows[1] = spacer,
+        # rows[2] = labels, rows[3..5] = value rows.
+        return rows[2], rows[3], rows[4], rows[5]
+
+    def _plate_tall_value(self, display, label: str) -> str:
+        """Extract the digit string currently sitting inside the named
+        big-value plate by slicing the three value rows at the label's
+        column range and reverse-looking-up each 3-character glyph
+        column against the ``_SCOREBUG_BIG_DIGITS`` table."""
+        from scripts.narrator_reader import _SCOREBUG_BIG_DIGITS
+
+        labels_row, value_top, value_middle, value_bottom = (
+            self._scorebug_value_rows(display)
+        )
+        label_start = labels_row.plain.index(label)
+        # Find the next plate's label start (or the end of the row) so
+        # this plate's cell range is bounded.
+        remaining = labels_row.plain[label_start + len(label):]
+        next_non_space = None
+        for offset, ch in enumerate(remaining):
+            if ch != " ":
+                next_non_space = offset
+                break
+        if next_non_space is None:
+            label_end = len(labels_row.plain)
+        else:
+            label_end = label_start + len(label) + next_non_space
+
+        # Pull the value-row slices in this plate's cell range.
+        top_cell = value_top.plain[label_start:label_end]
+        middle_cell = value_middle.plain[label_start:label_end]
+        bottom_cell = value_bottom.plain[label_start:label_end]
+
+        # The top row is the most reliable anchor because digit glyphs
+        # always carry visible ink in their top row (╔, ═, ╗, or a
+        # combination). Find the first non-space column in the top row
+        # and walk 3-char glyph columns from there. Middle and bottom
+        # rows must be read at the SAME column range without stripping,
+        # because some glyph bottoms (e.g. 7: "║  ") legitimately carry
+        # trailing spaces that would be destroyed by strip().
+        glyph_start = len(top_cell) - len(top_cell.lstrip(" "))
+        glyph_to_char = {rows: ch for ch, rows in _SCOREBUG_BIG_DIGITS.items()}
+        result: list[str] = []
+        col = glyph_start
+        while col + 3 <= len(top_cell):
+            top_glyph = top_cell[col:col + 3]
+            if top_glyph == "   ":
+                break  # hit the trailing padding after the last digit
+            middle_glyph = middle_cell[col:col + 3] if col + 3 <= len(middle_cell) else "   "
+            bottom_glyph = bottom_cell[col:col + 3] if col + 3 <= len(bottom_cell) else "   "
+            triple = (top_glyph, middle_glyph, bottom_glyph)
+            ch = glyph_to_char.get(triple)
+            if ch is None:
+                break
+            result.append(ch)
+            col += 3
+        return "".join(result)
+
     def test_header_starts_total_and_turn_timers(self):
+        """After the Gauge Saints II promotion, TOTAL and TURN render
+        as tall scorebug plates rather than flat header telemetry. The
+        timer values should still reflect elapsed time since the first
+        header fired."""
         display = self._make_display()
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=100.0):
             display.on_header("[item 1/6] 15-blue/fr-1")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("total=7s", header_text)
-        self.assertIn("turn=7s", header_text)
+            self.assertEqual(self._plate_tall_value(display, "TOTAL"), "7")
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
+            self.assertEqual(self._plate_tall_value(display, "TURN"), "7")
 
     def test_turn_timer_persists_within_item_and_resets_on_next_header(self):
         display = self._make_display()
@@ -1686,29 +1788,258 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_delta("Tracing")
         display.on_commit("status")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("turn=5s", header_text)
+            self.assertEqual(self._plate_tall_value(display, "TURN"), "5")
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
+            self.assertEqual(self._plate_tall_value(display, "TOTAL"), "5")
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=206.0):
             display.on_delta("Rechecking")
         display.on_drop("dedup", "Rechecking the same unit conversion.")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("turn=8s", header_text)
+            self.assertEqual(self._plate_tall_value(display, "TURN"), "8")
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
+            self.assertEqual(self._plate_tall_value(display, "TOTAL"), "8")
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=209.0):
             display.on_delta("Tracing")
         display.on_rollback_live()
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("turn=11s", header_text)
+            self.assertEqual(self._plate_tall_value(display, "TURN"), "11")
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
+            self.assertEqual(self._plate_tall_value(display, "TOTAL"), "11")
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=212.0):
             display.on_header("[item 2/6] 15-blue/fr-2")
+        # After the fr-2 header at t=212.0, TURN resets so at t=215.0
+        # we have TOTAL=15 but TURN=3 — timers in distinct plates, no
+        # longer collapsed into a shared flat line.
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
-            header_text = _extract_plain(display.render().renderables[0].renderable)
-        self.assertIn("total=15s", header_text)
-        self.assertIn("turn=3s", header_text)
+            self.assertEqual(self._plate_tall_value(display, "TOTAL"), "15")
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
+            self.assertEqual(self._plate_tall_value(display, "TURN"), "3")
+
+    def test_run_counters_render_as_scoreboard_dials_not_flat_telemetry(self):
+        """The three event-count run quantities (emitted, dedup, empty)
+        should read as scoreboard-language dials in the top header
+        band, not as a flat ``emitted=N  dedup=N  empty=N`` telemetry
+        tail. TOTAL and TURN are handled by
+        ``test_timers_render_as_tall_scorebug_plates_not_small_capsules``
+        because they are promoted into the tall scorebug-plate
+        treatment below.
+
+        Falsifiable shape:
+          * EMITTED / DEDUP / EMPTY each carry an uppercase dial label
+            in the header panel's plain text.
+          * The legacy flat ``total=``/``turn=``/``emitted=``/``dedup=``/
+            ``empty=`` substring prefixes are gone from the header panel
+            plain text — they are the exact shape the attractor is
+            retiring.
+          * Each of the three event-count dial labels lives inside a
+            capsule cell (same ``on #...`` background idiom used by
+            the existing scorebug cells), so a future pass cannot
+            silently collapse the dials back into unstyled flat text.
+          * The underlying counts are still legible in the header plain
+            text.
+          * The rejected/drops panel title no longer carries the literal
+            ``dedup=``/``empty=`` flat telemetry either, because the
+            attractor condition #1 covers the whole "flat line of plain
+            telemetry" surface rather than only the top-band header.
+        """
+        display = self._make_display()
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=500.0):
+            display.on_header("[item 1/6] 15-blue/fr-1")
+
+        display.on_delta("I'm tracing the stoichiometry.")
+        display.on_commit("thought")
+        display.on_delta("Tracing the stoichiometry setup.", mode="status")
+        display.on_commit("status")
+        display.on_drop("dedup", "Rechecking the same unit conversion.")
+        display.on_drop("dedup", "Rechecking the same unit conversion.")
+        display.on_drop("empty", "")
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=507.0):
+            group = display.render()
+
+        header_panel = group.renderables[0]
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+        header_text_obj = header_renderable
+        if isinstance(header_text_obj, Group):
+            header_text_obj = header_text_obj.renderables[0]
+        self.assertIsInstance(
+            header_text_obj,
+            Text,
+            "header panel should still render a Text row carrying the dial labels",
+        )
+        header_plain = header_text_obj.plain
+
+        for label in ("EMITTED", "DEDUP", "EMPTY"):
+            self.assertIn(label, header_plain)
+
+        for legacy in ("total=", "turn=", "emitted=", "dedup=", "empty="):
+            self.assertNotIn(legacy, header_plain)
+
+        self.assertIn("1", header_plain)
+        self.assertIn("2", header_plain)
+
+        for label in ("EMITTED", "DEDUP", "EMPTY"):
+            style = self._style_for_substring(header_text_obj, label)
+            self.assertIn("on #", style)
+
+        drops_panel = group.renderables[-1]
+        drops_title = drops_panel.title or ""
+        self.assertNotIn("dedup=", drops_title)
+        self.assertNotIn("empty=", drops_title)
+
+    def test_timers_render_as_tall_scorebug_plates_not_small_capsules(self):
+        """TOTAL and TURN must render as full three-row
+        ``_append_scorebug_big_value_cell`` plates inside the scorebug
+        panel, next to ON TARGET / LEFT ON TABLE / BAD CALLS — not as
+        small single-row ``_append_scorebug_cell`` capsules in the top
+        header band.
+
+        The previous Gauge Saints slice put all five run counters into
+        the small header-band capsule treatment. On review that made
+        the timer promotion invisible: the eye reads only the three
+        existing grading plates as "scoreboard dials" and the small
+        header capsules read as unchanged metadata chrome. The fix is
+        to promote TOTAL and TURN into the tall scoreboard-plate
+        treatment so there is an actual dial-shape promotion. The
+        event-count trio (EMITTED / DEDUP / EMPTY) stays as small
+        header capsules because the attractor only asked for timer
+        promotion.
+
+        Falsifiable shape:
+          * TOTAL and TURN labels appear in the scorebug panel's plain
+            text, not only in the header panel.
+          * The tall-digit three-row glyph signature produced by
+            ``_scorebug_big_value_rows`` for the TOTAL value (e.g.
+            ``2963``) appears in the scorebug panel rendering, so the
+            timer values are actually walking through the big-digit
+            renderer rather than being printed in bare text.
+          * Each of TOTAL and TURN has an ``on #...`` capsule label
+            style matching the ON TARGET / LEFT ON TABLE / BAD CALLS
+            label cell idiom.
+          * TOTAL and TURN are gone from the header panel plain text —
+            no duplicated small-capsule version in the top band.
+        """
+        display = self._make_display()
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1000.0):
+            display.on_header("[item 1/6] 15-blue/fr-1")
+        # Emit some activity so a realistic render is exercised and
+        # no panel collapses to a degenerate empty state.
+        display.on_delta("I'm tracing the stoichiometry.")
+        display.on_commit("thought")
+        display.on_delta("Tracing the stoichiometry setup.", mode="status")
+        display.on_commit("status")
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=3963.0):
+            group = display.render()
+
+        header_panel = group.renderables[0]
+        scorebug_panel = group.renderables[1]
+
+        # Collect the scorebug panel plain text from every row so the
+        # assertions don't depend on the exact row index of the new
+        # timer plates.
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        scorebug_rows = scorebug_renderable.renderables
+        scorebug_plain = "\n".join(
+            row.plain if isinstance(row, Text) else ""
+            for row in scorebug_rows
+        )
+
+        # Labels present in the scorebug panel.
+        self.assertIn(
+            "TOTAL",
+            scorebug_plain,
+            "TOTAL timer should live as a tall scoreboard-plate label "
+            "inside the scorebug panel, not as a small top-band capsule",
+        )
+        self.assertIn(
+            "TURN",
+            scorebug_plain,
+            "TURN timer should live as a tall scoreboard-plate label "
+            "inside the scorebug panel, not as a small top-band capsule",
+        )
+
+        # TOTAL value 2963 should walk through _scorebug_big_value_rows,
+        # so the top row of the three-row tall-digit signature for
+        # "2963" should appear verbatim somewhere in the scorebug plain
+        # text. Using the top row is the strongest check because the
+        # middle/bottom rows of some glyph pairs collide with other
+        # plates' glyphs.
+        total_top, _total_middle, _total_bottom = _scorebug_big_value_rows("2963")
+        self.assertIn(
+            total_top,
+            scorebug_plain,
+            "TOTAL value 2963 should render through _scorebug_big_value_rows "
+            "so the three-row tall-digit glyph signature is present in the "
+            "scorebug panel — this is how the plate is distinguished from a "
+            "small text capsule",
+        )
+
+        # TURN value 2963 (same elapsed because the test header fires
+        # at t=1000 and renders at t=3963; turn timer started at the
+        # header) should likewise walk through the big-digit renderer.
+        turn_top, _turn_middle, _turn_bottom = _scorebug_big_value_rows("2963")
+        self.assertIn(
+            turn_top,
+            scorebug_plain,
+            "TURN value should render through _scorebug_big_value_rows too",
+        )
+
+        # Label cells carry the ``on #...`` capsule style.
+        # Find whichever scorebug row carries each label and assert
+        # the label style has a background component.
+        def _label_style_in_scorebug(label: str) -> str:
+            for row in scorebug_rows:
+                if not isinstance(row, Text):
+                    continue
+                if label in row.plain:
+                    return self._style_for_substring(row, label)
+            raise AssertionError(
+                f"no scorebug row carried the label {label!r}"
+            )
+
+        for label in ("TOTAL", "TURN"):
+            style = _label_style_in_scorebug(label)
+            self.assertIn(
+                "on #",
+                style,
+                f"timer plate label {label!r} should live inside a capsule "
+                f"cell (``fg on #bghex`` style), matching the existing "
+                f"ON TARGET / LEFT ON TABLE / BAD CALLS label cells",
+            )
+
+        # Header panel no longer carries small TOTAL/TURN capsules —
+        # the promotion replaces the top-band treatment rather than
+        # duplicating it.
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+        if isinstance(header_renderable, Group):
+            header_renderable = header_renderable.renderables[0]
+        header_plain = header_renderable.plain
+        self.assertNotIn(
+            "TOTAL",
+            header_plain,
+            "TOTAL label should no longer appear in the top header band "
+            "once it is promoted to a tall scorebug plate — otherwise the "
+            "dial is duplicated",
+        )
+        self.assertNotIn(
+            "TURN",
+            header_plain,
+            "TURN label should no longer appear in the top header band "
+            "once it is promoted to a tall scorebug plate — otherwise the "
+            "dial is duplicated",
+        )
 
     def test_local_group_dim_factor_descends_materially_per_line(self):
         self.assertEqual(_history_tier_dim_factor(0), 1.0)
