@@ -379,6 +379,15 @@ class ThinkingNarratorContract(unittest.TestCase):
             "Rejected first-person line to compress:\n- I'm verifying the valence electron count and connectivity in the Lewis structure.",
             user_content,
         )
+        self.assertTrue(
+            user_content.startswith(
+                "Rejected first-person line to compress:\n- I'm verifying the valence electron count and connectivity in the Lewis structure."
+            )
+        )
+        self.assertIn(
+            "If the rejected line begins with \"I'm\" or \"I am\", remove that first-person scaffolding and keep the participle.",
+            user_content,
+        )
         self.assertIn(
             "Rewrite that same substance as one short non-first-person present-participle status line.",
             user_content,
