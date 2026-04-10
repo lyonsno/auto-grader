@@ -329,6 +329,16 @@ def _status_line_breaks_contract(text: str) -> bool:
     return bool(_STATUS_FIRST_PERSON_RE.search(text))
 
 
+def _checkpoint_line_breaks_contract(text: str) -> bool:
+    stripped = text.strip()
+    label, body = ThinkingNarrator._split_checkpoint_label(stripped)
+    if label not in {"core issue", "evidence", "lean"}:
+        return True
+    if not body:
+        return True
+    return bool(_STATUS_FIRST_PERSON_RE.search(body))
+
+
 def _rough_token_count(text: str) -> int:
     """Approximate token count (words * 1.3)."""
     return int(len(text.split()) * 1.3)
@@ -1262,7 +1272,9 @@ class ThinkingNarrator:
                     presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
                 ).strip()
                 if checkpoint_text:
-                    if any(
+                    if _checkpoint_line_breaks_contract(checkpoint_text):
+                        self._sink.write_drop("contract-checkpoint", checkpoint_text)
+                    elif any(
                         self._checkpoint_lines_share_basin(
                             checkpoint_text,
                             prev,
