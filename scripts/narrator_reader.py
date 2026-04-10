@@ -172,9 +172,15 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
-    "checkpoint": (160, 180, 205),        # fogged steel note — neutral,
-                                          # calmer than the live field and
-                                          # distinct from verdict rows
+    "checkpoint": (172, 186, 198),        # anchored steel-bone note —
+                                          # cooler and calmer than verdict
+                                          # rows, but brighter than body
+                                          # reasoning so checkpoints read
+                                          # as durable synthesis anchors
+    "checkpoint_mark": (162, 114, 82),    # embered rust notch — structural
+                                          # mark for checkpoint rows so the
+                                          # checkpoint doesn't begin with a
+                                          # dead grey gutter
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -198,7 +204,8 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
-    "checkpoint": 0.95,
+    "checkpoint": 0.86,
+    "checkpoint_mark": 0.96,
     "status": 1.15,
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
@@ -233,8 +240,11 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-fired earth
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "checkpoint": (205, 220, 238),      # pale steel highlight for
+    "checkpoint": (220, 228, 236),      # pale anchored steel highlight for
                                         # checkpoint synthesis lines
+    "checkpoint_mark": (226, 166, 114), # brighter ember crest for the
+                                        # checkpoint mark, tied to the
+                                        # header/status warm structure
     "status": (188, 118, 68),           # ember-lit umber crest for the
                                         # sticky status rail — brighter
                                         # orange note without losing the
@@ -259,6 +269,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "topic",
     "topic_match",
     "checkpoint",
+    "checkpoint_mark",
     "status",
     "topic_overshoot",
     "topic_undershoot",
@@ -2185,7 +2196,14 @@ class PaintDryDisplay:
                     )
             elif kind == "checkpoint":
                 indent = "  ≈ "
-                history_text.append(indent, style="grey50")
+                _apply_shimmer(
+                    history_text, indent, "checkpoint_mark",
+                    layer_index=render_layer,
+                    indent_width=0,
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
                 _apply_shimmer(
                     history_text, text, "checkpoint",
                     layer_index=render_layer,
