@@ -128,6 +128,16 @@ class _DuplicateCheckpointNarrator(ThinkingNarrator):
         return "Core issue: stoichiometry path is broken."
 
 
+class _FirstPersonCheckpointNarrator(_CheckpointNarrator):
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return "I'm noticing the student's answer is written in mL instead of cm³."
+
+
+class _StatusLikeCheckpointNarrator(_CheckpointNarrator):
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return "Rechecking ion balancing for net ionic equation."
+
+
 class ThinkingNarratorContract(unittest.TestCase):
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
@@ -357,6 +367,40 @@ class ThinkingNarratorContract(unittest.TestCase):
                 ["Checking NH3 stoichiometry."],
                 ["Core issue: stoichiometry path is broken."],
             ),
+        )
+
+    def test_first_person_checkpoint_is_dropped_instead_of_persisted(self):
+        sink = _DummySink()
+        narrator = _FirstPersonCheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+
+        for idx in range(4):
+            narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(sink.checkpoints, [])
+        self.assertIn(
+            (
+                "contract-checkpoint",
+                "I'm noticing the student's answer is written in mL instead of cm³.",
+            ),
+            sink.drops,
+        )
+
+    def test_unlabeled_status_like_checkpoint_is_dropped_instead_of_persisted(self):
+        sink = _DummySink()
+        narrator = _StatusLikeCheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-3")
+
+        for idx in range(4):
+            narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(sink.checkpoints, [])
+        self.assertIn(
+            (
+                "contract-checkpoint",
+                "Rechecking ion balancing for net ionic equation.",
+            ),
+            sink.drops,
         )
 
     def test_after_action_prompt_avoids_indexable_stock_examples(self):
