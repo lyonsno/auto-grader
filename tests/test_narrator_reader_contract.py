@@ -1047,6 +1047,36 @@ class NarratorReaderContract(unittest.TestCase):
             "item indicator should live in its own scorebug cell",
         )
 
+    def test_header_title_uses_visible_lacquer_gradient_in_rendered_surface(self):
+        display = self._make_display()
+        display.current_model = "qwen3p5-35B-A3B"
+        display.on_header("[item 4/6] 15-blue/fr-10a")
+
+        group = display.render()
+
+        header_panel = group.renderables[0]
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+
+        title_end = header_renderable.plain.index(" · sumi-e")
+        title_styles = {
+            style
+            for style in self._styles_in_range(header_renderable, 0, title_end)
+            if "#" in style
+        }
+
+        self.assertGreaterEqual(
+            len(title_styles),
+            2,
+            "PROJECT PAINT DRY should carry multiple lacquer-family spans so the header accent actually reads in the smoked surface",
+        )
+        self.assertNotIn(
+            "bold bright_white",
+            self._styles_in_range(header_renderable, 0, title_end),
+            "PROJECT PAINT DRY should no longer render as a single flat bright-white title",
+        )
+
     def test_scorebug_can_render_set_and_running_tally_cells(self):
         display = self._make_display()
         display.on_session_meta(
@@ -1193,6 +1223,43 @@ class NarratorReaderContract(unittest.TestCase):
             "top-row horizontal bars should stay on the strong stroke tier so the numerals read chunkier",
         )
 
+    def test_scorebug_rendered_four_uses_tapered_open_foot_in_context(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY+",
+            subset_count=12,
+        )
+        display.on_header("[item 4/12] 39-blue-redacted/fr-10a")
+        display.on_topic(
+            "23s · Grader: 4/4. Prof: 4/4.",
+            verdict="match",
+            grader_score=4.0,
+            truth_score=4.0,
+            max_points=4.0,
+        )
+
+        group = display.render()
+
+        scorebug_panel = group.renderables[1]
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        tally_value_mid = scorebug_renderable.renderables[4]
+        tally_value_bottom = scorebug_renderable.renderables[5]
+
+        self.assertIn("╚═╣", tally_value_mid.plain)
+        self.assertIn(
+            "╹ ▪",
+            tally_value_bottom.plain,
+            "rendered 4.0 cells should taper to an open foot in the bottom row instead of dropping a full tailed stem",
+        )
+        self.assertNotIn(
+            "║ ▪",
+            tally_value_bottom.plain,
+            "rendered 4.0 cells should not show the old tailed bottom stem",
+        )
+
     def test_scorebug_big_value_rows_render_three_line_scoreboard_digits(self):
         top, middle, bottom = _scorebug_big_value_rows("2.0/9.0")
 
@@ -1216,7 +1283,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("╚═╝", bottom)
         self.assertIn("▪", bottom)
 
-    def test_scorebug_four_glyph_keeps_a_straight_right_stem(self):
+    def test_scorebug_four_glyph_tapers_to_an_open_foot(self):
         top, middle, bottom = _scorebug_big_value_rows("4.0")
 
         self.assertIn(
@@ -1226,9 +1293,9 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertIn("╚═╣", middle)
         self.assertIn(
-            "  ║",
+            "  ╹",
             bottom,
-            "the 4 glyph should keep a straight right stem on the bottom row instead of flaring into a T-shape",
+            "the 4 glyph should taper into an open foot on the bottom row instead of carrying a tailed stem",
         )
 
     def test_scorebug_zero_glyph_uses_heavier_sidewalls(self):
