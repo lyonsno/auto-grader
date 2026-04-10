@@ -72,13 +72,14 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_scan_readback_contract",
                 "tests.test_scan_registration_contract",
                 "tests.test_bubble_interpretation_contract",
+                "tests.test_mc_scoring_contract",
                 "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
             "metadata, bootstrap-script, connection, Postgres harness, runner, "
             "template schema, generation, PDF rendering, scan readback, scan "
-            "registration, bubble interpretation, and discovery guardrail suites "
-            "in a fixed, repo-local order.",
+            "registration, bubble interpretation, MC scoring, and discovery "
+            "guardrail suites in a fixed, repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -131,6 +132,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_scan_readback_contract",
                 "tests.test_scan_registration_contract",
                 "tests.test_bubble_interpretation_contract",
+                "tests.test_mc_scoring_contract",
                 "test_unittest_discovery_contract",
                 "tests.test_db_postgres_smoke_contract",
                 "tests.postgres_contract_bootstrap_script_smoke_contract",

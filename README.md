@@ -195,9 +195,10 @@ Current implementation status on this grading surface:
 - page-identity QR readback is implemented via `auto_grader.scan_readback`
 - page registration is implemented via `auto_grader.scan_registration`
 - first-pass bubble readback is implemented via `auto_grader.bubble_interpretation`
-- scoring and review-state decisions on top of bubble readback are still the next slice,
-  so the system can currently tell you which bubble labels look marked but does not yet
-  convert that into finalized correctness or review workflow
+- first-pass scoring decisions are implemented via `auto_grader.mc_scoring`
+  for the core MC statuses `correct`, `incorrect`, `blank`, and `multiple_marked`
+- richer review workflow, persistence, and operator-facing resolution state are still
+  the next slice beyond that scoring surface
 
 ### 6. Review + Export
 
