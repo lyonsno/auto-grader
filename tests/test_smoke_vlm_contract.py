@@ -139,6 +139,116 @@ class SmokeVlmContract(unittest.TestCase):
             Path.home() / "dev" / "auto-grader-runs" / "20260410-213045-qwen3p5-35B-A3B",
         )
 
+    def test_progress_marks_match_against_truth_score_not_professor_score(self):
+        """_progress must compare model_score against truth_score, not professor_score.
+
+        When a corrected_score is recorded for an item (human-investigated
+        prof grading error), the live console mark shown by _progress must
+        reflect whether the model matches the *corrected* truth, not the
+        historical prof mark. Otherwise the live display contradicts the
+        eval report for the same run — the model could correctly return
+        the corrected answer and the live display would show X while
+        score_predictions counts it as an exact_match.
+
+        Found by Panopticon auto-review of dfa0eb3.
+        """
+        module = _load_smoke_vlm()
+        # The fr-5b case: prof gave 2/2 but the methodology is invalid,
+        # corrected to 0. A model that also returns 0 is actually correct.
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=5,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="check",
+            student_answer="14.2031 moles",
+            notes="consistent with wrong 5a",
+            corrected_score=0.0,
+            correction_reason="cannot add moles of N2 and H2 to get moles of NH3",
+        )
+        pred_matches_truth = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=0.0,  # matches truth_score (corrected), not professor_score
+            model_confidence=0.9,
+            model_reasoning="caught the methodology error",
+            model_read="14.2031 moles",
+            raw_assistant='{"model_score": 0}',
+            raw_reasoning="",
+            upstream_dependency="5(a)",
+            if_dependent_then_consistent=False,
+        )
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            module._progress(1, 1, item, pred_matches_truth)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "[=]",
+            output,
+            "model matching the corrected truth_score (0.0) must render "
+            "as '=', not as 'X' against the original professor_score (2.0)",
+        )
+        self.assertNotIn(
+            "[X]",
+            output,
+            "live mark must not disagree with truth_score when the model is actually correct per the corrected baseline",
+        )
+
+    def test_progress_marks_mismatch_when_model_only_matches_original_prof(self):
+        """Converse case: model matches the original prof mark but not truth.
+
+        When a corrected_score overrides the prof mark and the model
+        returns the (now-incorrect) prof value, _progress must render
+        that as a mismatch. Otherwise the live display would reward
+        the model for agreeing with a known prof error.
+        """
+        module = _load_smoke_vlm()
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=5,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="check",
+            student_answer="14.2031 moles",
+            notes="consistent with wrong 5a",
+            corrected_score=0.0,
+            correction_reason="cannot add moles of N2 and H2 to get moles of NH3",
+        )
+        pred_matches_prof_only = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=2.0,  # matches professor_score (pre-correction) but NOT truth
+            model_confidence=0.9,
+            model_reasoning="accepted the student's premise",
+            model_read="14.2031 moles",
+            raw_assistant='{"model_score": 2}',
+            raw_reasoning="",
+            upstream_dependency="5(a)",
+            if_dependent_then_consistent=True,
+        )
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            module._progress(1, 1, item, pred_matches_prof_only)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "[X]",
+            output,
+            "model matching the original professor_score but not the corrected truth must render as 'X'",
+        )
+        self.assertNotIn(
+            "[=]",
+            output,
+            "live mark must not reward the model for matching a known prof error",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
