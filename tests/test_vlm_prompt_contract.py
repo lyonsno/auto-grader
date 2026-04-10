@@ -15,8 +15,8 @@ class GradingPromptContract(unittest.TestCase):
         )
         self.assertLess(
             len(prompt),
-            2200,
-            "system prompt should stay compact enough that easy items do not pay for repeated policy prose",
+            2400,
+            "system prompt should stay compact enough that easy items do not pay for repeated policy prose even after the score-basis split",
         )
 
     def test_system_prompt_states_each_major_rule_once(self):
@@ -132,6 +132,31 @@ class GradingPromptContract(unittest.TestCase):
             "After one careful pass, if ambiguity still affects the score, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.",
             prompt,
             "hard ambiguous items should hand off cleanly once bounded effort is exhausted",
+        )
+
+    def test_system_prompt_distinguishes_score_basis_from_model_reasoning(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "score_basis = short literal basis for the awarded score",
+            prompt,
+            "prompt should define score_basis as the direct basis for the points awarded",
+        )
+        self.assertIn(
+            "model_reasoning = broader reasoning only",
+            prompt,
+            "prompt should reserve model_reasoning for broader interpretive reasoning instead of score restatement",
+        )
+        self.assertIn(
+            "Do not restate score_basis in model_reasoning.",
+            prompt,
+            "prompt should explicitly prevent overlap between score_basis and model_reasoning",
+        )
+        self.assertIn(
+            '"score_basis": <string>',
+            prompt,
+            "the JSON schema should persist score_basis as a first-class field",
         )
 
     def test_system_prompt_declares_obvious_correctness_buckets(self):
