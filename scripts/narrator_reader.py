@@ -75,8 +75,10 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
-_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 38
-_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 14
+_FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
+_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 88
+_FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
+_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 24
 _FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
 _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
                                    # descending deeper into the stack before
@@ -507,6 +509,26 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     feel laggy at 12 FPS get an immediate forced refresh.
     """
     return msg_type in {"session_meta", "focus_preview", "wrap_up", "end"}
+
+
+def _focus_preview_budget(term_width: int | None) -> tuple[int, int]:
+    """Return a terminal-aware preview raster budget.
+
+    The preview should feel like a real companion surface, not a
+    postage stamp. Use most of the terminal width while leaving enough
+    margin that the panel still breathes.
+    """
+    if term_width is None or term_width <= 0:
+        return _FOCUS_PREVIEW_MIN_WIDTH_CHARS, _FOCUS_PREVIEW_MIN_HEIGHT_ROWS
+    width_chars = max(
+        _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
+        min(_FOCUS_PREVIEW_MAX_WIDTH_CHARS, term_width - 12),
+    )
+    height_rows = max(
+        _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
+        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, int(round(width_chars * 0.28))),
+    )
+    return width_chars, height_rows
 
 
 def _render_focus_preview_terminal(
@@ -2046,8 +2068,19 @@ class PaintDryDisplay:
         label: str = "",
         source: str = "",
     ) -> None:
+        term_width = None
+        if self._console is not None:
+            try:
+                term_width = self._console.size.width
+            except Exception:
+                term_width = None
+        budget_width, budget_height = _focus_preview_budget(term_width)
         self.focus_preview_png = png_bytes
-        self.focus_preview_renderable = _render_focus_preview_terminal(png_bytes)
+        self.focus_preview_renderable = _render_focus_preview_terminal(
+            png_bytes,
+            max_width_chars=budget_width,
+            max_height_rows=budget_height,
+        )
         self.focus_preview_label = label
         self.focus_preview_source = source
 

@@ -12,6 +12,7 @@ from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _focus_preview_budget,
     _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
     PaintDryDisplay,
@@ -324,6 +325,20 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_focus_preview_requires_immediate_refresh(self):
         self.assertTrue(_message_requires_immediate_refresh("focus_preview"))
+
+    def test_focus_preview_budget_uses_most_of_terminal_width(self):
+        width_chars, height_rows = _focus_preview_budget(100)
+
+        self.assertGreaterEqual(
+            width_chars,
+            72,
+            "preview should use most of the terminal width instead of a tiny fixed stamp",
+        )
+        self.assertGreaterEqual(
+            height_rows,
+            18,
+            "preview should get enough rows that the vignette and handwriting survive downsampling",
+        )
 
     def test_lines_render_newest_first_beneath_topic_within_each_header(self):
         display = self._make_display()
