@@ -27,6 +27,12 @@ class FocusRegion:
     Coordinates are normalized to the rendered page: x/y are the top-left
     corner, width/height are box dimensions, all in the closed interval
     [0, 1] with positive width/height.
+
+    This is intentionally a display seam, not an OCR or box-detection claim.
+    A focus region may come from hand-authored ground truth, template metadata,
+    or a temporary mock map while the detector path does not exist yet.
+    Consumers should treat it as "best available crop hint for this item", not
+    as proof that the crop was discovered automatically.
     """
 
     page: int
@@ -192,6 +198,11 @@ def resolve_focus_region(
     Explicit item-level metadata wins. If absent, the resolver will look up a
     question- or part-level ``focus_region`` block in the provided template and
     attach it to the item's page.
+
+    This is a metadata seam for UI/display consumers. It is allowed to return
+    human-authored or mocked boxes while the real detector path is still
+    unbuilt; callers should not assume any particular provenance beyond the
+    ``source`` field on the returned region.
     """
     if item.focus_region is not None:
         return item.focus_region

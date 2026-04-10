@@ -113,6 +113,22 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # Prompt construction
 # ---------------------------------------------------------------------------
 
+# Grading philosophy, in project terms:
+#
+# - The grader's job is to award the highest score justified by the work
+#   actually on the page, not merely to mark errors.
+# - "Generous" here means lawful rescue, not speculative charity: actively
+#   search for rubric-grounded setup credit, method credit, carry-forward
+#   credit, and Lewis-structure partials, but do not imagine missing work.
+# - Answered-form requirements still bound rescue. If the requested form is the
+#   thing being graded, nearby chemical ingredients do not magically become the
+#   requested answer.
+# - Ambiguity should not turn into endless overthinking. After one careful pass,
+#   choose the best-supported reading, record uncertainty in model_reasoning,
+#   lower confidence when warranted, and stop.
+#
+# Keep this explanation next to the system prompt so future prompt edits do not
+# quietly drift back toward vague "be charitable" language.
 _SYSTEM_PROMPT = """\
 Award the highest score justified by the student's written work under the rubric.
 Actively rescue as much lawful partial credit as possible.

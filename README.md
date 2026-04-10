@@ -258,6 +258,9 @@ The authoring schema should support:
 The schema should remain compact and strict. A small, validated vocabulary is preferable
 to permissive anything-goes configuration.
 
+For the current internal focus-preview seam and renderer constraints used by
+Project Paint Dry, see [docs/focus_preview.md](docs/focus_preview.md).
+
 ## Helper tools
 
 These tools reduce professor burden and prevent the blank YAML from scratch tax.
