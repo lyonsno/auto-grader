@@ -203,8 +203,9 @@ Current implementation status on this grading surface:
   marked bubble labels, and scored MC outcomes for an already-matched page
 - a synthetic student-mark smoke harness is implemented via
   `auto_grader.mark_profile_smoke`; it renders plausible filled, scribbled,
-  off-center, smudged, faint, double-marked, hostile-glance, ambiguous-patchy,
-  and scratchout-illegible bubbles, runs them through a small ladder of
+  off-center, smudged, faint, double-marked, hostile-glance, glancing-stray-only,
+  tiny-center-dot, correct-plus-wrong-dot, ambiguous-patchy, and
+  scratchout-illegible bubbles, runs them through a small ladder of
   realistic scan variants (`clean_scan`, `office_scan`, `stressed_scan`) on the
   real QR/readback/registration/scoring path, and records both the observed
   behavior band (`grade`, `review`, `ignore`, or outright pipeline failure) and

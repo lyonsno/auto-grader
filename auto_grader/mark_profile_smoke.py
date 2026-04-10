@@ -103,6 +103,45 @@ def run_mark_profile_smoke(
             ],
         },
         {
+            "profile_id": "glancing_stray_only",
+            "description": "A lone glancing stray that clips the bubble edge without a fill attempt",
+            "mark_fn": lambda draw, bubble, scale: None,
+            "bubble_labels": [],
+            "expected_behavior_band": "ignore",
+            "stray_marks": [
+                {
+                    "bubble_label": correct_bubble_label,
+                    "draw_fn": _draw_glancing_stray,
+                }
+            ],
+        },
+        {
+            "profile_id": "tiny_center_dot",
+            "description": "A tiny incidental graphite dot near the center that is not a fill attempt",
+            "mark_fn": lambda draw, bubble, scale: None,
+            "bubble_labels": [],
+            "expected_behavior_band": "ignore",
+            "stray_marks": [
+                {
+                    "bubble_label": correct_bubble_label,
+                    "draw_fn": _draw_tiny_center_dot,
+                }
+            ],
+        },
+        {
+            "profile_id": "correct_plus_wrong_dot",
+            "description": "A correct fill plus a tiny accidental dot on a neighboring wrong bubble",
+            "mark_fn": lambda draw, bubble, scale: _draw_dark_center(draw, bubble, scale=scale),
+            "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "grade",
+            "stray_marks": [
+                {
+                    "bubble_label": alternate_bubble_label,
+                    "draw_fn": _draw_tiny_center_dot,
+                }
+            ],
+        },
+        {
             "profile_id": "ambiguous_patchy_center",
             "description": "Patchy center fill near the current ambiguous boundary",
             "mark_fn": lambda draw, bubble, scale: _draw_patchy_center(draw, bubble, scale=scale),
@@ -527,6 +566,29 @@ def _draw_glancing_stray(
         ],
         fill="black",
         width=max(2, scale),
+    )
+
+
+def _draw_tiny_center_dot(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    width = right - left
+    height = bottom - top
+    dot_radius = max(2.0, 0.055 * min(width, height))
+    center_x = left + (0.50 * width)
+    center_y = top + (0.50 * height)
+    draw.ellipse(
+        [
+            center_x - dot_radius,
+            center_y - dot_radius,
+            center_x + dot_radius,
+            center_y + dot_radius,
+        ],
+        fill=(120, 120, 120),
     )
 
 

@@ -88,6 +88,24 @@ class MarkProfileSmokeContractTests(unittest.TestCase):
             "within the handled surface instead of escalating into fake review work.",
         )
         self.assertEqual(
+            profiles["glancing_stray_only"]["observed_status"],
+            "blank",
+            "A lone glancing stray should stay outside the answer surface instead of "
+            "pretending the student tried to fill the bubble.",
+        )
+        self.assertEqual(
+            profiles["tiny_center_dot"]["observed_status"],
+            "blank",
+            "A tiny center dot should not count as an answer attempt just because it "
+            "lands inside the bubble.",
+        )
+        self.assertEqual(
+            profiles["correct_plus_wrong_dot"]["observed_status"],
+            "correct",
+            "A plainly filled correct bubble plus a tiny accidental dot on another "
+            "bubble should remain machine-gradable as the intended answer.",
+        )
+        self.assertEqual(
             profiles["ambiguous_patchy_center"]["observed_status"],
             "ambiguous_mark",
             "A patchy center fill near the boundary should surface as explicit "
