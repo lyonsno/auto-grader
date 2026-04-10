@@ -837,39 +837,43 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertEqual(_render_layer_index("header", 3), 0)
 
-    def test_history_groups_get_smaller_terrace_leads_and_stronger_within_group_rake(self):
+    def test_history_groups_get_subtle_setback_with_alternating_secondary_field(self):
         import scripts.narrator_reader as module
 
         self.assertTrue(
             hasattr(module, "_history_entry_phase"),
-            "history shimmer should expose a helper that combines per-group terrace and within-group rake",
+            "history shimmer should expose a helper that combines header setback, within-group rake, and a subtle alternating field",
         )
-        phase0 = module._history_entry_phase(0.25, 0, 0)
-        phase0_deep = module._history_entry_phase(0.25, 0, 2)
-        phase1 = module._history_entry_phase(0.25, 1, 0)
-        phase2 = module._history_entry_phase(0.25, 2, 0)
+        phase0 = module._history_entry_phase(0.25, 0.43, 0, 0)
+        phase0_deep = module._history_entry_phase(0.25, 0.43, 0, 2)
+        phase1 = module._history_entry_phase(0.25, 0.43, 1, 0)
+        phase2 = module._history_entry_phase(0.25, 0.43, 2, 0)
 
-        self.assertAlmostEqual(phase0, 0.25, places=9)
-        self.assertGreater(
-            phase1 - phase0,
-            0.0,
-            "adjacent item groups should still terrace forward a bit",
+        self.assertLess(
+            abs(phase0 - 0.25),
+            0.015,
+            "the lead item should stay close to its anchor even with the subtle alternating field",
         )
         self.assertLess(
             phase1 - phase0,
-            0.08,
-            "between-group terrace lead should be smaller than the earlier more aggressive jump",
+            0.0,
+            "lower item headers should sit slightly behind the one above them",
         )
         self.assertGreater(
+            phase1 - phase0,
+            -0.05,
+            "between-group setback should stay gentle enough to read as structure rather than a hard jump",
+        )
+        self.assertGreaterEqual(
             phase0 - phase0_deep,
             phase1 - phase0,
-            "within-group rake should now be stronger than the between-group terrace lead",
+            "within-group rake should still be at least as strong as the header-to-header setback",
         )
-        self.assertAlmostEqual(
+        self.assertNotAlmostEqual(
             phase2 - phase1,
             phase1 - phase0,
-            places=9,
-            msg="history terraces should advance by a consistent per-group lead",
+            places=6,
+            msg="alternating groups should not all ride the exact same header setback",
         )
 
     def test_stream_events_do_not_force_immediate_repaint(self):

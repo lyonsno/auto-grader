@@ -225,6 +225,8 @@ _SIMILARITY_STOP_WORDS = frozenset({
 
 _GRADER_SCORE_RE = re.compile(r"(Grader:\s*)([^ ]+)")
 _PROF_SCORE_RE = re.compile(r"(Prof:\s*)([^ ]+)")
+_TRUTH_SCORE_RE = re.compile(r"(Truth:\s*)([^ ]+)")
+_HISTORICAL_PROF_SCORE_RE = re.compile(r"(Historical\s+[Pp]rof:\s*)([^ ]+)")
 
 
 def _format_score_with_denominator(score: float, max_points: float) -> str:
@@ -235,21 +237,38 @@ def _normalize_after_action_scores(
     text: str,
     *,
     grader_score: float,
-    professor_score: float,
+    truth_score: float,
     max_points: float,
+    historical_professor_score: float | None = None,
 ) -> str:
     grader_display = _format_score_with_denominator(grader_score, max_points)
-    professor_display = _format_score_with_denominator(professor_score, max_points)
+    truth_display = _format_score_with_denominator(truth_score, max_points)
     text = _GRADER_SCORE_RE.sub(
         lambda match: f"{match.group(1)}{grader_display}",
         text,
         count=1,
     )
-    text = _PROF_SCORE_RE.sub(
-        lambda match: f"{match.group(1)}{professor_display}",
-        text,
-        count=1,
-    )
+    if "Truth:" in text:
+        text = _TRUTH_SCORE_RE.sub(
+            lambda match: f"{match.group(1)}{truth_display}",
+            text,
+            count=1,
+        )
+        if historical_professor_score is not None:
+            historical_display = _format_score_with_denominator(
+                historical_professor_score, max_points
+            )
+            text = _HISTORICAL_PROF_SCORE_RE.sub(
+                lambda match: f"{match.group(1)}{historical_display}",
+                text,
+                count=1,
+            )
+    else:
+        text = _PROF_SCORE_RE.sub(
+            lambda match: f"{match.group(1)}{truth_display}",
+            text,
+            count=1,
+        )
     return text
 
 
@@ -271,7 +290,7 @@ def _sanitize_after_action_text(text: str) -> str:
         (
             line
             for line in candidates
-            if "Grader:" in line and "Prof:" in line
+            if "Grader:" in line and ("Prof:" in line or "Truth:" in line)
         ),
         candidates[0],
     )
@@ -797,12 +816,18 @@ class ThinkingNarrator:
                     else:
                         expected = str(correct)
 
+            truth_score = getattr(item, "truth_score", item.professor_score)
+            corrected_truth = (
+                getattr(item, "corrected_score", None) is not None
+                and abs(truth_score - item.professor_score) > 1e-9
+            )
+
             # Verdict drives both the prompt context (which examples to
             # encourage) and the topic line color in the reader.
-            if prediction.model_score == item.professor_score:
+            if prediction.model_score == truth_score:
                 verdict = "MATCHED"
                 verdict_short = "match"
-            elif prediction.model_score > item.professor_score:
+            elif prediction.model_score > truth_score:
                 verdict = "GRADER OVERSHOT"
                 verdict_short = "overshoot"
             else:
@@ -811,8 +836,8 @@ class ThinkingNarrator:
             grader_score_display = _format_score_with_denominator(
                 prediction.model_score, item.max_points
             )
-            professor_score_display = _format_score_with_denominator(
-                item.professor_score, item.max_points
+            truth_score_display = _format_score_with_denominator(
+                truth_score, item.max_points
             )
             payload = (
                 f"The grader just rendered a verdict on question "
@@ -829,9 +854,26 @@ class ThinkingNarrator:
                 f"  Grader awarded: {prediction.model_score} pts "
                 f"(display as {grader_score_display})\n"
                 f"  Grader reasoning: {prediction.model_reasoning[:300]}\n"
-                f"  Professor awarded: {item.professor_score} pts "
-                f"(display as {professor_score_display}, mark: {item.professor_mark})\n"
-                f"  Professor's note: \"{item.notes}\"\n"
+            )
+            if corrected_truth:
+                professor_score_display = _format_score_with_denominator(
+                    item.professor_score, item.max_points
+                )
+                payload += (
+                    f"  Truth awarded: {truth_score} pts "
+                    f"(display as {truth_score_display})\n"
+                    f"  Historical professor awarded: {item.professor_score} pts "
+                    f"(display as {professor_score_display}, mark: {item.professor_mark})\n"
+                    f"  Historical professor's note: \"{item.notes}\"\n"
+                    f"  Correction reason: \"{getattr(item, 'correction_reason', '')}\"\n"
+                )
+            else:
+                payload += (
+                    f"  Professor awarded: {truth_score} pts "
+                    f"(display as {truth_score_display}, mark: {item.professor_mark})\n"
+                    f"  Professor's note: \"{item.notes}\"\n"
+                )
+            payload += (
                 f"  Verdict: {verdict}\n\n"
                 f"CRITICAL SEMANTICS: The grader and professor are JUDGES "
                 f"who score the STUDENT. When both judges give a low score "
@@ -844,10 +886,26 @@ class ThinkingNarrator:
                 f"award credit. The judges only 'miss' something if "
                 f"they DISAGREE with each other (verdict = OVERSHOT or "
                 f"UNDERSHOT).\n\n"
-                f"Write ONE concise after-action line in this format:\n"
-                f'  "Grader: <score> (<one-clause reason>). '
-                f'Prof: <score> (<one-clause reason>). · '
-                f'<optional short coda>"\n\n'
+            )
+            if corrected_truth:
+                payload += (
+                    "For corrected historical items, success means matching "
+                    "the corrected truth, not the historical professor mark. "
+                    "Mention the historical professor score only as provenance, "
+                    "not as the target.\n\n"
+                    "Write ONE concise after-action line in this format:\n"
+                    '  "Grader: <score> (<one-clause reason>). '
+                    'Truth: <score> (<one-clause reason>). · '
+                    'Historical prof: <score> (<one-clause provenance note>)"\n\n'
+                )
+            else:
+                payload += (
+                    "Write ONE concise after-action line in this format:\n"
+                    '  "Grader: <score> (<one-clause reason>). '
+                    'Prof: <score> (<one-clause reason>). · '
+                    '<optional short coda>"\n\n'
+                )
+            payload += (
                 f"Style rules:\n"
                 f"- The score+reason portion should be matter-of-fact and question-specific.\n"
                 f"- The optional coda should be fresh, concrete, and tied to this exact item.\n"
@@ -902,11 +960,13 @@ class ThinkingNarrator:
                 text = _normalize_after_action_scores(
                     text,
                     grader_score=prediction.model_score,
-                    professor_score=item.professor_score,
+                    truth_score=truth_score,
                     max_points=item.max_points,
+                    historical_professor_score=(
+                        item.professor_score if corrected_truth else None
+                    ),
                 )
                 logger.info("After-action: %s", text)
-                truth_score = getattr(item, "truth_score", item.professor_score)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · {text}",
                     verdict=verdict_short,
@@ -926,7 +986,6 @@ class ThinkingNarrator:
                     "After-action empty for %s/%s — emitting bare timing fallback",
                     item.exam_id, item.question_id,
                 )
-                truth_score = getattr(item, "truth_score", item.professor_score)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · (after-action unavailable)",
                     verdict=verdict_short,
