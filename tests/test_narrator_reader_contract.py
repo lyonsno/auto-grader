@@ -121,6 +121,20 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.streaming_line, "")
         self.assertEqual(display.status_streaming_line, "")
 
+    def test_thought_commit_freezes_live_line_without_persisting_history_row(self):
+        display = PaintDryDisplay()
+        display.on_header("[item 1/6] first")
+        display.on_delta("I'm tracing the stoichiometry.")
+
+        display.on_commit("thought")
+
+        self.assertEqual(display.frozen_line, "I'm tracing the stoichiometry.")
+        self.assertEqual(
+            list(display.history),
+            [("header", "[item 1/6] first", None)],
+            "live thought commits should stay in the live lane and no longer persist line rows into history",
+        )
+
     def test_active_animation_fps_is_doubled_for_smoother_motion(self):
         self.assertEqual(
             _ACTIVE_ANIMATION_FPS,
