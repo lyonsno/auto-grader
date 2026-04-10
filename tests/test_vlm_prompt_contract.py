@@ -74,17 +74,17 @@ class GradingPromptContract(unittest.TestCase):
             "prompt should prefer a supportable full-credit reading over continued nitpicking",
         )
         self.assertIn(
-            "Equivalent volume units such as mL and cm³ count as the same quantity unless the question explicitly tests a specific form.",
+            "Treat mL and cm³ as equivalent unless the question explicitly tests form.",
             prompt,
             "prompt should treat mL and cm³ as equivalent when the form itself is not being tested",
         )
         self.assertIn(
-            "small arithmetic, truncation, or rounding slip",
+            "small arithmetic, truncation, or rounding",
             prompt,
             "near-correct numerics should not lose points just for tiny arithmetic or rounding slips",
         )
         self.assertIn(
-            "award full credit unless the question explicitly tests exact rounding or significant figures",
+            "award full credit unless exact rounding or significant figures are being tested",
             prompt,
             "numeric rescue should still respect questions that explicitly test rounding or sig figs",
         )
@@ -94,7 +94,7 @@ class GradingPromptContract(unittest.TestCase):
 
         prompt = vlm_inference._SYSTEM_PROMPT
         self.assertIn(
-            'Use upstream_dependency = "none" unless this answer clearly carries forward an earlier part.',
+            'Use upstream_dependency = "none" unless carry-forward is clear.',
             prompt,
             "dependency handling should default to none unless the carry-forward is clear",
         )
@@ -119,7 +119,7 @@ class GradingPromptContract(unittest.TestCase):
 
         prompt = vlm_inference._SYSTEM_PROMPT
         self.assertIn(
-            "If the student plainly did not provide the requested answer form, stop once that is established and score only what is actually on the page.",
+            "If the requested answer form is plainly missing, stop and score only what is on the page.",
             prompt,
             "easy wrong-form items should not invite long re-litigation after the missing form is already clear",
         )
@@ -129,7 +129,7 @@ class GradingPromptContract(unittest.TestCase):
 
         prompt = vlm_inference._SYSTEM_PROMPT
         self.assertIn(
-            "If ambiguity still materially affects the score after one careful pass, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.",
+            "After one careful pass, if ambiguity still affects the score, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.",
             prompt,
             "hard ambiguous items should hand off cleanly once bounded effort is exhausted",
         )
@@ -139,12 +139,12 @@ class GradingPromptContract(unittest.TestCase):
 
         prompt = vlm_inference._SYSTEM_PROMPT
         self.assertIn(
-            "Use is_obviously_fully_correct = true only when the answer is clearly correct and needs no human rescue.",
+            "Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.",
             prompt,
             "prompt should expose a high-trust obvious-full-credit bucket",
         )
         self.assertIn(
-            "Use is_obviously_wrong = true only when the answer is clearly wrong and no lawful rescue path remains.",
+            "Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.",
             prompt,
             "prompt should expose a high-trust obvious-wrong bucket",
         )
@@ -174,7 +174,7 @@ class GradingPromptContract(unittest.TestCase):
 
         prompt = vlm_inference._SYSTEM_PROMPT
         self.assertIn(
-            "When the requested form is itself the thing being graded, do not award rescue credit for nearby ingredients of the answer unless the rubric explicitly does so.",
+            "When the requested form is the thing being graded, do not award rescue credit for nearby ingredients unless the rubric explicitly does so.",
             prompt,
             "answered-form failures should not pick up rescue points just for mentioning nearby chemistry",
         )
@@ -184,7 +184,7 @@ class GradingPromptContract(unittest.TestCase):
 
         prompt = vlm_inference._SYSTEM_PROMPT
         self.assertIn(
-            "On Lewis-structure questions, award partial credit for correct connectivity",
+            "On Lewis-structure questions, rescue partial credit for correct connectivity",
             prompt,
             "Lewis-structure grading should rescue meaningful structural progress",
         )
@@ -192,6 +192,26 @@ class GradingPromptContract(unittest.TestCase):
             "even if octets, formal charges, or resonance are incomplete.",
             prompt,
             "Lewis-structure grading should preserve partial credit for meaningful correct substructure",
+        )
+
+    def test_system_prompt_preserves_setup_credit_when_relation_is_right(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.",
+            prompt,
+            "setup-credit numerics like fr-10a should not collapse toward zero once the governing relation is correct",
+        )
+
+    def test_system_prompt_rescues_lewis_partial_credit_from_zero_when_structure_basis_is_present(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.",
+            prompt,
+            "Lewis partial-credit cases like 34-blue/fr-12a should stay out of the zero bucket when the structural basis is present",
         )
 
 
