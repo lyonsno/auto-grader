@@ -197,6 +197,9 @@ Current implementation status on this grading surface:
 - first-pass bubble readback is implemented via `auto_grader.bubble_interpretation`
 - first-pass scoring decisions are implemented via `auto_grader.mc_scoring`
   for the core MC statuses `correct`, `incorrect`, `blank`, and `multiple_marked`
+- matched-page extraction packaging is implemented via `auto_grader.mc_page_extraction`
+  so downstream callers can consume one bundle containing the normalized page,
+  marked bubble labels, and scored MC outcomes for an already-matched page
 - richer review workflow, persistence, and operator-facing resolution state are still
   the next slice beyond that scoring surface
 
