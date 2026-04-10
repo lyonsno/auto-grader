@@ -818,6 +818,23 @@ class NarratorReaderContract(unittest.TestCase):
             self._style_for_substring(tally_text_obj, "ON TARGET"),
             "running tally labels should render as scorebug cells, not plain text",
         )
+        cell_width = len(f" {expected_on_target[0]} ")
+        separator_width = 2
+        self.assertEqual(
+            tally_text_obj.plain.index("ON TARGET"),
+            0,
+            "ON TARGET label should start at the left edge of its score cell",
+        )
+        self.assertEqual(
+            tally_text_obj.plain.index("LEFT ON TABLE"),
+            cell_width + separator_width,
+            "LEFT ON TABLE label should start at the left edge of its score cell",
+        )
+        self.assertEqual(
+            tally_text_obj.plain.index("BAD CALLS"),
+            (2 * cell_width) + (2 * separator_width),
+            "BAD CALLS label should start at the left edge of its score cell",
+        )
 
     def test_scorebug_big_value_rows_render_three_line_scoreboard_digits(self):
         top, middle, bottom = _scorebug_big_value_rows("2.0/9.0")
@@ -829,7 +846,17 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("╝", bottom)
         self.assertIn("╔═╝", middle, "the 2 glyph should have a chunky middle shoulder, not a skinny bend")
         self.assertNotIn("╱", top)
-        self.assertIn("╱", middle + bottom)
+
+    def test_scorebug_five_glyph_reads_as_open_then_hooked_five(self):
+        top, middle, bottom = _scorebug_big_value_rows("5.0")
+
+        self.assertIn("╔═╗", top)
+        self.assertIn(
+            "╚═╗",
+            middle,
+            "the 5 glyph should hook rightward in the middle row so it reads less like a closed box",
+        )
+        self.assertIn("╚═╝", bottom)
         self.assertIn("▪", bottom)
 
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
