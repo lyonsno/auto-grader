@@ -25,7 +25,6 @@ below live), pushing older lines down.
 
 from __future__ import annotations
 
-import base64
 import json
 import math
 import os
@@ -38,7 +37,6 @@ from collections import deque
 from pathlib import Path
 from typing import Deque
 
-import fitz
 from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
@@ -75,28 +73,6 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
-_FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
-_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 116
-_FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
-_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
-_FOCUS_PREVIEW_COMPANION_SCALE = 0.69
-_FOCUS_PREVIEW_PENDING_FPS = 8.0
-_FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
-_FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)  # used only by the transition
-                                             # (pending) glyph overlay; the
-                                             # steady-state renderer uses
-                                             # the harder colors below
-# Legibility-first steady-state palette. High luminance delta against the
-# panel background so binary-thresholded cells read as page, not as mush.
-# Aesthetics are explicitly deferred — pick whatever reads cleanest first.
-_FOCUS_PREVIEW_HARD_INK_RGB = (50, 54, 62)
-_FOCUS_PREVIEW_HARD_PAPER_RGB = (238, 232, 220)
-_FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
-_FOCUS_PREVIEW_OVERLAY_RGBS = (
-    (108, 122, 154),
-    (132, 115, 86),
-    (94, 116, 106),
-)
 _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
                                    # descending deeper into the stack before
                                    # it settles at the floor.
@@ -539,11 +515,7 @@ def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
 
 
 def _append_header_title(text: Text, title: str, phase: float) -> None:
-<<<<<<< HEAD
-    """Keep the scene-setting title white against the colored telemetry."""
-=======
     """Keep the scene-setter title flat white so the color lives in the field below."""
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
     del phase
     text.append(title, style="bold bright_white")
 
@@ -615,411 +587,9 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     idle and active motion feel consistent. Only boundary moments that would
     feel laggy at 12 FPS get an immediate forced refresh.
     """
-    return msg_type in {
-        "session_meta",
-        "focus_preview",
-        "wrap_up",
-        "basis",
-        "review_marker",
-        "end",
-    }
+    return msg_type in {"session_meta", "wrap_up", "end"}
 
 
-def _focus_preview_budget(
-    term_width: int | None,
-    *,
-    source_width_px: int | None = None,
-    source_height_px: int | None = None,
-) -> tuple[int, int]:
-    """Return a terminal-aware preview raster budget.
-
-    The preview should feel like a real companion surface, not a
-    postage stamp. Use most of the terminal width while leaving enough
-    margin that the panel still breathes, but let high-detail crops
-    earn a denser raster than tiny crops on the same terminal.
-    """
-    if term_width is None or term_width <= 0:
-        return _FOCUS_PREVIEW_MIN_WIDTH_CHARS, _FOCUS_PREVIEW_MIN_HEIGHT_ROWS
-    available_width = min(
-        _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
-        int(round((term_width - 8) * _FOCUS_PREVIEW_COMPANION_SCALE)),
-    )
-    detail_factor = 1.0
-    if (
-        source_width_px is not None
-        and source_height_px is not None
-        and source_width_px > 0
-        and source_height_px > 0
-    ):
-        source_area = source_width_px * source_height_px
-        detail_factor = _clamp(
-            math.sqrt(source_area / float(900 * 500)),
-            0.35,
-            1.0,
-        )
-    width_chars = max(
-        _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
-        int(
-            round(
-                _FOCUS_PREVIEW_MIN_WIDTH_CHARS
-                + ((available_width - _FOCUS_PREVIEW_MIN_WIDTH_CHARS) * detail_factor)
-            )
-        ),
-    )
-    if (
-        source_width_px is not None
-        and source_height_px is not None
-        and source_width_px > 0
-        and source_height_px > 0
-    ):
-        source_aspect = source_height_px / source_width_px
-        height_target = int(round(width_chars * source_aspect * 0.46))
-    else:
-        height_target = int(round(width_chars * 0.24))
-    height_rows = max(
-        _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
-        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, height_target),
-    )
-    return width_chars, height_rows
-
-
-def _otsu_threshold(luminances) -> float:
-    """Classic Otsu's method: pick the luminance cut that maximizes
-    between-class variance across a 256-bin histogram.
-
-    Returns a float threshold in [0, 255]. Degenerate inputs (empty,
-    uniform) return a safe midpoint rather than raising — the renderer
-    treats such crops as "no ink" and the exact cut doesn't matter.
-    """
-    histogram = [0] * 256
-    total = 0
-    for value in luminances:
-        bucket = int(value)
-        if bucket < 0:
-            bucket = 0
-        elif bucket > 255:
-            bucket = 255
-        histogram[bucket] += 1
-        total += 1
-    if total == 0:
-        return 127.5
-
-    sum_total = 0.0
-    for i in range(256):
-        sum_total += i * histogram[i]
-
-    sum_bg = 0.0
-    weight_bg = 0
-    best_variance = -1.0
-    best_threshold = 127.5
-    for i in range(256):
-        weight_bg += histogram[i]
-        if weight_bg == 0:
-            continue
-        weight_fg = total - weight_bg
-        if weight_fg == 0:
-            break
-        sum_bg += i * histogram[i]
-        mean_bg = sum_bg / weight_bg
-        mean_fg = (sum_total - sum_bg) / weight_fg
-        variance = weight_bg * weight_fg * (mean_bg - mean_fg) ** 2
-        if variance > best_variance:
-            best_variance = variance
-            best_threshold = float(i)
-    # Return the upper edge of the chosen histogram bin. The histogram
-    # is integer-binned (`int(luma)`), so any float luma that fell into
-    # bin `i` is in [i, i+1). Returning `i + 1.0` means strict `<` at
-    # the caller correctly classifies every member of that bin as
-    # background (the darker / ink class).
-    return best_threshold + 1.0
-
-
-def _build_focus_preview_pixels(
-    png_bytes: bytes,
-    *,
-    max_width_chars: int,
-    max_height_rows: int,
-) -> list[list[tuple[int, int, int]]]:
-    """Sample a source crop into a grid of average-RGB pixels.
-
-    The returned grid has exactly ``target_height`` rows and
-    ``target_width`` cols, where those dimensions are ``_scaled_preview_size``
-    applied to the source. The caller controls whether this is
-    "one row per terminal row" or "two rows per terminal row" (for
-    half-blocks) by passing the appropriate ``max_height_rows``.
-
-    No tone mapping. No filmic. No paper/ink lerp. The downstream
-    renderer is responsible for turning these raw samples into
-    whatever output surface is appropriate.
-    """
-    pix = fitz.Pixmap(png_bytes)
-    target_width, target_height = _scaled_preview_size(
-        pix.width,
-        pix.height,
-        max_width_chars=max_width_chars,
-        max_height_rows=max_height_rows,
-    )
-    pixels: list[list[tuple[int, int, int]]] = []
-    for y in range(target_height):
-        row: list[tuple[int, int, int]] = []
-        for x in range(target_width):
-            row.append(_sample_preview_rgb(pix, x, y, target_width, target_height))
-        pixels.append(row)
-    return pixels
-
-
-def _clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
-
-
-def _pixel_luma(rgb: tuple[int, int, int]) -> float:
-    return (0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2])
-
-
-def _render_focus_preview_pixels(
-    pixels: list[list[tuple[int, int, int]]],
-    *,
-    now: float | None = None,
-    pending: bool = False,
-) -> Group:
-    """Render a sampled pixel grid as a Rich Group.
-
-    ``pixels`` is expected to be sampled at 2× vertical density relative
-    to the terminal row budget — each pair of source rows (2y, 2y+1)
-    becomes one terminal row. The steady-state renderer uses that pair
-    as the top and bottom halves of a half-block (▀). The pending
-    (transition) renderer averages each pair back down to a single
-    per-cell RGB and then runs its existing glyph-overlay animation.
-    """
-    now = time.monotonic() if now is None else now
-    if pending:
-        return _render_focus_preview_pending(pixels, now=now)
-    return _render_focus_preview_steady(pixels)
-
-
-def _render_focus_preview_steady(
-    pixels: list[list[tuple[int, int, int]]],
-) -> Group:
-    """Legibility-first steady-state renderer.
-
-    Binary Otsu threshold across all sampled luminances, half-block
-    cells (one terminal cell = one top half-pixel + one bottom
-    half-pixel), hard ink/paper palette. No tone mapping, no lerp,
-    no gradient. Ugly is acceptable; illegible is not.
-    """
-    if not pixels or not pixels[0]:
-        return Group()
-
-    source_height = len(pixels)
-    source_width = len(pixels[0])
-
-    # Collect all luminances for Otsu. Use ink and paper colors
-    # that are actually visually distinct from the panel background,
-    # so thresholded cells read as "page" and not as "void".
-    luminances = [_pixel_luma(rgb) for row in pixels for rgb in row]
-    threshold = _otsu_threshold(luminances)
-
-    # If the crop is effectively single-tone (variance too low for Otsu
-    # to find a meaningful cut), fall back to marking everything as paper.
-    # This keeps blank regions rendering as page instead of as garbled noise.
-    lum_span = max(luminances) - min(luminances) if luminances else 0.0
-    degenerate = lum_span < 12.0
-
-    ink_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_INK_RGB)
-    paper_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_PAPER_RGB)
-
-    def _color_for(rgb: tuple[int, int, int]) -> str:
-        if degenerate:
-            return paper_hex
-        return ink_hex if _pixel_luma(rgb) < threshold else paper_hex
-
-    rows: list[Text] = []
-    # Walk source rows in pairs. If the source has an odd number of rows,
-    # the dangling final row pairs with itself (top == bottom).
-    y = 0
-    while y < source_height:
-        top_row = pixels[y]
-        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
-        text = Text(no_wrap=True, overflow="ignore")
-        for col in range(source_width):
-            top_color = _color_for(top_row[col])
-            bottom_color = (
-                _color_for(bottom_row[col])
-                if col < len(bottom_row)
-                else top_color
-            )
-            # ▀ = U+2580 UPPER HALF BLOCK. Foreground is the top half,
-            # background is the bottom half. Exactly what we want for a
-            # binary-threshold image surface.
-            text.append("\u2580", style=f"{top_color} on {bottom_color}")
-        rows.append(text)
-        y += 2
-    return Group(*rows)
-
-
-def _render_focus_preview_pending(
-    pixels: list[list[tuple[int, int, int]]],
-    *,
-    now: float,
-) -> Group:
-    """Transition-layer renderer (unchanged animation, now fed from a
-    2×-vertical pixel grid by averaging row pairs back down to 1×)."""
-    if not pixels or not pixels[0]:
-        return Group()
-
-    # Average pairs of sampled rows back down to one row per terminal
-    # row, so the existing glyph-overlay animation keeps working
-    # against the density it was tuned for.
-    source_height = len(pixels)
-    source_width = len(pixels[0])
-    collapsed: list[list[tuple[int, int, int]]] = []
-    y = 0
-    while y < source_height:
-        top_row = pixels[y]
-        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
-        merged: list[tuple[int, int, int]] = []
-        for col in range(source_width):
-            top_rgb = top_row[col]
-            bottom_rgb = bottom_row[col] if col < len(bottom_row) else top_rgb
-            merged.append(
-                (
-                    (top_rgb[0] + bottom_rgb[0]) // 2,
-                    (top_rgb[1] + bottom_rgb[1]) // 2,
-                    (top_rgb[2] + bottom_rgb[2]) // 2,
-                )
-            )
-        collapsed.append(merged)
-        y += 2
-
-    rows: list[Text] = []
-    for char_row, pixel_row in enumerate(collapsed):
-        row = Text(no_wrap=True, overflow="ignore")
-        for col, rgb in enumerate(pixel_row):
-            avg_rgb = rgb
-            flow = 0.5 + (
-                0.5
-                * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
-            )
-            pulse = 0.5 + (
-                0.5
-                * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
-            )
-            retention = 0.54 + (0.18 * flow)
-            toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, avg_rgb, retention)
-            avg_luma = (
-                (0.299 * toned_rgb[0])
-                + (0.587 * toned_rgb[1])
-                + (0.114 * toned_rgb[2])
-            )
-            glyph_gate = 0.38 + (0.20 * pulse)
-            glyph_drive = (0.58 * flow) + (0.25 * pulse)
-            if glyph_drive > glyph_gate:
-                char_phase = (0.62 * flow) + (0.38 * (avg_luma / 255.0))
-                char_index = min(
-                    len(_FOCUS_PREVIEW_OVERLAY_CHARS) - 1,
-                    int(char_phase * len(_FOCUS_PREVIEW_OVERLAY_CHARS)),
-                )
-                palette_index = min(
-                    len(_FOCUS_PREVIEW_OVERLAY_RGBS) - 1,
-                    int((avg_luma / 255.0) * len(_FOCUS_PREVIEW_OVERLAY_RGBS)),
-                )
-                fg_rgb = _interp_rgb(
-                    _FOCUS_PREVIEW_OVERLAY_RGBS[palette_index],
-                    _FOCUS_PREVIEW_PAPER_RGB,
-                    0.16 + (0.18 * flow),
-                )
-                bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
-                row.append(
-                    _FOCUS_PREVIEW_OVERLAY_CHARS[char_index],
-                    style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
-                )
-                continue
-            # Non-glyph cells during the transition: render as a faded
-            # block color. The transition animation no longer tries to
-            # produce a legible steady-state image underneath itself.
-            bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
-            row.append(
-                " ",
-                style=f"{_rgb_to_hex(bg_rgb)} on {_rgb_to_hex(bg_rgb)}",
-            )
-        rows.append(row)
-    return Group(*rows)
-
-
-def _scaled_preview_size(
-    source_width: int,
-    source_height: int,
-    *,
-    max_width_chars: int,
-    max_height_rows: int,
-) -> tuple[int, int]:
-    scale = min(
-        max_width_chars / max(1, source_width),
-        max_height_rows / max(1, source_height),
-        1.0,
-    )
-    width = max(1, int(round(source_width * scale)))
-    height = max(1, int(round(source_height * scale)))
-    return width, height
-
-
-def _sample_preview_rgb(
-    pix: fitz.Pixmap,
-    x: int,
-    y: int,
-    target_width: int,
-    target_height: int,
-) -> tuple[int, int, int]:
-    src_x0 = max(0, int((x / target_width) * pix.width))
-    src_x1 = min(
-        pix.width,
-        max(src_x0 + 1, int(math.ceil(((x + 1) / target_width) * pix.width))),
-    )
-    src_y0 = max(0, int((y / target_height) * pix.height))
-    src_y1 = min(
-        pix.height,
-        max(src_y0 + 1, int(math.ceil(((y + 1) / target_height) * pix.height))),
-    )
-    samples = pix.samples
-    red = 0
-    green = 0
-    blue = 0
-    count = 0
-    darkest_luma = float("inf")
-    darkest_rgb = _FOCUS_PREVIEW_BG_RGB
-    for src_y in range(src_y0, src_y1):
-        row_offset = src_y * pix.width * pix.n
-        for src_x in range(src_x0, src_x1):
-            offset = row_offset + (src_x * pix.n)
-            sample_red = samples[offset]
-            sample_green = samples[offset + 1]
-            sample_blue = samples[offset + 2]
-            red += sample_red
-            green += sample_green
-            blue += sample_blue
-            count += 1
-            sample_luma = (
-                (0.299 * sample_red)
-                + (0.587 * sample_green)
-                + (0.114 * sample_blue)
-            )
-            if sample_luma < darkest_luma:
-                darkest_luma = sample_luma
-                darkest_rgb = (sample_red, sample_green, sample_blue)
-    if count == 0:
-        return _FOCUS_PREVIEW_BG_RGB
-    avg_rgb = (
-        int(round(red / count)),
-        int(round(green / count)),
-        int(round(blue / count)),
-    )
-    avg_luma = (
-        (0.299 * avg_rgb[0])
-        + (0.587 * avg_rgb[1])
-        + (0.114 * avg_rgb[2])
-    )
-    ink_weight = _clamp((avg_luma - darkest_luma - 18.0) / 120.0, 0.0, 0.58)
-    return _interp_rgb(avg_rgb, darkest_rgb, ink_weight)
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     """Convert HSV (h in degrees, s/v in [0, 1]) to 8-bit RGB."""
     h = h % 360
@@ -1518,7 +1088,7 @@ class PaintDryDisplay:
         self._freeze_started_at: float | None = None
 
         # History entries are 3-tuples (kind, text, parity):
-        #   kind in {"line", "header", "topic", "basis", "review_marker", "checkpoint"}
+        #   kind in {"line", "header", "topic", "checkpoint"}
         #   parity is 0 or 1 for "line" entries (alternation), None for others
         # Drops live in their own deque, rendered in a separate panel
         # below post-game so they don't clutter the narrative thread.
@@ -1557,15 +1127,6 @@ class PaintDryDisplay:
         # and working on the wrap-up rather than hung.
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
-        self.focus_preview_png: bytes | None = None
-        self.focus_preview_pixels: list[list[tuple[int, int, int]]] | None = None
-        self.focus_preview_renderable: Group | None = None
-        self.focus_preview_label: str = ""
-        self.focus_preview_source: str = ""
-        self.focus_preview_pending: bool = False
-        self.focus_preview_pending_started: float | None = None
-        self._focus_preview_pending_bucket: int | None = None
-        self._focus_preview_pending_renderable: Group | None = None
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
@@ -1674,10 +1235,6 @@ class PaintDryDisplay:
             prefix_width = len("─ ")
         elif kind == "topic":
             prefix_width = len("  · ")
-        elif kind == "basis":
-            prefix_width = len("  ≡ Basis: ")
-        elif kind == "review_marker":
-            prefix_width = len("  ! Review needed: ")
         else:
             prefix_width = len("    ")
 
@@ -1745,9 +1302,7 @@ class PaintDryDisplay:
             rest.sort(
                 key=lambda pair: {
                     "topic": 0,
-                    "basis": 1,
-                    "review_marker": 2,
-                    "checkpoint": 3,
+                    "checkpoint": 1,
                 }.get(pair[0][0], 2)
             )
             flat.extend(header)
@@ -1766,7 +1321,7 @@ class PaintDryDisplay:
         # essentials drop first — but the deque cap should make this
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic", "basis", "review_marker", "checkpoint"):
+            if entry[0] in ("header", "topic", "checkpoint"):
                 row_cost = self._entry_visual_rows(entry, wrap_width)
                 if used_rows >= budget:
                     break
@@ -1782,7 +1337,7 @@ class PaintDryDisplay:
         optionals = [
             (pos, entry, idx)
             for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic", "basis", "review_marker", "checkpoint")
+            if entry[0] not in ("header", "topic", "checkpoint")
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
 
@@ -1869,89 +1424,29 @@ class PaintDryDisplay:
             if self._turn_started_at is not None
             else None
         )
-
-        # Scoreboard-dial treatment for the five run counters. Each
-        # quantity renders through `_append_scorebug_cell` so it reuses
-        # the same capsule-and-value language the Liquid Varnish
-        # Squadron scorebug panel below uses for CURRENT MODEL / ITEM /
-        # ON TARGET etc., instead of sitting in the top chrome as a
-        # flat telemetry tail. The time dials stay on cool structural
-        # capsules (TOTAL indigo, TURN ember to pair with the warm ITEM
-        # tag), and the event-count dials light up on green/amber/red
-        # capsules only when nonzero — at zero they fall back to a
-        # muted grey capsule so a quiet run doesn't scream color.
-        _dead_label = "bold #b9b2a8 on #2d2a29"
-        _dead_value = "bold #d7d0c7 on #1f1d1d"
-        self._append_scorebug_cell(
-            header_text,
-            "TOTAL",
-            f"{total_elapsed_s}s",
-            label_style=(
-                "bold #e6ddd4 on #43444d"
-                if self._session_started_at is not None
-                else _dead_label
-            ),
-            value_style=(
-                "bold #d6cec6 on #2c2d33"
-                if self._session_started_at is not None
-                else _dead_value
-            ),
+        header_text.append(
+            f"total={total_elapsed_s}s",
+            style="#7f95cf" if self._session_started_at is not None else "grey50",
         )
-        self._append_scorebug_cell(
-            header_text,
-            "TURN",
-            f"{turn_elapsed_s}s" if turn_elapsed_s is not None else "--",
-            label_style=(
-                "bold #ead8c7 on #53382c"
-                if turn_elapsed_s is not None
-                else _dead_label
-            ),
-            value_style=(
-                "bold #d9c5b2 on #3a261f"
-                if turn_elapsed_s is not None
-                else _dead_value
-            ),
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"turn={turn_elapsed_s}s" if turn_elapsed_s is not None else "turn=--",
+            style=_rgb_to_hex(_EMBER_ACCENT_RGB) if turn_elapsed_s is not None else "grey50",
         )
-        self._append_scorebug_cell(
-            header_text,
-            "EMITTED",
-            f"{self.stat_emitted}",
-            label_style=(
-                "bold #dbe3d0 on #364036" if self.stat_emitted > 0 else _dead_label
-            ),
-            value_style=(
-                "bold #c7d0bc on #252d25" if self.stat_emitted > 0 else _dead_value
-            ),
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"emitted={self.stat_emitted}",
+            style="green4" if self.stat_emitted > 0 else "grey50",
         )
-        self._append_scorebug_cell(
-            header_text,
-            "DEDUP",
-            f"{self.stat_dropped_dedup}",
-            label_style=(
-                "bold #e7dcc4 on #4a3e2c"
-                if self.stat_dropped_dedup > 0
-                else _dead_label
-            ),
-            value_style=(
-                "bold #d7caaf on #33281d"
-                if self.stat_dropped_dedup > 0
-                else _dead_value
-            ),
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"dedup={self.stat_dropped_dedup}",
+            style="yellow4" if self.stat_dropped_dedup > 0 else "grey50",
         )
-        self._append_scorebug_cell(
-            header_text,
-            "EMPTY",
-            f"{self.stat_dropped_empty}",
-            label_style=(
-                "bold #e5d1cb on #4a2c28"
-                if self.stat_dropped_empty > 0
-                else _dead_label
-            ),
-            value_style=(
-                "bold #d7beb7 on #33201d"
-                if self.stat_dropped_empty > 0
-                else _dead_value
-            ),
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"empty={self.stat_dropped_empty}",
+            style="red3" if self.stat_dropped_empty > 0 else "grey50",
         )
         header = Panel(
             Align.left(header_text),
@@ -1976,14 +1471,9 @@ class PaintDryDisplay:
                 scorebug_top,
                 "CURRENT MODEL",
                 self.current_model or "—",
-<<<<<<< HEAD
-                label_style="bold #e7dfd3 on #403a3a",
-                value_style="bold #d7cec5 on #2e2929",
-=======
                 label_style=f"bold #bab2a6 on {meta_bg}",
                 value_style=f"bold #ddd8d0 on {meta_bg}",
                 separator_style=meta_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
             )
             if self.current_set_label:
                 set_value = self.current_set_label
@@ -1991,28 +1481,18 @@ class PaintDryDisplay:
                     scorebug_top,
                     "SET",
                     set_value,
-<<<<<<< HEAD
-                    label_style="bold #e9dfd0 on #4d3f2c",
-                    value_style="bold #d8cdbc on #372d20",
-=======
                     label_style=f"bold #bab2a6 on {meta_bg}",
                     value_style=f"bold #d6cfbf on {meta_bg}",
                     separator_style=meta_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                 )
             if self.current_item_bug:
                 self._append_scorebug_cell(
                     scorebug_top,
                     "ITEM",
                     self.current_item_bug,
-<<<<<<< HEAD
-                    label_style="bold #ead7cf on #5a352f",
-                    value_style="bold #d8c0ba on #402621",
-=======
                     label_style=f"bold #bab2a6 on {meta_bg}",
                     value_style=f"bold #e5d6c5 on {meta_bg}",
                     separator_style=meta_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                 )
 
             scorebug_gap = Text(" ", style="grey35")
@@ -2032,18 +1512,6 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_on_target_points)}"
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
-<<<<<<< HEAD
-                    label_style="bold #e6ddd4 on #44525c",
-                    value_row_styles=(
-                        "bold #ddd4cb on #39444d",
-                        "bold #d4cbc1 on #303840",
-                        "bold #c8c0b6 on #272e35",
-                    ),
-                    value_mid_row_styles=(
-                        "bold #8f918f on #39444d",
-                        "bold #868885 on #303840",
-                        "bold #7b7d79 on #272e35",
-=======
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=(
                         f"bold #dce2de on {tally_top_bg}",
@@ -2060,7 +1528,6 @@ class PaintDryDisplay:
                         tally_top_separator_style,
                         tally_mid_separator_style,
                         tally_bottom_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2073,18 +1540,6 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
-<<<<<<< HEAD
-                    label_style="bold #e8dece on #5a4731",
-                    value_row_styles=(
-                        "bold #ddd1c0 on #524431",
-                        "bold #d4c7b5 on #463925",
-                        "bold #c7b9a6 on #3b2f1d",
-                    ),
-                    value_mid_row_styles=(
-                        "bold #95866d on #524431",
-                        "bold #8c7d63 on #463925",
-                        "bold #7f7157 on #3b2f1d",
-=======
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=(
                         f"bold #e3d9c5 on {tally_top_bg}",
@@ -2101,7 +1556,6 @@ class PaintDryDisplay:
                         tally_top_separator_style,
                         tally_mid_separator_style,
                         tally_bottom_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2114,18 +1568,6 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
-<<<<<<< HEAD
-                    label_style="bold #e9d7d2 on #5b3530",
-                    value_row_styles=(
-                        "bold #ddcbc7 on #583331",
-                        "bold #d5c0bb on #4a2927",
-                        "bold #c8b2ad on #3e201f",
-                    ),
-                    value_mid_row_styles=(
-                        "bold #957c79 on #583331",
-                        "bold #8a706d on #4a2927",
-                        "bold #7e6461 on #3e201f",
-=======
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=(
                         f"bold #ddcdc7 on {tally_top_bg}",
@@ -2142,7 +1584,6 @@ class PaintDryDisplay:
                         tally_top_separator_style,
                         tally_mid_separator_style,
                         tally_bottom_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 scorebug_rows.extend(
@@ -2166,18 +1607,6 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
-<<<<<<< HEAD
-                    label_style="bold #e6ddd4 on #44525c",
-                    value_row_styles=(
-                        "bold #ddd4cb on #39444d",
-                        "bold #d4cbc1 on #303840",
-                        "bold #c8c0b6 on #272e35",
-                    ),
-                    value_mid_row_styles=(
-                        "bold #8f918f on #39444d",
-                        "bold #868885 on #303840",
-                        "bold #7b7d79 on #272e35",
-=======
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=(
                         f"bold #dce2de on {tally_top_bg}",
@@ -2194,7 +1623,6 @@ class PaintDryDisplay:
                         tally_top_separator_style,
                         tally_mid_separator_style,
                         tally_bottom_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2204,18 +1632,6 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
-<<<<<<< HEAD
-                    label_style="bold #e8dece on #5a4731",
-                    value_row_styles=(
-                        "bold #ddd1c0 on #524431",
-                        "bold #d4c7b5 on #463925",
-                        "bold #c7b9a6 on #3b2f1d",
-                    ),
-                    value_mid_row_styles=(
-                        "bold #95866d on #524431",
-                        "bold #8c7d63 on #463925",
-                        "bold #7f7157 on #3b2f1d",
-=======
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=(
                         f"bold #e3d9c5 on {tally_top_bg}",
@@ -2232,7 +1648,6 @@ class PaintDryDisplay:
                         tally_top_separator_style,
                         tally_mid_separator_style,
                         tally_bottom_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2242,18 +1657,6 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
-<<<<<<< HEAD
-                    label_style="bold #e9d7d2 on #5b3530",
-                    value_row_styles=(
-                        "bold #ddcbc7 on #583331",
-                        "bold #d5c0bb on #4a2927",
-                        "bold #c8b2ad on #3e201f",
-                    ),
-                    value_mid_row_styles=(
-                        "bold #957c79 on #583331",
-                        "bold #8a706d on #4a2927",
-                        "bold #7e6461 on #3e201f",
-=======
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=(
                         f"bold #ddcdc7 on {tally_top_bg}",
@@ -2270,7 +1673,6 @@ class PaintDryDisplay:
                         tally_top_separator_style,
                         tally_mid_separator_style,
                         tally_bottom_separator_style,
->>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 scorebug_rows.extend(
@@ -2383,39 +1785,6 @@ class PaintDryDisplay:
             # doesn't jitter when bonsai produces a long line.
             height=_TOP_PANEL_CONTENT_LINES + 2,
         )
-
-        focus_preview_panel = None
-        if self.focus_preview_renderable is not None:
-            preview_title = "[grey50]focus preview"
-            if self.focus_preview_pending:
-                preview_title += " · pending"
-            if self.focus_preview_label:
-                preview_title += f" · {self.focus_preview_label}"
-            preview_title += "[/grey50]"
-            if self.focus_preview_pending and self.focus_preview_pixels is not None:
-                pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
-                if (
-                    self._focus_preview_pending_renderable is None
-                    or self._focus_preview_pending_bucket != pending_bucket
-                ):
-                    self._focus_preview_pending_renderable = _render_focus_preview_pixels(
-                        self.focus_preview_pixels,
-                        now=now,
-                        pending=True,
-                    )
-                    self._focus_preview_pending_bucket = pending_bucket
-                preview_renderable = self._focus_preview_pending_renderable
-            else:
-                preview_renderable = self.focus_preview_renderable
-            focus_preview_panel = Panel(
-                Align.center(
-                    preview_renderable
-                ),
-                border_style="#3d4458",
-                padding=(0, 1),
-                title=preview_title,
-                title_align="left",
-            )
 
         # History panel — items grouped by header. Each item is a
         # group: header at the top, decision/topic directly below it,
@@ -2561,36 +1930,6 @@ class PaintDryDisplay:
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                     )
-            elif kind == "basis":
-                indent = "  ≡ "
-                history_text.append(indent, style="grey50")
-                history_text.append(
-                    "Basis: ",
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
-                )
-                _apply_shimmer(
-                    history_text, text, "checkpoint_alt",
-                    layer_index=render_layer,
-                    indent_width=len(indent) + len("Basis: "),
-                    wrap_width=wrap_width,
-                    cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                )
-            elif kind == "review_marker":
-                indent = "  ! "
-                history_text.append(indent, style="grey50")
-                history_text.append(
-                    "Review needed: ",
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
-                )
-                _apply_shimmer(
-                    history_text, text, "topic_undershoot",
-                    layer_index=render_layer,
-                    indent_width=len(indent) + len("Review needed: "),
-                    wrap_width=wrap_width,
-                    cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                )
             elif kind == "checkpoint":
                 indent = "  ≈ "
                 _apply_shimmer(
@@ -2652,15 +1991,15 @@ class PaintDryDisplay:
                 drops_text.append("  ✗ ", style="grey39")
                 drops_text.append(f"[{reason}] ", style="grey39")
                 drops_text.append(label, style="grey42 strike")
-            # The DEDUP/EMPTY dials in the top header are now
-            # authoritative for the counts, so the drops panel title
-            # drops the flat ``dedup=N empty=N`` telemetry tail and just
-            # carries the label.
             drops_panel = Panel(
                 drops_text,
                 border_style="grey30",
                 padding=(0, 1),
-                title="[grey42]rejected[/grey42]",
+                title=(
+                    f"[grey42]rejected · "
+                    f"dedup={self.stat_dropped_dedup} "
+                    f"empty={self.stat_dropped_empty}[/grey42]"
+                ),
                 title_align="left",
             )
 
@@ -2705,10 +2044,7 @@ class PaintDryDisplay:
         panels.append(header)
         if scorebug_panel is not None:
             panels.append(scorebug_panel)
-        panels.append(live_panel)
-        if focus_preview_panel is not None:
-            panels.append(focus_preview_panel)
-        panels.append(history_panel)
+        panels.extend([live_panel, history_panel])
         if wrap_panel is not None:
             panels.append(wrap_panel)
         if drops_panel is not None:
@@ -2737,21 +2073,6 @@ class PaintDryDisplay:
         self.frozen_line = ""
         self._frozen_line_parity = self._line_parity
         self._freeze_started_at = None
-        if self.focus_preview_renderable is not None:
-            self.focus_preview_pending = True
-            self.focus_preview_pending_started = header_now
-            self._focus_preview_pending_bucket = None
-            self._focus_preview_pending_renderable = None
-        else:
-            self.focus_preview_png = None
-            self.focus_preview_pixels = None
-            self.focus_preview_renderable = None
-            self.focus_preview_label = ""
-            self.focus_preview_source = ""
-            self.focus_preview_pending = False
-            self.focus_preview_pending_started = None
-            self._focus_preview_pending_bucket = None
-            self._focus_preview_pending_renderable = None
         m = _HEADER_INDEX_RE.match(text)
         if m:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
@@ -2827,40 +2148,6 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
-    def on_focus_preview(
-        self,
-        png_bytes: bytes,
-        *,
-        label: str = "",
-        source: str = "",
-    ) -> None:
-        term_width = None
-        if self._console is not None:
-            try:
-                term_width = self._console.size.width
-            except Exception:
-                term_width = None
-        budget_width, budget_height = _focus_preview_budget(term_width)
-        self.focus_preview_png = png_bytes
-        # Sample at 2× vertical density so the steady-state renderer can
-        # pack a top/bottom half-pixel pair into each terminal row via
-        # half-block (▀) cells. The pending/transition renderer averages
-        # pairs back down to its own density internally.
-        self.focus_preview_pixels = _build_focus_preview_pixels(
-            png_bytes,
-            max_width_chars=budget_width,
-            max_height_rows=budget_height * 2,
-        )
-        self.focus_preview_renderable = _render_focus_preview_pixels(
-            self.focus_preview_pixels
-        )
-        self.focus_preview_label = label
-        self.focus_preview_source = source
-        self.focus_preview_pending = False
-        self.focus_preview_pending_started = None
-        self._focus_preview_pending_bucket = None
-        self._focus_preview_pending_renderable = None
-
     def on_topic(
         self,
         text: str,
@@ -2904,12 +2191,6 @@ class PaintDryDisplay:
             self._line_parity,
         )
         self.history.append(("checkpoint", text, checkpoint_parity))
-
-    def on_basis(self, text: str) -> None:
-        self.history.append(("basis", text, None))
-
-    def on_review_marker(self, text: str) -> None:
-        self.history.append(("review_marker", text, None))
 
 
 def main() -> int:
@@ -3024,19 +2305,6 @@ def main() -> int:
                             set_label=msg.get("set_label"),
                             subset_count=msg.get("subset_count"),
                         )
-                    elif msg_type == "focus_preview":
-                        try:
-                            png_bytes = base64.b64decode(
-                                msg.get("png_base64", ""),
-                            )
-                        except Exception:
-                            png_bytes = b""
-                        if png_bytes:
-                            display.on_focus_preview(
-                                png_bytes,
-                                label=msg.get("label", ""),
-                                source=msg.get("source", ""),
-                            )
                     elif msg_type == "delta":
                         display.on_delta(
                             msg.get("text", ""),
@@ -3054,10 +2322,6 @@ def main() -> int:
                             truth_score=msg.get("truth_score"),
                             max_points=msg.get("max_points"),
                         )
-                    elif msg_type == "basis":
-                        display.on_basis(msg.get("text", ""))
-                    elif msg_type == "review_marker":
-                        display.on_review_marker(msg.get("text", ""))
                     elif msg_type == "checkpoint":
                         display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":
