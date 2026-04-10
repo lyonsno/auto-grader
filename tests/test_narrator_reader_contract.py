@@ -1149,23 +1149,35 @@ class NarratorReaderContract(unittest.TestCase):
         top, middle, bottom = _scorebug_big_value_rows("1.0")
 
         self.assertIn(
-            "╺╗ ",
+            "╔╗ ",
             top,
             "the 1 glyph should carry its serif/cap in the upper row instead of reading as a thin post with all the weight at the bottom",
         )
         self.assertIn(" ║ ", middle)
         self.assertIn(" ║ ", bottom)
 
+    def test_scorebug_skinny_family_packs_tightly_with_a_fuller_one_cap(self):
+        top, middle, bottom = _scorebug_big_value_rows("17.0")
+
+        self.assertIn(
+            "╔╗ ╔═╗",
+            top,
+            "the 1 and 7 should read as one dense scorebug field, with the 1 carrying a fuller top cap instead of a sparse left tick",
+        )
+        self.assertNotIn("╔╗  ╔═╗", top)
+        self.assertIn(" ║ ╔╝", middle)
+        self.assertIn(" ║ ║", bottom)
+
     def test_scorebug_seven_glyph_keeps_chunky_upper_hook(self):
         top, middle, bottom = _scorebug_big_value_rows("7.0")
 
         self.assertIn("╔═╗", top)
         self.assertIn(
-            " ╔╝",
+            "╔╝ ",
             middle,
             "the 7 glyph should keep a chunkier upper hook instead of dropping immediately into a thin centered post",
         )
-        self.assertIn(" ║ ", bottom)
+        self.assertIn("║  ", bottom)
 
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
         display = self._make_display()
