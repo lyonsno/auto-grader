@@ -31,6 +31,7 @@ _BUBBLE_LABEL_TOP_OFFSET = 6
 _CHOICE_LEGEND_LEFT_OFFSET = 12
 _CHOICE_LEGEND_TOP_OFFSET = 4
 _CHOICE_LEGEND_LINE_SPACING = 14
+_CHOICE_WRAP_WIDTH = 46
 _PROMPT_LINE_SPACING = 14
 _PROMPT_WRAP_WIDTH = 52
 
@@ -197,18 +198,27 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
         )
         choice_legend_left = prompt_left + _CHOICE_LEGEND_LEFT_OFFSET
 
-        for index, choice in enumerate(choices):
-            content_lines.extend(
-                _text_block(
-                    choice_legend_left,
-                    _pdf_text_y(
-                        height,
-                        prompt_y_top + _CHOICE_LEGEND_TOP_OFFSET + (index * _CHOICE_LEGEND_LINE_SPACING),
-                    ),
-                    _CHOICE_LEGEND_FONT_SIZE,
-                    f"{choice['bubble_label']}. {choice.get('text', '')}",
-                )
+        choice_line_cursor = 0
+        for choice in choices:
+            wrapped_choice_lines = _wrap_choice_text(
+                choice["bubble_label"],
+                str(choice.get("text", "")),
             )
+            for wrapped_line in wrapped_choice_lines:
+                content_lines.extend(
+                    _text_block(
+                        choice_legend_left,
+                        _pdf_text_y(
+                            height,
+                            prompt_y_top
+                            + _CHOICE_LEGEND_TOP_OFFSET
+                            + (choice_line_cursor * _CHOICE_LEGEND_LINE_SPACING),
+                        ),
+                        _CHOICE_LEGEND_FONT_SIZE,
+                        wrapped_line,
+                    )
+                )
+                choice_line_cursor += 1
 
         for choice in choices:
             bubble_label = str(choice["bubble_label"])
@@ -262,6 +272,17 @@ def _wrap_prompt_text(text: str) -> list[str]:
         break_on_hyphens=False,
     )
     return wrapped or [text]
+
+
+def _wrap_choice_text(bubble_label: str, text: str) -> list[str]:
+    wrapped = textwrap.wrap(
+        f"{bubble_label}. {text}",
+        width=_CHOICE_WRAP_WIDTH,
+        subsequent_indent="   ",
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return wrapped or [f"{bubble_label}. {text}"]
 
 
 def _circle_path(x: int | float, y: int | float, width: int | float, height: int | float) -> str:

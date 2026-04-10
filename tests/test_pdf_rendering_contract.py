@@ -136,6 +136,46 @@ def _build_wrapped_prompt_artifact() -> dict:
     )
 
 
+def _build_wrapped_choice_artifact() -> dict:
+    from auto_grader.generation import build_mc_answer_sheet
+
+    template = {
+        "slug": "quiz-choice-wrap",
+        "title": "Choice Wrap Quiz",
+        "sections": [
+            {
+                "id": "mc",
+                "title": "Multiple Choice",
+                "questions": [
+                    {
+                        "id": "mc-choice-wrap-1",
+                        "points": 2,
+                        "answer_type": "multiple_choice",
+                        "prompt": (
+                            "Which statement best describes why increasing surface area "
+                            "speeds up a heterogeneous reaction in a powder sample?"
+                        ),
+                        "choices": {
+                            "A": "More exposed particles create more collision opportunities",
+                            "B": "The equilibrium constant becomes larger",
+                            "C": "The sample gains additional electrons",
+                            "D": "The activation energy always drops to zero",
+                        },
+                        "correct": "A",
+                        "shuffle": False,
+                    }
+                ],
+            }
+        ],
+    }
+    return build_mc_answer_sheet(
+        template,
+        {"student_id": "s-001", "student_name": "Ada Lovelace"},
+        attempt_number=1,
+        seed=17,
+    )
+
+
 def _load_pdf_renderer(test_case: unittest.TestCase):
     try:
         from auto_grader.pdf_rendering import render_mc_answer_sheet_pdf
@@ -426,6 +466,27 @@ class PdfRenderingContractTests(unittest.TestCase):
             b"(1. Which statement best describes why increasing surface area speeds up a heterogeneous reaction in a powder sample during a busy laboratory period?)",
             pdf_bytes,
             "The renderer should not emit the full long prompt as one unwrapped line once prompt wrapping is supported.",
+        )
+
+    def test_renderer_wraps_long_choice_lines_before_the_bubble_lane(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_wrapped_choice_artifact()
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        self.assertIn(
+            b"(A. More exposed particles create more)",
+            pdf_bytes,
+            "Long choice text should wrap inside the left-hand text block instead of overrunning the bubble lane.",
+        )
+        self.assertIn(
+            b"(   collision opportunities)",
+            pdf_bytes,
+        )
+        self.assertNotIn(
+            b"(A. More exposed particles create more collision opportunities)",
+            pdf_bytes,
+            "Long choice text should not remain one unbounded line once choice wrapping is supported.",
         )
 
 
