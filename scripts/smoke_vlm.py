@@ -28,6 +28,7 @@ from auto_grader.vlm_inference import ServerConfig, grade_all_items
 
 _GROUND_TRUTH = Path(__file__).resolve().parent.parent / "eval" / "ground_truth.yaml"
 _SCANS_DIR = Path.home() / "dev" / "auto-grader-assets" / "scans"
+_DEFAULT_RUNS_ROOT = Path.home() / "dev" / "auto-grader-runs"
 _TEMPLATE = (
     Path(__file__).resolve().parent.parent
     / "templates"
@@ -54,6 +55,12 @@ _TRICKY_PLUS_PICKS = [
     ("34-blue", "fr-12a"),       # Lewis partial with setup credit
     *_TRICKY_PICKS,
 ]
+
+
+def _default_run_dir(model: str, *, now: datetime | None = None) -> Path:
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    safe_model = model.replace("/", "_")
+    return _DEFAULT_RUNS_ROOT / f"{stamp}-{safe_model}"
 
 
 def _progress(i: int, total: int, item, pred):
@@ -261,7 +268,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Model name for the wrap-up call. Defaults to --model.",
     )
     parser.add_argument("--run-dir", default=None,
-                        help="Directory to write narrator.jsonl/.txt logs (default: runs/<ts>-<model>/)")
+                        help="Directory to write narrator.jsonl/.txt logs (default: ~/dev/auto-grader-runs/<ts>-<model>/)")
     return parser
 
 
@@ -323,12 +330,7 @@ def main():
     if args.run_dir:
         run_dir = Path(args.run_dir)
     else:
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        safe_model = config.model.replace("/", "_")
-        run_dir = (
-            Path(__file__).resolve().parent.parent
-            / "runs" / f"{ts}-{safe_model}"
-        )
+        run_dir = _default_run_dir(config.model)
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Run dir: {run_dir}")
 
