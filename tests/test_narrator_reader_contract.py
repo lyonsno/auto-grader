@@ -97,6 +97,17 @@ class NarratorReaderContract(unittest.TestCase):
             if isinstance(span.style, str) and span.style.startswith("#")
         ]
 
+    @staticmethod
+    def _styles_in_range(text: Text, start: int, end: int) -> set[str]:
+        styles: set[str] = set()
+        for span in text.spans:
+            if not isinstance(span.style, str):
+                continue
+            if span.end <= start or span.start >= end:
+                continue
+            styles.add(span.style)
+        return styles
+
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
         display = PaintDryDisplay()
         display.on_delta("I'm tracing the stoichiometry.")
@@ -531,6 +542,16 @@ class NarratorReaderContract(unittest.TestCase):
             tally_text_obj.plain.index("BAD CALLS"),
             (2 * cell_width) + (2 * separator_width),
             "BAD CALLS label should start at the left edge of its score cell",
+        )
+        on_target_styles = self._styles_in_range(
+            tally_value_top,
+            0,
+            cell_width,
+        )
+        self.assertGreaterEqual(
+            len(on_target_styles),
+            2,
+            "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
         )
 
     def test_scorebug_big_value_rows_render_three_line_scoreboard_digits(self):
