@@ -1109,6 +1109,11 @@ class NarratorReaderContract(unittest.TestCase):
             0.75 * cool_blue,
             "cool live line should lean a bit greener than the earlier pure steel-blue pass",
         )
+        self.assertLess(
+            cool_red + cool_green + cool_blue,
+            545,
+            "cool live line should tone down from the brighter electric wash and carry a darker, more pigmented aqua body",
+        )
         self.assertGreater(
             warm_red,
             warm_blue,
@@ -1123,6 +1128,11 @@ class NarratorReaderContract(unittest.TestCase):
             warm_green,
             warm_blue,
             "soft-warm live line should still stay pastel and friendly instead of pure hot red",
+        )
+        self.assertLess(
+            warm_red + warm_green + warm_blue,
+            540,
+            "soft-warm live line should stop hovering near white and read as an actual peach/apricot note",
         )
 
     def test_render_places_project_paint_dry_header_above_scorebug_when_model_known(self):
@@ -1336,6 +1346,27 @@ class NarratorReaderContract(unittest.TestCase):
             {on_target_top_bg, left_top_bg, bad_top_bg},
             {on_target_top_bg},
             "the top numeral row should use one continuous smoke background across all three scoreboard categories",
+        )
+        on_target_mid_bg = self._background_hex(
+            self._style_for_substring(tally_value_mid, expected_on_target[1].strip())
+        )
+        on_target_bottom_bg = self._background_hex(
+            self._style_for_substring(tally_value_bottom, expected_on_target[2].strip())
+        )
+        bg_lumas = [
+            self._hex_luminance(on_target_top_bg),
+            self._hex_luminance(on_target_mid_bg),
+            self._hex_luminance(on_target_bottom_bg),
+        ]
+        self.assertLess(
+            max(bg_lumas) - min(bg_lumas),
+            24,
+            "the score field should read as a flatter low-contrast texture, not a strong descending row gradient",
+        )
+        self.assertGreater(
+            max(bg_lumas) - min(bg_lumas),
+            6,
+            "the score field should still have some subtle tonal breathing room instead of collapsing to one dead flat slab",
         )
         on_target_top_strong = tally_value_top.spans[1].style
         on_target_bottom_style = self._style_for_substring(
