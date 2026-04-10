@@ -241,7 +241,9 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
     def test_focus_preview_panel_renders_between_live_and_history(self):
+        # Half-block fallback path — test the panel-title ordering.
         display = self._make_display()
+        display._inline_images_supported = False
         display.on_focus_preview(
             self._make_png(),
             label="15-blue/fr-12a",
@@ -266,6 +268,40 @@ class NarratorReaderContract(unittest.TestCase):
             titled_panels.index("[grey50]focus preview · 15-blue/fr-12a[/grey50]"),
             titled_panels.index("[grey50]history[/grey50]"),
         )
+
+    def test_inline_focus_preview_renders_between_live_and_history(self):
+        # Inline image path — same ordering invariant as above but
+        # the renderable is a FocusPreviewInlineImage rather than a
+        # Panel with a title attribute. Verify positional ordering
+        # within the Group.
+        display = self._make_display()
+        display._inline_images_supported = True
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+        group = display.render()
+        renderables = list(group.renderables)
+        status_live_idx = None
+        history_idx = None
+        inline_idx = None
+        for i, r in enumerate(renderables):
+            title = getattr(r, "title", None)
+            if title == "[grey50]status + live[/grey50]":
+                status_live_idx = i
+            elif title == "[grey50]history[/grey50]":
+                history_idx = i
+            elif isinstance(r, FocusPreviewInlineImage):
+                inline_idx = i
+        self.assertIsNotNone(status_live_idx, "status+live panel must be present")
+        self.assertIsNotNone(history_idx, "history panel must be present")
+        self.assertIsNotNone(
+            inline_idx,
+            "inline focus preview renderable must be present in render group",
+        )
+        self.assertLess(status_live_idx, inline_idx)
+        self.assertLess(inline_idx, history_idx)
 
     def test_new_header_keeps_previous_preview_visible_in_pending_state(self):
         display = self._make_display()

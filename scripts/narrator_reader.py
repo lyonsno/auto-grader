@@ -44,6 +44,7 @@ from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
 from rich.panel import Panel
 from rich.segment import ControlType, Segment
+from rich.style import Style
 from rich.text import Text
 
 # scripts/ is not on sys.path by default when narrator_reader.py is
@@ -822,17 +823,38 @@ def _supports_inline_images(term_program: str | None) -> bool:
 
 
 class FocusPreviewInlineImage:
-    """Rich Renderable that emits an iTerm2 inline image and reserves
-    exactly ``cell_height`` rows of vertical space.
+    """Rich Renderable that emits an iTerm2 inline image framed in a
+    self-drawn border box.
 
-    Rich's layout engine positions subsequent renderables below this
-    object based on how many rows it yields. The iTerm2 escape
-    sequence itself occupies no text rows from Rich's perspective,
-    so we yield the escape sequence on the first row and pad the
-    remaining rows with blank segments. The terminal (which does
-    understand the escape sequence) paints the image into the
-    vertical band that Rich has reserved for padding, and everything
-    lines up visually.
+    This renderable is deliberately NOT wrapped in a ``rich.Panel``
+    because Panel's padding logic writes literal spaces to the cells
+    to the right of its inner content on every row, filling the panel
+    to its declared inner width. Those spaces land on exactly the
+    terminal cells that the iTerm2 escape sequence just painted image
+    pixels into, overwriting the image the instant it's drawn. The
+    failure mode is extremely subtle — Rich's output byte stream does
+    carry the full image sequence — but the image is gone before the
+    operator sees it because Rich immediately clobbers its cells.
+
+    The fix is to own the border drawing ourselves and use
+    cursor-forward escape sequences (``ESC[nC``) marked as zero-width
+    control segments to advance the cursor across the image region
+    without writing any visible characters to those cells. The
+    terminal-painted image pixels are preserved because nothing is
+    written over them.
+
+    The renderable yields, in order:
+      1. A top border row ``╭─… title …─╮``
+      2. A content row ``│`` + space + image escape sequence +
+         cursor-forward past the image cells + ``│``
+      3. ``cell_height - 1`` more content rows ``│`` + cursor-forward
+         past the image cells + ``│``
+      4. A bottom border row ``╰─…─╯``
+
+    Rich sees the border segments as visible text with the expected
+    cell widths, so its layout accounting treats this renderable as a
+    (cell_width + 4) × (cell_height + 2) rectangle in the panels
+    stack. No outer Panel needed; the renderable IS the panel.
     """
 
     def __init__(
@@ -841,10 +863,12 @@ class FocusPreviewInlineImage:
         png_bytes: bytes,
         cell_width: int,
         cell_height: int,
+        title: str = "",
     ) -> None:
         self._png_bytes = png_bytes
         self._cell_width = cell_width
         self._cell_height = cell_height
+        self._title = title
         self._sequence = _build_iterm2_inline_image_sequence(
             png_bytes, cell_width=cell_width, cell_height=cell_height
         )
@@ -854,33 +878,64 @@ class FocusPreviewInlineImage:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        # First row carries the escape sequence as a CONTROL segment.
-        # This is load-bearing: without the control marker, Rich
-        # treats the escape sequence's raw text as visible content
-        # whose `cell_length` equals its string length (tens of
-        # thousands of "visible" cells from the base64 payload),
-        # and Rich's line-fitting logic inside a Panel will
-        # line-wrap or truncate the segment to the panel's cell
-        # width — stripping the base64 payload partway through the
-        # escape sequence, which means the terminal never receives
-        # a complete iTerm2 File= sequence and no image renders.
-        #
-        # Marking the segment as a control (via the third-positional
-        # `control` argument to Segment) sets its cell_length to 0,
-        # which tells Rich "this is a zero-width control payload,
-        # emit it verbatim, do not wrap or truncate." The specific
-        # ControlType chosen doesn't matter — Rich uses the control
-        # list only as a zero-width marker; the emitted text is
-        # whatever we pass as the first argument.
-        yield Segment(self._sequence, None, [(ControlType.BELL,)])
+        border = Style.parse("#3d4458")
+        # Total cell width of the framed output: image + one padding
+        # space on each side of the image + border char on each side.
+        inner_width = self._cell_width
+        total_width = inner_width + 2  # just the borders, no extra pad
+
+        # Top border with embedded title: ╭─ <title> ─…─╮
+        title_text = self._title
+        max_title = max(0, inner_width - 4)
+        if len(title_text) > max_title:
+            title_text = title_text[: max(0, max_title - 1)] + "…"
+        if title_text:
+            prefix = f"╭─ {title_text} "
+            filler_len = total_width - len(prefix) - 1
+            if filler_len < 0:
+                filler_len = 0
+            top_border = prefix + ("─" * filler_len) + "╮"
+        else:
+            top_border = "╭" + ("─" * (total_width - 2)) + "╮"
+        yield Segment(top_border, border)
         yield Segment.line()
-        # Pad with blank rows so Rich reserves the rest of the
-        # vertical footprint. Each blank row is a single space
-        # segment followed by a line break so Rich's row accounting
-        # counts it as a full row.
+
+        # Cursor-forward escape advances the cursor `inner_width`
+        # columns without writing any visible characters. Marked as
+        # a control segment so Rich's cell_length accounting treats
+        # it as zero cells — Rich's line-level logic will not try
+        # to line-fit, truncate, or pad around it.
+        forward_escape = f"\x1b[{inner_width}C"
+
+        # First interior row carries the iTerm2 image escape sequence.
+        # The cursor is at column 1 (after the left border). The image
+        # sequence paints inner_width cells wide starting here, and
+        # the cursor-forward advances us past those cells to where
+        # the right border goes. None of those cells get written to
+        # by Rich's own padding logic because this renderable is NOT
+        # wrapped in a Panel — Rich treats its output at the Group
+        # level and emits our segments verbatim.
+        yield Segment("│", border)
+        yield Segment(self._sequence, None, [(ControlType.BELL,)])
+        yield Segment(forward_escape, None, [(ControlType.BELL,)])
+        yield Segment("│", border)
+        yield Segment.line()
+
+        # Remaining interior rows: border + cursor-forward + border.
+        # These rows are visually "blank" from Rich's perspective but
+        # the terminal has image pixels painted into the cells from
+        # the first row's escape sequence. Cursor-forward preserves
+        # those pixels; writing spaces here would overwrite them.
         for _ in range(self._cell_height - 1):
-            yield Segment(" ")
+            yield Segment("│", border)
+            yield Segment(forward_escape, None, [(ControlType.BELL,)])
+            yield Segment("│", border)
             yield Segment.line()
+
+        # Bottom border.
+        bottom_border = "╰" + ("─" * (total_width - 2)) + "╯"
+        yield Segment(bottom_border, border)
+        yield Segment.line()
 
 
 def _otsu_threshold(luminances) -> float:
@@ -2553,60 +2608,54 @@ class PaintDryDisplay:
         focus_preview_panel = None
         have_inline = self.focus_preview_inline_renderable is not None
         have_fallback = self.focus_preview_renderable is not None
-        if have_inline or have_fallback:
+        if have_inline and not self.focus_preview_pending:
+            # Inline image, steady state: use the custom renderable
+            # DIRECTLY, not wrapped in a Panel. Panel's Padding layer
+            # writes literal spaces to the cells on either side of
+            # the content, which lands on exactly the cells WezTerm
+            # just painted image pixels into, overwriting the image.
+            # The renderable draws its own border + title and uses
+            # cursor-forward escapes (not spaces) to advance past
+            # the image cells without touching them.
+            focus_preview_panel = self.focus_preview_inline_renderable
+        elif have_inline or have_fallback:
             preview_title = "[grey50]focus preview"
             if self.focus_preview_pending:
                 preview_title += " · pending"
             if self.focus_preview_label:
                 preview_title += f" · {self.focus_preview_label}"
             preview_title += "[/grey50]"
-            if have_inline:
-                # Inline image path: the terminal rasterizes the crop
-                # PNG directly. The custom Renderable reserves the
-                # exact vertical footprint Rich needs so the next
-                # panel lands below where the terminal paints the
-                # image. During pending (transition) state, fall
-                # through to the half-block animation since the
-                # inline path is static; the fallback may not exist
-                # at this point if the inline path is active, so
-                # check before using.
-                if self.focus_preview_pending and have_fallback and self.focus_preview_pixels is not None:
-                    pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
-                    if (
-                        self._focus_preview_pending_renderable is None
-                        or self._focus_preview_pending_bucket != pending_bucket
-                    ):
-                        self._focus_preview_pending_renderable = _render_focus_preview_pixels(
-                            self.focus_preview_pixels,
-                            now=now,
-                            pending=True,
-                        )
-                        self._focus_preview_pending_bucket = pending_bucket
-                    preview_renderable = self._focus_preview_pending_renderable
-                else:
-                    preview_renderable = self.focus_preview_inline_renderable
+            # Pending or fallback path: use the half-block renderer
+            # wrapped in a Panel. During the pending transition the
+            # inline image path falls through to the half-block
+            # animation because the inline path is static; if no
+            # fallback pixels are available (because the inline path
+            # was active and replaced them), we show an empty panel
+            # with the title, which is still informative.
+            if self.focus_preview_pending and have_fallback and self.focus_preview_pixels is not None:
+                pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                if (
+                    self._focus_preview_pending_renderable is None
+                    or self._focus_preview_pending_bucket != pending_bucket
+                ):
+                    self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                        self.focus_preview_pixels,
+                        now=now,
+                        pending=True,
+                    )
+                    self._focus_preview_pending_bucket = pending_bucket
+                preview_renderable = self._focus_preview_pending_renderable
+            elif have_fallback:
+                preview_renderable = self.focus_preview_renderable
             else:
-                # Half-block fallback path (no inline support or
-                # inline build failed).
-                if self.focus_preview_pending and self.focus_preview_pixels is not None:
-                    pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
-                    if (
-                        self._focus_preview_pending_renderable is None
-                        or self._focus_preview_pending_bucket != pending_bucket
-                    ):
-                        self._focus_preview_pending_renderable = _render_focus_preview_pixels(
-                            self.focus_preview_pixels,
-                            now=now,
-                            pending=True,
-                        )
-                        self._focus_preview_pending_bucket = pending_bucket
-                    preview_renderable = self._focus_preview_pending_renderable
-                else:
-                    preview_renderable = self.focus_preview_renderable
+                # Have inline pending but no fallback — just show a
+                # blank placeholder, the next focus_preview event
+                # will swap it for the real inline image.
+                preview_renderable = Text(
+                    "(preview loading…)", style="grey50 italic"
+                )
             focus_preview_panel = Panel(
-                Align.center(
-                    preview_renderable
-                ),
+                Align.center(preview_renderable),
                 border_style="#3d4458",
                 padding=(0, 1),
                 title=preview_title,
@@ -3025,10 +3074,12 @@ class PaintDryDisplay:
                     max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
                     max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
                 )
+                title = f"focus preview · {label}" if label else "focus preview"
                 self.focus_preview_inline_renderable = FocusPreviewInlineImage(
                     png_bytes=png_bytes,
                     cell_width=cell_width,
                     cell_height=cell_height,
+                    title=title,
                 )
                 # No need to build the half-block fallback too — the
                 # inline path owns the panel when it's available.
