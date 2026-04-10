@@ -743,10 +743,20 @@ class NarratorReaderContract(unittest.TestCase):
             -0.05,
             "between-group setback should stay gentle enough to read as structure rather than a hard jump",
         )
-        self.assertGreaterEqual(
-            phase0 - phase0_deep,
+        self.assertLess(
             phase1 - phase0,
-            "within-group rake should still be at least as strong as the header-to-header setback",
+            -0.02,
+            "adjacent headers should now sit a bit more visibly behind the one above",
+        )
+        self.assertGreater(
+            phase0 - phase0_deep,
+            0.0,
+            "within-item rake should still exist so each block keeps a coherent local field",
+        )
+        self.assertLess(
+            phase0 - phase0_deep,
+            abs(phase1 - phase0),
+            "this pass should lean more on header setback than on aggressive within-item rake",
         )
         self.assertNotAlmostEqual(
             phase2 - phase1,
@@ -805,6 +815,25 @@ class NarratorReaderContract(unittest.TestCase):
         ) - self._hex_luminance(lower_static.spans[0].style)
 
         self.assertGreater(top_boost, lower_boost)
+
+    def test_wrapped_history_line_only_privileges_first_visual_row(self) -> None:
+        wrapped_text = Text()
+        _apply_shimmer(
+            wrapped_text,
+            "ABCDEFGHIJKLMNOPQRSTUVWX",
+            "line",
+            0,
+            wrap_width=16,
+            phase_override=0.0,
+        )
+
+        first_row_style = wrapped_text.spans[0].style
+        continuation_style = wrapped_text.spans[16].style
+
+        self.assertLess(
+            self._hex_luminance(continuation_style),
+            self._hex_luminance(first_row_style),
+        )
 
     def test_active_session_keeps_animating_after_live_freeze_fade(self) -> None:
         display = self._make_display()
