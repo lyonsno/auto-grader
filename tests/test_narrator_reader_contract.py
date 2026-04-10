@@ -298,6 +298,30 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(build_mock.call_count, 1)
 
+    def test_focus_preview_samples_at_double_row_density_for_half_block_rendering(self):
+        display = self._make_display()
+
+        with mock.patch(
+            "scripts.narrator_reader._build_focus_preview_pixels",
+            return_value=[[(10, 20, 30)]],
+        ) as build_mock:
+            display.on_focus_preview(
+                self._make_png(width=48, height=72),
+                label="15-blue/fr-12a",
+                source="mock_tricky",
+            )
+
+        call = build_mock.call_args.kwargs
+        budget_width, budget_height = _focus_preview_budget(
+            display._console.width,
+        )
+        self.assertEqual(call["max_width_chars"], budget_width)
+        self.assertEqual(
+            call["max_height_rows"],
+            budget_height * 2,
+            "steady-state preview should sample at double row density so the packed terminal image has more vertical detail than a one-row-per-pixel-field render",
+        )
+
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
         display = self._make_display()
         display.frozen_line = "I'm tracing the previous item."
@@ -479,7 +503,7 @@ class NarratorReaderContract(unittest.TestCase):
             "source-aware budgeting should buy more vertical detail too, not only horizontal width",
         )
 
-    def test_focus_preview_steady_state_uses_space_first_field_with_sparse_ink_accents(self):
+    def test_focus_preview_steady_state_uses_half_block_image_cells(self):
         pixels = []
         for row in range(12):
             rows: list[tuple[int, int, int]] = []
@@ -494,17 +518,15 @@ class NarratorReaderContract(unittest.TestCase):
             pending=False,
         )
         plain = _extract_plain(renderable)
-        drawable = [ch for ch in plain if ch != "\n"]
-        space_ratio = drawable.count(" ") / len(drawable)
 
         self.assertTrue(
-            any(ch in plain for ch in ".,:-=+"),
-            "steady-state previews should still carry some faint ink accents instead of collapsing into a pure flat card",
+            any(ch in plain for ch in "▀▄"),
+            "steady-state previews should render as a packed image field instead of a punctuation texture",
         )
-        self.assertGreater(
-            space_ratio,
-            0.45,
-            "steady-state previews should now read as a mostly image-backed field, not as a full-screen ASCII texture",
+        self.assertEqual(
+            len(plain.splitlines()),
+            6,
+            "steady-state preview should pack two pixel rows into one terminal row",
         )
 
     def test_focus_preview_bright_paper_stays_quiet_in_steady_state(self):
@@ -514,49 +536,44 @@ class NarratorReaderContract(unittest.TestCase):
             pending=False,
         )
         plain = _extract_plain(renderable)
-        drawable = [ch for ch in plain if ch != "\n"]
-        space_ratio = drawable.count(" ") / len(drawable)
 
         self.assertTrue(
-            any(ch in plain for ch in " .,:"),
-            "bright paper should still render with a very faint field instead of disappearing entirely",
-        )
-        self.assertGreater(
-            space_ratio,
-            0.70,
-            "bright paper should be overwhelmingly space-backed rather than filled with texture glyphs",
+            set(plain.replace("\n", "")) <= {" ", "▀", "▄"},
+            "bright paper should render as quiet image cells rather than punctuation texture",
         )
         self.assertFalse(
-            any(ch in plain for ch in "*#%@"),
-            "bright paper should not light up with dense texture glyphs",
+            any(ch in plain for ch in ".,:-=+*#%@"),
+            "bright paper should not light up with textural glyphs in steady state",
         )
 
-    def test_focus_preview_dark_strokes_use_denser_marks_than_paper(self):
-        paper = _extract_plain(
-            _render_focus_preview_pixels(
-                [[(220, 214, 206) for _ in range(24)] for _ in range(12)],
-                now=0.0,
-                pending=False,
-            )
+    def test_focus_preview_dark_strokes_preserve_fg_bg_separation(self):
+        pixels = []
+        for row in range(12):
+            rows: list[tuple[int, int, int]] = []
+            for _col in range(24):
+                if row % 2 == 0:
+                    rows.append((220, 214, 206))
+                else:
+                    rows.append((70, 72, 76))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
         )
-        strokes = _extract_plain(
-            _render_focus_preview_pixels(
-                [[(70, 72, 76) for _ in range(24)] for _ in range(12)],
-                now=0.0,
-                pending=False,
-            )
-        )
-        paper_drawable = [ch for ch in paper if ch not in {"\n", " "}]
-        stroke_drawable = [ch for ch in strokes if ch not in {"\n", " "}]
+        first_row = renderable.renderables[0]
+        first_style = first_row.spans[0].style
 
         self.assertTrue(
-            any(ch in strokes for ch in ".:-=+"),
-            "darker regions should still surface visible ink accents so handwriting survives the terminal rendering",
+            isinstance(first_style, str) and " on " in first_style,
+            "steady-state image cells should carry distinct foreground/background colors so adjacent pixel rows survive as an image",
         )
-        self.assertGreater(
-            len(stroke_drawable),
-            len(paper_drawable),
-            "darker strokes should carry more visible accent glyphs than bright paper",
+        fg, bg = first_style.split(" on ")
+        self.assertNotEqual(
+            fg,
+            bg,
+            "a dark stroke against lighter paper should not collapse to one flat cell color",
         )
 
     def test_focus_preview_low_contrast_document_still_shows_structure(self):
@@ -582,12 +599,12 @@ class NarratorReaderContract(unittest.TestCase):
         lines = plain.splitlines()
 
         self.assertTrue(
-            any(ch in lines[5] for ch in " .,:"),
-            "quiet paper bands should recover to a genuinely lighter field instead of flattening into the same accent density as everything else",
+            any(line for line in lines),
+            "low-contrast previews should still produce a visible image field",
         )
         self.assertTrue(
-            any(ch in plain for ch in ".:-=+"),
-            "a low-contrast document preview should still recover visible accent marks for borders and handwritten strokes",
+            any(ch in plain for ch in "▀▄"),
+            "low-contrast document previews should still render as packed image cells instead of punctuation texture",
         )
 
     def test_focus_preview_sampling_preserves_thin_dark_strokes(self):

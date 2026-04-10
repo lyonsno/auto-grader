@@ -725,25 +725,38 @@ def _render_focus_preview_pixels(
         luminance_floor = 0.0
         luminance_ceil = 1.0
     luminance_span = max(0.10, luminance_ceil - luminance_floor)
-    for char_row, upper in enumerate(pixels):
+    for char_row in range(0, len(pixels), 2):
+        upper = pixels[char_row]
+        lower = pixels[char_row + 1] if (char_row + 1) < len(pixels) else upper
         row = Text(no_wrap=True, overflow="ignore")
         for col, top_rgb in enumerate(upper):
-            luminance = (
+            bottom_rgb = lower[col] if col < len(lower) else top_rgb
+            top_luminance = (
                 (0.299 * top_rgb[0])
                 + (0.587 * top_rgb[1])
                 + (0.114 * top_rgb[2])
             ) / 255.0
+            bottom_luminance = (
+                (0.299 * bottom_rgb[0])
+                + (0.587 * bottom_rgb[1])
+                + (0.114 * bottom_rgb[2])
+            ) / 255.0
+            avg_rgb = (
+                int(round((top_rgb[0] + bottom_rgb[0]) / 2)),
+                int(round((top_rgb[1] + bottom_rgb[1]) / 2)),
+                int(round((top_rgb[2] + bottom_rgb[2]) / 2)),
+            )
             if pending:
                 flow = 0.5 + (
                     0.5
-                    * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
+                    * math.sin((col * 0.44) - ((char_row // 2) * 0.18) - (now * 6.8))
                 )
                 pulse = 0.5 + (
                     0.5
-                    * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
+                    * math.sin((col * 0.16) + ((char_row // 2) * 0.31) + (now * 5.3))
                 )
                 retention = 0.54 + (0.18 * flow)
-                toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, retention)
+                toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, avg_rgb, retention)
                 avg_luma = (
                     (0.299 * toned_rgb[0])
                     + (0.587 * toned_rgb[1])
@@ -773,47 +786,53 @@ def _render_focus_preview_pixels(
                     )
                     continue
                 top_rgb = toned_rgb
-                luminance = avg_luma / 255.0
-            normalized_luminance = _clamp(
-                (luminance - luminance_floor) / luminance_span,
+                bottom_rgb = toned_rgb
+                top_luminance = avg_luma / 255.0
+                bottom_luminance = avg_luma / 255.0
+            normalized_top = _clamp(
+                (top_luminance - luminance_floor) / luminance_span,
+                0.0,
+                1.0,
+            )
+            normalized_bottom = _clamp(
+                (bottom_luminance - luminance_floor) / luminance_span,
                 0.0,
                 1.0,
             )
             if (luminance_ceil - luminance_floor) < 0.04:
-                display_luminance = luminance
+                display_top = top_luminance
+                display_bottom = bottom_luminance
             else:
-                display_luminance = (
-                    (0.68 * normalized_luminance)
-                    + (0.32 * luminance)
+                display_top = (
+                    (0.68 * normalized_top)
+                    + (0.32 * top_luminance)
                 )
-            darkness = 1.0 - display_luminance
-            bg_strength = 0.28 + (0.62 * display_luminance)
-            bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, bg_strength)
-            accent_strength = _clamp((darkness - 0.18) / 0.54, 0.0, 1.0)
-            visible_accent = _clamp((accent_strength - 0.50) / 0.50, 0.0, 1.0)
-            if visible_accent <= 0.0:
+                display_bottom = (
+                    (0.68 * normalized_bottom)
+                    + (0.32 * bottom_luminance)
+                )
+            top_rgb = _interp_rgb(
+                _FOCUS_PREVIEW_BG_RGB,
+                top_rgb,
+                0.22 + (0.70 * display_top),
+            )
+            bottom_rgb = _interp_rgb(
+                _FOCUS_PREVIEW_BG_RGB,
+                bottom_rgb,
+                0.22 + (0.70 * display_bottom),
+            )
+            paired_delta = abs(display_top - display_bottom)
+            if (
+                max(display_top, display_bottom) > 0.80
+                and paired_delta < 0.025
+            ):
                 glyph = " "
+                fg_rgb = _interp_rgb(bottom_rgb, top_rgb, 0.5)
+                bg_rgb = _interp_rgb(bottom_rgb, top_rgb, 0.5)
             else:
-                ramp_index = min(
-                    len(_FOCUS_PREVIEW_STEADY_RAMP) - 1,
-                    int(
-                        round(
-                            visible_accent
-                            * (len(_FOCUS_PREVIEW_STEADY_RAMP) - 1)
-                        )
-                    ),
-                )
-                glyph = _FOCUS_PREVIEW_STEADY_RAMP[ramp_index]
-            ink_rgb = _interp_rgb(
-                bg_rgb,
-                _FOCUS_PREVIEW_INK_RGB,
-                0.24 + (0.52 * visible_accent),
-            )
-            fg_rgb = _interp_rgb(
-                bg_rgb,
-                ink_rgb,
-                0.03 + (0.40 * visible_accent),
-            )
+                glyph = "▀"
+                fg_rgb = top_rgb
+                bg_rgb = bottom_rgb
             row.append(
                 glyph,
                 style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
@@ -2449,7 +2468,7 @@ class PaintDryDisplay:
         self.focus_preview_pixels = _build_focus_preview_pixels(
             png_bytes,
             max_width_chars=budget_width,
-            max_height_rows=budget_height,
+            max_height_rows=budget_height * 2,
         )
         self.focus_preview_renderable = _render_focus_preview_pixels(
             self.focus_preview_pixels
