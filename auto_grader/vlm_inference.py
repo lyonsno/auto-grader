@@ -114,54 +114,25 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-Grade one chemistry exam question.
-
-- Award the highest score justified by the student's written work under the \
-rubric.
-- Actively rescue as much lawful partial credit as possible.
-- If the student's work supports a lawful full-credit interpretation, take \
-it and stop.
-- Use is_obviously_fully_correct = true only when the answer is clearly \
-correct and needs no human rescue.
-- Use is_obviously_wrong = true only when the answer is clearly wrong and \
-no lawful rescue path remains.
-- Do not use is_obviously_wrong = true if any lawful partial-credit path \
-remains.
-- Equivalent volume units such as mL and cm³ count as the same quantity \
-unless the question explicitly tests a specific form.
-- Do not invent work.
-- Grade what is written, not a more favorable answer you can imagine.
-- If two readings are plausible and neither is clearly better supported, \
-choose the best-supported reading and move on.
-- If ambiguity still materially affects the score after one careful pass, \
-choose the best-supported reading, say in model_reasoning that human review \
-is warranted, lower model_confidence, and stop.
-- Award method credit for arithmetic slips.
-- Internal consistency rule: correct carry-forward of a wrong result still \
-earns full method credit.
-- Answered-form rule: grade the requested form; net ionic means net ionic.
-- When the requested form is itself the thing being graded, do not award \
-rescue credit for nearby ingredients of the answer unless the rubric \
-explicitly does so.
-- If the student plainly did not provide the requested answer form, stop once \
-that is established and score only what is actually on the page.
-
-Use upstream_dependency = "none" unless this answer clearly carries forward \
-an earlier part. If it does, name that part and decide whether this work is \
-consistent with the student's own earlier result.
-
-Return ONLY this JSON:
-
-{
-  "model_read": "<verbatim>",
-  "upstream_dependency": "<part or 'none'>",
-  "if_dependent_then_consistent": <true | false | null>,
-  "model_score": <score>,
-  "is_obviously_fully_correct": <true | false | null>,
-  "is_obviously_wrong": <true | false | null>,
-  "model_confidence": <0-1>,
-  "model_reasoning": "<why>"
-}
+Award the highest score justified by the student's written work under the rubric.
+Actively rescue as much lawful partial credit as possible.
+If the student's work supports a lawful full-credit interpretation, take it and stop.
+Use is_obviously_fully_correct = true only when the answer is clearly correct and needs no human rescue.
+Use is_obviously_wrong = true only when the answer is clearly wrong and no lawful rescue path remains.
+Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
+Equivalent volume units such as mL and cm³ count as the same quantity unless the question explicitly tests a specific form.
+If chemically correct setup leads to only a small arithmetic, truncation, or rounding slip, award full credit unless the question explicitly tests exact rounding or significant figures.
+On Lewis-structure questions, award partial credit for correct connectivity, valence-electron counting, or bond-order pattern even if octets, formal charges, or resonance are incomplete.
+Grade what is written, not a more favorable answer you can imagine.
+If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
+If ambiguity still materially affects the score after one careful pass, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.
+Internal consistency rule: consistent carry-forward still earns method credit.
+Answered-form rule: grade the requested form.
+When the requested form is itself the thing being graded, do not award rescue credit for nearby ingredients of the answer unless the rubric explicitly does so.
+If the student plainly did not provide the requested answer form, stop once that is established and score only what is actually on the page.
+Use upstream_dependency = "none" unless this answer clearly carries forward an earlier part.
+JSON only:
+{"model_read":"...","upstream_dependency":"...","if_dependent_then_consistent":<true|false|null>,"model_score":<score>,"is_obviously_fully_correct": <true | false | null>,"is_obviously_wrong": <true | false | null>,"model_confidence":<0-1>,"model_reasoning":"..."}
 """
 
 

@@ -382,15 +382,20 @@ _SCOREBUG_BIG_DIGITS = {
     "-": ("   ", "═══", "   "),
 }
 
-_HISTORY_GROUP_SETBACK = 0.03      # lower item headers sit slightly behind the
+_HISTORY_GROUP_SETBACK = 0.036     # lower item headers sit a bit more visibly
                                    # one above them, but not by enough to read
                                    # as separate weather systems
-_HISTORY_GROUP_RAKE = 0.028        # gentler within-item rake than the last pass
+_HISTORY_GROUP_RAKE = 0.022        # gentler within-item rake than the last pass
                                    # so the grouping reads structural, not
                                    # algorithmically terraced
 _HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
                                    # shared across even/odd item groups
 _HISTORY_GROUP_ALT_RATE = 0.55     # slower than the primary history field
+_HISTORY_CONTINUATION_ROW_STEP = 0.08  # wrapped continuation rows should step
+                                       # down in authority below the first
+                                       # visual row of an entry
+_HISTORY_CONTINUATION_ROW_MIN = 0.78   # keep deeper wrapped rows visible, but
+                                       # clearly subordinate to the first row
 
 
 def _interp_rgb(
@@ -926,9 +931,16 @@ def _apply_shimmer(
         for i, ch in enumerate(content):
             absolute_col = indent_width + i
             visual_col = absolute_col % wrap_width
+            visual_row = absolute_col // wrap_width
             distance = head - visual_col
+            row_dim = max(
+                _HISTORY_CONTINUATION_ROW_MIN,
+                1.0 - (visual_row * _HISTORY_CONTINUATION_ROW_STEP),
+            )
+            row_base_rgb = _scale_rgb(base_rgb, row_dim)
+            row_peak_rgb = _scale_rgb(peak_rgb, row_dim)
             _append_shimmer_char(
-                text_obj, ch, distance, base_rgb, peak_rgb,
+                text_obj, ch, distance, row_base_rgb, row_peak_rgb,
                 layer_recency, layer_index
             )
     else:

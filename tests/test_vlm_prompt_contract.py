@@ -78,6 +78,16 @@ class GradingPromptContract(unittest.TestCase):
             prompt,
             "prompt should treat mL and cm³ as equivalent when the form itself is not being tested",
         )
+        self.assertIn(
+            "small arithmetic, truncation, or rounding slip",
+            prompt,
+            "near-correct numerics should not lose points just for tiny arithmetic or rounding slips",
+        )
+        self.assertIn(
+            "award full credit unless the question explicitly tests exact rounding or significant figures",
+            prompt,
+            "numeric rescue should still respect questions that explicitly test rounding or sig figs",
+        )
 
     def test_system_prompt_defaults_dependency_to_none_unless_clear(self):
         from auto_grader import vlm_inference
@@ -167,6 +177,21 @@ class GradingPromptContract(unittest.TestCase):
             "When the requested form is itself the thing being graded, do not award rescue credit for nearby ingredients of the answer unless the rubric explicitly does so.",
             prompt,
             "answered-form failures should not pick up rescue points just for mentioning nearby chemistry",
+        )
+
+    def test_system_prompt_explicitly_rescues_partial_credit_on_lewis_structures(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "On Lewis-structure questions, award partial credit for correct connectivity",
+            prompt,
+            "Lewis-structure grading should rescue meaningful structural progress",
+        )
+        self.assertIn(
+            "even if octets, formal charges, or resonance are incomplete.",
+            prompt,
+            "Lewis-structure grading should preserve partial credit for meaningful correct substructure",
         )
 
 
