@@ -12,31 +12,36 @@ simulate plausible student behavior.
 
 Use these exact images when submitting prompts.
 
+Note: the PNG assets are intentionally local working files under
+`docs/model_edit_pathology_packet/assets/`. The repo's ignore rules currently
+exclude `assets/`, so the prompt packet is versioned but the binary images are a
+local packet on this machine unless we later choose to force-add them.
+
 ### Set A: Single-question morphology probes
 
 Use these when you want tight control over one bubble cluster and do not care
 about the rest of the page looking busy.
 
-- [single_question_clean.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/single_question_clean.png)
-- [single_question_target_crop.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/single_question_target_crop.png)
+- `assets/single_question_clean.png`
+- `assets/single_question_target_crop.png`
 
 ### Set B: Full-page local-edit probes
 
 Use these when you want a realistic exam-page context but still want the model
 to edit only one local question block.
 
-- [full_page_clean.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/full_page_clean.png)
-- [full_page_question_block_crop.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/full_page_question_block_crop.png)
+- `assets/full_page_clean.png`
+- `assets/full_page_question_block_crop.png`
 
 ### Human reference only
 
 These are not the first images I would submit to the model. They are here so we
 can compare what the model makes against our current decision boundary.
 
-- [boundary_ignored_short_slash.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/boundary_ignored_short_slash.png)
-- [boundary_nonignored_compact_scribble.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/boundary_nonignored_compact_scribble.png)
-- [dominance_reference_rendered.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/dominance_reference_rendered.png)
-- [dominance_reference_normalized.png](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/assets/dominance_reference_normalized.png)
+- `assets/boundary_ignored_short_slash.png`
+- `assets/boundary_nonignored_compact_scribble.png`
+- `assets/dominance_reference_rendered.png`
+- `assets/dominance_reference_normalized.png`
 
 ## Submission Guidance
 
