@@ -664,6 +664,12 @@ class NarratorReaderContract(unittest.TestCase):
         current_model_bg = self._background_hex(
             self._style_for_substring(scorebug_text_obj, "CURRENT MODEL")
         )
+        current_model_label_fg = self._foreground_hex(
+            self._style_for_substring(scorebug_text_obj, "CURRENT MODEL")
+        )
+        current_model_value_fg = self._foreground_hex(
+            self._style_for_substring(scorebug_text_obj, "gemma-4-26b-a4b-it-bf16")
+        )
         set_bg = self._background_hex(
             self._style_for_substring(scorebug_text_obj, "SET")
         )
@@ -674,6 +680,16 @@ class NarratorReaderContract(unittest.TestCase):
             {current_model_bg, set_bg, item_bg},
             {current_model_bg},
             "the metadata strip should read as one shared smoke field, not three separate categorical capsules",
+        )
+        self.assertGreater(
+            self._hex_luminance(current_model_label_fg),
+            545,
+            "the top metadata strip should carry a little more white mass so the identity band doesn't feel too slight once the scoreboard settles in",
+        )
+        self.assertGreater(
+            self._hex_luminance(current_model_value_fg),
+            655,
+            "scorebug metadata values should read closer to blocky white lettering than dim instrument text",
         )
         on_target_label_style = self._style_for_substring(tally_text_obj, "ON TARGET")
         left_label_style = self._style_for_substring(tally_text_obj, "LEFT ON TABLE")
@@ -801,6 +817,15 @@ class NarratorReaderContract(unittest.TestCase):
             ),
             3,
             "each scorebug cell should carry its own numeral-stroke family so the human can compare three mockup directions at once",
+        )
+        self.assertTrue(
+            all(
+                self._hex_luminance(
+                    self._foreground_hex(style)
+                ) > 635
+                for style in {on_target_top_strong, left_top_style, bad_top_style}
+            ),
+            "the main numeral strokes should now carry more white weight so the scorebug can sit in the same bold white language as the surrounding interface",
         )
         self.assertEqual(
             tally_value_top.spans[2].style,

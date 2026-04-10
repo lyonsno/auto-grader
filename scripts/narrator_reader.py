@@ -1484,8 +1484,8 @@ class PaintDryDisplay:
                 scorebug_top,
                 "CURRENT MODEL",
                 self.current_model or "—",
-                label_style=f"bold #bab2a6 on {meta_bg}",
-                value_style=f"bold #ddd8d0 on {meta_bg}",
+                label_style=f"bold #c9c1b6 on {meta_bg}",
+                value_style=f"bold #ece7de on {meta_bg}",
                 separator_style=meta_separator_style,
             )
             if self.current_set_label:
@@ -1494,8 +1494,8 @@ class PaintDryDisplay:
                     scorebug_top,
                     "SET",
                     set_value,
-                    label_style=f"bold #bab2a6 on {meta_bg}",
-                    value_style=f"bold #d6cfbf on {meta_bg}",
+                    label_style=f"bold #c9c1b6 on {meta_bg}",
+                    value_style=f"bold #e7decb on {meta_bg}",
                     separator_style=meta_separator_style,
                 )
             if self.current_item_bug:
@@ -1503,8 +1503,8 @@ class PaintDryDisplay:
                     scorebug_top,
                     "ITEM",
                     self.current_item_bug,
-                    label_style=f"bold #bab2a6 on {meta_bg}",
-                    value_style=f"bold #e5d6c5 on {meta_bg}",
+                    label_style=f"bold #c9c1b6 on {meta_bg}",
+                    value_style=f"bold #efe0cf on {meta_bg}",
                     separator_style=meta_separator_style,
                 )
 
@@ -1527,7 +1527,7 @@ class PaintDryDisplay:
                     ),
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #d5ddd1 on {on_target_top_bg}",
+                        f"bold #e7eee2 on {on_target_top_bg}",
                         f"bold #ccd5ca on {on_target_mid_bg}",
                         f"bold #c4cdc2 on {on_target_bottom_bg}",
                     ),
@@ -1555,7 +1555,7 @@ class PaintDryDisplay:
                     ),
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #e1d5bf on {left_top_bg}",
+                        f"bold #eee2cf on {left_top_bg}",
                         f"bold #d7cab2 on {left_mid_bg}",
                         f"bold #ccbea5 on {left_bottom_bg}",
                     ),
@@ -1583,7 +1583,7 @@ class PaintDryDisplay:
                     ),
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #d9ccc9 on {bad_top_bg}",
+                        f"bold #eadcd8 on {bad_top_bg}",
                         f"bold #cfbfbd on {bad_mid_bg}",
                         f"bold #c4b3b2 on {bad_bottom_bg}",
                     ),
@@ -1622,7 +1622,7 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #d5ddd1 on {on_target_top_bg}",
+                        f"bold #e7eee2 on {on_target_top_bg}",
                         f"bold #ccd5ca on {on_target_mid_bg}",
                         f"bold #c4cdc2 on {on_target_bottom_bg}",
                     ),
@@ -1647,7 +1647,7 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #e1d5bf on {left_top_bg}",
+                        f"bold #eee2cf on {left_top_bg}",
                         f"bold #d7cab2 on {left_mid_bg}",
                         f"bold #ccbea5 on {left_bottom_bg}",
                     ),
@@ -1672,7 +1672,7 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #d9ccc9 on {bad_top_bg}",
+                        f"bold #eadcd8 on {bad_top_bg}",
                         f"bold #cfbfbd on {bad_mid_bg}",
                         f"bold #c4b3b2 on {bad_bottom_bg}",
                     ),
