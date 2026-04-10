@@ -1,20 +1,285 @@
 # Canonical focus-region annotations for the eval harness.
 #
 # Read by scripts/smoke_vlm.py (default path; overridable with
-# --focus-regions PATH for concurrent sessions working against different
-# copies of this file). Written by scripts/annotate_focus_regions.py.
+# --focus-regions PATH for concurrent sessions).
+# Written by scripts/annotate_focus_regions.py.
 #
-# Keys: "exam_id/question_id" flat strings. Values mirror FocusRegion.
-# The `source` field carries provenance — currently every entry here is
-# `mock_tricky` / `mock_tricky_plus` because it was migrated from a
-# Python dict literal. Once the annotation tool has been run, entries
-# it touches flip to `operator_annotated`.
-#
-# NOTE: regions in this file may point at the wrong part of the page.
-# The old mush renderer hid this; the legibility-first renderer exposed
-# it. See attractor: auto-grader_visual-focus-region-annotation_2026-04-10.
+# Keys: 'exam_id/question_id' flat strings. Values mirror FocusRegion.
 
 regions:
+  15-blue/fr-1:
+    page: 1
+    x: 0.048426150121065374
+    y: 0.063125
+    width: 0.3502824858757062
+    height: 0.038125
+    source: operator_annotated
+  15-blue/fr-10a:
+    page: 3
+    x: 0.04923325262308313
+    y: 0.190625
+    width: 0.34947538337368844
+    height: 0.085625
+    source: operator_annotated
+  15-blue/fr-10b:
+    page: 3
+    x: 0.048426150121065374
+    y: 0.191875
+    width: 0.3502824858757062
+    height: 0.115
+    source: operator_annotated
+  15-blue/fr-11a:
+    page: 3
+    x: 0.041969330104923326
+    y: 0.3025
+    width: 0.39709443099273606
+    height: 0.07
+    source: operator_annotated
+  15-blue/fr-11b:
+    page: 3
+    x: 0.041969330104923326
+    y: 0.3025
+    width: 0.3987086359967716
+    height: 0.09125
+    source: operator_annotated
+  15-blue/fr-11c:
+    page: 3
+    x: 0.046811945117029866
+    y: 0.30375
+    width: 0.3946731234866828
+    height: 0.111875
+    source: operator_annotated
+  15-blue/fr-12a:
+    page: 4
+    x: 0.04923325262308313
+    y: 0.036875
+    width: 0.23648103309120258
+    height: 0.04625
+    source: operator_annotated
+  15-blue/fr-12b:
+    page: 4
+    x: 0.04923325262308313
+    y: 0.040625
+    width: 0.3470540758676352
+    height: 0.0875
+    source: operator_annotated
+  15-blue/fr-13a:
+    page: 4
+    x: 0.0516545601291364
+    y: 0.12875
+    width: 0.3583535108958838
+    height: 0.101875
+    source: operator_annotated
+  15-blue/fr-13b:
+    page: 4
+    x: 0.048426150121065374
+    y: 0.125
+    width: 0.3672316384180791
+    height: 0.134375
+    source: operator_annotated
+  15-blue/fr-13c:
+    page: 4
+    x: 0.047619047619047616
+    y: 0.125
+    width: 0.3704600484261501
+    height: 0.160625
+    source: operator_annotated
+  15-blue/fr-14a:
+    page: 4
+    x: 0.05084745762711865
+    y: 0.285
+    width: 0.4003228410008071
+    height: 0.04625
+    source: operator_annotated
+  15-blue/fr-14b:
+    page: 4
+    x: 0.047619047619047616
+    y: 0.284375
+    width: 0.4043583535108959
+    height: 0.13625
+    source: operator_annotated
+  15-blue/fr-14c:
+    page: 4
+    x: 0.047619047619047616
+    y: 0.284375
+    width: 0.40274414850686036
+    height: 0.150625
+    source: operator_annotated
+  15-blue/fr-15a:
+    page: 5
+    x: 0.04361873990306947
+    y: 0.036875
+    width: 0.3578352180936995
+    height: 0.07625
+    source: operator_annotated
+  15-blue/fr-15b:
+    page: 5
+    x: 0.04361873990306947
+    y: 0.036875
+    width: 0.3505654281098546
+    height: 0.101875
+    source: operator_annotated
+  15-blue/fr-15c:
+    page: 5
+    x: 0.05088852988691438
+    y: 0.035
+    width: 0.34975767366720517
+    height: 0.13875
+    source: operator_annotated
+  15-blue/fr-15d:
+    page: 5
+    x: 0.04765751211631664
+    y: 0.03875
+    width: 0.3982229402261712
+    height: 0.169375
+    source: operator_annotated
+  15-blue/fr-16a:
+    page: 5
+    x: 0.050080775444264945
+    y: 0.199375
+    width: 0.15024232633279483
+    height: 0.066875
+    source: operator_annotated
+  15-blue/fr-16b:
+    page: 5
+    x: 0.050080775444264945
+    y: 0.2
+    width: 0.1987075928917609
+    height: 0.086875
+    source: operator_annotated
+  15-blue/fr-16c:
+    page: 5
+    x: 0.049273021001615507
+    y: 0.199375
+    width: 0.35379644588045234
+    height: 0.1475
+    source: operator_annotated
+  15-blue/fr-16d:
+    page: 5
+    x: 0.050080775444264945
+    y: 0.199375
+    width: 0.3546042003231018
+    height: 0.235
+    source: operator_annotated
+  15-blue/fr-2:
+    page: 1
+    x: 0.048426150121065374
+    y: 0.103125
+    width: 0.33171912832929784
+    height: 0.041875
+    source: operator_annotated
+  15-blue/fr-3:
+    page: 1
+    x: 0.05004035512510089
+    y: 0.17
+    width: 0.3785310734463277
+    height: 0.055
+    source: operator_annotated
+  15-blue/fr-4:
+    page: 1
+    x: 0.05084745762711865
+    y: 0.2275
+    width: 0.3099273607748184
+    height: 0.045625
+    source: operator_annotated
+  15-blue/fr-5a:
+    page: 1
+    x: 0.004035512510088781
+    y: 0.271875
+    width: 0.44148506860371267
+    height: 0.1575
+    source: operator_annotated
+  15-blue/fr-5b:
+    page: 1
+    x: 0.005649717514124294
+    y: 0.27
+    width: 0.4406779661016949
+    height: 0.1575
+    source: operator_annotated
+  15-blue/fr-5c:
+    page: 1
+    x: 0.008071025020177562
+    y: 0.26875
+    width: 0.4390637610976594
+    height: 0.154375
+    source: operator_annotated
+  15-blue/fr-6:
+    page: 2
+    x: 0.08555286521388217
+    y: 0.03375
+    width: 0.3139628732849072
+    height: 0.0675
+    source: operator_annotated
+  15-blue/fr-7a:
+    page: 2
+    x: 0.041969330104923326
+    y: 0.103125
+    width: 0.3446327683615819
+    height: 0.091875
+    source: operator_annotated
+  15-blue/fr-7b:
+    page: 2
+    x: 0.048426150121065374
+    y: 0.100625
+    width: 0.3309120258272801
+    height: 0.10625
+    source: operator_annotated
+  15-blue/fr-7c:
+    page: 2
+    x: 0.04519774011299435
+    y: 0.1
+    width: 0.3357546408393866
+    height: 0.1225
+    source: operator_annotated
+  15-blue/fr-7d:
+    page: 2
+    x: 0.04600484261501211
+    y: 0.098125
+    width: 0.33736884584342214
+    height: 0.1425
+    source: operator_annotated
+  15-blue/fr-7e:
+    page: 2
+    x: 0.04439063761097659
+    y: 0.098125
+    width: 0.33494753833736884
+    height: 0.1575
+    source: operator_annotated
+  15-blue/fr-8:
+    page: 2
+    x: 0.05004035512510089
+    y: 0.2725
+    width: 0.31234866828087166
+    height: 0.116875
+    source: operator_annotated
+  15-blue/fr-9a:
+    page: 3
+    x: 0.05084745762711865
+    y: 0.04
+    width: 0.3171912832929782
+    height: 0.08125
+    source: operator_annotated
+  15-blue/fr-9b:
+    page: 3
+    x: 0.04923325262308313
+    y: 0.036875
+    width: 0.3559322033898305
+    height: 0.125625
+    source: operator_annotated
+  15-blue/fr-9c:
+    page: 3
+    x: 0.048426150121065374
+    y: 0.034375
+    width: 0.4011299435028249
+    height: 0.165625
+    source: operator_annotated
+  27-blue-2023/fr-12a:
+    page: 4
+    x: 0.16
+    y: 0.08
+    width: 0.46
+    height: 0.2
+    source: mock_tricky_plus
   27-blue-2023/fr-3:
     page: 1
     x: 0.14
@@ -29,19 +294,12 @@ regions:
     width: 0.66
     height: 0.28
     source: mock_tricky_plus
-  27-blue-2023/fr-12a:
+  34-blue/fr-12a:
     page: 4
-    x: 0.16
-    y: 0.08
-    width: 0.46
-    height: 0.20
-    source: mock_tricky_plus
-  39-blue-redacted/fr-10a:
-    page: 3
-    x: 0.14
-    y: 0.20
-    width: 0.62
-    height: 0.24
+    x: 0.18
+    y: 0.07
+    width: 0.5
+    height: 0.18
     source: mock_tricky_plus
   34-blue/fr-8:
     page: 2
@@ -50,52 +308,10 @@ regions:
     width: 0.58
     height: 0.24
     source: mock_tricky_plus
-  34-blue/fr-12a:
-    page: 4
-    x: 0.18
-    y: 0.07
-    width: 0.50
-    height: 0.18
-    source: mock_tricky_plus
-  15-blue/fr-1:
-    page: 1
-    x: 0.16
-    y: 0.05
-    width: 0.60
-    height: 0.22
-    source: mock_tricky
-  15-blue/fr-3:
-    page: 1
-    x: 0.14
-    y: 0.18
-    width: 0.64
-    height: 0.24
-    source: mock_tricky
-  15-blue/fr-5b:
-    page: 1
-    x: 0.14
-    y: 0.42
-    width: 0.66
-    height: 0.28
-    source: mock_tricky
-  15-blue/fr-10a:
+  39-blue-redacted/fr-10a:
     page: 3
     x: 0.14
-    y: 0.20
+    y: 0.2
     width: 0.62
     height: 0.24
-    source: mock_tricky
-  15-blue/fr-11a:
-    page: 3
-    x: 0.16
-    y: 0.40
-    width: 0.58
-    height: 0.22
-    source: mock_tricky
-  15-blue/fr-12a:
-    page: 4
-    x: 0.16
-    y: 0.08
-    width: 0.48
-    height: 0.19
-    source: mock_tricky
+    source: mock_tricky_plus
