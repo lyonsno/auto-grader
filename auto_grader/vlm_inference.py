@@ -90,7 +90,24 @@ class ServerConfig:
 # ---------------------------------------------------------------------------
 
 
-def extract_page_image(pdf_path: Path, page_num: int, dpi: int = 200) -> bytes:
+#: DPI used for page images handed to the VLM grader. Kept modest so
+#: request payloads (base64-encoded PNGs) stay well under typical
+#: endpoint limits and rasterization latency stays tolerable per item.
+GRADER_PAGE_DPI = 200
+
+#: DPI used for page images handed to the focus-preview pipeline. The
+#: half-block terminal renderer has a Nyquist-style resolution ceiling:
+#: strokes thinner than ~half the source-pixels-per-sampled-cell ratio
+#: get averaged into the paper side of the Otsu threshold and disappear.
+#: 200 DPI was leaving pencil Lewis structures and thin ink strokes
+#: invisible even when the box was aimed correctly. Bumping 4× (200 → 800)
+#: turns a 2.5-px stroke into a 10-px stroke in source space, which
+#: survives downsampling with room to spare. The grader does NOT see
+#: this higher-resolution image — it's rasterized into a separate cache.
+PREVIEW_PAGE_DPI = 800
+
+
+def extract_page_image(pdf_path: Path, page_num: int, dpi: int = GRADER_PAGE_DPI) -> bytes:
     """Extract a single page from a PDF as a PNG image (bytes).
 
     page_num is 1-indexed (matching ground truth schema).
@@ -693,7 +710,13 @@ def grade_all_items(
         load_template_questions(template_path) if template_path else {}
     )
 
+    # Two separate caches at two separate resolutions. The grader cache
+    # feeds the VLM at GRADER_PAGE_DPI (payload-friendly). The preview
+    # cache feeds the focus-preview terminal renderer at PREVIEW_PAGE_DPI
+    # (high enough to survive the half-block Nyquist ceiling). Held one
+    # page at a time per exam, so memory overhead is bounded.
     page_cache: dict[tuple[str, int], bytes] = {}
+    preview_page_cache: dict[tuple[str, int], bytes] = {}
     predictions: list[Prediction] = []
 
     for i, item in enumerate(ground_truth):
@@ -705,7 +728,12 @@ def grade_all_items(
             pdf_path = scans_dir / pdf_name
             if not pdf_path.exists():
                 raise FileNotFoundError(f"Scan PDF not found: {pdf_path}")
-            page_cache[cache_key] = extract_page_image(pdf_path, item.page)
+            page_cache[cache_key] = extract_page_image(
+                pdf_path, item.page, dpi=GRADER_PAGE_DPI
+            )
+            preview_page_cache[cache_key] = extract_page_image(
+                pdf_path, item.page, dpi=PREVIEW_PAGE_DPI
+            )
 
         tq = template_questions.get(item.question_id)
 
@@ -748,7 +776,7 @@ def grade_all_items(
                 try:
                     focus_preview_callback(
                         item=item,
-                        page_image=page_cache[cache_key],
+                        page_image=preview_page_cache[cache_key],
                         template_question=tq,
                     )
                 except Exception as exc:
