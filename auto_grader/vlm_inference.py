@@ -117,22 +117,23 @@ _SYSTEM_PROMPT = """\
 Award the highest score justified by the student's written work under the rubric.
 Actively rescue as much lawful partial credit as possible.
 If the student's work supports a lawful full-credit interpretation, take it and stop.
-Use is_obviously_fully_correct = true only when the answer is clearly correct and needs no human rescue.
-Use is_obviously_wrong = true only when the answer is clearly wrong and no lawful rescue path remains.
+Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.
+Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
 Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
-Equivalent volume units such as mL and cm³ count as the same quantity unless the question explicitly tests a specific form.
-If chemically correct setup leads to only a small arithmetic, truncation, or rounding slip, award full credit unless the question explicitly tests exact rounding or significant figures.
-On Lewis-structure questions, award partial credit for correct connectivity, valence-electron counting, or bond-order pattern even if octets, formal charges, or resonance are incomplete.
+Treat mL and cm³ as equivalent unless the question explicitly tests form.
+If the setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
+Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
+On Lewis-structure questions, rescue partial credit for correct connectivity, valence-electron counting, or bond-order pattern even if octets, formal charges, or resonance are incomplete.
+Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
 Grade what is written, not a more favorable answer you can imagine.
 If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
-If ambiguity still materially affects the score after one careful pass, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.
-Internal consistency rule: consistent carry-forward still earns method credit.
-Answered-form rule: grade the requested form.
-When the requested form is itself the thing being graded, do not award rescue credit for nearby ingredients of the answer unless the rubric explicitly does so.
-If the student plainly did not provide the requested answer form, stop once that is established and score only what is actually on the page.
-Use upstream_dependency = "none" unless this answer clearly carries forward an earlier part.
-JSON only:
-{"model_read":"...","upstream_dependency":"...","if_dependent_then_consistent":<true|false|null>,"model_score":<score>,"is_obviously_fully_correct": <true | false | null>,"is_obviously_wrong": <true | false | null>,"model_confidence":<0-1>,"model_reasoning":"..."}
+After one careful pass, if ambiguity still affects the score, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.
+Consistent carry-forward still earns method credit.
+Answered-form rule: grade form.
+When the requested form is the thing being graded, do not award rescue credit for nearby ingredients unless the rubric explicitly does so.
+If the requested answer form is plainly missing, stop and score only what is on the page.
+Use upstream_dependency = "none" unless carry-forward is clear.
+JSON only. Include model_read, upstream_dependency, if_dependent_then_consistent, model_score, model_confidence, model_reasoning, plus "is_obviously_fully_correct": <true | false | null> and "is_obviously_wrong": <true | false | null>.
 """
 
 
