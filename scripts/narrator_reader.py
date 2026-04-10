@@ -751,42 +751,18 @@ def _render_focus_preview_pixels(
             return luminance
         return (0.68 * normalized) + (0.32 * luminance)
 
-    braille_bits = (
-        ((0, 0), 0x01),
-        ((0, 1), 0x02),
-        ((0, 2), 0x04),
-        ((1, 0), 0x08),
-        ((1, 1), 0x10),
-        ((1, 2), 0x20),
-        ((0, 3), 0x40),
-        ((1, 3), 0x80),
-    )
-
-    for char_row in range(0, len(pixels), 4):
+    for char_row, pixel_row in enumerate(pixels):
         row = Text(no_wrap=True, overflow="ignore")
-        block_height = min(4, len(pixels) - char_row)
-        row_width = max(len(pixels[char_row + offset]) for offset in range(block_height))
-        for col in range(0, row_width, 2):
-            block_pixels: list[tuple[int, int, int]] = []
-            for y_offset in range(4):
-                src_row_index = min(char_row + y_offset, len(pixels) - 1)
-                src_row = pixels[src_row_index]
-                for x_offset in range(2):
-                    src_col_index = min(col + x_offset, len(src_row) - 1)
-                    block_pixels.append(src_row[src_col_index])
-            avg_rgb = (
-                int(round(sum(rgb[0] for rgb in block_pixels) / len(block_pixels))),
-                int(round(sum(rgb[1] for rgb in block_pixels) / len(block_pixels))),
-                int(round(sum(rgb[2] for rgb in block_pixels) / len(block_pixels))),
-            )
+        for col, rgb in enumerate(pixel_row):
+            avg_rgb = rgb
             if pending:
                 flow = 0.5 + (
                     0.5
-                    * math.sin(((col // 2) * 0.44) - ((char_row // 4) * 0.18) - (now * 6.8))
+                    * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
                 )
                 pulse = 0.5 + (
                     0.5
-                    * math.sin(((col // 2) * 0.16) + ((char_row // 4) * 0.31) + (now * 5.3))
+                    * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
                 )
                 retention = 0.54 + (0.18 * flow)
                 toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, avg_rgb, retention)
@@ -818,52 +794,19 @@ def _render_focus_preview_pixels(
                         style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
                     )
                     continue
-                block_pixels = [toned_rgb] * 8
+                avg_rgb = toned_rgb
 
-            display_values = [_display_luminance(rgb) for rgb in block_pixels]
-            toned_pixels = [
-                _interp_rgb(
-                    _FOCUS_PREVIEW_BG_RGB,
-                    rgb,
-                    0.18 + (0.74 * display),
-                )
-                for rgb, display in zip(block_pixels, display_values, strict=True)
-            ]
-            avg_display = sum(display_values) / len(display_values)
-            raw_bg_rgb = (
-                int(round(sum(rgb[0] for rgb in toned_pixels) / len(toned_pixels))),
-                int(round(sum(rgb[1] for rgb in toned_pixels) / len(toned_pixels))),
-                int(round(sum(rgb[2] for rgb in toned_pixels) / len(toned_pixels))),
-            )
+            display = _display_luminance(avg_rgb)
             bg_rgb = _interp_rgb(
                 _FOCUS_PREVIEW_BG_RGB,
-                raw_bg_rgb,
-                0.10 + (0.34 * avg_display),
+                avg_rgb,
+                0.10 + (0.42 * display),
             )
-            block_darkness = [1.0 - display for display in display_values]
-            dark_mean = sum(block_darkness) / len(block_darkness)
-            dark_span = max(block_darkness) - min(block_darkness)
-            mask = 0
-            for (x_offset, y_offset), bit in braille_bits:
-                idx = (y_offset * 2) + x_offset
-                darkness = block_darkness[idx]
-                if darkness > 0.30 and (
-                    darkness > (dark_mean + 0.035) or dark_span > 0.10
-                ):
-                    mask |= bit
-            if avg_display > 0.82 and dark_span < 0.05 and mask == 0:
-                glyph = " "
-                fg_rgb = bg_rgb
-            else:
-                glyph = chr(0x2800 + mask) if mask else " "
-                fg_rgb = _interp_rgb(
-                    bg_rgb,
-                    _FOCUS_PREVIEW_INK_RGB,
-                    0.20 + (0.58 * max(block_darkness)),
-                )
+            if display > 0.84:
+                bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, bg_rgb, 0.94)
             row.append(
-                glyph,
-                style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
+                " ",
+                style=f"{_rgb_to_hex(bg_rgb)} on {_rgb_to_hex(bg_rgb)}",
             )
         rows.append(row)
     return Group(*rows)
@@ -875,11 +818,11 @@ def _render_focus_preview_terminal(
     max_width_chars: int = _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
     max_height_rows: int = _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
 ) -> Group:
-    """Render a PNG preview as terminal-safe packed braille rows."""
+    """Render a PNG preview as a terminal-safe literal image surface."""
     pixels = _build_focus_preview_pixels(
         png_bytes,
-        max_width_chars=max_width_chars * 2,
-        max_height_rows=max_height_rows * 4,
+        max_width_chars=max_width_chars,
+        max_height_rows=max_height_rows,
     )
     return _render_focus_preview_pixels(pixels)
 
@@ -2494,8 +2437,8 @@ class PaintDryDisplay:
         self.focus_preview_png = png_bytes
         self.focus_preview_pixels = _build_focus_preview_pixels(
             png_bytes,
-            max_width_chars=budget_width * 2,
-            max_height_rows=budget_height * 4,
+            max_width_chars=budget_width,
+            max_height_rows=budget_height,
         )
         self.focus_preview_renderable = _render_focus_preview_pixels(
             self.focus_preview_pixels

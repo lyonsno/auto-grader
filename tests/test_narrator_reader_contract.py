@@ -312,7 +312,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(build_mock.call_count, 1)
 
-    def test_focus_preview_samples_at_braille_density_for_steady_rendering(self):
+    def test_focus_preview_samples_at_literal_cell_density_for_steady_rendering(self):
         display = self._make_display()
 
         with mock.patch(
@@ -329,11 +329,11 @@ class NarratorReaderContract(unittest.TestCase):
         budget_width, budget_height = _focus_preview_budget(
             display._console.width,
         )
-        self.assertEqual(call["max_width_chars"], budget_width * 2)
+        self.assertEqual(call["max_width_chars"], budget_width)
         self.assertEqual(
             call["max_height_rows"],
-            budget_height * 4,
-            "steady-state preview should sample at braille density so the packed terminal image has meaningfully more vertical detail than a one-row-per-pixel-field render",
+            budget_height,
+            "steady-state preview should sample at literal cell density so the renderer paints a direct image surface instead of packing multi-pixel masks into each terminal cell",
         )
 
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
@@ -517,7 +517,7 @@ class NarratorReaderContract(unittest.TestCase):
             "source-aware budgeting should buy more vertical detail too, not only horizontal width",
         )
 
-    def test_focus_preview_steady_state_uses_braille_image_cells(self):
+    def test_focus_preview_steady_state_uses_literal_background_cells(self):
         pixels = []
         for row in range(16):
             rows: list[tuple[int, int, int]] = []
@@ -534,13 +534,13 @@ class NarratorReaderContract(unittest.TestCase):
         plain = _extract_plain(renderable)
 
         self.assertTrue(
-            any(0x2800 <= ord(ch) <= 0x28FF for ch in plain if ch != "\n"),
-            "steady-state previews should render as a packed braille image field instead of punctuation or chunky block cells",
+            set(plain.replace("\n", "")) <= {" "},
+            "steady-state previews should render as a literal image surface, not as visible texture glyphs",
         )
         self.assertEqual(
             len(plain.splitlines()),
-            4,
-            "steady-state preview should pack four sampled rows into one terminal row",
+            16,
+            "steady-state preview should dedicate one terminal row to each sampled image row",
         )
 
     def test_focus_preview_bright_paper_stays_quiet_in_steady_state(self):
@@ -560,7 +560,7 @@ class NarratorReaderContract(unittest.TestCase):
             "bright paper should not light up with textural or chunky block glyphs in steady state",
         )
 
-    def test_focus_preview_dark_strokes_preserve_braille_detail_and_fg_bg_separation(self):
+    def test_focus_preview_dark_strokes_preserve_per_cell_background_detail(self):
         pixels = []
         for row in range(16):
             rows: list[tuple[int, int, int]] = []
@@ -588,13 +588,10 @@ class NarratorReaderContract(unittest.TestCase):
             span_styles,
             "steady-state image cells should carry foreground/background styles so adjacent pixel rows survive as an image",
         )
+        bg_colors = [style.split(" on ")[1] for style in span_styles]
         self.assertTrue(
-            any(fg != bg for fg, bg in (style.split(" on ") for style in span_styles)),
-            "a dark stroke against lighter paper should not collapse to one flat cell color",
-        )
-        self.assertTrue(
-            any(0x2800 <= ord(ch) <= 0x28FF for ch in _extract_plain(renderable) if ch != "\n"),
-            "dark structure should surface as braille detail instead of only flat fills",
+            len(set(bg_colors)) > 2,
+            "a dark stroke against lighter paper should still create multiple distinct cell tones instead of one flat slab",
         )
 
     def test_focus_preview_steady_state_keeps_background_field_restrained(self):
@@ -659,9 +656,16 @@ class NarratorReaderContract(unittest.TestCase):
             any(line for line in lines),
             "low-contrast previews should still produce a visible image field",
         )
-        self.assertTrue(
-            any(0x2800 <= ord(ch) <= 0x28FF for ch in plain if ch != "\n"),
-            "low-contrast document previews should still render as packed braille image cells instead of punctuation texture",
+        span_styles = [
+            span.style
+            for row in renderable.renderables
+            for span in row.spans
+            if isinstance(span.style, str) and " on " in span.style
+        ]
+        self.assertGreater(
+            len({style.split(" on ")[1] for style in span_styles}),
+            4,
+            "low-contrast document previews should still preserve multiple background tones instead of collapsing into one flat field",
         )
 
     def test_focus_preview_sampling_preserves_thin_dark_strokes(self):
