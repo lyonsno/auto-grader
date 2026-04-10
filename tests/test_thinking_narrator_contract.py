@@ -75,7 +75,20 @@ class _BadStatusRetryNarrator(ThinkingNarrator):
     def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
         system = messages[0]["content"]
         if "present-participle status line" in system:
-            return "I'm noticing the same unit conversion."
+            return "I think the same unit conversion is still wrong."
+        return "I'm tracing the same unit conversion mistake."
+
+
+class _CanonicalizedStatusRetryNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        if "present-participle status line" in system:
+            return "I'm verifying the units and the numeric answer."
         return "I'm tracing the same unit conversion mistake."
 
 
@@ -198,10 +211,32 @@ class ThinkingNarratorContract(unittest.TestCase):
             sink.drops,
             [
                 ("dedup", "I'm tracing the same unit conversion mistake."),
-                ("contract-status", "I'm noticing the same unit conversion."),
+                ("contract-status", "I think the same unit conversion is still wrong."),
             ],
         )
         self.assertEqual(sink.deltas, [])
+
+    def test_status_retry_canonicalizes_run_observed_first_person_status_line(self):
+        sink = _DummySink()
+        narrator = _CanonicalizedStatusRetryNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._thoughts_since_status = [
+            "I'm tracing the same unit conversion mistake."
+        ]
+
+        narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(sink.commits, ["status"])
+        self.assertEqual(sink.drops, [])
+        self.assertEqual(
+            "".join(sink.deltas),
+            "Verifying the units and the numeric answer.",
+        )
+        self.assertEqual(sink.delta_modes, ["status"] * len(sink.deltas))
+        self.assertEqual(
+            narrator._prior_statuses[-1],
+            "Verifying the units and the numeric answer.",
+        )
 
     def test_thought_prompt_uses_current_status_and_last_four_thoughts_only(self):
         sink = _DummySink()
