@@ -24,6 +24,10 @@ from auto_grader.eval_harness import (
     score_predictions,
 )
 from auto_grader.focus_preview import render_focus_preview
+from auto_grader.focus_regions import (
+    DEFAULT_FOCUS_REGIONS_PATH,
+    load_focus_regions,
+)
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
 from auto_grader.vlm_inference import ServerConfig, grade_all_items
@@ -40,44 +44,6 @@ _TEMPLATE = (
 )
 
 _DEFAULT_NARRATOR_URL = "http://nlmb2p.local:8002"
-_TRICKY_FOCUS_REGION_MOCKS: dict[tuple[str, str], FocusRegion] = {
-    ("27-blue-2023", "fr-3"): FocusRegion(
-        page=1, x=0.14, y=0.18, width=0.66, height=0.24, source="mock_tricky_plus"
-    ),
-    ("27-blue-2023", "fr-5b"): FocusRegion(
-        page=1, x=0.14, y=0.42, width=0.66, height=0.28, source="mock_tricky_plus"
-    ),
-    ("27-blue-2023", "fr-12a"): FocusRegion(
-        page=4, x=0.16, y=0.08, width=0.46, height=0.20, source="mock_tricky_plus"
-    ),
-    ("39-blue-redacted", "fr-10a"): FocusRegion(
-        page=3, x=0.14, y=0.20, width=0.62, height=0.24, source="mock_tricky_plus"
-    ),
-    ("34-blue", "fr-8"): FocusRegion(
-        page=2, x=0.16, y=0.32, width=0.58, height=0.24, source="mock_tricky_plus"
-    ),
-    ("34-blue", "fr-12a"): FocusRegion(
-        page=4, x=0.18, y=0.07, width=0.50, height=0.18, source="mock_tricky_plus"
-    ),
-    ("15-blue", "fr-1"): FocusRegion(
-        page=1, x=0.16, y=0.05, width=0.60, height=0.22, source="mock_tricky"
-    ),
-    ("15-blue", "fr-3"): FocusRegion(
-        page=1, x=0.14, y=0.18, width=0.64, height=0.24, source="mock_tricky"
-    ),
-    ("15-blue", "fr-5b"): FocusRegion(
-        page=1, x=0.14, y=0.42, width=0.66, height=0.28, source="mock_tricky"
-    ),
-    ("15-blue", "fr-10a"): FocusRegion(
-        page=3, x=0.14, y=0.20, width=0.62, height=0.24, source="mock_tricky"
-    ),
-    ("15-blue", "fr-11a"): FocusRegion(
-        page=3, x=0.16, y=0.40, width=0.58, height=0.22, source="mock_tricky"
-    ),
-    ("15-blue", "fr-12a"): FocusRegion(
-        page=4, x=0.16, y=0.08, width=0.48, height=0.19, source="mock_tricky"
-    ),
-}
 
 _TRICKY_PICKS = [
     ("15-blue", "fr-1"),    # easy warmup (numeric, density)
@@ -171,11 +137,12 @@ def _resolve_preview_focus_region(
     item: EvalItem,
     *,
     template_document: dict | None,
+    focus_region_overrides: dict[tuple[str, str], FocusRegion],
 ) -> FocusRegion | None:
     resolved = resolve_focus_region(item, template_document)
     if resolved is not None:
         return resolved
-    return _TRICKY_FOCUS_REGION_MOCKS.get((item.exam_id, item.question_id))
+    return focus_region_overrides.get((item.exam_id, item.question_id))
 
 
 def _emit_focus_preview(
@@ -184,10 +151,12 @@ def _emit_focus_preview(
     item: EvalItem,
     page_image: bytes,
     template_document: dict | None,
+    focus_region_overrides: dict[tuple[str, str], FocusRegion],
 ) -> None:
     focus_region = _resolve_preview_focus_region(
         item,
         template_document=template_document,
+        focus_region_overrides=focus_region_overrides,
     )
     if focus_region is None:
         return
@@ -373,6 +342,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--run-dir", default=None,
                         help="Directory to write narrator.jsonl/.txt logs (default: ~/dev/auto-grader-runs/<ts>-<model>/)")
+    parser.add_argument(
+        "--focus-regions",
+        default=None,
+        help=(
+            "Path to a focus-regions YAML file. Default: "
+            "eval/focus_regions.yaml. Override with a per-session path so "
+            "concurrent sessions can work against independent copies "
+            "without stomping each other."
+        ),
+    )
     return parser
 
 
@@ -384,6 +363,9 @@ def main():
 
     gt = load_ground_truth(_GROUND_TRUTH)
     template_document = _load_template_document(_TEMPLATE)
+    focus_region_overrides = load_focus_regions(
+        args.focus_regions or DEFAULT_FOCUS_REGIONS_PATH
+    )
 
     if args.pick:
         wanted = []
@@ -494,6 +476,7 @@ def main():
                     item=item,
                     page_image=page_image,
                     template_document=template_document,
+                    focus_region_overrides=focus_region_overrides,
                 )
         try:
             predictions = grade_all_items(

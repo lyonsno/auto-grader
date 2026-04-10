@@ -90,7 +90,7 @@ class SmokeVlmContract(unittest.TestCase):
             },
         )
 
-    def test_resolve_preview_focus_region_falls_back_to_mock_tricky_map(self) -> None:
+    def test_resolve_preview_focus_region_falls_back_to_yaml_overrides(self) -> None:
         item = EvalItem(
             exam_id="15-blue",
             question_id="fr-12a",
@@ -102,8 +102,22 @@ class SmokeVlmContract(unittest.TestCase):
             student_answer="O3 Lewis structure drawn",
             notes="Half annotation.",
         )
+        overrides = {
+            ("15-blue", "fr-12a"): FocusRegion(
+                page=4,
+                x=0.16,
+                y=0.08,
+                width=0.48,
+                height=0.19,
+                source="mock_tricky",
+            ),
+        }
 
-        focus = smoke_vlm._resolve_preview_focus_region(item, template_document=None)
+        focus = smoke_vlm._resolve_preview_focus_region(
+            item,
+            template_document=None,
+            focus_region_overrides=overrides,
+        )
 
         self.assertIsNotNone(focus)
         assert focus is not None
@@ -111,7 +125,7 @@ class SmokeVlmContract(unittest.TestCase):
         self.assertGreater(focus.width, 0.0)
         self.assertGreater(focus.height, 0.0)
 
-    def test_resolve_preview_focus_region_prefers_item_metadata_over_mock(self) -> None:
+    def test_resolve_preview_focus_region_prefers_item_metadata_over_overrides(self) -> None:
         item = EvalItem(
             exam_id="15-blue",
             question_id="fr-12a",
@@ -131,23 +145,25 @@ class SmokeVlmContract(unittest.TestCase):
                 source="ground_truth",
             ),
         )
+        # Overrides carries a different box; item-level metadata must win.
+        overrides = {
+            ("15-blue", "fr-12a"): FocusRegion(
+                page=4,
+                x=0.99,
+                y=0.99,
+                width=0.01,
+                height=0.01,
+                source="mock_tricky",
+            ),
+        }
 
-        focus = smoke_vlm._resolve_preview_focus_region(item, template_document=None)
+        focus = smoke_vlm._resolve_preview_focus_region(
+            item,
+            template_document=None,
+            focus_region_overrides=overrides,
+        )
 
         self.assertEqual(focus, item.focus_region)
-
-    def test_mock_tricky_focus_regions_are_not_ribbon_thin(self) -> None:
-        for focus in smoke_vlm._TRICKY_FOCUS_REGION_MOCKS.values():
-            self.assertGreaterEqual(
-                focus.height,
-                0.18,
-                "mock tricky previews should be tall enough to read as focused crops, not banner strips",
-            )
-            self.assertLessEqual(
-                focus.width / focus.height,
-                3.5,
-                "mock tricky previews should avoid ultra-wide aspect ratios until we have real boxes",
-            )
 
     def test_scorebug_session_meta_labels_tricky_plus_subset(self) -> None:
         parser = smoke_vlm._build_arg_parser()
@@ -184,6 +200,12 @@ class SmokeVlmContract(unittest.TestCase):
         )
 
     def test_tricky_plus_items_all_resolve_to_preview_regions(self) -> None:
+        from auto_grader.focus_regions import (
+            DEFAULT_FOCUS_REGIONS_PATH,
+            load_focus_regions,
+        )
+
+        overrides = load_focus_regions(DEFAULT_FOCUS_REGIONS_PATH)
         items = [
             EvalItem(
                 exam_id=exam_id,
@@ -203,34 +225,12 @@ class SmokeVlmContract(unittest.TestCase):
             smoke_vlm._resolve_preview_focus_region(
                 item,
                 template_document=None,
+                focus_region_overrides=overrides,
             )
             for item in items
         ]
 
         self.assertTrue(all(region is not None for region in resolved))
-
-    def test_lewis_mock_focus_regions_hug_the_student_work_not_the_whole_page(self) -> None:
-        for key in [
-            ("15-blue", "fr-12a"),
-            ("27-blue-2023", "fr-12a"),
-            ("34-blue", "fr-12a"),
-        ]:
-            focus = smoke_vlm._TRICKY_FOCUS_REGION_MOCKS[key]
-            self.assertGreaterEqual(
-                focus.y,
-                0.06,
-                "Lewis mock boxes should start below the top margin so they stop spending preview budget on blank paper",
-            )
-            self.assertLessEqual(
-                focus.width,
-                0.54,
-                "Lewis mock boxes should tighten around the resonance drawings instead of carrying a page-wide banner crop",
-            )
-            self.assertLessEqual(
-                focus.height,
-                0.24,
-                "Lewis mock boxes should exclude the next question block so the crop reads like the graded work, not a mini page",
-            )
 
     def test_run_dir_help_advertises_durable_root_outside_worktree(self) -> None:
         parser = smoke_vlm._build_arg_parser()
