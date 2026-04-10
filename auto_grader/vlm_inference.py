@@ -29,7 +29,7 @@ class ServerConfig:
     e.g. WebDev" row of the model card sampling table):
 
         temperature=0.6, top_p=0.95, top_k=20, min_p=0.0,
-        presence_penalty=0.0, repetition_penalty=1.0
+        presence_penalty=0.75, repetition_penalty=1.0
 
     Why coding-mode and not general-mode: our task is thinking-mode
     reasoning with **structured JSON output**, which is structurally
@@ -42,7 +42,8 @@ class ServerConfig:
     at handwriting, doing the actual division 95/13.6, considering
     misprints) and then the stream closed without ever producing a
     content delta. Reasoning prose was fine, JSON emission was
-    blocked. Switching to the coding preset with presence_penalty=0
+    blocked. Switching to the coding preset with a low, bounded
+    presence penalty
     fixes the structured-output phase without giving up the
     exploration that the original temperature=0.1 was missing.
 
@@ -56,14 +57,16 @@ class ServerConfig:
          general, tried 2026-04-08 16:43): reasoning prose was clean
          and grounded, but JSON output was blocked entirely. Empty
          content, parser fail on every item.
-      3. temperature=0.6, presence_penalty=0 (current — Alibaba
-         thinking-mode coding): the right combination for our task
-         shape. 6x more exploration than (1) so reasoning loops
-         should dissolve, no presence penalty fighting JSON emission.
+      3. temperature=0.6, presence_penalty=0.75 (current bounded
+         experiment on top of Alibaba thinking-mode coding): keep the
+         coding preset structure, but add a moderate novelty gradient
+         to see whether Qwen escapes repetitive local loops without
+         collapsing JSON emission the way 1.5 did.
 
-    If (3) still produces repetitive reasoning, the next move is
-    raising temperature toward 0.8-1.0 while keeping presence_penalty
-    at 0. We do NOT raise presence_penalty for structured output.
+    This is an explicit experiment, not a settled doctrine. If it
+    regresses JSON emission or stability, roll it back. We still do
+    NOT jump to the general-mode 1.5 presence penalty for structured
+    output.
 
     max_tokens=8192 keeps headroom for legitimately hard items without
     letting one bad stall chew through the old 16384-token runway. The
@@ -80,7 +83,7 @@ class ServerConfig:
     top_p: float = 0.95
     top_k: int = 20
     min_p: float = 0.0
-    presence_penalty: float = 0.0
+    presence_penalty: float = 0.75
     repetition_penalty: float = 1.0
 
 

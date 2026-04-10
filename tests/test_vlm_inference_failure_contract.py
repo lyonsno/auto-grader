@@ -41,6 +41,19 @@ class VlmInferenceFailureContract(unittest.TestCase):
             "the default token ceiling should be lower than the old runaway-friendly 16384 cap",
         )
 
+    def test_default_qwen_presence_penalty_uses_experimental_075_setting(self):
+        config = ServerConfig(base_url="http://example.test")
+
+        self.assertEqual(
+            config.model,
+            "qwen3p5-35B-A3B",
+        )
+        self.assertEqual(
+            config.presence_penalty,
+            0.75,
+            "Qwen's default preset should reflect the current bounded presence-penalty experiment",
+        )
+
     def test_length_truncation_returns_failure_prediction_instead_of_raising(self):
         with mock.patch(
             "urllib.request.urlopen",
