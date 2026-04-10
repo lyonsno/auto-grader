@@ -15,8 +15,8 @@ class GradingPromptContract(unittest.TestCase):
         )
         self.assertLess(
             len(prompt),
-            2400,
-            "system prompt should stay compact enough that easy items do not pay for repeated policy prose even after the score-basis split",
+            2700,
+            "system prompt should stay compact even after the score-basis split and concept-vs-execution rule",
         )
 
     def test_system_prompt_states_each_major_rule_once(self):
@@ -38,6 +38,25 @@ class GradingPromptContract(unittest.TestCase):
             2,
             "consistency rule should be stated cleanly, not reiterated in multiple phrasings",
         )
+
+    def test_prompt_contract_publishes_version_and_hash(self):
+        from auto_grader import vlm_inference
+
+        version = getattr(vlm_inference, "GRADING_PROMPT_VERSION", "")
+        self.assertRegex(
+            version,
+            r"^\d{4}-\d{2}-\d{2}-",
+            "grading prompt should declare a human-readable version string in code",
+        )
+
+        metadata_fn = getattr(vlm_inference, "grading_prompt_metadata", None)
+        self.assertTrue(
+            callable(metadata_fn),
+            "vlm prompt contract should publish grading_prompt_metadata() for run manifests",
+        )
+        metadata = metadata_fn()
+        self.assertEqual(metadata["version"], version)
+        self.assertRegex(metadata["content_hash"], r"^[0-9a-f]{64}$")
 
     def test_system_prompt_uses_explicit_rescue_credit_language(self):
         from auto_grader import vlm_inference
@@ -227,6 +246,21 @@ class GradingPromptContract(unittest.TestCase):
             "Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.",
             prompt,
             "setup-credit numerics like fr-10a should not collapse toward zero once the governing relation is correct",
+        )
+
+    def test_system_prompt_distinguishes_wrong_concept_from_wrong_execution(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.",
+            prompt,
+            "prompt should block method credit for wrong-approach answers that merely look nearby",
+        )
+        self.assertIn(
+            "If the student's approach would still be wrong with perfect execution, do not award method credit.",
+            prompt,
+            "prompt should distinguish bad execution from a fundamentally wrong method",
         )
 
     def test_system_prompt_rescues_lewis_partial_credit_from_zero_when_structure_basis_is_present(self):

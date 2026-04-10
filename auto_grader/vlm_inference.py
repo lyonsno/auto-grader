@@ -8,6 +8,8 @@ into Prediction objects that the eval harness can score.
 from __future__ import annotations
 
 import base64
+import hashlib
+import inspect
 import json
 import re
 import sys
@@ -162,6 +164,8 @@ Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
 Treat mL and cm³ as equivalent unless the question explicitly tests form.
 If setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
 Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
+Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.
+If the student's approach would still be wrong with perfect execution, do not award method credit.
 On Lewis-structure questions, rescue partial credit for correct connectivity, valence electrons, or bond order even if octets, formal charges, or resonance are incomplete.
 Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
 Grade what is written, not a more favorable answer you can imagine.
@@ -177,6 +181,7 @@ Use upstream_dependency = "none" unless carry-forward is clear.
 JSON only. Include model_read, model_score, model_confidence, model_reasoning, upstream_dependency, if_dependent_then_consistent, "score_basis": <string>, "is_obviously_fully_correct": <true | false | null>, and "is_obviously_wrong": <true | false | null>.
 """
 
+GRADING_PROMPT_VERSION = "2026-04-10-concept-vs-execution-v1"
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
     """Build the user-facing grading prompt for one question."""
@@ -212,6 +217,21 @@ def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str
         "\nRespond with ONLY the JSON object, no markdown fences or other text."
     )
     return "\n".join(parts)
+
+
+def grading_prompt_metadata() -> dict[str, str]:
+    """Return operator-legible prompt identity for run manifests."""
+    content_hash = hashlib.sha256(
+        (
+            _SYSTEM_PROMPT
+            + "\n---build_grading_prompt---\n"
+            + inspect.getsource(_build_grading_prompt)
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "version": GRADING_PROMPT_VERSION,
+        "content_hash": content_hash,
+    }
 
 
 # ---------------------------------------------------------------------------
