@@ -639,9 +639,14 @@ class ThinkingNarrator:
     @staticmethod
     def _build_status_user_content(
         chunk: str,
+        rejected_thought: str,
         prior_statuses: list[str],
     ) -> str:
         blocks = [f"Current reasoning excerpt:\n\n{chunk}"]
+        blocks.append(
+            "Rejected first-person line to compress:\n"
+            f"- {rejected_thought}"
+        )
         if prior_statuses:
             blocks.append(
                 "Recent status lines:\n"
@@ -652,7 +657,8 @@ class ThinkingNarrator:
             )
         blocks.append(
             "You are still on the SAME point. Do not invent a new angle. "
-            "Compress the ongoing state into one short present-participle status line."
+            "Rewrite that same substance as one short non-first-person "
+            "present-participle status line."
         )
         return "\n\n".join(blocks)
 
@@ -713,7 +719,7 @@ class ThinkingNarrator:
         present-participle form, or it is rejected as ``contract-status``.
         """
         status_user_content = self._build_status_user_content(
-            chunk, prior_statuses
+            chunk, chunk, prior_statuses
         )
         messages = [
             {"role": "system", "content": self._compose_system_prompt(status_mode=True)},

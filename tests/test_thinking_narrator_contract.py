@@ -310,12 +310,35 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator = ThinkingNarrator(sink)
         prior_statuses = [f"Tracing status {idx}." for idx in range(7)]
 
-        user_content = narrator._build_status_user_content("chunk", prior_statuses)
+        user_content = narrator._build_status_user_content(
+            "chunk",
+            "I'm checking the Lewis structure details.",
+            prior_statuses,
+        )
 
         self.assertNotIn("Tracing status 0.", user_content)
         self.assertNotIn("Tracing status 1.", user_content)
         for idx in range(2, 7):
             self.assertIn(f"Tracing status {idx}.", user_content)
+
+    def test_status_prompt_rewrites_the_rejected_first_person_line_not_just_the_chunk(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink)
+
+        user_content = narrator._build_status_user_content(
+            "reasoning chunk",
+            "I'm verifying the valence electron count and connectivity in the Lewis structure.",
+            ["Rechecking the Lewis structure for octet compliance."],
+        )
+
+        self.assertIn(
+            "Rejected first-person line to compress:\n- I'm verifying the valence electron count and connectivity in the Lewis structure.",
+            user_content,
+        )
+        self.assertIn(
+            "Rewrite that same substance as one short non-first-person present-participle status line.",
+            user_content,
+        )
 
     def test_double_dedup_sets_exponential_backoff(self):
         sink = _DummySink()
