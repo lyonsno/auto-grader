@@ -198,6 +198,15 @@ class AnnotationApp:
 
         self.root = tk.Tk()
         self.root.title("focus region annotator")
+        # macOS foreground dance. Without this, second-and-subsequent
+        # invocations from the same shell session can land behind the
+        # current window and the operator thinks the tool is hanging.
+        # Briefly pin topmost, lift, force focus, then clear topmost so
+        # the window doesn't stay stuck above everything.
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after_idle(lambda: self.root.attributes("-topmost", False))
+        self.root.focus_force()
         self.status_var = tk.StringVar()
         self.status_label = tk.Label(
             self.root,
