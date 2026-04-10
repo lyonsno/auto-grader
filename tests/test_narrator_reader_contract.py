@@ -157,6 +157,10 @@ class NarratorReaderContract(unittest.TestCase):
         })
 
     @staticmethod
+    def _scorebug_texture_count(text: str) -> int:
+        return sum(ch in "░▒·┈╎" for ch in text)
+
+    @staticmethod
     def _styles_in_range(text: Text, start: int, end: int) -> set[str]:
         styles: set[str] = set()
         for span in text.spans:
@@ -1474,6 +1478,26 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertTrue(
             any(ch in tally_value_bottom.plain for ch in "░▒·┈╎"),
             "the bottom score field should use visible UTF-8 texture characters instead of smooth colored whitespace",
+        )
+        self.assertGreaterEqual(
+            self._scorebug_texture_count(tally_value_top.plain),
+            10,
+            "the top score field should carry enough texture mass to register at a glance rather than only in a few isolated specks",
+        )
+        self.assertGreaterEqual(
+            self._scorebug_texture_count(tally_value_mid.plain),
+            7,
+            "the middle score field should carry enough texture mass to read as a surface, not an almost-empty gradient band",
+        )
+        self.assertGreaterEqual(
+            self._scorebug_texture_count(tally_value_bottom.plain),
+            7,
+            "the bottom score field should carry enough texture mass to read as a surface, not an almost-empty gradient band",
+        )
+        self.assertNotIn(
+            "╎",
+            tally_value_mid.plain + tally_value_top.plain + tally_value_bottom.plain,
+            "scorebug texture should avoid thin vertical artifact glyphs that read like accidental banding",
         )
         on_target_mid_bg = self._background_hex(
             self._style_for_normalized_scorebug_substring(

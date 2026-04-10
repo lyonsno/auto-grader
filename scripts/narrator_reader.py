@@ -585,13 +585,19 @@ def _scorebug_texture_char(slot_index: int, seed: int) -> str:
     The field should read like low-frequency terminal texture, not like a
     repeating wallpaper. Keep density low and avoid strong vertical glyphs.
     """
-    mixed = (slot_index * 73) + (seed * 29) + ((slot_index // 3) * 17)
-    bucket = mixed % 37
-    if bucket == 0:
+    group = slot_index // 3
+    within = slot_index % 3
+    mixed = (group * 17) + (seed * 13) + ((group // 4) * 7)
+    bucket = mixed % 19
+    if bucket in {0, 1, 2} and within in {1, 2}:
         return "░"
-    if bucket in {7, 19}:
+    if seed == 1 and bucket in {3, 4} and within in {0, 2}:
         return "·"
-    if bucket == 27:
+    if bucket in {5, 6} and within in {0, 1}:
+        return "▒"
+    if bucket in {9, 12, 15} and within == 1:
+        return "·"
+    if bucket == 17 and within in {0, 1, 2}:
         return "┈"
     return " "
 
@@ -1849,7 +1855,7 @@ class PaintDryDisplay:
             strong_style=value_row_styles[1],
             mid_style=value_mid_row_styles[1],
             texture_style=value_texture_styles[1],
-            texture_seed=1,
+            texture_seed=9,
         )
         _append_scorebug_value_row(
             value_bottom_row,
@@ -2167,9 +2173,9 @@ class PaintDryDisplay:
                 f"bold #a69c8d on {tally_bottom_bg}",
             )
             tally_value_texture_styles = (
-                f"#4a4742 on {tally_top_bg}",
-                f"#47433f on {tally_mid_bg}",
-                f"#433f3b on {tally_bottom_bg}",
+                f"#5b5750 on {tally_top_bg}",
+                f"#57524c on {tally_mid_bg}",
+                f"#534e48 on {tally_bottom_bg}",
             )
             scorebug_top = Text()
             self._append_scorebug_cell(
