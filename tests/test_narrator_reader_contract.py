@@ -488,6 +488,36 @@ class NarratorReaderContract(unittest.TestCase):
             "steady-state previews should use a denser terminal glyph field instead of only block cells",
         )
 
+    def test_focus_preview_bright_paper_stays_quiet_in_steady_state(self):
+        renderable = _render_focus_preview_pixels(
+            [[(220, 214, 206) for _ in range(24)] for _ in range(12)],
+            now=0.0,
+            pending=False,
+        )
+        plain = _extract_plain(renderable)
+
+        self.assertTrue(
+            any(ch in plain for ch in " .,:"),
+            "bright paper should render with quiet low-density marks instead of a heavy glyph wall",
+        )
+        self.assertFalse(
+            any(ch in plain for ch in "#%@"),
+            "bright paper should not light up with the densest glyphs",
+        )
+
+    def test_focus_preview_dark_strokes_use_denser_marks_than_paper(self):
+        renderable = _render_focus_preview_pixels(
+            [[(70, 72, 76) for _ in range(24)] for _ in range(12)],
+            now=0.0,
+            pending=False,
+        )
+        plain = _extract_plain(renderable)
+
+        self.assertTrue(
+            any(ch in plain for ch in "=+*#%@"),
+            "darker regions should use denser glyphs so handwriting and strokes survive the terminal rendering",
+        )
+
     def test_scaled_preview_size_respects_terminal_row_budget_in_glyph_mode(self):
         width, height = _scaled_preview_size(
             475,

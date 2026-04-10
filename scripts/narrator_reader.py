@@ -724,15 +724,17 @@ def _render_focus_preview_pixels(
                     continue
                 top_rgb = toned_rgb
                 luminance = avg_luma / 255.0
+            darkness = 1.0 - luminance
+            ramp_darkness = darkness ** 1.45
             ramp_index = min(
                 len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1,
-                int(round(luminance * (len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1))),
+                int(round(ramp_darkness * (len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1))),
             )
             glyph = _FOCUS_PREVIEW_GLYPH_RAMP[ramp_index]
-            bg_strength = 0.10 + (0.20 * luminance)
-            fg_strength = 0.42 + (0.44 * luminance)
+            bg_strength = 0.28 + (0.52 * luminance)
+            fg_strength = 0.04 + (0.56 * darkness)
             bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, bg_strength)
-            fg_rgb = _interp_rgb(bg_rgb, top_rgb, fg_strength)
+            fg_rgb = _interp_rgb(bg_rgb, _FOCUS_PREVIEW_PAPER_RGB, fg_strength)
             row.append(
                 glyph,
                 style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
