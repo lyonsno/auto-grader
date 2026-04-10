@@ -12,6 +12,7 @@ from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _build_focus_preview_pixels,
     _focus_preview_budget,
     _render_focus_preview_pixels,
     _scaled_preview_size,
@@ -558,6 +559,34 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertTrue(
             any(ch in plain for ch in "=+*#%@"),
             "a low-contrast document preview should still recover denser marks for borders and handwritten strokes",
+        )
+
+    def test_focus_preview_sampling_preserves_thin_dark_strokes(self):
+        width = 96
+        height = 96
+        background = (235, 230, 222)
+        ink = (35, 35, 35)
+        buf = bytearray(background * (width * height))
+        for y in range(height):
+            for x in range(47, 49):
+                offset = (y * width + x) * 3
+                buf[offset : offset + 3] = bytes(ink)
+
+        pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(buf), False)
+        pixels = _build_focus_preview_pixels(
+            pix.tobytes("png"),
+            max_width_chars=12,
+            max_height_rows=12,
+        )
+        center_luminances = [
+            ((0.299 * row[len(row) // 2][0]) + (0.587 * row[len(row) // 2][1]) + (0.114 * row[len(row) // 2][2])) / 255.0
+            for row in pixels
+        ]
+
+        self.assertLess(
+            min(center_luminances),
+            0.45,
+            "downsampling should preserve a materially darker center stripe instead of averaging thin ink strokes back into the paper",
         )
 
     def test_scaled_preview_size_respects_terminal_row_budget_in_glyph_mode(self):

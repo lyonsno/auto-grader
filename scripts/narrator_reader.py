@@ -840,21 +840,41 @@ def _sample_preview_rgb(
     green = 0
     blue = 0
     count = 0
+    darkest_luma = float("inf")
+    darkest_rgb = _FOCUS_PREVIEW_BG_RGB
     for src_y in range(src_y0, src_y1):
         row_offset = src_y * pix.width * pix.n
         for src_x in range(src_x0, src_x1):
             offset = row_offset + (src_x * pix.n)
-            red += samples[offset]
-            green += samples[offset + 1]
-            blue += samples[offset + 2]
+            sample_red = samples[offset]
+            sample_green = samples[offset + 1]
+            sample_blue = samples[offset + 2]
+            red += sample_red
+            green += sample_green
+            blue += sample_blue
             count += 1
+            sample_luma = (
+                (0.299 * sample_red)
+                + (0.587 * sample_green)
+                + (0.114 * sample_blue)
+            )
+            if sample_luma < darkest_luma:
+                darkest_luma = sample_luma
+                darkest_rgb = (sample_red, sample_green, sample_blue)
     if count == 0:
         return _FOCUS_PREVIEW_BG_RGB
-    return (
+    avg_rgb = (
         int(round(red / count)),
         int(round(green / count)),
         int(round(blue / count)),
     )
+    avg_luma = (
+        (0.299 * avg_rgb[0])
+        + (0.587 * avg_rgb[1])
+        + (0.114 * avg_rgb[2])
+    )
+    ink_weight = _clamp((avg_luma - darkest_luma - 18.0) / 120.0, 0.0, 0.58)
+    return _interp_rgb(avg_rgb, darkest_rgb, ink_weight)
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
