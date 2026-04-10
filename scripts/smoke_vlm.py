@@ -168,6 +168,16 @@ class _PredictionWriter:
                 "answer_type": item.answer_type,
                 "max_points": item.max_points,
                 "professor_score": item.professor_score,
+                # corrected_score and correction_reason preserve the
+                # human-investigated truth alongside the historical prof
+                # mark, so the prediction file is genuinely self-contained
+                # for offline analysis (downstream tools like
+                # compare_runs.py can compute truth_score without needing
+                # the original ground_truth.yaml). Uncorrected items emit
+                # explicit null / empty string rather than omitting the
+                # fields, so readers have an unambiguous signal.
+                "corrected_score": item.corrected_score,
+                "correction_reason": item.correction_reason,
                 "professor_mark": item.professor_mark,
                 "student_answer": item.student_answer,
                 "model_score": pred.model_score,
@@ -467,7 +477,7 @@ def main():
     print(f"False positives:   {report.false_positives}")
     print(f"False negatives:   {report.false_negatives}")
     print(f"Points possible:   {report.total_points_possible}")
-    print(f"Points (professor):{report.total_points_professor}")
+    print(f"Points (truth):    {report.total_points_truth}")
 
     print(f"\nPer answer type (exact):")
     for atype, acc in sorted(report.per_answer_type_exact.items()):

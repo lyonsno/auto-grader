@@ -111,11 +111,18 @@ class EvalReport:
     total_scored: int = 0
     unclear_excluded: int = 0
     total_points_possible: float = 0.0
-    total_points_professor: float = 0.0
     obvious_full_credit_calls: int = 0
     obvious_full_credit_precision: float | None = None
     obvious_wrong_calls: int = 0
     obvious_wrong_precision: float | None = None
+    # total_points_truth is the sum of `EvalItem.truth_score` across all
+    # scored items — this is the corrected-truth baseline the grader is
+    # being measured against, NOT the historical prof mark total. When
+    # no corrections are recorded, this equals the prof-mark total;
+    # when corrections are present, it reflects them. The field was
+    # formerly named `total_points_professor`, which became misleading
+    # after eval_harness started using `truth_score` for scoring.
+    total_points_truth: float = 0.0
     calibration_bins: list[CalibrationBin] = field(default_factory=list)
 
 
@@ -200,11 +207,11 @@ def score_predictions(
     false_positives = 0
     false_negatives = 0
     total_points_possible = 0.0
-    total_points_professor = 0.0
     obvious_full_credit_calls = 0
     obvious_full_credit_correct = 0
     obvious_wrong_calls = 0
     obvious_wrong_correct = 0
+    total_points_truth = 0.0
 
     # Per-answer-type tracking
     type_exact: dict[str, list[bool]] = {}
@@ -237,7 +244,7 @@ def score_predictions(
             false_negatives += 1
 
         total_points_possible += item.max_points
-        total_points_professor += truth
+        total_points_truth += truth
 
         if pred.is_obviously_fully_correct is True:
             obvious_full_credit_calls += 1
@@ -293,11 +300,11 @@ def score_predictions(
         total_scored=n,
         unclear_excluded=unclear_count,
         total_points_possible=total_points_possible,
-        total_points_professor=total_points_professor,
         obvious_full_credit_calls=obvious_full_credit_calls,
         obvious_full_credit_precision=obvious_full_credit_precision,
         obvious_wrong_calls=obvious_wrong_calls,
         obvious_wrong_precision=obvious_wrong_precision,
+        total_points_truth=total_points_truth,
         calibration_bins=calibration_bins,
     )
 

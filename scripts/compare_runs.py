@@ -29,6 +29,7 @@ class RunRecord:
     exam_id: str
     question_id: str
     professor_score: float
+    corrected_score: float | None
     max_points: float
     answer_type: str
     model_score: float
@@ -40,6 +41,23 @@ class RunRecord:
     if_dependent_then_consistent: bool | None
     reasoning_chars: int
     elapsed_s: int | None
+
+    @property
+    def truth_score(self) -> float:
+        """The score we believe is correct after any human investigation.
+
+        Mirrors `EvalItem.truth_score` from `auto_grader.eval_harness`:
+        returns `corrected_score` when set (human-investigated prof
+        grading error), otherwise falls back to `professor_score`. Use
+        this everywhere the comparison surface needs the corrected
+        baseline, so that the same run viewed through compare_runs.py
+        and through eval_harness.py reports the same numbers.
+        """
+        return (
+            self.corrected_score
+            if self.corrected_score is not None
+            else self.professor_score
+        )
 
 
 def _resolve_predictions_path(run_dir: Path) -> Path:
@@ -120,11 +138,20 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
                 continue
             key = (obj["exam_id"], obj["question_id"])
             raw_reasoning = str(obj.get("raw_reasoning", ""))
+            # corrected_score defaults to None for backwards compat with
+            # prediction files written before the self-contained-record
+            # change. Old files simply produce truth_score == professor_score
+            # via the RunRecord.truth_score property fallback.
+            corrected_raw = obj.get("corrected_score")
+            corrected_score = (
+                float(corrected_raw) if corrected_raw is not None else None
+            )
             records[key] = RunRecord(
                 model=model,
                 exam_id=obj["exam_id"],
                 question_id=obj["question_id"],
                 professor_score=float(obj["professor_score"]),
+                corrected_score=corrected_score,
                 max_points=float(obj["max_points"]),
                 answer_type=str(obj["answer_type"]),
                 model_score=float(obj["model_score"]),
@@ -162,7 +189,13 @@ def build_comparison_rows(
             "question_id": question_id,
             "answer_type": exemplar.answer_type,
             "max_points": exemplar.max_points,
+            # professor_score is the historical prof mark; truth_score
+            # is the corrected baseline (equal to professor_score when
+            # no correction is recorded). Both columns are emitted so
+            # operators can see the historical distinction and still
+            # get the corrected accuracy baseline in the same CSV.
             "professor_score": exemplar.professor_score,
+            "truth_score": exemplar.truth_score,
         }
         for label, records in loaded:
             record = records.get((exam_id, question_id))

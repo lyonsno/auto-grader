@@ -482,11 +482,20 @@ class TestEvalReportSummary(unittest.TestCase):
         """Report should track total points possible across scored items."""
         self.assertGreater(self.report.total_points_possible, 0)
 
-    def test_total_points_awarded_by_professor(self):
-        """Report should track total points the professor actually awarded."""
-        self.assertGreater(self.report.total_points_professor, 0)
+    def test_total_points_truth_tracks_corrected_baseline(self):
+        """Report tracks the corrected-truth baseline the grader is measured against.
+
+        The field was formerly named total_points_professor and described
+        the historical prof mark total. After eval_harness started using
+        truth_score (corrected when available, professor_score otherwise)
+        for scoring, the field semantics changed — it's now the sum of
+        item.truth_score across scored items. When no corrections are
+        recorded, this equals the old prof-mark total; otherwise it
+        reflects the corrections.
+        """
+        self.assertGreater(self.report.total_points_truth, 0)
         self.assertLessEqual(
-            self.report.total_points_professor,
+            self.report.total_points_truth,
             self.report.total_points_possible,
         )
 

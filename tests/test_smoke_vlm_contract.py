@@ -249,6 +249,157 @@ class SmokeVlmContract(unittest.TestCase):
             "live mark must not reward the model for matching a known prof error",
         )
 
+    def test_prediction_record_carries_corrected_score_and_reason(self):
+        """predictions.jsonl must be self-contained for offline analysis.
+
+        The _PredictionWriter docstring promises this. When an EvalItem
+        carries a corrected_score (recording a human-investigated prof
+        grading error), the prediction record written for that item must
+        include both corrected_score and correction_reason, so downstream
+        tools (compare_runs.py, ad-hoc analysis) can compute truth_score
+        without needing the original ground_truth.yaml alongside.
+
+        Tested directly against _PredictionWriter.write_one rather than
+        the full main() pipeline — the contract belongs to the writer.
+        """
+        module = _load_smoke_vlm()
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=5,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="check",
+            student_answer="14.2031 moles",
+            notes="internally consistent with wrong 5a",
+            corrected_score=0.0,
+            correction_reason=(
+                "cannot add moles of N2 and H2 to get moles of NH3; "
+                "prof gave 2/2 but methodology is invalid"
+            ),
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=0.0,
+            model_confidence=0.9,
+            model_reasoning="caught the methodology error",
+            model_read="14.2031 moles",
+            raw_assistant='{"model_score": 0}',
+            raw_reasoning="upstream 5a was also wrong",
+            upstream_dependency="5(a)",
+            if_dependent_then_consistent=False,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir)
+            predictions_path = run_dir / "predictions.jsonl"
+            with module._PredictionWriter(
+                predictions_path, model="qwen-test", run_dir=run_dir
+            ) as writer:
+                writer.write_one(item, prediction)
+
+            self.assertTrue(predictions_path.is_file())
+            records = [
+                json.loads(line)
+                for line in predictions_path.read_text().splitlines()
+                if line.strip()
+            ]
+            pred_records = [r for r in records if r.get("type") == "prediction"]
+            self.assertEqual(
+                len(pred_records),
+                1,
+                "expected exactly one prediction record written",
+            )
+            record = pred_records[0]
+            self.assertIn(
+                "corrected_score",
+                record,
+                "prediction record must carry corrected_score for self-contained offline analysis",
+            )
+            self.assertEqual(
+                record["corrected_score"],
+                0.0,
+                "corrected_score in the record must match the EvalItem's corrected_score",
+            )
+            self.assertIn(
+                "correction_reason",
+                record,
+                "prediction record must carry correction_reason alongside corrected_score",
+            )
+            self.assertIn(
+                "methodology",
+                record["correction_reason"].lower(),
+                "correction_reason should carry the human-investigator's note verbatim",
+            )
+            # The historical professor_score must ALSO be preserved, not
+            # silently overwritten by the correction. Both fields matter.
+            self.assertEqual(
+                record["professor_score"],
+                2.0,
+                "professor_score field must preserve the historical prof mark, not be rewritten by corrected_score",
+            )
+
+    def test_prediction_record_corrected_fields_null_when_no_correction(self):
+        """Uncorrected items must produce null corrected_score + empty reason.
+
+        Backwards-compat contract: when the EvalItem has no corrected_score
+        recorded, the prediction record must explicitly carry
+        corrected_score=null (not omit the field), so downstream readers
+        have an unambiguous signal rather than having to distinguish
+        "field missing" from "field explicitly null". correction_reason
+        in that case is the empty string.
+        """
+        module = _load_smoke_vlm()
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="check",
+            student_answer="13.6",
+            notes="density warmup",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=2.0,
+            model_confidence=0.75,
+            model_reasoning="ok",
+            model_read="13.6",
+            raw_assistant='{"model_score": 2}',
+            raw_reasoning="checked",
+            upstream_dependency="none",
+            if_dependent_then_consistent=None,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir)
+            predictions_path = run_dir / "predictions.jsonl"
+            with module._PredictionWriter(
+                predictions_path, model="qwen-test", run_dir=run_dir
+            ) as writer:
+                writer.write_one(item, prediction)
+
+            records = [
+                json.loads(line)
+                for line in predictions_path.read_text().splitlines()
+                if line.strip()
+            ]
+            pred_records = [r for r in records if r.get("type") == "prediction"]
+            self.assertEqual(len(pred_records), 1)
+            record = pred_records[0]
+            self.assertIn("corrected_score", record)
+            self.assertIsNone(
+                record["corrected_score"],
+                "uncorrected items must emit explicit null, not omit the field",
+            )
+            self.assertIn("correction_reason", record)
+            self.assertEqual(record["correction_reason"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
