@@ -40,12 +40,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from auto_grader.eval_harness import FocusRegion  # noqa: E402
+from auto_grader.eval_harness import FocusRegion, load_ground_truth  # noqa: E402
 from auto_grader.focus_regions import (  # noqa: E402
     DEFAULT_FOCUS_REGIONS_PATH,
     load_focus_regions,
     save_focus_regions,
 )
+
+_GROUND_TRUTH_PATH = _REPO_ROOT / "eval" / "ground_truth.yaml"
 
 
 _MAX_DISPLAY_WIDTH = 1400
@@ -53,7 +55,28 @@ _MAX_DISPLAY_HEIGHT = 1600
 _DPI = 160
 
 
+def _load_exam_question_sequence(exam_id: str) -> list[str]:
+    """Return the canonical question_id sequence for an exam from the
+    ground-truth YAML. Order is preserved as it appears in the file."""
+    gt = load_ground_truth(_GROUND_TRUTH_PATH)
+    return [item.question_id for item in gt if item.exam_id == exam_id]
+
+
 def _parse_targets(raw: str) -> list[tuple[str, str]]:
+    """Parse a --targets string into an ordered list of (exam_id, question_id)
+    tuples. Accepts explicit entries and dotdot ranges:
+
+        15-blue/fr-1                single entry
+        15-blue/fr-1..fr-3          range, expanded using ground-truth order
+        15-blue/fr-1,15-blue/fr-3   comma-separated, same exam or different
+        15-blue/fr-1..fr-2,15-blue/fr-12a   mix of ranges and explicits
+
+    Ranges expand against the canonical question_id sequence from the
+    ground-truth YAML, so sub-parts (fr-5a, fr-5b, fr-5c) are included
+    when a range straddles them. Both endpoints must exist in the
+    exam's sequence; unknown endpoints are a SystemExit with a
+    caller-helpful message.
+    """
     out: list[tuple[str, str]] = []
     for token in raw.split(","):
         token = token.strip()
@@ -63,8 +86,39 @@ def _parse_targets(raw: str) -> list[tuple[str, str]]:
             raise SystemExit(
                 f"--targets entry {token!r} is not in 'exam_id/question_id' form"
             )
-        exam_id, question_id = token.split("/", 1)
-        out.append((exam_id.strip(), question_id.strip()))
+        exam_id, rest = token.split("/", 1)
+        exam_id = exam_id.strip()
+        rest = rest.strip()
+        if ".." in rest:
+            first, last = rest.split("..", 1)
+            first = first.strip()
+            last = last.strip()
+            sequence = _load_exam_question_sequence(exam_id)
+            if not sequence:
+                raise SystemExit(
+                    f"--targets exam_id {exam_id!r} has no ground-truth entries"
+                )
+            if first not in sequence:
+                raise SystemExit(
+                    f"--targets range start {exam_id}/{first} not found in "
+                    f"ground truth for exam {exam_id}"
+                )
+            if last not in sequence:
+                raise SystemExit(
+                    f"--targets range end {exam_id}/{last} not found in "
+                    f"ground truth for exam {exam_id}"
+                )
+            start_idx = sequence.index(first)
+            end_idx = sequence.index(last)
+            if end_idx < start_idx:
+                raise SystemExit(
+                    f"--targets range {exam_id}/{first}..{last} is reversed "
+                    f"(end comes before start in ground-truth order)"
+                )
+            for qid in sequence[start_idx : end_idx + 1]:
+                out.append((exam_id, qid))
+        else:
+            out.append((exam_id, rest))
     if not out:
         raise SystemExit("--targets was empty")
     return out

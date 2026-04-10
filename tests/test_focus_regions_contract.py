@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,20 @@ from auto_grader.focus_regions import (
     load_focus_regions,
     save_focus_regions,
 )
+
+
+def _load_annotator_module():
+    # The annotator script is not an importable package, so load it
+    # through importlib. tkinter import at module top is harmless in
+    # headless CI — it's instantiating tk.Tk() that would break, and
+    # the tests never do that.
+    spec = importlib.util.spec_from_file_location(
+        "annotate_focus_regions",
+        Path(__file__).resolve().parent.parent / "scripts" / "annotate_focus_regions.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class FocusRegionsRoundTripContract(unittest.TestCase):
@@ -80,6 +95,59 @@ class FocusRegionsRoundTripContract(unittest.TestCase):
             path.write_text("- not\n- a\n- mapping\n")
             with self.assertRaises(ValueError):
                 load_focus_regions(path)
+
+    def test_parse_targets_expands_dotdot_range_in_ground_truth_order(self):
+        annotator = _load_annotator_module()
+        # fr-1..fr-3 → fr-1, fr-2, fr-3 (contiguous in the canonical
+        # ground-truth sequence).
+        result = annotator._parse_targets("15-blue/fr-1..fr-3")
+        self.assertEqual(
+            result,
+            [("15-blue", "fr-1"), ("15-blue", "fr-2"), ("15-blue", "fr-3")],
+        )
+
+    def test_parse_targets_range_includes_multi_part_sub_questions(self):
+        # fr-5a..fr-6 → fr-5a, fr-5b, fr-5c, fr-6. Sub-parts like
+        # "fr-5a/b/c" are distinct question IDs in the sequence and
+        # must be included when the range straddles them.
+        annotator = _load_annotator_module()
+        result = annotator._parse_targets("15-blue/fr-5a..fr-6")
+        self.assertEqual(
+            result,
+            [
+                ("15-blue", "fr-5a"),
+                ("15-blue", "fr-5b"),
+                ("15-blue", "fr-5c"),
+                ("15-blue", "fr-6"),
+            ],
+        )
+
+    def test_parse_targets_mixes_ranges_and_explicit_entries(self):
+        annotator = _load_annotator_module()
+        result = annotator._parse_targets(
+            "15-blue/fr-1..fr-2, 15-blue/fr-12a"
+        )
+        self.assertEqual(
+            result,
+            [
+                ("15-blue", "fr-1"),
+                ("15-blue", "fr-2"),
+                ("15-blue", "fr-12a"),
+            ],
+        )
+
+    def test_parse_targets_explicit_list_still_works(self):
+        annotator = _load_annotator_module()
+        result = annotator._parse_targets("15-blue/fr-1, 15-blue/fr-3")
+        self.assertEqual(
+            result,
+            [("15-blue", "fr-1"), ("15-blue", "fr-3")],
+        )
+
+    def test_parse_targets_rejects_range_with_unknown_endpoint(self):
+        annotator = _load_annotator_module()
+        with self.assertRaises(SystemExit):
+            annotator._parse_targets("15-blue/fr-1..fr-999")
 
     def test_migrated_default_file_loads(self):
         # The on-disk default file must parse cleanly and produce the
