@@ -11,8 +11,16 @@ from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _build_focus_preview_pixels,
+    _build_iterm2_inline_image_sequence,
+    _compute_inline_image_cell_dimensions,
+    _focus_preview_budget,
+    _render_focus_preview_pixels,
+    _scaled_preview_size,
+    _supports_inline_images,
     _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
+    FocusPreviewInlineImage,
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
     _LIVE_PER_CHAR_PHASE_OFFSET,
@@ -190,6 +198,133 @@ class NarratorReaderContract(unittest.TestCase):
             panel_text.index("I'm tracing the stoichiometry."),
         )
 
+    def test_focus_preview_panel_renders_between_live_and_history(self):
+        display = self._make_display()
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+
+        group = display.render()
+        titled_panels = [
+            getattr(panel, "title", None)
+            for panel in group.renderables
+            if getattr(panel, "title", None) is not None
+        ]
+
+        self.assertIn("[grey50]status + live[/grey50]", titled_panels)
+        self.assertIn("[grey50]focus preview · 15-blue/fr-12a[/grey50]", titled_panels)
+        self.assertIn("[grey50]history[/grey50]", titled_panels)
+        self.assertLess(
+            titled_panels.index("[grey50]status + live[/grey50]"),
+            titled_panels.index("[grey50]focus preview · 15-blue/fr-12a[/grey50]"),
+        )
+        self.assertLess(
+            titled_panels.index("[grey50]focus preview · 15-blue/fr-12a[/grey50]"),
+            titled_panels.index("[grey50]history[/grey50]"),
+        )
+
+    def test_new_header_keeps_previous_preview_visible_in_pending_state(self):
+        display = self._make_display()
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+
+        display.on_header("[item 2/12] 27-blue-2023/fr-3 (balanced_equation, 4.0 pts)")
+
+        group = display.render()
+        titled_panels = [
+            getattr(panel, "title", None)
+            for panel in group.renderables
+            if getattr(panel, "title", None) is not None
+        ]
+
+        self.assertTrue(display.focus_preview_pending)
+        self.assertIn(
+            "[grey50]focus preview · pending · 15-blue/fr-12a[/grey50]",
+            titled_panels,
+        )
+
+    def test_new_focus_preview_clears_pending_transition_state(self):
+        display = self._make_display()
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+        display.on_header("[item 2/12] 27-blue-2023/fr-3 (balanced_equation, 4.0 pts)")
+
+        display.on_focus_preview(
+            self._make_png(rgb=(120, 130, 140)),
+            label="27-blue-2023/fr-3",
+            source="mock_tricky_plus",
+        )
+
+        self.assertFalse(display.focus_preview_pending)
+        self.assertEqual(display.focus_preview_label, "27-blue-2023/fr-3")
+
+    def test_pending_focus_preview_uses_character_overlay_not_just_block_noise(self):
+        renderable = _render_focus_preview_pixels(
+            [[(230, 230, 230) for _ in range(12)] for _ in range(8)],
+            now=0.0,
+            pending=True,
+        )
+        plain = _extract_plain(renderable)
+
+        self.assertTrue(
+            any(ch in plain for ch in "01./:"),
+            "pending preview should use a dim character veil rather than only geometric block shading",
+        )
+
+    def test_focus_preview_is_rasterized_once_per_item_not_each_frame(self):
+        display = self._make_display()
+        # Force half-block fallback path so this test exercises the
+        # pipeline it's designed to cover regardless of what terminal
+        # the test runner's environment looks like to be.
+        display._inline_images_supported = False
+        sentinel_pixels = [[(10, 20, 30)]]
+
+        with mock.patch(
+            "scripts.narrator_reader._build_focus_preview_pixels",
+            return_value=sentinel_pixels,
+        ) as build_mock:
+            display.on_focus_preview(
+                self._make_png(),
+                label="15-blue/fr-12a",
+                source="mock_tricky",
+            )
+            display.render()
+            display.render()
+
+        self.assertEqual(build_mock.call_count, 1)
+
+    def test_focus_preview_samples_at_double_vertical_density_for_half_blocks(self):
+        display = self._make_display()
+        display._inline_images_supported = False
+
+        with mock.patch(
+            "scripts.narrator_reader._build_focus_preview_pixels",
+            return_value=[[(10, 20, 30)], [(10, 20, 30)]],
+        ) as build_mock:
+            display.on_focus_preview(
+                self._make_png(width=48, height=72),
+                label="15-blue/fr-12a",
+                source="mock_tricky",
+            )
+
+        call = build_mock.call_args.kwargs
+        budget_width, budget_height = _focus_preview_budget(
+            display._console.width,
+        )
+        self.assertEqual(call["max_width_chars"], budget_width)
+        self.assertEqual(
+            call["max_height_rows"],
+            2 * budget_height,
+            "half-block renderer should sample at 2× the terminal row budget so each terminal row can encode a top/bottom half-pixel pair",
+        )
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
         display = self._make_display()
         display.frozen_line = "I'm tracing the previous item."
@@ -298,6 +433,458 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(depths[3], ("topic", "second topic", 1))
         self.assertEqual(depths[4], ("line", "second line", 2))
 
+    def test_focus_preview_requires_immediate_refresh(self):
+        self.assertTrue(_message_requires_immediate_refresh("focus_preview"))
+
+    def test_focus_preview_budget_uses_most_of_terminal_width(self):
+        width_chars, height_rows = _focus_preview_budget(100)
+
+        self.assertGreaterEqual(
+            width_chars,
+            60,
+            "the companion preview should still be comfortably readable on a 100-column terminal",
+        )
+        self.assertLessEqual(
+            width_chars,
+            70,
+            "the preview should no longer sprawl across most of the terminal width now that it is a calmer companion surface",
+        )
+        self.assertGreaterEqual(
+            height_rows,
+            18,
+            "preview should get enough rows that the vignette and handwriting survive downsampling",
+        )
+
+    def test_focus_preview_budget_uses_a_smaller_companion_surface_on_wide_terminals(self):
+        width_chars, height_rows = _focus_preview_budget(
+            140,
+            source_width_px=1600,
+            source_height_px=900,
+        )
+
+        self.assertGreaterEqual(
+            width_chars,
+            80,
+            "wide terminals should still get a preview that reads clearly instead of collapsing back to a postage stamp",
+        )
+        self.assertLessEqual(
+            width_chars,
+            92,
+            "the focus preview should read as a companion surface, not a giant wall of glyphs that dominates the terminal",
+        )
+        self.assertGreaterEqual(
+            height_rows,
+            20,
+            "the smaller companion surface still needs enough rows to preserve the handwriting and vignette",
+        )
+        self.assertLessEqual(
+            height_rows,
+            24,
+            "the preview should stay closer to the 70% scale the operator asked for instead of ballooning back upward",
+        )
+
+    def test_focus_preview_budget_scales_with_source_detail_instead_of_staying_fixed(self):
+        small_width, small_height = _focus_preview_budget(
+            140,
+            source_width_px=240,
+            source_height_px=120,
+        )
+        large_width, large_height = _focus_preview_budget(
+            140,
+            source_width_px=1600,
+            source_height_px=900,
+        )
+
+        self.assertGreater(
+            large_width,
+            small_width,
+            "high-detail crops should be allowed a denser preview raster than tiny crops on the same terminal",
+        )
+        self.assertGreater(
+            large_height,
+            small_height,
+            "source-aware budgeting should buy more vertical detail too, not only horizontal width",
+        )
+
+    def test_focus_preview_steady_state_uses_half_block_image_cells(self):
+        # 16 sampled rows = 8 terminal rows when half-blocks pair them up.
+        pixels = []
+        for row in range(16):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(24):
+                value = 42 + ((row * 17 + col * 11) % 180)
+                rows.append((value, value - 6, value - 10))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        plain = _extract_plain(renderable)
+
+        # Steady state must be a static image surface, not animated glyph
+        # texture: only half-block characters (and spaces for all-paper
+        # regions) are allowed.
+        self.assertTrue(
+            set(plain.replace("\n", "")) <= {" ", "\u2580"},
+            "steady-state previews should render as half-block image cells, not as visible texture glyphs",
+        )
+        self.assertEqual(
+            len(plain.splitlines()),
+            8,
+            "half-block renderer should collapse each pair of sampled image rows into one terminal row",
+        )
+
+    def test_focus_preview_steady_state_emits_foreground_and_background_per_cell(self):
+        # A vertical 2-column ink bar on paper should produce cells that
+        # carry *both* a foreground (top half-pixel) and a background
+        # (bottom half-pixel) color — that's what half-blocks are for.
+        pixels = []
+        for row in range(16):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(24):
+                if col in {12, 13}:
+                    rows.append((30, 30, 30))
+                else:
+                    rows.append((230, 225, 215))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        styles_with_both = [
+            span.style
+            for row in renderable.renderables
+            for span in row.spans
+            if isinstance(span.style, str) and " on " in span.style
+        ]
+        self.assertTrue(
+            styles_with_both,
+            "half-block cells should carry fg+bg style pairs representing the top and bottom sampled rows",
+        )
+
+    def test_focus_preview_dark_strokes_produce_spatial_variation(self):
+        pixels = []
+        for row in range(16):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(24):
+                if col in {12, 13} and 2 <= row <= 13:
+                    rows.append((70, 72, 76))
+                elif col < 12:
+                    rows.append((220, 214, 206))
+                else:
+                    rows.append((190, 184, 176))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        span_styles = [
+            span.style
+            for row in renderable.renderables
+            for span in row.spans
+            if isinstance(span.style, str) and " on " in span.style
+        ]
+        self.assertTrue(
+            span_styles,
+            "steady-state image cells should carry foreground/background styles so adjacent pixel rows survive as an image",
+        )
+        # Binary-threshold renderer: a dark stroke against lighter paper must
+        # produce AT LEAST two distinct cell styles (the ink cells and the
+        # paper cells). Anything less means the stroke was swallowed by
+        # thresholding and the renderer is producing a uniform slab again,
+        # which would be a regression to the old mush behavior.
+        self.assertGreaterEqual(
+            len(set(span_styles)),
+            2,
+            "a dark stroke against lighter paper must produce spatial variation in output cells (ink cells AND paper cells), not a single uniform slab",
+        )
+
+    def test_focus_preview_sampling_preserves_thin_dark_strokes(self):
+        width = 96
+        height = 96
+        background = (235, 230, 222)
+        ink = (35, 35, 35)
+        buf = bytearray(background * (width * height))
+        for y in range(height):
+            for x in range(47, 49):
+                offset = (y * width + x) * 3
+                buf[offset : offset + 3] = bytes(ink)
+
+        pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(buf), False)
+        pixels = _build_focus_preview_pixels(
+            pix.tobytes("png"),
+            max_width_chars=12,
+            max_height_rows=12,
+        )
+        center_luminances = [
+            ((0.299 * row[len(row) // 2][0]) + (0.587 * row[len(row) // 2][1]) + (0.114 * row[len(row) // 2][2])) / 255.0
+            for row in pixels
+        ]
+
+        self.assertLess(
+            min(center_luminances),
+            0.45,
+            "downsampling should preserve a materially darker center stripe instead of averaging thin ink strokes back into the paper",
+        )
+
+    # ------------------------------------------------------------------
+    # Inline image path (iTerm2 protocol, the primary focus-preview
+    # renderer on image-capable terminals like WezTerm). The half-block
+    # renderer above is the fallback for terminals that don't speak an
+    # image protocol. These tests pin the protocol format and the Rich
+    # Renderable contract without actually rendering to a real terminal.
+    # ------------------------------------------------------------------
+
+    def test_build_iterm2_inline_image_sequence_has_correct_envelope(self):
+        png = b"\x89PNG\r\n\x1a\nfake png bytes for test"
+        seq = _build_iterm2_inline_image_sequence(
+            png, cell_width=40, cell_height=18
+        )
+        # Envelope: ESC ] 1337 ; File = <args> : <base64> BEL
+        self.assertTrue(
+            seq.startswith("\x1b]1337;File="),
+            "must start with the iTerm2 OSC 1337 File= prefix",
+        )
+        self.assertTrue(
+            seq.endswith("\x07"),
+            "must terminate with BEL",
+        )
+        self.assertIn("inline=1", seq, "must request inline rendering")
+        self.assertIn("width=40", seq, "must declare requested cell width")
+        self.assertIn("height=18", seq, "must declare requested cell height")
+        self.assertIn(
+            "preserveAspectRatio=1",
+            seq,
+            "must preserve aspect ratio so images don't stretch",
+        )
+        # The base64 of the PNG payload must actually appear in the
+        # sequence between the ':' and the trailing BEL.
+        import base64 as _b64
+        encoded = _b64.b64encode(png).decode("ascii")
+        self.assertIn(encoded, seq)
+
+    def test_compute_inline_image_cell_dimensions_preserves_aspect(self):
+        # Wide crop: 900x300 px → 3:1 aspect. At cell_height=18 and
+        # terminal cell aspect ~2:1 (tall), the cell_width should be
+        # roughly 18 * 3 * 2 = 108 cells.
+        cw, ch = _compute_inline_image_cell_dimensions(
+            900, 300, max_cell_height=18, max_cell_width=200
+        )
+        self.assertEqual(ch, 18)
+        self.assertGreaterEqual(cw, 90)
+        self.assertLessEqual(cw, 120)
+
+    def test_compute_inline_image_cell_dimensions_clamps_to_max_width(self):
+        # A very wide crop would want more cells than max allows.
+        # Output must clamp to max_cell_width and shrink cell_height
+        # proportionally so the aspect ratio doesn't get distorted.
+        cw, ch = _compute_inline_image_cell_dimensions(
+            4000, 200, max_cell_height=30, max_cell_width=100
+        )
+        self.assertLessEqual(cw, 100)
+        # Aspect preserved: ch should have shrunk from 30 to keep
+        # the ratio roughly 4000:200 = 20:1 (accounting for cell 2:1).
+        self.assertLess(ch, 30)
+
+    def test_compute_inline_image_cell_dimensions_returns_positive_integers(self):
+        cw, ch = _compute_inline_image_cell_dimensions(
+            1, 1, max_cell_height=18, max_cell_width=100
+        )
+        self.assertIsInstance(cw, int)
+        self.assertIsInstance(ch, int)
+        self.assertGreater(cw, 0)
+        self.assertGreater(ch, 0)
+
+    def test_supports_inline_images_recognizes_wezterm(self):
+        self.assertTrue(_supports_inline_images("WezTerm"))
+
+    def test_supports_inline_images_recognizes_iterm2(self):
+        self.assertTrue(_supports_inline_images("iTerm.app"))
+
+    def test_supports_inline_images_rejects_plain_xterm(self):
+        self.assertFalse(_supports_inline_images("xterm"))
+        self.assertFalse(_supports_inline_images("Apple_Terminal"))
+        self.assertFalse(_supports_inline_images(None))
+        self.assertFalse(_supports_inline_images(""))
+
+    def test_focus_preview_inline_image_renderable_declares_cell_height(self):
+        # Rich's layout engine measures a renderable's vertical footprint
+        # from what it yields. The inline image escape sequence occupies
+        # no text rows on its own, so the renderable must yield exactly
+        # `cell_height` blank lines alongside the escape sequence, so
+        # Rich reserves the right amount of vertical space and positions
+        # the next panel below where the image visually lands.
+        from rich.console import Console
+
+        png = b"\x89PNG\r\n\x1a\nfake png"
+        renderable = FocusPreviewInlineImage(
+            png_bytes=png, cell_width=60, cell_height=18
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        with console.capture() as capture:
+            console.print(renderable)
+        captured = capture.get()
+        # Must contain the escape sequence exactly once.
+        self.assertEqual(
+            captured.count("\x1b]1337;File="),
+            1,
+            "inline image must emit exactly one OSC 1337 sequence per render",
+        )
+        # Line count: must produce cell_height rows of vertical footprint
+        # so Rich reserves that much space. Rich's print adds a trailing
+        # newline; count the non-final newlines.
+        lines = captured.splitlines()
+        self.assertGreaterEqual(
+            len(lines),
+            18,
+            "renderable must reserve cell_height rows of vertical space",
+        )
+
+    def test_otsu_threshold_separates_bimodal_distribution(self):
+        # Two clear clusters: 200 samples around 40 (ink), 200 around 220 (paper).
+        luminances = [40.0] * 200 + [220.0] * 200
+        threshold = _otsu_threshold(luminances)
+        self.assertGreater(
+            threshold,
+            40.0,
+            "Otsu threshold must fall above the ink cluster",
+        )
+        self.assertLess(
+            threshold,
+            220.0,
+            "Otsu threshold must fall below the paper cluster",
+        )
+
+    def test_otsu_threshold_handles_uniform_input(self):
+        # Degenerate case: all one value. The function must not crash;
+        # the exact returned threshold is unconstrained since the input
+        # is not bimodal, but it should be a real finite number.
+        threshold = _otsu_threshold([128.0] * 50)
+        self.assertIsInstance(threshold, (int, float))
+        self.assertTrue(math.isfinite(float(threshold)))
+
+    def test_half_block_pipeline_preserves_ink_position(self):
+        # End-to-end invariant: if we render a pure-black horizontal strip
+        # across the TOP half of a pure-white field, the rendered output
+        # must have ink-colored cells in the upper rows and paper-colored
+        # cells in the lower rows. This is the single most important
+        # legibility guarantee — ink position through the pipeline.
+        width = 96
+        height = 96
+        paper = (235, 230, 222)
+        ink = (15, 15, 15)
+        buf = bytearray(paper * (width * height))
+        for y in range(0, height // 2):
+            for x in range(width):
+                offset = (y * width + x) * 3
+                buf[offset : offset + 3] = bytes(ink)
+        pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(buf), False)
+
+        pixels = _build_focus_preview_pixels(
+            pix.tobytes("png"),
+            max_width_chars=12,
+            # 12 terminal rows = 24 sampled rows (half-blocks = 2× vertical)
+            max_height_rows=24,
+        )
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+
+        def _row_avg_luma(row_text) -> float:
+            # Collect all bg colors from all spans in the row; also treat
+            # fg (top half-pixel) as contributing to the visible luminance
+            # of that terminal row. For a row entirely above the ink/paper
+            # boundary, both fg and bg should be ink-dark.
+            lumas: list[float] = []
+            for span in row_text.spans:
+                if not isinstance(span.style, str) or " on " not in span.style:
+                    continue
+                fg, bg = span.style.split(" on ")
+                for hex_color in (fg, bg):
+                    hex_color = hex_color.lstrip("#")
+                    if len(hex_color) != 6:
+                        continue
+                    r = int(hex_color[0:2], 16)
+                    g = int(hex_color[2:4], 16)
+                    b = int(hex_color[4:6], 16)
+                    lumas.append(0.299 * r + 0.587 * g + 0.114 * b)
+            if not lumas:
+                return float("nan")
+            return sum(lumas) / len(lumas)
+
+        rows = list(renderable.renderables)
+        self.assertGreaterEqual(
+            len(rows),
+            6,
+            "pipeline should emit multiple terminal rows for a 24-sample-row input",
+        )
+        top_luma = _row_avg_luma(rows[1])  # skip row 0 to avoid boundary
+        bottom_luma = _row_avg_luma(rows[-2])
+        self.assertLess(
+            top_luma,
+            bottom_luma - 80,
+            "ink strip at the top of the source must render as distinctly darker "
+            "terminal rows than the paper at the bottom",
+        )
+
+    def test_scaled_preview_size_respects_terminal_row_budget_in_glyph_mode(self):
+        width, height = _scaled_preview_size(
+            475,
+            218,
+            max_width_chars=72,
+            max_height_rows=18,
+        )
+
+        self.assertLessEqual(
+            height,
+            18,
+            "glyph-mode preview sizing should not retain the old half-block *2 row budget and overflow vertically",
+        )
+        self.assertLessEqual(
+            width,
+            72,
+            "scaled preview width should still honor the horizontal character budget",
+        )
+
+    def test_pending_focus_preview_rerender_is_quantized_instead_of_rebuilding_every_tick(self):
+        display = self._make_display()
+        display._inline_images_supported = False
+        display.on_focus_preview(
+            self._make_png(width=64, height=36),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+        display.on_header("[item 2/12] 27-blue-2023/fr-3 (balanced_equation, 4.0 pts)")
+
+        with mock.patch(
+            "scripts.narrator_reader._render_focus_preview_pixels",
+            return_value=Group(Text("preview")),
+        ) as render_mock:
+            with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1.01):
+                display.render()
+            with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1.05):
+                display.render()
+            with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1.15):
+                display.render()
+
+        self.assertEqual(
+            render_mock.call_count,
+            2,
+            "pending preview frames should be cached within a transition bucket instead of rebuilding on every 24 FPS tick",
+        )
     def test_lines_render_newest_first_beneath_topic_within_each_header(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))

@@ -38,9 +38,10 @@ from pathlib import Path
 from typing import Deque
 
 from rich.align import Align
-from rich.console import Console, Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
 from rich.panel import Panel
+from rich.segment import Segment
 from rich.text import Text
 
 # scripts/ is not on sys.path by default when narrator_reader.py is
@@ -587,7 +588,563 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     idle and active motion feel consistent. Only boundary moments that would
     feel laggy at 12 FPS get an immediate forced refresh.
     """
-    return msg_type in {"session_meta", "wrap_up", "end"}
+    return msg_type in {"session_meta", "focus_preview", "wrap_up", "end"}
+
+
+def _focus_preview_budget(
+    term_width: int | None,
+    *,
+    source_width_px: int | None = None,
+    source_height_px: int | None = None,
+) -> tuple[int, int]:
+    """Return a terminal-aware preview raster budget.
+
+    The preview should feel like a real companion surface, not a
+    postage stamp. Use most of the terminal width while leaving enough
+    margin that the panel still breathes, but let high-detail crops
+    earn a denser raster than tiny crops on the same terminal.
+    """
+    if term_width is None or term_width <= 0:
+        return _FOCUS_PREVIEW_MIN_WIDTH_CHARS, _FOCUS_PREVIEW_MIN_HEIGHT_ROWS
+    available_width = min(
+        _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
+        int(round((term_width - 8) * _FOCUS_PREVIEW_COMPANION_SCALE)),
+    )
+    detail_factor = 1.0
+    if (
+        source_width_px is not None
+        and source_height_px is not None
+        and source_width_px > 0
+        and source_height_px > 0
+    ):
+        source_area = source_width_px * source_height_px
+        detail_factor = _clamp(
+            math.sqrt(source_area / float(900 * 500)),
+            0.35,
+            1.0,
+        )
+    width_chars = max(
+        _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
+        int(
+            round(
+                _FOCUS_PREVIEW_MIN_WIDTH_CHARS
+                + ((available_width - _FOCUS_PREVIEW_MIN_WIDTH_CHARS) * detail_factor)
+            )
+        ),
+    )
+    if (
+        source_width_px is not None
+        and source_height_px is not None
+        and source_width_px > 0
+        and source_height_px > 0
+    ):
+        source_aspect = source_height_px / source_width_px
+        height_target = int(round(width_chars * source_aspect * 0.46))
+    else:
+        height_target = int(round(width_chars * 0.24))
+    height_rows = max(
+        _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
+        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, height_target),
+    )
+    return width_chars, height_rows
+
+
+# ---------------------------------------------------------------------
+# Inline image rendering path (iTerm2 OSC 1337 protocol).
+#
+# The half-block renderer below is the fallback for terminals that
+# can't do image escapes. On WezTerm and iTerm2, we take the much
+# simpler and strictly-more-legible path: hand the focus preview PNG
+# directly to the terminal via the iTerm2 inline image escape sequence
+# and let the terminal rasterize it into screen pixels at the requested
+# cell span.
+#
+# Integration with Rich: the inline image is wrapped in a custom Rich
+# Renderable (`FocusPreviewInlineImage`) that yields the escape
+# sequence plus enough blank rows to reserve the image's visual
+# vertical footprint. Rich thinks it's rendering N rows of padding
+# and positions the next panel below where the terminal has drawn
+# the image. No Live-region splitting needed.
+# ---------------------------------------------------------------------
+
+#: Cell height the inline image path targets. Matches the half-block
+#: renderer's typical panel height so the layout doesn't shift when
+#: the path switches.
+_INLINE_IMAGE_CELL_HEIGHT = 18
+
+#: Max cell width the inline image path will request. Companion-scale
+#: similar to the half-block renderer but a bit more generous because
+#: real images tolerate larger panels aesthetically.
+_INLINE_IMAGE_MAX_CELL_WIDTH = 140
+
+#: Terminal cell aspect ratio (height / width) for sizing math. Most
+#: fixed-width terminal fonts render cells roughly twice as tall as
+#: wide, so a 1:1 source image wants roughly half as many cells in
+#: height as in width.
+_TERMINAL_CELL_ASPECT = 2.0
+
+
+def _build_iterm2_inline_image_sequence(
+    png_bytes: bytes,
+    *,
+    cell_width: int,
+    cell_height: int,
+) -> str:
+    """Return an iTerm2 OSC 1337 File= escape sequence that embeds the
+    given PNG at the requested cell dimensions.
+
+    Format::
+
+        ESC ] 1337 ; File = inline=1;width=<W>;height=<H>;preserveAspectRatio=1 : <base64> BEL
+
+    WezTerm, iTerm2, and a few other terminals render this as a real
+    raster image at the requested footprint. Unsupported terminals
+    will either show the sequence as garbled text or (more commonly)
+    swallow it silently. Capability detection via
+    `_supports_inline_images` gates whether to emit this at all.
+    """
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    args = (
+        f"inline=1;width={cell_width};height={cell_height};preserveAspectRatio=1"
+    )
+    return f"\x1b]1337;File={args}:{b64}\x07"
+
+
+def _compute_inline_image_cell_dimensions(
+    crop_width_px: int,
+    crop_height_px: int,
+    *,
+    max_cell_height: int = _INLINE_IMAGE_CELL_HEIGHT,
+    max_cell_width: int = _INLINE_IMAGE_MAX_CELL_WIDTH,
+) -> tuple[int, int]:
+    """Compute the (cell_width, cell_height) footprint for an inline
+    image given its source pixel dimensions.
+
+    Strategy: pin the cell height to ``max_cell_height`` (so the
+    preview occupies a consistent vertical slot regardless of crop
+    aspect ratio — history below never jumps around) and compute
+    cell width from the crop's aspect ratio, accounting for terminal
+    cells being roughly ``_TERMINAL_CELL_ASPECT`` times taller than
+    wide. If the resulting cell width exceeds ``max_cell_width``,
+    clamp it and shrink cell height proportionally to preserve
+    aspect. Returns positive integers.
+    """
+    if crop_width_px <= 0 or crop_height_px <= 0:
+        return (max(1, max_cell_width), max(1, max_cell_height))
+    crop_aspect = crop_width_px / crop_height_px
+    cell_height = max(1, max_cell_height)
+    # cell_width such that visual aspect matches:
+    #   (cell_width * 1) / (cell_height * _TERMINAL_CELL_ASPECT) == crop_aspect
+    cell_width = int(round(cell_height * crop_aspect * _TERMINAL_CELL_ASPECT))
+    if cell_width > max_cell_width:
+        # Preserve aspect by shrinking both dimensions so cell_width
+        # lands exactly at max_cell_width.
+        shrink = max_cell_width / cell_width
+        cell_width = max_cell_width
+        cell_height = max(1, int(round(cell_height * shrink)))
+    cell_width = max(1, cell_width)
+    return (cell_width, cell_height)
+
+
+def _supports_inline_images(term_program: str | None) -> bool:
+    """Return True if the terminal identified by ``$TERM_PROGRAM``
+    supports the iTerm2 inline image protocol.
+
+    Known-good: WezTerm, iTerm.app (iTerm2). Everything else — xterm,
+    Apple_Terminal, tmux, unset — is treated as unsupported and falls
+    through to the half-block fallback renderer.
+    """
+    if not term_program:
+        return False
+    return term_program in {"WezTerm", "iTerm.app"}
+
+
+class FocusPreviewInlineImage:
+    """Rich Renderable that emits an iTerm2 inline image and reserves
+    exactly ``cell_height`` rows of vertical space.
+
+    Rich's layout engine positions subsequent renderables below this
+    object based on how many rows it yields. The iTerm2 escape
+    sequence itself occupies no text rows from Rich's perspective,
+    so we yield the escape sequence on the first row and pad the
+    remaining rows with blank segments. The terminal (which does
+    understand the escape sequence) paints the image into the
+    vertical band that Rich has reserved for padding, and everything
+    lines up visually.
+    """
+
+    def __init__(
+        self,
+        *,
+        png_bytes: bytes,
+        cell_width: int,
+        cell_height: int,
+    ) -> None:
+        self._png_bytes = png_bytes
+        self._cell_width = cell_width
+        self._cell_height = cell_height
+        self._sequence = _build_iterm2_inline_image_sequence(
+            png_bytes, cell_width=cell_width, cell_height=cell_height
+        )
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        # First row carries the escape sequence. The terminal will
+        # render the image starting at this cursor position and
+        # consume approximately `cell_height` rows of vertical space
+        # on-screen. Rich doesn't know the sequence does anything
+        # visual; it treats the Segment as a zero-width text payload.
+        yield Segment(self._sequence)
+        yield Segment.line()
+        # Pad with blank rows so Rich reserves the rest of the
+        # vertical footprint. Each blank row is a single space
+        # segment followed by a line break so Rich's row accounting
+        # counts it as a full row.
+        for _ in range(self._cell_height - 1):
+            yield Segment(" ")
+            yield Segment.line()
+
+
+def _otsu_threshold(luminances) -> float:
+    """Classic Otsu's method: pick the luminance cut that maximizes
+    between-class variance across a 256-bin histogram.
+
+    Returns a float threshold in [0, 255]. Degenerate inputs (empty,
+    uniform) return a safe midpoint rather than raising — the renderer
+    treats such crops as "no ink" and the exact cut doesn't matter.
+    """
+    histogram = [0] * 256
+    total = 0
+    for value in luminances:
+        bucket = int(value)
+        if bucket < 0:
+            bucket = 0
+        elif bucket > 255:
+            bucket = 255
+        histogram[bucket] += 1
+        total += 1
+    if total == 0:
+        return 127.5
+
+    sum_total = 0.0
+    for i in range(256):
+        sum_total += i * histogram[i]
+
+    sum_bg = 0.0
+    weight_bg = 0
+    best_variance = -1.0
+    best_threshold = 127.5
+    for i in range(256):
+        weight_bg += histogram[i]
+        if weight_bg == 0:
+            continue
+        weight_fg = total - weight_bg
+        if weight_fg == 0:
+            break
+        sum_bg += i * histogram[i]
+        mean_bg = sum_bg / weight_bg
+        mean_fg = (sum_total - sum_bg) / weight_fg
+        variance = weight_bg * weight_fg * (mean_bg - mean_fg) ** 2
+        if variance > best_variance:
+            best_variance = variance
+            best_threshold = float(i)
+    # Return the upper edge of the chosen histogram bin. The histogram
+    # is integer-binned (`int(luma)`), so any float luma that fell into
+    # bin `i` is in [i, i+1). Returning `i + 1.0` means strict `<` at
+    # the caller correctly classifies every member of that bin as
+    # background (the darker / ink class).
+    return best_threshold + 1.0
+
+
+def _build_focus_preview_pixels(
+    png_bytes: bytes,
+    *,
+    max_width_chars: int,
+    max_height_rows: int,
+) -> list[list[tuple[int, int, int]]]:
+    """Sample a source crop into a grid of average-RGB pixels.
+
+    The returned grid has exactly ``target_height`` rows and
+    ``target_width`` cols, where those dimensions are ``_scaled_preview_size``
+    applied to the source. The caller controls whether this is
+    "one row per terminal row" or "two rows per terminal row" (for
+    half-blocks) by passing the appropriate ``max_height_rows``.
+
+    No tone mapping. No filmic. No paper/ink lerp. The downstream
+    renderer is responsible for turning these raw samples into
+    whatever output surface is appropriate.
+    """
+    pix = fitz.Pixmap(png_bytes)
+    target_width, target_height = _scaled_preview_size(
+        pix.width,
+        pix.height,
+        max_width_chars=max_width_chars,
+        max_height_rows=max_height_rows,
+    )
+    pixels: list[list[tuple[int, int, int]]] = []
+    for y in range(target_height):
+        row: list[tuple[int, int, int]] = []
+        for x in range(target_width):
+            row.append(_sample_preview_rgb(pix, x, y, target_width, target_height))
+        pixels.append(row)
+    return pixels
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _pixel_luma(rgb: tuple[int, int, int]) -> float:
+    return (0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2])
+
+
+def _render_focus_preview_pixels(
+    pixels: list[list[tuple[int, int, int]]],
+    *,
+    now: float | None = None,
+    pending: bool = False,
+) -> Group:
+    """Render a sampled pixel grid as a Rich Group.
+
+    ``pixels`` is expected to be sampled at 2× vertical density relative
+    to the terminal row budget — each pair of source rows (2y, 2y+1)
+    becomes one terminal row. The steady-state renderer uses that pair
+    as the top and bottom halves of a half-block (▀). The pending
+    (transition) renderer averages each pair back down to a single
+    per-cell RGB and then runs its existing glyph-overlay animation.
+    """
+    now = time.monotonic() if now is None else now
+    if pending:
+        return _render_focus_preview_pending(pixels, now=now)
+    return _render_focus_preview_steady(pixels)
+
+
+def _render_focus_preview_steady(
+    pixels: list[list[tuple[int, int, int]]],
+) -> Group:
+    """Legibility-first steady-state renderer.
+
+    Binary Otsu threshold across all sampled luminances, half-block
+    cells (one terminal cell = one top half-pixel + one bottom
+    half-pixel), hard ink/paper palette. No tone mapping, no lerp,
+    no gradient. Ugly is acceptable; illegible is not.
+    """
+    if not pixels or not pixels[0]:
+        return Group()
+
+    source_height = len(pixels)
+    source_width = len(pixels[0])
+
+    # Collect all luminances for Otsu. Use ink and paper colors
+    # that are actually visually distinct from the panel background,
+    # so thresholded cells read as "page" and not as "void".
+    luminances = [_pixel_luma(rgb) for row in pixels for rgb in row]
+    threshold = _otsu_threshold(luminances)
+
+    # If the crop is effectively single-tone (variance too low for Otsu
+    # to find a meaningful cut), fall back to marking everything as paper.
+    # This keeps blank regions rendering as page instead of as garbled noise.
+    lum_span = max(luminances) - min(luminances) if luminances else 0.0
+    degenerate = lum_span < 12.0
+
+    ink_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_INK_RGB)
+    paper_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_PAPER_RGB)
+
+    def _color_for(rgb: tuple[int, int, int]) -> str:
+        if degenerate:
+            return paper_hex
+        return ink_hex if _pixel_luma(rgb) < threshold else paper_hex
+
+    rows: list[Text] = []
+    # Walk source rows in pairs. If the source has an odd number of rows,
+    # the dangling final row pairs with itself (top == bottom).
+    y = 0
+    while y < source_height:
+        top_row = pixels[y]
+        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
+        text = Text(no_wrap=True, overflow="ignore")
+        for col in range(source_width):
+            top_color = _color_for(top_row[col])
+            bottom_color = (
+                _color_for(bottom_row[col])
+                if col < len(bottom_row)
+                else top_color
+            )
+            # ▀ = U+2580 UPPER HALF BLOCK. Foreground is the top half,
+            # background is the bottom half. Exactly what we want for a
+            # binary-threshold image surface.
+            text.append("\u2580", style=f"{top_color} on {bottom_color}")
+        rows.append(text)
+        y += 2
+    return Group(*rows)
+
+
+def _render_focus_preview_pending(
+    pixels: list[list[tuple[int, int, int]]],
+    *,
+    now: float,
+) -> Group:
+    """Transition-layer renderer (unchanged animation, now fed from a
+    2×-vertical pixel grid by averaging row pairs back down to 1×)."""
+    if not pixels or not pixels[0]:
+        return Group()
+
+    # Average pairs of sampled rows back down to one row per terminal
+    # row, so the existing glyph-overlay animation keeps working
+    # against the density it was tuned for.
+    source_height = len(pixels)
+    source_width = len(pixels[0])
+    collapsed: list[list[tuple[int, int, int]]] = []
+    y = 0
+    while y < source_height:
+        top_row = pixels[y]
+        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
+        merged: list[tuple[int, int, int]] = []
+        for col in range(source_width):
+            top_rgb = top_row[col]
+            bottom_rgb = bottom_row[col] if col < len(bottom_row) else top_rgb
+            merged.append(
+                (
+                    (top_rgb[0] + bottom_rgb[0]) // 2,
+                    (top_rgb[1] + bottom_rgb[1]) // 2,
+                    (top_rgb[2] + bottom_rgb[2]) // 2,
+                )
+            )
+        collapsed.append(merged)
+        y += 2
+
+    rows: list[Text] = []
+    for char_row, pixel_row in enumerate(collapsed):
+        row = Text(no_wrap=True, overflow="ignore")
+        for col, rgb in enumerate(pixel_row):
+            avg_rgb = rgb
+            flow = 0.5 + (
+                0.5
+                * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
+            )
+            pulse = 0.5 + (
+                0.5
+                * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
+            )
+            retention = 0.54 + (0.18 * flow)
+            toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, avg_rgb, retention)
+            avg_luma = (
+                (0.299 * toned_rgb[0])
+                + (0.587 * toned_rgb[1])
+                + (0.114 * toned_rgb[2])
+            )
+            glyph_gate = 0.38 + (0.20 * pulse)
+            glyph_drive = (0.58 * flow) + (0.25 * pulse)
+            if glyph_drive > glyph_gate:
+                char_phase = (0.62 * flow) + (0.38 * (avg_luma / 255.0))
+                char_index = min(
+                    len(_FOCUS_PREVIEW_OVERLAY_CHARS) - 1,
+                    int(char_phase * len(_FOCUS_PREVIEW_OVERLAY_CHARS)),
+                )
+                palette_index = min(
+                    len(_FOCUS_PREVIEW_OVERLAY_RGBS) - 1,
+                    int((avg_luma / 255.0) * len(_FOCUS_PREVIEW_OVERLAY_RGBS)),
+                )
+                fg_rgb = _interp_rgb(
+                    _FOCUS_PREVIEW_OVERLAY_RGBS[palette_index],
+                    _FOCUS_PREVIEW_PAPER_RGB,
+                    0.16 + (0.18 * flow),
+                )
+                bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
+                row.append(
+                    _FOCUS_PREVIEW_OVERLAY_CHARS[char_index],
+                    style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
+                )
+                continue
+            # Non-glyph cells during the transition: render as a faded
+            # block color. The transition animation no longer tries to
+            # produce a legible steady-state image underneath itself.
+            bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
+            row.append(
+                " ",
+                style=f"{_rgb_to_hex(bg_rgb)} on {_rgb_to_hex(bg_rgb)}",
+            )
+        rows.append(row)
+    return Group(*rows)
+
+
+def _scaled_preview_size(
+    source_width: int,
+    source_height: int,
+    *,
+    max_width_chars: int,
+    max_height_rows: int,
+) -> tuple[int, int]:
+    scale = min(
+        max_width_chars / max(1, source_width),
+        max_height_rows / max(1, source_height),
+        1.0,
+    )
+    width = max(1, int(round(source_width * scale)))
+    height = max(1, int(round(source_height * scale)))
+    return width, height
+
+
+def _sample_preview_rgb(
+    pix: fitz.Pixmap,
+    x: int,
+    y: int,
+    target_width: int,
+    target_height: int,
+) -> tuple[int, int, int]:
+    src_x0 = max(0, int((x / target_width) * pix.width))
+    src_x1 = min(
+        pix.width,
+        max(src_x0 + 1, int(math.ceil(((x + 1) / target_width) * pix.width))),
+    )
+    src_y0 = max(0, int((y / target_height) * pix.height))
+    src_y1 = min(
+        pix.height,
+        max(src_y0 + 1, int(math.ceil(((y + 1) / target_height) * pix.height))),
+    )
+    samples = pix.samples
+    red = 0
+    green = 0
+    blue = 0
+    count = 0
+    darkest_luma = float("inf")
+    darkest_rgb = _FOCUS_PREVIEW_BG_RGB
+    for src_y in range(src_y0, src_y1):
+        row_offset = src_y * pix.width * pix.n
+        for src_x in range(src_x0, src_x1):
+            offset = row_offset + (src_x * pix.n)
+            sample_red = samples[offset]
+            sample_green = samples[offset + 1]
+            sample_blue = samples[offset + 2]
+            red += sample_red
+            green += sample_green
+            blue += sample_blue
+            count += 1
+            sample_luma = (
+                (0.299 * sample_red)
+                + (0.587 * sample_green)
+                + (0.114 * sample_blue)
+            )
+            if sample_luma < darkest_luma:
+                darkest_luma = sample_luma
+                darkest_rgb = (sample_red, sample_green, sample_blue)
+    if count == 0:
+        return _FOCUS_PREVIEW_BG_RGB
+    avg_rgb = (
+        int(round(red / count)),
+        int(round(green / count)),
+        int(round(blue / count)),
+    )
+    avg_luma = (
+        (0.299 * avg_rgb[0])
+        + (0.587 * avg_rgb[1])
+        + (0.114 * avg_rgb[2])
+    )
+    ink_weight = _clamp((avg_luma - darkest_luma - 18.0) / 120.0, 0.0, 0.58)
+    return _interp_rgb(avg_rgb, darkest_rgb, ink_weight)
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -1127,6 +1684,27 @@ class PaintDryDisplay:
         # and working on the wrap-up rather than hung.
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
+        self.focus_preview_png: bytes | None = None
+        self.focus_preview_pixels: list[list[tuple[int, int, int]]] | None = None
+        self.focus_preview_renderable: Group | None = None
+        self.focus_preview_label: str = ""
+        self.focus_preview_source: str = ""
+        self.focus_preview_pending: bool = False
+        self.focus_preview_pending_started: float | None = None
+        self._focus_preview_pending_bucket: int | None = None
+        self._focus_preview_pending_renderable: Group | None = None
+        # Inline-image renderer state. When the terminal supports
+        # iTerm2 inline images (WezTerm, iTerm2), we skip the half-
+        # block renderer and let the terminal rasterize the crop PNG
+        # directly — strictly better legibility at no grain cost.
+        # Capability detection runs once at construction from
+        # $TERM_PROGRAM. The cached renderable carries the escape
+        # sequence + padding so Rich's layout reserves the right
+        # vertical space.
+        self.focus_preview_inline_renderable: FocusPreviewInlineImage | None = None
+        self._inline_images_supported: bool = _supports_inline_images(
+            os.environ.get("TERM_PROGRAM")
+        )
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
@@ -1786,6 +2364,68 @@ class PaintDryDisplay:
             height=_TOP_PANEL_CONTENT_LINES + 2,
         )
 
+        focus_preview_panel = None
+        have_inline = self.focus_preview_inline_renderable is not None
+        have_fallback = self.focus_preview_renderable is not None
+        if have_inline or have_fallback:
+            preview_title = "[grey50]focus preview"
+            if self.focus_preview_pending:
+                preview_title += " · pending"
+            if self.focus_preview_label:
+                preview_title += f" · {self.focus_preview_label}"
+            preview_title += "[/grey50]"
+            if have_inline:
+                # Inline image path: the terminal rasterizes the crop
+                # PNG directly. The custom Renderable reserves the
+                # exact vertical footprint Rich needs so the next
+                # panel lands below where the terminal paints the
+                # image. During pending (transition) state, fall
+                # through to the half-block animation since the
+                # inline path is static; the fallback may not exist
+                # at this point if the inline path is active, so
+                # check before using.
+                if self.focus_preview_pending and have_fallback and self.focus_preview_pixels is not None:
+                    pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                    if (
+                        self._focus_preview_pending_renderable is None
+                        or self._focus_preview_pending_bucket != pending_bucket
+                    ):
+                        self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                            self.focus_preview_pixels,
+                            now=now,
+                            pending=True,
+                        )
+                        self._focus_preview_pending_bucket = pending_bucket
+                    preview_renderable = self._focus_preview_pending_renderable
+                else:
+                    preview_renderable = self.focus_preview_inline_renderable
+            else:
+                # Half-block fallback path (no inline support or
+                # inline build failed).
+                if self.focus_preview_pending and self.focus_preview_pixels is not None:
+                    pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                    if (
+                        self._focus_preview_pending_renderable is None
+                        or self._focus_preview_pending_bucket != pending_bucket
+                    ):
+                        self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                            self.focus_preview_pixels,
+                            now=now,
+                            pending=True,
+                        )
+                        self._focus_preview_pending_bucket = pending_bucket
+                    preview_renderable = self._focus_preview_pending_renderable
+                else:
+                    preview_renderable = self.focus_preview_renderable
+            focus_preview_panel = Panel(
+                Align.center(
+                    preview_renderable
+                ),
+                border_style="#3d4458",
+                padding=(0, 1),
+                title=preview_title,
+                title_align="left",
+            )
         # History panel — items grouped by header. Each item is a
         # group: header at the top, decision/topic directly below it,
         # then narrator lines newest-first beneath that. Groups are
@@ -2073,6 +2713,25 @@ class PaintDryDisplay:
         self.frozen_line = ""
         self._frozen_line_parity = self._line_parity
         self._freeze_started_at = None
+        if (
+            self.focus_preview_renderable is not None
+            or self.focus_preview_inline_renderable is not None
+        ):
+            self.focus_preview_pending = True
+            self.focus_preview_pending_started = header_now
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
+        else:
+            self.focus_preview_png = None
+            self.focus_preview_pixels = None
+            self.focus_preview_renderable = None
+            self.focus_preview_inline_renderable = None
+            self.focus_preview_label = ""
+            self.focus_preview_source = ""
+            self.focus_preview_pending = False
+            self.focus_preview_pending_started = None
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
         m = _HEADER_INDEX_RE.match(text)
         if m:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
@@ -2148,6 +2807,71 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
+    def on_focus_preview(
+        self,
+        png_bytes: bytes,
+        *,
+        label: str = "",
+        source: str = "",
+    ) -> None:
+        term_width = None
+        if self._console is not None:
+            try:
+                term_width = self._console.size.width
+            except Exception:
+                term_width = None
+        self.focus_preview_png = png_bytes
+        self.focus_preview_label = label
+        self.focus_preview_source = source
+        self.focus_preview_pending = False
+        self.focus_preview_pending_started = None
+        self._focus_preview_pending_bucket = None
+        self._focus_preview_pending_renderable = None
+
+        # Inline image path: primary on WezTerm/iTerm2. Bypasses the
+        # half-block renderer entirely and hands the full-resolution
+        # crop PNG to the terminal for pixel-for-pixel rasterization.
+        if self._inline_images_supported:
+            try:
+                pix = fitz.Pixmap(png_bytes)
+                cell_width, cell_height = _compute_inline_image_cell_dimensions(
+                    pix.width,
+                    pix.height,
+                    max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                    max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
+                )
+                self.focus_preview_inline_renderable = FocusPreviewInlineImage(
+                    png_bytes=png_bytes,
+                    cell_width=cell_width,
+                    cell_height=cell_height,
+                )
+                # No need to build the half-block fallback too — the
+                # inline path owns the panel when it's available.
+                self.focus_preview_pixels = None
+                self.focus_preview_renderable = None
+                return
+            except Exception:
+                # If building the inline renderable fails for any
+                # reason (corrupt PNG, fitz quirk), fall through to
+                # the half-block fallback so the operator still
+                # gets *something* in the panel.
+                self.focus_preview_inline_renderable = None
+
+        # Half-block fallback path: for terminals that don't support
+        # inline images, or when the inline path fails to build.
+        # Sample at 2× vertical density so the steady-state renderer
+        # can pack a top/bottom half-pixel pair into each terminal
+        # row via half-block (▀) cells.
+        budget_width, budget_height = _focus_preview_budget(term_width)
+        self.focus_preview_pixels = _build_focus_preview_pixels(
+            png_bytes,
+            max_width_chars=budget_width,
+            max_height_rows=budget_height * 2,
+        )
+        self.focus_preview_renderable = _render_focus_preview_pixels(
+            self.focus_preview_pixels
+        )
+        self.focus_preview_inline_renderable = None
     def on_topic(
         self,
         text: str,
