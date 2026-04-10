@@ -2,6 +2,16 @@
 
 These repo-specific instructions supplement the global Codex defaults.
 
+## Integration protocol
+
+- If the user asks you to "manage the integration", "make an integration branch",
+  "pull everything in", or otherwise make a union smoke surface current, read
+  [docs/integration.md](/private/tmp/auto-grader-solipsism-integration-break-0410/docs/integration.md)
+  before acting.
+- Do not declare an integration lane current from memory, from `origin/*` alone,
+  or from one sibling lane at a time. Follow the receipt-driven protocol in that
+  doc and report the result explicitly.
+
 ## Bonsai narrator server
 
 - On `MacBook-Pro-2.local`, the canonical local Bonsai narrator surface is a
