@@ -77,8 +77,6 @@ def _ditto_box_for(
     if current_index <= 0:
         return None
     return session_accepted.get(current_index - 1)
-
-
 def _load_exam_question_sequence(exam_id: str) -> list[str]:
     """Return the canonical question_id sequence for an exam from the
     ground-truth YAML. Order is preserved as it appears in the file."""

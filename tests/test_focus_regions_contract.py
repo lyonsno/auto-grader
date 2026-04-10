@@ -191,7 +191,6 @@ class FocusRegionsRoundTripContract(unittest.TestCase):
         )
         result = annotator._ditto_box_for(3, {0: box_a, 2: box_c})
         self.assertEqual(result, box_c)
-
     def test_migrated_default_file_loads(self):
         # The on-disk default file must parse cleanly and produce the
         # expected number of entries. This is a minimal reality check
