@@ -916,6 +916,12 @@ class NarratorReaderContract(unittest.TestCase):
             2,
             "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
         )
+        on_target_top_strong = tally_value_top.spans[1].style
+        self.assertEqual(
+            tally_value_top.spans[2].style,
+            on_target_top_strong,
+            "top-row horizontal bars should stay on the strong stroke tier so the numerals read chunkier",
+        )
 
     def test_scorebug_big_value_rows_render_three_line_scoreboard_digits(self):
         top, middle, bottom = _scorebug_big_value_rows("2.0/9.0")
