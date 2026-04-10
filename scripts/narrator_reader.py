@@ -758,10 +758,9 @@ def _scaled_preview_size(
     max_width_chars: int,
     max_height_rows: int,
 ) -> tuple[int, int]:
-    max_pixel_height = max_height_rows * 2
     scale = min(
         max_width_chars / max(1, source_width),
-        max_pixel_height / max(1, source_height),
+        max_height_rows / max(1, source_height),
         1.0,
     )
     width = max(1, int(round(source_width * scale)))

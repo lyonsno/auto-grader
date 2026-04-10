@@ -14,6 +14,7 @@ from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
     _focus_preview_budget,
     _render_focus_preview_pixels,
+    _scaled_preview_size,
     _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
     PaintDryDisplay,
@@ -485,6 +486,25 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertTrue(
             any(ch in plain for ch in ".,:;-=+*#%@"),
             "steady-state previews should use a denser terminal glyph field instead of only block cells",
+        )
+
+    def test_scaled_preview_size_respects_terminal_row_budget_in_glyph_mode(self):
+        width, height = _scaled_preview_size(
+            475,
+            218,
+            max_width_chars=72,
+            max_height_rows=18,
+        )
+
+        self.assertLessEqual(
+            height,
+            18,
+            "glyph-mode preview sizing should not retain the old half-block *2 row budget and overflow vertically",
+        )
+        self.assertLessEqual(
+            width,
+            72,
+            "scaled preview width should still honor the horizontal character budget",
         )
 
     def test_pending_focus_preview_rerender_is_quantized_instead_of_rebuilding_every_tick(self):
