@@ -539,7 +539,11 @@ def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
 
 
 def _append_header_title(text: Text, title: str, phase: float) -> None:
+<<<<<<< HEAD
     """Keep the scene-setting title white against the colored telemetry."""
+=======
+    """Keep the scene-setter title flat white so the color lives in the field below."""
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
     del phase
     text.append(title, style="bold bright_white")
 
@@ -1584,11 +1588,12 @@ class PaintDryDisplay:
         *,
         label_style: str,
         value_style: str,
+        separator_style: str = "dim",
         label_pad: int = 1,
         value_pad: int = 1,
     ) -> None:
         if row.plain:
-            row.append("  ", style="dim")
+            row.append("  ", style=separator_style)
         row.append(f"{' ' * label_pad}{label}{' ' * label_pad}", style=label_style)
         row.append(f"{' ' * value_pad}{value}{' ' * value_pad}", style=value_style)
 
@@ -1604,14 +1609,15 @@ class PaintDryDisplay:
         label_style: str,
         value_row_styles: tuple[str, str, str],
         value_mid_row_styles: tuple[str, str, str],
+        separator_styles: tuple[str, str, str, str] = ("dim", "dim", "dim", "dim"),
         label_pad: int = 3,
         value_pad: int = 1,
     ) -> None:
         if label_row.plain:
-            label_row.append("  ", style="dim")
-            value_top_row.append("  ", style="dim")
-            value_middle_row.append("  ", style="dim")
-            value_bottom_row.append("  ", style="dim")
+            label_row.append("  ", style=separator_styles[0])
+            value_top_row.append("  ", style=separator_styles[1])
+            value_middle_row.append("  ", style=separator_styles[2])
+            value_bottom_row.append("  ", style=separator_styles[3])
         top, middle, bottom = _scorebug_big_value_rows(value)
         cell_width = len(f"{' ' * value_pad}{top}{' ' * value_pad}")
         label_lead = ""
@@ -1955,13 +1961,29 @@ class PaintDryDisplay:
 
         scorebug_panel = None
         if self.current_model or self.current_item_bug or self.current_set_label:
+            meta_bg = "#383530"
+            meta_separator_style = "bold #585149 on #383530"
+            tally_label_bg = "#3a3732"
+            tally_label_separator_style = "bold #5b554d on #3a3732"
+            tally_top_bg = "#35322f"
+            tally_mid_bg = "#2f2d2a"
+            tally_bottom_bg = "#2a2826"
+            tally_top_separator_style = "bold #555048 on #35322f"
+            tally_mid_separator_style = "bold #4d4841 on #2f2d2a"
+            tally_bottom_separator_style = "bold #46413b on #2a2826"
             scorebug_top = Text()
             self._append_scorebug_cell(
                 scorebug_top,
                 "CURRENT MODEL",
                 self.current_model or "—",
+<<<<<<< HEAD
                 label_style="bold #e7dfd3 on #403a3a",
                 value_style="bold #d7cec5 on #2e2929",
+=======
+                label_style=f"bold #bab2a6 on {meta_bg}",
+                value_style=f"bold #ddd8d0 on {meta_bg}",
+                separator_style=meta_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
             )
             if self.current_set_label:
                 set_value = self.current_set_label
@@ -1969,16 +1991,28 @@ class PaintDryDisplay:
                     scorebug_top,
                     "SET",
                     set_value,
+<<<<<<< HEAD
                     label_style="bold #e9dfd0 on #4d3f2c",
                     value_style="bold #d8cdbc on #372d20",
+=======
+                    label_style=f"bold #bab2a6 on {meta_bg}",
+                    value_style=f"bold #d6cfbf on {meta_bg}",
+                    separator_style=meta_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                 )
             if self.current_item_bug:
                 self._append_scorebug_cell(
                     scorebug_top,
                     "ITEM",
                     self.current_item_bug,
+<<<<<<< HEAD
                     label_style="bold #ead7cf on #5a352f",
                     value_style="bold #d8c0ba on #402621",
+=======
+                    label_style=f"bold #bab2a6 on {meta_bg}",
+                    value_style=f"bold #e5d6c5 on {meta_bg}",
+                    separator_style=meta_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                 )
 
             scorebug_gap = Text(" ", style="grey35")
@@ -1998,6 +2032,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_on_target_points)}"
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
+<<<<<<< HEAD
                     label_style="bold #e6ddd4 on #44525c",
                     value_row_styles=(
                         "bold #ddd4cb on #39444d",
@@ -2008,6 +2043,24 @@ class PaintDryDisplay:
                         "bold #8f918f on #39444d",
                         "bold #868885 on #303840",
                         "bold #7b7d79 on #272e35",
+=======
+                    label_style=f"bold #a8b8bb on {tally_label_bg}",
+                    value_row_styles=(
+                        f"bold #dce2de on {tally_top_bg}",
+                        f"bold #d4dbd6 on {tally_mid_bg}",
+                        f"bold #cdd4cf on {tally_bottom_bg}",
+                    ),
+                    value_mid_row_styles=(
+                        f"bold #8f9fa0 on {tally_top_bg}",
+                        f"bold #869493 on {tally_mid_bg}",
+                        f"bold #7e8a89 on {tally_bottom_bg}",
+                    ),
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2020,6 +2073,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
+<<<<<<< HEAD
                     label_style="bold #e8dece on #5a4731",
                     value_row_styles=(
                         "bold #ddd1c0 on #524431",
@@ -2030,6 +2084,24 @@ class PaintDryDisplay:
                         "bold #95866d on #524431",
                         "bold #8c7d63 on #463925",
                         "bold #7f7157 on #3b2f1d",
+=======
+                    label_style=f"bold #c0aa83 on {tally_label_bg}",
+                    value_row_styles=(
+                        f"bold #e3d9c5 on {tally_top_bg}",
+                        f"bold #dacfb9 on {tally_mid_bg}",
+                        f"bold #d0c4ac on {tally_bottom_bg}",
+                    ),
+                    value_mid_row_styles=(
+                        f"bold #9d8d6f on {tally_top_bg}",
+                        f"bold #938364 on {tally_mid_bg}",
+                        f"bold #88785a on {tally_bottom_bg}",
+                    ),
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2042,6 +2114,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
+<<<<<<< HEAD
                     label_style="bold #e9d7d2 on #5b3530",
                     value_row_styles=(
                         "bold #ddcbc7 on #583331",
@@ -2052,6 +2125,24 @@ class PaintDryDisplay:
                         "bold #957c79 on #583331",
                         "bold #8a706d on #4a2927",
                         "bold #7e6461 on #3e201f",
+=======
+                    label_style=f"bold #bc9589 on {tally_label_bg}",
+                    value_row_styles=(
+                        f"bold #ddcdc7 on {tally_top_bg}",
+                        f"bold #d4c2bc on {tally_mid_bg}",
+                        f"bold #cab6b0 on {tally_bottom_bg}",
+                    ),
+                    value_mid_row_styles=(
+                        f"bold #9c817a on {tally_top_bg}",
+                        f"bold #92756e on {tally_mid_bg}",
+                        f"bold #876962 on {tally_bottom_bg}",
+                    ),
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 scorebug_rows.extend(
@@ -2075,6 +2166,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
+<<<<<<< HEAD
                     label_style="bold #e6ddd4 on #44525c",
                     value_row_styles=(
                         "bold #ddd4cb on #39444d",
@@ -2085,6 +2177,24 @@ class PaintDryDisplay:
                         "bold #8f918f on #39444d",
                         "bold #868885 on #303840",
                         "bold #7b7d79 on #272e35",
+=======
+                    label_style=f"bold #a8b8bb on {tally_label_bg}",
+                    value_row_styles=(
+                        f"bold #dce2de on {tally_top_bg}",
+                        f"bold #d4dbd6 on {tally_mid_bg}",
+                        f"bold #cdd4cf on {tally_bottom_bg}",
+                    ),
+                    value_mid_row_styles=(
+                        f"bold #8f9fa0 on {tally_top_bg}",
+                        f"bold #869493 on {tally_mid_bg}",
+                        f"bold #7e8a89 on {tally_bottom_bg}",
+                    ),
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2094,6 +2204,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
+<<<<<<< HEAD
                     label_style="bold #e8dece on #5a4731",
                     value_row_styles=(
                         "bold #ddd1c0 on #524431",
@@ -2104,6 +2215,24 @@ class PaintDryDisplay:
                         "bold #95866d on #524431",
                         "bold #8c7d63 on #463925",
                         "bold #7f7157 on #3b2f1d",
+=======
+                    label_style=f"bold #c0aa83 on {tally_label_bg}",
+                    value_row_styles=(
+                        f"bold #e3d9c5 on {tally_top_bg}",
+                        f"bold #dacfb9 on {tally_mid_bg}",
+                        f"bold #d0c4ac on {tally_bottom_bg}",
+                    ),
+                    value_mid_row_styles=(
+                        f"bold #9d8d6f on {tally_top_bg}",
+                        f"bold #938364 on {tally_mid_bg}",
+                        f"bold #88785a on {tally_bottom_bg}",
+                    ),
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2113,6 +2242,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
+<<<<<<< HEAD
                     label_style="bold #e9d7d2 on #5b3530",
                     value_row_styles=(
                         "bold #ddcbc7 on #583331",
@@ -2123,6 +2253,24 @@ class PaintDryDisplay:
                         "bold #957c79 on #583331",
                         "bold #8a706d on #4a2927",
                         "bold #7e6461 on #3e201f",
+=======
+                    label_style=f"bold #bc9589 on {tally_label_bg}",
+                    value_row_styles=(
+                        f"bold #ddcdc7 on {tally_top_bg}",
+                        f"bold #d4c2bc on {tally_mid_bg}",
+                        f"bold #cab6b0 on {tally_bottom_bg}",
+                    ),
+                    value_mid_row_styles=(
+                        f"bold #9c817a on {tally_top_bg}",
+                        f"bold #92756e on {tally_mid_bg}",
+                        f"bold #876962 on {tally_bottom_bg}",
+                    ),
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+>>>>>>> 2826d96 (narrator: rebase scorebug on the 2026-04-09 visual language)
                     ),
                 )
                 scorebug_rows.extend(
