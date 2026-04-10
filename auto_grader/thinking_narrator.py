@@ -52,6 +52,8 @@ I'm catching, I'm hesitating, I'm leaning toward, I'm tracing, I'm \
 counting, I'm doubling back, I'm squinting at, I'm second-guessing, \
 I'm plugging in, I'm checking, I'm trying, I'm wondering, etc.
 - Or use "I am" / "Let me" sparingly when the rhythm calls for it.
+- Do not default to "I'm noticing" or "I'm seeing"; use stronger verbs \
+unless the point is literal OCR or legibility.
 - Be specific: name the concrete numbers, units, or chemical species \
 from THIS question. Pull real details out of the reasoning excerpt.
 - Refer to the student's work in third person ("the student wrote", \
@@ -227,6 +229,9 @@ _GRADER_SCORE_RE = re.compile(r"(Grader:\s*)([^ ]+)")
 _PROF_SCORE_RE = re.compile(r"(Prof:\s*)([^ ]+)")
 _TRUTH_SCORE_RE = re.compile(r"(Truth:\s*)([^ ]+)")
 _HISTORICAL_PROF_SCORE_RE = re.compile(r"(Historical\s+[Pp]rof:\s*)([^ ]+)")
+_STATUS_FIRST_PERSON_RE = re.compile(
+    r"\b(i|i'm|im|i am|i've|i'll)\b", re.IGNORECASE
+)
 
 
 def _format_score_with_denominator(score: float, max_points: float) -> str:
@@ -295,6 +300,10 @@ def _sanitize_after_action_text(text: str) -> str:
         candidates[0],
     )
     return " ".join(preferred.split())
+
+
+def _status_line_breaks_contract(text: str) -> bool:
+    return bool(_STATUS_FIRST_PERSON_RE.search(text))
 
 
 def _rough_token_count(text: str) -> int:
@@ -616,6 +625,8 @@ class ThinkingNarrator:
         full = full.strip()
         if not full:
             return None, status_user_content, None
+        if _status_line_breaks_contract(full):
+            return None, status_user_content, full
 
         if any(
             self._lines_too_similar(
