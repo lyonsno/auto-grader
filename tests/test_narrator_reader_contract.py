@@ -738,9 +738,9 @@ class NarratorReaderContract(unittest.TestCase):
         left_top_bg = self._background_hex(left_top_style)
         bad_top_bg = self._background_hex(bad_top_style)
         self.assertEqual(
-            {on_target_top_bg, left_top_bg, bad_top_bg},
-            {on_target_top_bg},
-            "the top numeral row should use one continuous smoke background across all three scoreboard categories",
+            len({on_target_top_bg, left_top_bg, bad_top_bg}),
+            3,
+            "the three scorebug cells should now act as deliberate side-by-side mockups with distinct field treatments",
         )
         on_target_mid_bg = self._background_hex(
             self._style_for_substring(tally_value_mid, expected_on_target[1].strip())
@@ -790,6 +790,17 @@ class NarratorReaderContract(unittest.TestCase):
             bad_top_style,
             bad_bottom_style,
             "bad-calls board should also drift tonally instead of reading as a flat tech slab",
+        )
+        self.assertEqual(
+            len(
+                {
+                    self._foreground_hex(on_target_top_strong),
+                    self._foreground_hex(left_top_style),
+                    self._foreground_hex(bad_top_style),
+                }
+            ),
+            3,
+            "each scorebug cell should carry its own numeral-stroke family so the human can compare three mockup directions at once",
         )
         self.assertEqual(
             tally_value_top.spans[2].style,
