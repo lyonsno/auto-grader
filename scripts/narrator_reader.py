@@ -492,8 +492,8 @@ def _append_scorebug_value_row(
     mid_style: str,
 ) -> None:
     """Append one scoreboard value row with weighted two-tone strokes."""
-    strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "▪"}
-    mid_chars = {"═", "╱", " "}
+    strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "═", "▪"}
+    mid_chars = {"╱", " "}
     for ch in content:
         if ch in strong_chars:
             row.append(ch, style=strong_style)
