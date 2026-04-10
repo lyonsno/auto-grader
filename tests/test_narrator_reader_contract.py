@@ -197,14 +197,55 @@ class NarratorReaderContract(unittest.TestCase):
             titled_panels.index("[grey50]history[/grey50]"),
         )
 
+    def test_new_header_keeps_previous_preview_visible_in_pending_state(self):
+        display = self._make_display()
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+
+        display.on_header("[item 2/12] 27-blue-2023/fr-3 (balanced_equation, 4.0 pts)")
+
+        group = display.render()
+        titled_panels = [
+            getattr(panel, "title", None)
+            for panel in group.renderables
+            if getattr(panel, "title", None) is not None
+        ]
+
+        self.assertTrue(display.focus_preview_pending)
+        self.assertIn(
+            "[grey50]focus preview · pending · 15-blue/fr-12a[/grey50]",
+            titled_panels,
+        )
+
+    def test_new_focus_preview_clears_pending_transition_state(self):
+        display = self._make_display()
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+        display.on_header("[item 2/12] 27-blue-2023/fr-3 (balanced_equation, 4.0 pts)")
+
+        display.on_focus_preview(
+            self._make_png(rgb=(120, 130, 140)),
+            label="27-blue-2023/fr-3",
+            source="mock_tricky_plus",
+        )
+
+        self.assertFalse(display.focus_preview_pending)
+        self.assertEqual(display.focus_preview_label, "27-blue-2023/fr-3")
+
     def test_focus_preview_is_rasterized_once_per_item_not_each_frame(self):
         display = self._make_display()
-        sentinel = Group(Text("preview"))
+        sentinel_pixels = [[(10, 20, 30)]]
 
         with mock.patch(
-            "scripts.narrator_reader._render_focus_preview_terminal",
-            return_value=sentinel,
-        ) as render_mock:
+            "scripts.narrator_reader._build_focus_preview_pixels",
+            return_value=sentinel_pixels,
+        ) as build_mock:
             display.on_focus_preview(
                 self._make_png(),
                 label="15-blue/fr-12a",
@@ -213,7 +254,7 @@ class NarratorReaderContract(unittest.TestCase):
             display.render()
             display.render()
 
-        self.assertEqual(render_mock.call_count, 1)
+        self.assertEqual(build_mock.call_count, 1)
 
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
         display = self._make_display()

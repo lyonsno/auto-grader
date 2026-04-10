@@ -531,13 +531,12 @@ def _focus_preview_budget(term_width: int | None) -> tuple[int, int]:
     return width_chars, height_rows
 
 
-def _render_focus_preview_terminal(
+def _build_focus_preview_pixels(
     png_bytes: bytes,
     *,
-    max_width_chars: int = _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
-    max_height_rows: int = _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
-) -> Group:
-    """Render a PNG preview as terminal-safe truecolor half-block rows."""
+    max_width_chars: int,
+    max_height_rows: int,
+) -> list[list[tuple[int, int, int]]]:
     pix = fitz.Pixmap(png_bytes)
     target_width, target_height = _scaled_preview_size(
         pix.width,
@@ -545,27 +544,56 @@ def _render_focus_preview_terminal(
         max_width_chars=max_width_chars,
         max_height_rows=max_height_rows,
     )
+    pixels: list[list[tuple[int, int, int]]] = []
+    for y in range(target_height):
+        row: list[tuple[int, int, int]] = []
+        for x in range(target_width):
+            row.append(_sample_preview_rgb(pix, x, y, target_width, target_height))
+        pixels.append(row)
+    return pixels
+
+
+def _render_focus_preview_pixels(
+    pixels: list[list[tuple[int, int, int]]],
+    *,
+    now: float | None = None,
+    pending: bool = False,
+) -> Group:
     rows: list[Text] = []
-    for char_row in range(0, target_height, 2):
+    now = time.monotonic() if now is None else now
+    for char_row in range(0, len(pixels), 2):
         row = Text(no_wrap=True, overflow="ignore")
-        for col in range(target_width):
-            top_rgb = _sample_preview_rgb(pix, col, char_row, target_width, target_height)
-            if char_row + 1 < target_height:
-                bottom_rgb = _sample_preview_rgb(
-                    pix,
-                    col,
-                    char_row + 1,
-                    target_width,
-                    target_height,
-                )
-            else:
-                bottom_rgb = _FOCUS_PREVIEW_BG_RGB
+        upper = pixels[char_row]
+        lower = pixels[char_row + 1] if char_row + 1 < len(pixels) else None
+        for col, top_rgb in enumerate(upper):
+            bottom_rgb = lower[col] if lower is not None else _FOCUS_PREVIEW_BG_RGB
+            if pending:
+                phase = ((col * 0.19) + (char_row * 0.07) - (now * 2.1))
+                wave = 0.5 + (0.5 * math.sin(phase))
+                retention = 0.58 + (0.16 * wave)
+                top_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, retention)
+                bottom_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, bottom_rgb, retention)
             row.append(
                 "▀",
                 style=f"{_rgb_to_hex(top_rgb)} on {_rgb_to_hex(bottom_rgb)}",
             )
         rows.append(row)
     return Group(*rows)
+
+
+def _render_focus_preview_terminal(
+    png_bytes: bytes,
+    *,
+    max_width_chars: int = _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
+    max_height_rows: int = _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
+) -> Group:
+    """Render a PNG preview as terminal-safe truecolor half-block rows."""
+    pixels = _build_focus_preview_pixels(
+        png_bytes,
+        max_width_chars=max_width_chars,
+        max_height_rows=max_height_rows,
+    )
+    return _render_focus_preview_pixels(pixels)
 
 
 def _scaled_preview_size(
@@ -1156,9 +1184,12 @@ class PaintDryDisplay:
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
         self.focus_preview_png: bytes | None = None
+        self.focus_preview_pixels: list[list[tuple[int, int, int]]] | None = None
         self.focus_preview_renderable: Group | None = None
         self.focus_preview_label: str = ""
         self.focus_preview_source: str = ""
+        self.focus_preview_pending: bool = False
+        self.focus_preview_pending_started: float | None = None
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
@@ -1698,12 +1729,22 @@ class PaintDryDisplay:
         focus_preview_panel = None
         if self.focus_preview_renderable is not None:
             preview_title = "[grey50]focus preview"
+            if self.focus_preview_pending:
+                preview_title += " · pending"
             if self.focus_preview_label:
                 preview_title += f" · {self.focus_preview_label}"
             preview_title += "[/grey50]"
+            if self.focus_preview_pending and self.focus_preview_pixels is not None:
+                preview_renderable = _render_focus_preview_pixels(
+                    self.focus_preview_pixels,
+                    now=now,
+                    pending=True,
+                )
+            else:
+                preview_renderable = self.focus_preview_renderable
             focus_preview_panel = Panel(
                 Align.center(
-                    self.focus_preview_renderable
+                    preview_renderable
                 ),
                 border_style="#3d4458",
                 padding=(0, 1),
@@ -1980,10 +2021,17 @@ class PaintDryDisplay:
         self.frozen_line = ""
         self._frozen_line_parity = self._line_parity
         self._freeze_started_at = None
-        self.focus_preview_png = None
-        self.focus_preview_renderable = None
-        self.focus_preview_label = ""
-        self.focus_preview_source = ""
+        if self.focus_preview_renderable is not None:
+            self.focus_preview_pending = True
+            self.focus_preview_pending_started = header_now
+        else:
+            self.focus_preview_png = None
+            self.focus_preview_pixels = None
+            self.focus_preview_renderable = None
+            self.focus_preview_label = ""
+            self.focus_preview_source = ""
+            self.focus_preview_pending = False
+            self.focus_preview_pending_started = None
         m = _HEADER_INDEX_RE.match(text)
         if m:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
@@ -2076,13 +2124,18 @@ class PaintDryDisplay:
                 term_width = None
         budget_width, budget_height = _focus_preview_budget(term_width)
         self.focus_preview_png = png_bytes
-        self.focus_preview_renderable = _render_focus_preview_terminal(
+        self.focus_preview_pixels = _build_focus_preview_pixels(
             png_bytes,
             max_width_chars=budget_width,
             max_height_rows=budget_height,
         )
+        self.focus_preview_renderable = _render_focus_preview_pixels(
+            self.focus_preview_pixels
+        )
         self.focus_preview_label = label
         self.focus_preview_source = source
+        self.focus_preview_pending = False
+        self.focus_preview_pending_started = None
 
     def on_topic(
         self,
