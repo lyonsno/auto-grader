@@ -43,7 +43,7 @@ from rich.align import Align
 from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
 from rich.panel import Panel
-from rich.segment import Segment
+from rich.segment import ControlType, Segment
 from rich.text import Text
 
 # scripts/ is not on sys.path by default when narrator_reader.py is
@@ -808,12 +808,25 @@ class FocusPreviewInlineImage:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        # First row carries the escape sequence. The terminal will
-        # render the image starting at this cursor position and
-        # consume approximately `cell_height` rows of vertical space
-        # on-screen. Rich doesn't know the sequence does anything
-        # visual; it treats the Segment as a zero-width text payload.
-        yield Segment(self._sequence)
+        # First row carries the escape sequence as a CONTROL segment.
+        # This is load-bearing: without the control marker, Rich
+        # treats the escape sequence's raw text as visible content
+        # whose `cell_length` equals its string length (tens of
+        # thousands of "visible" cells from the base64 payload),
+        # and Rich's line-fitting logic inside a Panel will
+        # line-wrap or truncate the segment to the panel's cell
+        # width — stripping the base64 payload partway through the
+        # escape sequence, which means the terminal never receives
+        # a complete iTerm2 File= sequence and no image renders.
+        #
+        # Marking the segment as a control (via the third-positional
+        # `control` argument to Segment) sets its cell_length to 0,
+        # which tells Rich "this is a zero-width control payload,
+        # emit it verbatim, do not wrap or truncate." The specific
+        # ControlType chosen doesn't matter — Rich uses the control
+        # list only as a zero-width marker; the emitted text is
+        # whatever we pass as the first argument.
+        yield Segment(self._sequence, None, [(ControlType.BELL,)])
         yield Segment.line()
         # Pad with blank rows so Rich reserves the rest of the
         # vertical footprint. Each blank row is a single space

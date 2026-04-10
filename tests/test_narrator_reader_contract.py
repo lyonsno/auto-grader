@@ -719,6 +719,80 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertFalse(_supports_inline_images(None))
         self.assertFalse(_supports_inline_images(""))
 
+    def test_focus_preview_inline_image_escape_sequence_survives_panel_line_fitting(self):
+        # Regression guard against the "Rich truncates the escape
+        # sequence mid-base64 because it treats the segment as
+        # visible text of length == character count" bug.
+        #
+        # The iTerm2 inline image protocol encodes the full PNG as
+        # base64 inside the escape sequence. For a real-sized crop
+        # PNG that's tens of thousands of characters. If Rich's
+        # Segment cell_length is computed from the text's string
+        # length (instead of being forced to 0 via the control
+        # marker), the panel's line-fitting pass will wrap or
+        # truncate the escape sequence to the panel's cell width
+        # (~70-140 cells), destroying the base64 payload and
+        # preventing the terminal from ever seeing a complete
+        # File= sequence. The fix: mark the escape-sequence
+        # Segment as a control segment so its cell_length is 0.
+        # This test renders through render_lines (which is what
+        # Rich Live uses) and verifies the FULL base64 payload
+        # survives into exactly one line segment.
+        from rich.console import Console
+        from rich.panel import Panel
+
+        # Build a reasonably-large fake PNG so the base64 payload
+        # is definitely longer than any reasonable panel width.
+        fake_png = b"\x89PNG\r\n\x1a\n" + b"x" * 4096
+        renderable = FocusPreviewInlineImage(
+            png_bytes=fake_png, cell_width=70, cell_height=18
+        )
+        # Wrap in a Panel like the real render path does — that's
+        # where the line-fitting truncation happens, not at the
+        # bare renderable level.
+        panel = Panel(renderable, padding=(0, 1))
+        console = Console(
+            width=100,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        lines = console.render_lines(panel, console.options, pad=True)
+
+        # Find the line containing the escape sequence start.
+        escape_start = "\x1b]1337;File="
+        found_segments = []
+        for line in lines:
+            for seg in line:
+                if seg.text and escape_start in seg.text:
+                    found_segments.append(seg)
+        self.assertEqual(
+            len(found_segments),
+            1,
+            "exactly one segment should carry the full escape sequence",
+        )
+        seg = found_segments[0]
+        # The full escape sequence must be intact: starts with the
+        # OSC prefix, ends with BEL (\x07), contains the complete
+        # base64 payload.
+        self.assertTrue(seg.text.startswith(escape_start))
+        self.assertTrue(seg.text.endswith("\x07"))
+        import base64 as _b64
+        expected_b64 = _b64.b64encode(fake_png).decode("ascii")
+        self.assertIn(
+            expected_b64,
+            seg.text,
+            "the full base64 payload must survive line-fitting without truncation",
+        )
+        # And the segment must have zero cell_length so Rich's
+        # layout engine doesn't try to wrap it.
+        self.assertEqual(
+            seg.cell_length,
+            0,
+            "the escape-sequence segment must be zero cell-width so Rich "
+            "doesn't truncate it to fit the panel's visible width",
+        )
+
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies
