@@ -186,6 +186,27 @@ class SmokeVlmContract(unittest.TestCase):
             },
         )
 
+    def test_scorebug_session_meta_labels_tricky_plus_plus_subset(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+        args = parser.parse_args(
+            ["--model", "qwen3p5-35B-A3B", "--tricky-plus-plus"]
+        )
+
+        meta = smoke_vlm._scorebug_session_meta(
+            args=args,
+            model=args.model,
+            subset_count=15,
+        )
+
+        self.assertEqual(
+            meta,
+            {
+                "model": "qwen3p5-35B-A3B",
+                "set_label": "TRICKY++",
+                "subset_count": 15,
+            },
+        )
+
     def test_tricky_plus_runs_expansion_items_first(self) -> None:
         self.assertEqual(
             smoke_vlm._TRICKY_PLUS_PICKS[:6],
@@ -232,6 +253,21 @@ class SmokeVlmContract(unittest.TestCase):
 
         self.assertTrue(all(region is not None for region in resolved))
 
+    def test_tricky_plus_plus_prepends_three_more_fifteen_blue_stress_items(self) -> None:
+        self.assertEqual(
+            smoke_vlm._TRICKY_PLUS_PLUS_PICKS[:9],
+            [
+                ("15-blue", "fr-10b"),
+                ("15-blue", "fr-11c"),
+                ("15-blue", "fr-12b"),
+                ("27-blue-2023", "fr-3"),
+                ("27-blue-2023", "fr-5b"),
+                ("27-blue-2023", "fr-12a"),
+                ("39-blue-redacted", "fr-10a"),
+                ("34-blue", "fr-8"),
+                ("34-blue", "fr-12a"),
+            ],
+        )
     def test_run_dir_help_advertises_durable_root_outside_worktree(self) -> None:
         parser = smoke_vlm._build_arg_parser()
         run_dir_action = next(
