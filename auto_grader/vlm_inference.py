@@ -32,7 +32,7 @@ class ServerConfig:
     e.g. WebDev" row of the model card sampling table):
 
         temperature=0.6, top_p=0.95, top_k=20, min_p=0.0,
-        presence_penalty=0.75, repetition_penalty=1.0
+        presence_penalty=0.0, repetition_penalty=1.0
 
     Why coding-mode and not general-mode: our task is thinking-mode
     reasoning with **structured JSON output**, which is structurally
@@ -60,16 +60,19 @@ class ServerConfig:
          general, tried 2026-04-08 16:43): reasoning prose was clean
          and grounded, but JSON output was blocked entirely. Empty
          content, parser fail on every item.
-      3. temperature=0.6, presence_penalty=0.75 (current bounded
-         experiment on top of Alibaba thinking-mode coding): keep the
-         coding preset structure, but add a moderate novelty gradient
-         to see whether Qwen escapes repetitive local loops without
+      3. temperature=0.6, presence_penalty=0.75 (temporary bounded
+         experiment on top of Alibaba thinking-mode coding): kept the
+         coding preset structure, but added a moderate novelty gradient
+         to see whether Qwen escaped repetitive local loops without
          collapsing JSON emission the way 1.5 did.
+      4. temperature=0.6, presence_penalty=0.0 (current): revert to the
+         coding preset after the bounded experiment. Structured JSON
+         emission remains the primary constraint, so we prefer the
+         simpler known-good zero-presence regime until there is clear
+         evidence the higher value helps more than it harms.
 
-    This is an explicit experiment, not a settled doctrine. If it
-    regresses JSON emission or stability, roll it back. We still do
-    NOT jump to the general-mode 1.5 presence penalty for structured
-    output.
+    We still do NOT jump to the general-mode 1.5 presence penalty for
+    structured output.
 
     max_tokens=8192 keeps headroom for legitimately hard items without
     letting one bad stall chew through the old 16384-token runway. The
@@ -86,7 +89,7 @@ class ServerConfig:
     top_p: float = 0.95
     top_k: int = 20
     min_p: float = 0.0
-    presence_penalty: float = 0.75
+    presence_penalty: float = 0.0
     repetition_penalty: float = 1.0
 
 
