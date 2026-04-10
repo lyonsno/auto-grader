@@ -1047,7 +1047,7 @@ class NarratorReaderContract(unittest.TestCase):
             "item indicator should live in its own scorebug cell",
         )
 
-    def test_header_title_uses_visible_lacquer_gradient_in_rendered_surface(self):
+    def test_header_title_returns_to_white_scene_setter(self):
         display = self._make_display()
         display.current_model = "qwen3p5-35B-A3B"
         display.on_header("[item 4/6] 15-blue/fr-10a")
@@ -1060,21 +1060,12 @@ class NarratorReaderContract(unittest.TestCase):
             header_renderable = header_renderable.renderable
 
         title_end = header_renderable.plain.index(" · sumi-e")
-        title_styles = {
-            style
-            for style in self._styles_in_range(header_renderable, 0, title_end)
-            if "#" in style
-        }
+        title_styles = self._styles_in_range(header_renderable, 0, title_end)
 
-        self.assertGreaterEqual(
-            len(title_styles),
-            2,
-            "PROJECT PAINT DRY should carry multiple lacquer-family spans so the header accent actually reads in the smoked surface",
-        )
-        self.assertNotIn(
-            "bold bright_white",
-            self._styles_in_range(header_renderable, 0, title_end),
-            "PROJECT PAINT DRY should no longer render as a single flat bright-white title",
+        self.assertEqual(
+            title_styles,
+            {"bold bright_white"},
+            "PROJECT PAINT DRY should go back to reading as a single white scene-setter against the colored telemetry and score surfaces",
         )
 
     def test_scorebug_can_render_set_and_running_tally_cells(self):
@@ -1149,10 +1140,40 @@ class NarratorReaderContract(unittest.TestCase):
             self._style_for_substring(scorebug_text_obj, "SET"),
             "set label should also read like a scoreboard cell",
         )
+        self.assertEqual(
+            self._style_for_substring(scorebug_text_obj, "CURRENT MODEL"),
+            "bold #e7dfd3 on #403a3a",
+            "current-model capsule should read as a smoked plate, not a bright dashboard-blue widget",
+        )
+        self.assertEqual(
+            self._style_for_substring(scorebug_text_obj, "SET"),
+            "bold #e9dfd0 on #4d3f2c",
+            "set capsule should move into the bone-and-brass family instead of a crisp tech blue",
+        )
+        self.assertEqual(
+            self._style_for_substring(scorebug_text_obj, "ITEM"),
+            "bold #ead7cf on #5a352f",
+            "item capsule should stay warm but rougher and darker than the earlier glossy ember chip",
+        )
         self.assertIn(
             "on #",
             self._style_for_substring(tally_text_obj, "ON TARGET"),
             "running tally labels should render as scorebug cells, not plain text",
+        )
+        self.assertEqual(
+            self._style_for_substring(tally_text_obj, "ON TARGET"),
+            "bold #e6ddd4 on #44525c",
+            "on-target board should feel like a smoked slate plate, not an instrument-panel blue slab",
+        )
+        self.assertEqual(
+            self._style_for_substring(tally_text_obj, "LEFT ON TABLE"),
+            "bold #e8dece on #5a4731",
+            "left-on-table board should stay earthy and tarnished rather than clean brass UI chrome",
+        )
+        self.assertEqual(
+            self._style_for_substring(tally_text_obj, "BAD CALLS"),
+            "bold #e9d7d2 on #5b3530",
+            "bad-calls board should read as oxblood lacquer on char, not a crisp warning widget",
         )
         cell_width = len(f" {expected_on_target[0]} ")
         separator_width = 2
@@ -1642,6 +1663,32 @@ class NarratorReaderContract(unittest.TestCase):
                 f"capsules — a future pass should not be able to silently "
                 f"collapse it back into unstyled telemetry text",
             )
+
+        self.assertEqual(
+            self._style_for_substring(header_text_obj, "TOTAL"),
+            "bold #e6ddd4 on #43444d",
+            "TOTAL dial should read as a charred indigo-lacquer plate instead of a bright scoreboard primary",
+        )
+        self.assertEqual(
+            self._style_for_substring(header_text_obj, "TURN"),
+            "bold #ead8c7 on #53382c",
+            "TURN dial should stay warm, but in the dark ember-clay family rather than a glossy orange pill",
+        )
+        self.assertEqual(
+            self._style_for_substring(header_text_obj, "EMITTED"),
+            "bold #dbe3d0 on #364036",
+            "EMITTED dial should read as moss over char, not a green status LED",
+        )
+        self.assertEqual(
+            self._style_for_substring(header_text_obj, "DEDUP"),
+            "bold #e7dcc4 on #4a3e2c",
+            "DEDUP dial should sit in the same smoked bone/umber family as the rest of the top band",
+        )
+        self.assertEqual(
+            self._style_for_substring(header_text_obj, "EMPTY"),
+            "bold #e5d1cb on #4a2c28",
+            "EMPTY with a nonzero count should read as a smoked red-brown plate, not a vivid chip",
+        )
 
         # Rejected/drops panel title should also stop speaking flat
         # telemetry — attractor condition #1 covers the whole flat

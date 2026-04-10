@@ -539,36 +539,9 @@ def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
 
 
 def _append_header_title(text: Text, title: str, phase: float) -> None:
-    """Render the title with a visible lacquered red/plum gradient.
-
-    The smoked surface needs the heading accent to read at a glance,
-    not just exist as a latent palette choice. Split the title into a
-    few stable spans and let them drift gently within the existing
-    burgundy/plum family so the top band stays alive without becoming
-    flashy.
-    """
-    body, separator, tail = title.partition(" · ")
-    words = body.split()
-    if not words:
-        text.append(title, style=f"bold {_rgb_to_hex(_BASE_RGB['header'])}")
-        return
-
-    for index, word in enumerate(words):
-        if index:
-            text.append(" ", style=f"bold {_rgb_to_hex(_BASE_RGB['header'])}")
-        weight = 0.16 + (index * 0.14)
-        weight += 0.08 * math.sin(2 * math.pi * (phase + (index * 0.11)))
-        text.append(
-            word,
-            style=f"bold {_rgb_to_hex(_interp_rgb(_BASE_RGB['header'], _SHIMMER_KIND_PEAK_RGB['header'], weight))}",
-        )
-
-    if separator:
-        tail_weight = 0.20 + (0.06 * math.sin(2 * math.pi * (phase + 0.41)))
-        text.append(
-            f"{separator}{tail}",
-            style=f"bold {_rgb_to_hex(_interp_rgb(_BASE_RGB['header'], _SHIMMER_KIND_PEAK_RGB['header'], tail_weight))}",
-        )
+    """Keep the scene-setting title white against the colored telemetry."""
+    del phase
+    text.append(title, style="bold bright_white")
 
 
 def _append_scorebug_value_row(
@@ -1901,19 +1874,19 @@ class PaintDryDisplay:
         # tag), and the event-count dials light up on green/amber/red
         # capsules only when nonzero — at zero they fall back to a
         # muted grey capsule so a quiet run doesn't scream color.
-        _dead_label = "bold #9aa0ac on #2a2d34"
-        _dead_value = "bold #cdd1da on #1a1c22"
+        _dead_label = "bold #b9b2a8 on #2d2a29"
+        _dead_value = "bold #d7d0c7 on #1f1d1d"
         self._append_scorebug_cell(
             header_text,
             "TOTAL",
             f"{total_elapsed_s}s",
             label_style=(
-                "bold #e6ebff on #2e3a66"
+                "bold #e6ddd4 on #43444d"
                 if self._session_started_at is not None
                 else _dead_label
             ),
             value_style=(
-                "bold #d7dff5 on #1d2440"
+                "bold #d6cec6 on #2c2d33"
                 if self._session_started_at is not None
                 else _dead_value
             ),
@@ -1923,12 +1896,12 @@ class PaintDryDisplay:
             "TURN",
             f"{turn_elapsed_s}s" if turn_elapsed_s is not None else "--",
             label_style=(
-                "bold #ffe9d6 on #5a3a1e"
+                "bold #ead8c7 on #53382c"
                 if turn_elapsed_s is not None
                 else _dead_label
             ),
             value_style=(
-                f"bold #ffd9b8 on {_rgb_to_hex(_EMBER_ACCENT_RGB)}"
+                "bold #d9c5b2 on #3a261f"
                 if turn_elapsed_s is not None
                 else _dead_value
             ),
@@ -1938,10 +1911,10 @@ class PaintDryDisplay:
             "EMITTED",
             f"{self.stat_emitted}",
             label_style=(
-                "bold #e0f5dc on #2b4e2a" if self.stat_emitted > 0 else _dead_label
+                "bold #dbe3d0 on #364036" if self.stat_emitted > 0 else _dead_label
             ),
             value_style=(
-                "bold #c7e6c0 on #1a3519" if self.stat_emitted > 0 else _dead_value
+                "bold #c7d0bc on #252d25" if self.stat_emitted > 0 else _dead_value
             ),
         )
         self._append_scorebug_cell(
@@ -1949,12 +1922,12 @@ class PaintDryDisplay:
             "DEDUP",
             f"{self.stat_dropped_dedup}",
             label_style=(
-                "bold #fff1cc on #5a4420"
+                "bold #e7dcc4 on #4a3e2c"
                 if self.stat_dropped_dedup > 0
                 else _dead_label
             ),
             value_style=(
-                "bold #f2dfa8 on #3d2d13"
+                "bold #d7caaf on #33281d"
                 if self.stat_dropped_dedup > 0
                 else _dead_value
             ),
@@ -1964,12 +1937,12 @@ class PaintDryDisplay:
             "EMPTY",
             f"{self.stat_dropped_empty}",
             label_style=(
-                "bold #ffd6d0 on #5a2620"
+                "bold #e5d1cb on #4a2c28"
                 if self.stat_dropped_empty > 0
                 else _dead_label
             ),
             value_style=(
-                "bold #f2b6ad on #3d1813"
+                "bold #d7beb7 on #33201d"
                 if self.stat_dropped_empty > 0
                 else _dead_value
             ),
@@ -1987,8 +1960,8 @@ class PaintDryDisplay:
                 scorebug_top,
                 "CURRENT MODEL",
                 self.current_model or "—",
-                label_style="bold #eaf2ff on #405a93",
-                value_style="bold #d8e5ff on #27344f",
+                label_style="bold #e7dfd3 on #403a3a",
+                value_style="bold #d7cec5 on #2e2929",
             )
             if self.current_set_label:
                 set_value = self.current_set_label
@@ -1996,16 +1969,16 @@ class PaintDryDisplay:
                     scorebug_top,
                     "SET",
                     set_value,
-                    label_style="bold #eef6ff on #32506e",
-                    value_style="bold #d7e8ff on #1d3147",
+                    label_style="bold #e9dfd0 on #4d3f2c",
+                    value_style="bold #d8cdbc on #372d20",
                 )
             if self.current_item_bug:
                 self._append_scorebug_cell(
                     scorebug_top,
                     "ITEM",
                     self.current_item_bug,
-                    label_style="bold #fff1e6 on #7d4a2e",
-                    value_style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    label_style="bold #ead7cf on #5a352f",
+                    value_style="bold #d8c0ba on #402621",
                 )
 
             scorebug_gap = Text(" ", style="grey35")
@@ -2025,16 +1998,16 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_on_target_points)}"
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
-                    label_style="bold #eef3ff on #32578e",
+                    label_style="bold #e6ddd4 on #44525c",
                     value_row_styles=(
-                        "bold #dbe8ef on #33434c",
-                        "bold #d4e2eb on #2a3740",
-                        "bold #cad8e4 on #223038",
+                        "bold #ddd4cb on #39444d",
+                        "bold #d4cbc1 on #303840",
+                        "bold #c8c0b6 on #272e35",
                     ),
                     value_mid_row_styles=(
-                        "bold #95a7b1 on #33434c",
-                        "bold #8ea1ac on #2a3740",
-                        "bold #8799a3 on #223038",
+                        "bold #8f918f on #39444d",
+                        "bold #868885 on #303840",
+                        "bold #7b7d79 on #272e35",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2047,16 +2020,16 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
-                    label_style="bold #fff1d6 on #6b5028",
+                    label_style="bold #e8dece on #5a4731",
                     value_row_styles=(
-                        "bold #f7ecd0 on #5a4c31",
-                        "bold #f2e4c4 on #4d4028",
-                        "bold #e7d7b3 on #43381f",
+                        "bold #ddd1c0 on #524431",
+                        "bold #d4c7b5 on #463925",
+                        "bold #c7b9a6 on #3b2f1d",
                     ),
                     value_mid_row_styles=(
-                        "bold #ab9a72 on #5a4c31",
-                        "bold #a18f66 on #4d4028",
-                        "bold #95835b on #43381f",
+                        "bold #95866d on #524431",
+                        "bold #8c7d63 on #463925",
+                        "bold #7f7157 on #3b2f1d",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2069,16 +2042,16 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
-                    label_style="bold #ffe5dd on #7a392f",
+                    label_style="bold #e9d7d2 on #5b3530",
                     value_row_styles=(
-                        "bold #f5ddd8 on #653738",
-                        "bold #f0d5cf on #552d2e",
-                        "bold #e5c7c2 on #492425",
+                        "bold #ddcbc7 on #583331",
+                        "bold #d5c0bb on #4a2927",
+                        "bold #c8b2ad on #3e201f",
                     ),
                     value_mid_row_styles=(
-                        "bold #a98a84 on #653738",
-                        "bold #9f7d78 on #552d2e",
-                        "bold #946f6b on #492425",
+                        "bold #957c79 on #583331",
+                        "bold #8a706d on #4a2927",
+                        "bold #7e6461 on #3e201f",
                     ),
                 )
                 scorebug_rows.extend(
@@ -2102,16 +2075,16 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
-                    label_style="bold #eef3ff on #32578e",
+                    label_style="bold #e6ddd4 on #44525c",
                     value_row_styles=(
-                        "bold #dbe8ef on #33434c",
-                        "bold #d4e2eb on #2a3740",
-                        "bold #cad8e4 on #223038",
+                        "bold #ddd4cb on #39444d",
+                        "bold #d4cbc1 on #303840",
+                        "bold #c8c0b6 on #272e35",
                     ),
                     value_mid_row_styles=(
-                        "bold #95a7b1 on #33434c",
-                        "bold #8ea1ac on #2a3740",
-                        "bold #8799a3 on #223038",
+                        "bold #8f918f on #39444d",
+                        "bold #868885 on #303840",
+                        "bold #7b7d79 on #272e35",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2121,16 +2094,16 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
-                    label_style="bold #fff1d6 on #6b5028",
+                    label_style="bold #e8dece on #5a4731",
                     value_row_styles=(
-                        "bold #f7ecd0 on #5a4c31",
-                        "bold #f2e4c4 on #4d4028",
-                        "bold #e7d7b3 on #43381f",
+                        "bold #ddd1c0 on #524431",
+                        "bold #d4c7b5 on #463925",
+                        "bold #c7b9a6 on #3b2f1d",
                     ),
                     value_mid_row_styles=(
-                        "bold #ab9a72 on #5a4c31",
-                        "bold #a18f66 on #4d4028",
-                        "bold #95835b on #43381f",
+                        "bold #95866d on #524431",
+                        "bold #8c7d63 on #463925",
+                        "bold #7f7157 on #3b2f1d",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -2140,16 +2113,16 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
-                    label_style="bold #ffe5dd on #7a392f",
+                    label_style="bold #e9d7d2 on #5b3530",
                     value_row_styles=(
-                        "bold #f5ddd8 on #653738",
-                        "bold #f0d5cf on #552d2e",
-                        "bold #e5c7c2 on #492425",
+                        "bold #ddcbc7 on #583331",
+                        "bold #d5c0bb on #4a2927",
+                        "bold #c8b2ad on #3e201f",
                     ),
                     value_mid_row_styles=(
-                        "bold #a98a84 on #653738",
-                        "bold #9f7d78 on #552d2e",
-                        "bold #946f6b on #492425",
+                        "bold #957c79 on #583331",
+                        "bold #8a706d on #4a2927",
+                        "bold #7e6461 on #3e201f",
                     ),
                 )
                 scorebug_rows.extend(
