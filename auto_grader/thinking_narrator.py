@@ -150,6 +150,8 @@ Rules:
 - Start with a present participle: Rechecking, Tracing, Revisiting, \
 Weighing, Comparing, Checking, Squinting at, Staying on, etc.
 - Do NOT use "I".
+- If the source line starts with "I'm" or "I am", strip that wrapper \
+and keep the participle instead of copying the first-person form.
 - Do NOT give a final verdict or score.
 - Be concrete: mention the actual issue, quantity, unit, species, or \
 rubric criterion when possible.
@@ -642,11 +644,11 @@ class ThinkingNarrator:
         rejected_thought: str,
         prior_statuses: list[str],
     ) -> str:
-        blocks = [f"Current reasoning excerpt:\n\n{chunk}"]
-        blocks.append(
+        blocks = [
             "Rejected first-person line to compress:\n"
             f"- {rejected_thought}"
-        )
+        ]
+        blocks.append(f"Current reasoning excerpt:\n\n{chunk}")
         if prior_statuses:
             blocks.append(
                 "Recent status lines:\n"
@@ -659,6 +661,10 @@ class ThinkingNarrator:
             "You are still on the SAME point. Do not invent a new angle. "
             "Rewrite that same substance as one short non-first-person "
             "present-participle status line."
+        )
+        blocks.append(
+            'If the rejected line begins with "I\'m" or "I am", remove that '
+            "first-person scaffolding and keep the participle."
         )
         return "\n\n".join(blocks)
 
