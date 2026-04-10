@@ -147,8 +147,8 @@ class NarratorReaderPaletteContract(unittest.TestCase):
         )
         self.assertGreaterEqual(
             module._LIVE_HUE_CENTER_DEG,
-            200,
-            "live band should stay in the deeper blue/indigo family rather than sliding back toward teal",
+            190,
+            "cool live band should stay on the cool side of the spectrum even after pulling in more moss green",
         )
 
     def test_live_field_is_tempered_below_the_old_hot_pass(self):

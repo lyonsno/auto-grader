@@ -260,23 +260,23 @@ _TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 # palette without losing fire feel.
 _LIVE_UNDULATION_CYCLE_S = 3.8    # lively enough to read as motion, but
                                    # still slower than token streaming
-_LIVE_HUE_CENTER_DEG = 204         # pushed a little deeper into indigo-blue
-                                   # so the live band stays clearly cool
-_LIVE_HUE_RANGE_DEG = 18           # tighter swing keeps a hint of green
-                                    # without letting the band settle there
+_LIVE_HUE_CENTER_DEG = 196         # pulled slightly toward mossy aqua so the
+                                   # cool lane keeps more green body
+_LIVE_HUE_RANGE_DEG = 22           # broader swing so the green note is
+                                   # visibly present instead of incidental
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
 _LIVE_PHASE_OFFSET_RAD = 0.0
 _LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
                                     # shimmer sweep, so the top band feels
                                     # like its own counter-current
-_LIVE_BASE_SAT = 0.28              # soft wash rather than hot flame
-_LIVE_BASE_VAL = 0.88              # bright enough to read, but not a neon band
-_LIVE_WARM_HUE_CENTER_DEG = 30     # softened ember / apricot sibling for
-                                   # alternating live dispatches
-_LIVE_WARM_HUE_RANGE_DEG = 16
-_LIVE_WARM_BASE_SAT = 0.22
-_LIVE_WARM_BASE_VAL = 0.90
-_LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH = 0.35
+_LIVE_BASE_SAT = 0.34              # still soft, but with a more visible wash
+_LIVE_BASE_VAL = 0.86              # slightly less white, a little more pigment
+_LIVE_WARM_HUE_CENTER_DEG = 22     # yellow-red sibling, friendlier than a hot
+                                   # alarm band but more chromatic than before
+_LIVE_WARM_HUE_RANGE_DEG = 18
+_LIVE_WARM_BASE_SAT = 0.30
+_LIVE_WARM_BASE_VAL = 0.87
+_LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH = 0.30
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
 # brightness (BT.709 luminance weights yellow ~4× higher than red),
@@ -369,9 +369,11 @@ _SCOREBUG_BIG_DIGITS = {
     "-": ("   ", "═══", "   "),
 }
 
-_HISTORY_GROUP_PHASE_LEAD = 0.085  # per-item terrace jump: enough to read as
-                                   # a structural break without making adjacent
-                                   # items feel like unrelated weather systems
+_HISTORY_GROUP_PHASE_LEAD = 0.05   # smaller between-item terrace jump —
+                                   # enough to separate items, but less than the
+                                   # earlier more aggressive lead
+_HISTORY_GROUP_RAKE = 0.04         # stronger within-item setback so each group
+                                   # still rakes back more than the next header
 
 
 def _interp_rgb(
@@ -420,6 +422,21 @@ def _history_group_phase(base_phase: float, group_index: int) -> float:
     successive visible group by a stable phase offset.
     """
     return (base_phase + (group_index * _HISTORY_GROUP_PHASE_LEAD)) % 1.0
+
+
+def _history_entry_phase(
+    base_phase: float,
+    group_index: int,
+    group_depth: int,
+) -> float:
+    """Phase for one visible history entry.
+
+    Item headers terrace forward a bit from the item above them, but
+    entries within an item rake back more aggressively so each item
+    reads as its own stepped mini-field rather than one long diagonal.
+    """
+    group_phase = _history_group_phase(base_phase, group_index)
+    return (group_phase - (group_depth * _HISTORY_GROUP_RAKE)) % 1.0
 
 
 def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
@@ -1457,7 +1474,8 @@ class PaintDryDisplay:
                     value_style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                 )
 
-            scorebug_rows: list[Text] = [scorebug_top]
+            scorebug_gap = Text(" ", style="grey35")
+            scorebug_rows: list[Text] = [scorebug_top, scorebug_gap]
             if self.score_points_possible > 0:
                 scorebug_labels = Text()
                 scorebug_values_top = Text()
@@ -1688,17 +1706,14 @@ class PaintDryDisplay:
         display_entries = self._build_display_entries(wrap_width=wrap_width)
         history_text = Text(no_wrap=False, overflow="fold")
         current_group_index = -1
-        current_group_phase = 0.0
+        current_group_base_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
             if kind == "header":
                 current_group_index += 1
-                current_group_phase = _history_group_phase(
-                    self._shimmer_phases.phase(current_group_index),
-                    current_group_index,
-                )
+                current_group_base_phase = self._shimmer_phases.phase(current_group_index)
             render_layer = _render_layer_index(kind, group_depth)
             if i > 0:
                 history_text.append("\n")
@@ -1711,11 +1726,14 @@ class PaintDryDisplay:
                 else _SHIMMER_DEFAULT_CYCLE_S
             )
 
-            # Keep one coherent phase field within an item, then jump
-            # ahead by a fixed terrace lead at the next item's header.
-            # This prevents the diagonal shimmer from marching
-            # uninterrupted through multiple visible items.
-            phase_override = current_group_phase
+            # Keep a coherent local shimmer field within an item, but
+            # terrace headers forward a little and rake reasoning back
+            # more aggressively inside that item.
+            phase_override = _history_entry_phase(
+                current_group_base_phase,
+                current_group_index,
+                group_depth,
+            )
 
             if kind == "header":
                 indent = "─ "
