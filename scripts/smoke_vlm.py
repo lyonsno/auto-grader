@@ -40,6 +40,24 @@ _TEMPLATE = (
 
 _DEFAULT_NARRATOR_URL = "http://nlmb2p.local:8002"
 _TRICKY_FOCUS_REGION_MOCKS: dict[tuple[str, str], FocusRegion] = {
+    ("27-blue-2023", "fr-3"): FocusRegion(
+        page=1, x=0.14, y=0.18, width=0.66, height=0.24, source="mock_tricky_plus"
+    ),
+    ("27-blue-2023", "fr-5b"): FocusRegion(
+        page=1, x=0.14, y=0.42, width=0.66, height=0.28, source="mock_tricky_plus"
+    ),
+    ("27-blue-2023", "fr-12a"): FocusRegion(
+        page=4, x=0.14, y=0.04, width=0.62, height=0.28, source="mock_tricky_plus"
+    ),
+    ("39-blue-redacted", "fr-10a"): FocusRegion(
+        page=3, x=0.14, y=0.20, width=0.62, height=0.24, source="mock_tricky_plus"
+    ),
+    ("34-blue", "fr-8"): FocusRegion(
+        page=2, x=0.16, y=0.32, width=0.58, height=0.24, source="mock_tricky_plus"
+    ),
+    ("34-blue", "fr-12a"): FocusRegion(
+        page=4, x=0.14, y=0.04, width=0.62, height=0.28, source="mock_tricky_plus"
+    ),
     ("15-blue", "fr-1"): FocusRegion(
         page=1, x=0.16, y=0.05, width=0.60, height=0.22, source="mock_tricky"
     ),

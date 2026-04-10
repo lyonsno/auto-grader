@@ -175,6 +175,32 @@ class SmokeVlmContract(unittest.TestCase):
             ],
         )
 
+    def test_tricky_plus_items_all_resolve_to_preview_regions(self) -> None:
+        items = [
+            EvalItem(
+                exam_id=exam_id,
+                question_id=question_id,
+                answer_type="numeric",
+                page=1,
+                professor_score=0.0,
+                max_points=1.0,
+                professor_mark="x",
+                student_answer="mock",
+                notes="mock",
+            )
+            for exam_id, question_id in smoke_vlm._TRICKY_PLUS_PICKS
+        ]
+
+        resolved = [
+            smoke_vlm._resolve_preview_focus_region(
+                item,
+                template_document=None,
+            )
+            for item in items
+        ]
+
+        self.assertTrue(all(region is not None for region in resolved))
+
 
 if __name__ == "__main__":
     unittest.main()
