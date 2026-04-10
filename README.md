@@ -149,8 +149,10 @@ Current implementation status on the MC/OpenCV prerequisite lane:
   slice by using the filled corner markers to normalize a skewed page back into
   canonical page aspect and marker-aligned page space while preserving practical
   scan resolution
-- bubble interpretation is still future work; it should extend the same page
-  artifact rather than inventing a second layout truth
+- `auto_grader.bubble_interpretation` now performs the first bubble-readback
+  slice by reading filled bubble labels from the normalized page image while
+  keeping blanks explicit and preserving multiple marks as visible ambiguity
+  instead of collapsing them into fake single answers
 
 ### 4. Ingestion (Scans -> Identified pages)
 
