@@ -19,24 +19,29 @@ def _load_narrator_reader():
 
 
 class NarratorReaderPaletteContract(unittest.TestCase):
-    def test_header_title_reads_as_lacquer_red_not_plain_orange(self):
+    def test_header_title_reads_as_deeper_wine_red_not_plain_orange(self):
         module = _load_narrator_reader()
         red, green, blue = module._BASE_RGB["header"]
 
         self.assertGreater(
             red,
+            blue,
+            "header title should stay red-led rather than drifting fully violet",
+        )
+        self.assertGreater(
+            blue,
             green,
-            "header title should stay red-led rather than orange-led",
+            "header title should now carry a bruised wine / aubergine undertone instead of reading as simple orange-red",
         )
         self.assertLess(
             green,
-            100,
-            "header title should sit darker and redder, closer to lacquer than pumpkin",
+            75,
+            "header title should sit darker and less orange than the earlier persimmon pass",
         )
-        self.assertLess(
+        self.assertGreaterEqual(
             blue,
             60,
-            "header title should stay out of burgundy-purple territory",
+            "header title should bring some plum depth into the heading family",
         )
 
     def test_match_verdict_base_color_reads_as_indigo_steel_not_aqua(self):

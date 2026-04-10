@@ -649,6 +649,15 @@ class NarratorReaderContract(unittest.TestCase):
             "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
         )
         on_target_top_strong = tally_value_top.spans[1].style
+        on_target_bottom_style = self._style_for_substring(
+            tally_value_bottom,
+            expected_on_target[2].strip(),
+        )
+        self.assertNotEqual(
+            on_target_top_strong,
+            on_target_bottom_style,
+            "scorebug value rows should now drift tonally across the board instead of sitting on one flat background",
+        )
         self.assertEqual(
             tally_value_top.spans[2].style,
             on_target_top_strong,

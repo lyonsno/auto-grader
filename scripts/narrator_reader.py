@@ -131,10 +131,10 @@ _BASE_RGB = {
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
-    "header": (186, 82, 52),     # lacquered persimmon red — darker and
-                                  # redder than the earlier orange pass,
-                                  # so structural titles read like warm
-                                  # lacquer instead of pumpkin glow
+    "header": (148, 58, 72),     # bruised wine lacquer — darker, redder,
+                                  # and a touch plum-led so structural
+                                  # titles read like settled varnish rather
+                                  # than active pumpkin-orange signal
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
@@ -174,7 +174,7 @@ _BASE_RGB = {
     # appearing purely as a verdict indicator) and pulses in sync with
     # the rest of the header so the painting reads as one stroke per
     # item: vermilion dash → indigo index → persimmon title.
-    "header_dash": (210, 90, 65),
+    "header_dash": (214, 126, 82),
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
@@ -215,9 +215,9 @@ _SHIMMER_KIND_PEAK_RGB = {
     "live": (245, 155, 80),       # persimmon ember — live field warms
                                    # toward the same lacquer-red as the
                                    # headers as the wave passes
-    "header": (232, 136, 102),    # fired lacquer red — brighter crest,
-                                   # but still clearly red-led rather than
-                                   # tipping back into orange
+    "header": (208, 118, 132),    # fired wine-lacquer crest — brighter
+                                   # within the same dark red/plum family,
+                                   # not a return to simple orange-red
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
@@ -242,7 +242,7 @@ _SHIMMER_KIND_PEAK_RGB = {
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
-    "header_dash": (250, 140, 105),      # fired vermilion — the dash
+    "header_dash": (246, 166, 118),      # fired apricot-vermilion — the dash
                                           # brightens toward the same
                                           # bright lacquer that the
                                           # topic_overshoot verdict uses,
@@ -1159,8 +1159,8 @@ class PaintDryDisplay:
         value: str,
         *,
         label_style: str,
-        value_style: str,
-        value_mid_style: str,
+        value_row_styles: tuple[str, str, str],
+        value_mid_row_styles: tuple[str, str, str],
         label_pad: int = 3,
         value_pad: int = 1,
     ) -> None:
@@ -1180,20 +1180,20 @@ class PaintDryDisplay:
         _append_scorebug_value_row(
             value_top_row,
             f"{' ' * value_pad}{top}{' ' * value_pad}",
-            strong_style=value_style,
-            mid_style=value_mid_style,
+            strong_style=value_row_styles[0],
+            mid_style=value_mid_row_styles[0],
         )
         _append_scorebug_value_row(
             value_middle_row,
             f"{' ' * value_pad}{middle}{' ' * value_pad}",
-            strong_style=value_style,
-            mid_style=value_mid_style,
+            strong_style=value_row_styles[1],
+            mid_style=value_mid_row_styles[1],
         )
         _append_scorebug_value_row(
             value_bottom_row,
             f"{' ' * value_pad}{bottom}{' ' * value_pad}",
-            strong_style=value_style,
-            mid_style=value_mid_style,
+            strong_style=value_row_styles[2],
+            mid_style=value_mid_row_styles[2],
         )
 
     def should_animate(self, now: float | None = None) -> bool:
@@ -1490,8 +1490,16 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
                     label_style="bold #eef3ff on #32578e",
-                    value_style="bold #dce9ff on #1c2d47",
-                    value_mid_style="bold #8ea5cb on #1c2d47",
+                    value_row_styles=(
+                        "bold #e4eeff on #264262",
+                        "bold #dce9ff on #1c2d47",
+                        "bold #d1deff on #16263d",
+                    ),
+                    value_mid_row_styles=(
+                        "bold #95acd4 on #264262",
+                        "bold #8ea5cb on #1c2d47",
+                        "bold #8398bc on #16263d",
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1504,8 +1512,16 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
                     label_style="bold #fff1d6 on #6b5028",
-                    value_style="bold #ffefcf on #3e2f1b",
-                    value_mid_style="bold #a18f66 on #3e2f1b",
+                    value_row_styles=(
+                        "bold #fff2d6 on #4b3921",
+                        "bold #ffefcf on #3e2f1b",
+                        "bold #f0deb8 on #342713",
+                    ),
+                    value_mid_row_styles=(
+                        "bold #a99770 on #4b3921",
+                        "bold #a18f66 on #3e2f1b",
+                        "bold #947f58 on #342713",
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1518,8 +1534,16 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
                     label_style="bold #ffe5dd on #7a392f",
-                    value_style="bold #ffe3d8 on #47211d",
-                    value_mid_style="bold #a57e76 on #47211d",
+                    value_row_styles=(
+                        "bold #ffe6dc on #552926",
+                        "bold #ffe3d8 on #47211d",
+                        "bold #f0d4cb on #3b1b18",
+                    ),
+                    value_mid_row_styles=(
+                        "bold #ae8680 on #552926",
+                        "bold #a57e76 on #47211d",
+                        "bold #997069 on #3b1b18",
+                    ),
                 )
                 scorebug_rows.extend(
                     [
@@ -1543,8 +1567,16 @@ class PaintDryDisplay:
                     "ON TARGET",
                     "0.0/0.0",
                     label_style="bold #eef3ff on #32578e",
-                    value_style="bold #dce9ff on #1c2d47",
-                    value_mid_style="bold #8ea5cb on #1c2d47",
+                    value_row_styles=(
+                        "bold #e4eeff on #264262",
+                        "bold #dce9ff on #1c2d47",
+                        "bold #d1deff on #16263d",
+                    ),
+                    value_mid_row_styles=(
+                        "bold #95acd4 on #264262",
+                        "bold #8ea5cb on #1c2d47",
+                        "bold #8398bc on #16263d",
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1554,8 +1586,16 @@ class PaintDryDisplay:
                     "LEFT ON TABLE",
                     "0.0/0.0",
                     label_style="bold #fff1d6 on #6b5028",
-                    value_style="bold #ffefcf on #3e2f1b",
-                    value_mid_style="bold #a18f66 on #3e2f1b",
+                    value_row_styles=(
+                        "bold #fff2d6 on #4b3921",
+                        "bold #ffefcf on #3e2f1b",
+                        "bold #f0deb8 on #342713",
+                    ),
+                    value_mid_row_styles=(
+                        "bold #a99770 on #4b3921",
+                        "bold #a18f66 on #3e2f1b",
+                        "bold #947f58 on #342713",
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1565,8 +1605,16 @@ class PaintDryDisplay:
                     "BAD CALLS",
                     "0.0/0.0",
                     label_style="bold #ffe5dd on #7a392f",
-                    value_style="bold #ffe3d8 on #47211d",
-                    value_mid_style="bold #a57e76 on #47211d",
+                    value_row_styles=(
+                        "bold #ffe6dc on #552926",
+                        "bold #ffe3d8 on #47211d",
+                        "bold #f0d4cb on #3b1b18",
+                    ),
+                    value_mid_row_styles=(
+                        "bold #ae8680 on #552926",
+                        "bold #a57e76 on #47211d",
+                        "bold #997069 on #3b1b18",
+                    ),
                 )
                 scorebug_rows.extend(
                     [
