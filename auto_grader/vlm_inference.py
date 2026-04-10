@@ -96,14 +96,16 @@ class ServerConfig:
 GRADER_PAGE_DPI = 200
 
 #: DPI used for page images handed to the focus-preview pipeline. The
-#: half-block terminal renderer has a Nyquist-style resolution ceiling:
-#: strokes thinner than ~half the source-pixels-per-sampled-cell ratio
-#: get averaged into the paper side of the Otsu threshold and disappear.
-#: 200 DPI was leaving pencil Lewis structures and thin ink strokes
-#: invisible even when the box was aimed correctly. Bumping 4× (200 → 800)
-#: turns a 2.5-px stroke into a 10-px stroke in source space, which
-#: survives downsampling with room to spare. The grader does NOT see
-#: this higher-resolution image — it's rasterized into a separate cache.
+#: primary preview renderer on image-capable terminals (WezTerm, iTerm2)
+#: is the iTerm2 inline image path, which hands the full-resolution PNG
+#: directly to the terminal for pixel-for-pixel rasterization. That
+#: path benefits from maximum source resolution — the terminal will
+#: produce a sharper rendered image the more pixels it has to work with.
+#: The half-block fallback renderer (for terminals without image
+#: support) downsamples to terminal cells regardless of source DPI and
+#: doesn't benefit from the extra pixels, but doesn't suffer either.
+#: The grader does NOT see this higher-resolution image — it's
+#: rasterized into a separate cache at GRADER_PAGE_DPI.
 PREVIEW_PAGE_DPI = 800
 
 

@@ -13,11 +13,15 @@ from rich.text import Text
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
     _build_focus_preview_pixels,
+    _build_iterm2_inline_image_sequence,
+    _compute_inline_image_cell_dimensions,
     _focus_preview_budget,
     _render_focus_preview_pixels,
     _scaled_preview_size,
+    _supports_inline_images,
     _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
+    FocusPreviewInlineImage,
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
     _LIVE_PER_CHAR_PHASE_OFFSET,
@@ -282,6 +286,10 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_focus_preview_is_rasterized_once_per_item_not_each_frame(self):
         display = self._make_display()
+        # Force half-block fallback path so this test exercises the
+        # pipeline it's designed to cover regardless of what terminal
+        # the test runner's environment looks like to be.
+        display._inline_images_supported = False
         sentinel_pixels = [[(10, 20, 30)]]
 
         with mock.patch(
@@ -300,6 +308,7 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_focus_preview_samples_at_double_vertical_density_for_half_blocks(self):
         display = self._make_display()
+        display._inline_images_supported = False
 
         with mock.patch(
             "scripts.narrator_reader._build_focus_preview_pixels",
@@ -630,6 +639,124 @@ class NarratorReaderContract(unittest.TestCase):
             "downsampling should preserve a materially darker center stripe instead of averaging thin ink strokes back into the paper",
         )
 
+    # ------------------------------------------------------------------
+    # Inline image path (iTerm2 protocol, the primary focus-preview
+    # renderer on image-capable terminals like WezTerm). The half-block
+    # renderer above is the fallback for terminals that don't speak an
+    # image protocol. These tests pin the protocol format and the Rich
+    # Renderable contract without actually rendering to a real terminal.
+    # ------------------------------------------------------------------
+
+    def test_build_iterm2_inline_image_sequence_has_correct_envelope(self):
+        png = b"\x89PNG\r\n\x1a\nfake png bytes for test"
+        seq = _build_iterm2_inline_image_sequence(
+            png, cell_width=40, cell_height=18
+        )
+        # Envelope: ESC ] 1337 ; File = <args> : <base64> BEL
+        self.assertTrue(
+            seq.startswith("\x1b]1337;File="),
+            "must start with the iTerm2 OSC 1337 File= prefix",
+        )
+        self.assertTrue(
+            seq.endswith("\x07"),
+            "must terminate with BEL",
+        )
+        self.assertIn("inline=1", seq, "must request inline rendering")
+        self.assertIn("width=40", seq, "must declare requested cell width")
+        self.assertIn("height=18", seq, "must declare requested cell height")
+        self.assertIn(
+            "preserveAspectRatio=1",
+            seq,
+            "must preserve aspect ratio so images don't stretch",
+        )
+        # The base64 of the PNG payload must actually appear in the
+        # sequence between the ':' and the trailing BEL.
+        import base64 as _b64
+        encoded = _b64.b64encode(png).decode("ascii")
+        self.assertIn(encoded, seq)
+
+    def test_compute_inline_image_cell_dimensions_preserves_aspect(self):
+        # Wide crop: 900x300 px → 3:1 aspect. At cell_height=18 and
+        # terminal cell aspect ~2:1 (tall), the cell_width should be
+        # roughly 18 * 3 * 2 = 108 cells.
+        cw, ch = _compute_inline_image_cell_dimensions(
+            900, 300, max_cell_height=18, max_cell_width=200
+        )
+        self.assertEqual(ch, 18)
+        self.assertGreaterEqual(cw, 90)
+        self.assertLessEqual(cw, 120)
+
+    def test_compute_inline_image_cell_dimensions_clamps_to_max_width(self):
+        # A very wide crop would want more cells than max allows.
+        # Output must clamp to max_cell_width and shrink cell_height
+        # proportionally so the aspect ratio doesn't get distorted.
+        cw, ch = _compute_inline_image_cell_dimensions(
+            4000, 200, max_cell_height=30, max_cell_width=100
+        )
+        self.assertLessEqual(cw, 100)
+        # Aspect preserved: ch should have shrunk from 30 to keep
+        # the ratio roughly 4000:200 = 20:1 (accounting for cell 2:1).
+        self.assertLess(ch, 30)
+
+    def test_compute_inline_image_cell_dimensions_returns_positive_integers(self):
+        cw, ch = _compute_inline_image_cell_dimensions(
+            1, 1, max_cell_height=18, max_cell_width=100
+        )
+        self.assertIsInstance(cw, int)
+        self.assertIsInstance(ch, int)
+        self.assertGreater(cw, 0)
+        self.assertGreater(ch, 0)
+
+    def test_supports_inline_images_recognizes_wezterm(self):
+        self.assertTrue(_supports_inline_images("WezTerm"))
+
+    def test_supports_inline_images_recognizes_iterm2(self):
+        self.assertTrue(_supports_inline_images("iTerm.app"))
+
+    def test_supports_inline_images_rejects_plain_xterm(self):
+        self.assertFalse(_supports_inline_images("xterm"))
+        self.assertFalse(_supports_inline_images("Apple_Terminal"))
+        self.assertFalse(_supports_inline_images(None))
+        self.assertFalse(_supports_inline_images(""))
+
+    def test_focus_preview_inline_image_renderable_declares_cell_height(self):
+        # Rich's layout engine measures a renderable's vertical footprint
+        # from what it yields. The inline image escape sequence occupies
+        # no text rows on its own, so the renderable must yield exactly
+        # `cell_height` blank lines alongside the escape sequence, so
+        # Rich reserves the right amount of vertical space and positions
+        # the next panel below where the image visually lands.
+        from rich.console import Console
+
+        png = b"\x89PNG\r\n\x1a\nfake png"
+        renderable = FocusPreviewInlineImage(
+            png_bytes=png, cell_width=60, cell_height=18
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        with console.capture() as capture:
+            console.print(renderable)
+        captured = capture.get()
+        # Must contain the escape sequence exactly once.
+        self.assertEqual(
+            captured.count("\x1b]1337;File="),
+            1,
+            "inline image must emit exactly one OSC 1337 sequence per render",
+        )
+        # Line count: must produce cell_height rows of vertical footprint
+        # so Rich reserves that much space. Rich's print adds a trailing
+        # newline; count the non-final newlines.
+        lines = captured.splitlines()
+        self.assertGreaterEqual(
+            len(lines),
+            18,
+            "renderable must reserve cell_height rows of vertical space",
+        )
+
     def test_otsu_threshold_separates_bimodal_distribution(self):
         # Two clear clusters: 200 samples around 40 (ink), 200 around 220 (paper).
         luminances = [40.0] * 200 + [220.0] * 200
@@ -740,6 +867,7 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_pending_focus_preview_rerender_is_quantized_instead_of_rebuilding_every_tick(self):
         display = self._make_display()
+        display._inline_images_supported = False
         display.on_focus_preview(
             self._make_png(width=64, height=36),
             label="15-blue/fr-12a",

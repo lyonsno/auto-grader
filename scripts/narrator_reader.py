@@ -40,9 +40,10 @@ from typing import Deque
 
 import fitz
 from rich.align import Align
-from rich.console import Console, Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
 from rich.panel import Panel
+from rich.segment import Segment
 from rich.text import Text
 
 # scripts/ is not on sys.path by default when narrator_reader.py is
@@ -662,6 +663,165 @@ def _focus_preview_budget(
         min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, height_target),
     )
     return width_chars, height_rows
+
+
+# ---------------------------------------------------------------------
+# Inline image rendering path (iTerm2 OSC 1337 protocol).
+#
+# The half-block renderer below is the fallback for terminals that
+# can't do image escapes. On WezTerm and iTerm2, we take the much
+# simpler and strictly-more-legible path: hand the focus preview PNG
+# directly to the terminal via the iTerm2 inline image escape sequence
+# and let the terminal rasterize it into screen pixels at the requested
+# cell span.
+#
+# Integration with Rich: the inline image is wrapped in a custom Rich
+# Renderable (`FocusPreviewInlineImage`) that yields the escape
+# sequence plus enough blank rows to reserve the image's visual
+# vertical footprint. Rich thinks it's rendering N rows of padding
+# and positions the next panel below where the terminal has drawn
+# the image. No Live-region splitting needed.
+# ---------------------------------------------------------------------
+
+#: Cell height the inline image path targets. Matches the half-block
+#: renderer's typical panel height so the layout doesn't shift when
+#: the path switches.
+_INLINE_IMAGE_CELL_HEIGHT = 18
+
+#: Max cell width the inline image path will request. Companion-scale
+#: similar to the half-block renderer but a bit more generous because
+#: real images tolerate larger panels aesthetically.
+_INLINE_IMAGE_MAX_CELL_WIDTH = 140
+
+#: Terminal cell aspect ratio (height / width) for sizing math. Most
+#: fixed-width terminal fonts render cells roughly twice as tall as
+#: wide, so a 1:1 source image wants roughly half as many cells in
+#: height as in width.
+_TERMINAL_CELL_ASPECT = 2.0
+
+
+def _build_iterm2_inline_image_sequence(
+    png_bytes: bytes,
+    *,
+    cell_width: int,
+    cell_height: int,
+) -> str:
+    """Return an iTerm2 OSC 1337 File= escape sequence that embeds the
+    given PNG at the requested cell dimensions.
+
+    Format::
+
+        ESC ] 1337 ; File = inline=1;width=<W>;height=<H>;preserveAspectRatio=1 : <base64> BEL
+
+    WezTerm, iTerm2, and a few other terminals render this as a real
+    raster image at the requested footprint. Unsupported terminals
+    will either show the sequence as garbled text or (more commonly)
+    swallow it silently. Capability detection via
+    `_supports_inline_images` gates whether to emit this at all.
+    """
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    args = (
+        f"inline=1;width={cell_width};height={cell_height};preserveAspectRatio=1"
+    )
+    return f"\x1b]1337;File={args}:{b64}\x07"
+
+
+def _compute_inline_image_cell_dimensions(
+    crop_width_px: int,
+    crop_height_px: int,
+    *,
+    max_cell_height: int = _INLINE_IMAGE_CELL_HEIGHT,
+    max_cell_width: int = _INLINE_IMAGE_MAX_CELL_WIDTH,
+) -> tuple[int, int]:
+    """Compute the (cell_width, cell_height) footprint for an inline
+    image given its source pixel dimensions.
+
+    Strategy: pin the cell height to ``max_cell_height`` (so the
+    preview occupies a consistent vertical slot regardless of crop
+    aspect ratio — history below never jumps around) and compute
+    cell width from the crop's aspect ratio, accounting for terminal
+    cells being roughly ``_TERMINAL_CELL_ASPECT`` times taller than
+    wide. If the resulting cell width exceeds ``max_cell_width``,
+    clamp it and shrink cell height proportionally to preserve
+    aspect. Returns positive integers.
+    """
+    if crop_width_px <= 0 or crop_height_px <= 0:
+        return (max(1, max_cell_width), max(1, max_cell_height))
+    crop_aspect = crop_width_px / crop_height_px
+    cell_height = max(1, max_cell_height)
+    # cell_width such that visual aspect matches:
+    #   (cell_width * 1) / (cell_height * _TERMINAL_CELL_ASPECT) == crop_aspect
+    cell_width = int(round(cell_height * crop_aspect * _TERMINAL_CELL_ASPECT))
+    if cell_width > max_cell_width:
+        # Preserve aspect by shrinking both dimensions so cell_width
+        # lands exactly at max_cell_width.
+        shrink = max_cell_width / cell_width
+        cell_width = max_cell_width
+        cell_height = max(1, int(round(cell_height * shrink)))
+    cell_width = max(1, cell_width)
+    return (cell_width, cell_height)
+
+
+def _supports_inline_images(term_program: str | None) -> bool:
+    """Return True if the terminal identified by ``$TERM_PROGRAM``
+    supports the iTerm2 inline image protocol.
+
+    Known-good: WezTerm, iTerm.app (iTerm2). Everything else — xterm,
+    Apple_Terminal, tmux, unset — is treated as unsupported and falls
+    through to the half-block fallback renderer.
+    """
+    if not term_program:
+        return False
+    return term_program in {"WezTerm", "iTerm.app"}
+
+
+class FocusPreviewInlineImage:
+    """Rich Renderable that emits an iTerm2 inline image and reserves
+    exactly ``cell_height`` rows of vertical space.
+
+    Rich's layout engine positions subsequent renderables below this
+    object based on how many rows it yields. The iTerm2 escape
+    sequence itself occupies no text rows from Rich's perspective,
+    so we yield the escape sequence on the first row and pad the
+    remaining rows with blank segments. The terminal (which does
+    understand the escape sequence) paints the image into the
+    vertical band that Rich has reserved for padding, and everything
+    lines up visually.
+    """
+
+    def __init__(
+        self,
+        *,
+        png_bytes: bytes,
+        cell_width: int,
+        cell_height: int,
+    ) -> None:
+        self._png_bytes = png_bytes
+        self._cell_width = cell_width
+        self._cell_height = cell_height
+        self._sequence = _build_iterm2_inline_image_sequence(
+            png_bytes, cell_width=cell_width, cell_height=cell_height
+        )
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        # First row carries the escape sequence. The terminal will
+        # render the image starting at this cursor position and
+        # consume approximately `cell_height` rows of vertical space
+        # on-screen. Rich doesn't know the sequence does anything
+        # visual; it treats the Segment as a zero-width text payload.
+        yield Segment(self._sequence)
+        yield Segment.line()
+        # Pad with blank rows so Rich reserves the rest of the
+        # vertical footprint. Each blank row is a single space
+        # segment followed by a line break so Rich's row accounting
+        # counts it as a full row.
+        for _ in range(self._cell_height - 1):
+            yield Segment(" ")
+            yield Segment.line()
 
 
 def _otsu_threshold(luminances) -> float:
@@ -1549,6 +1709,18 @@ class PaintDryDisplay:
         self.focus_preview_pending_started: float | None = None
         self._focus_preview_pending_bucket: int | None = None
         self._focus_preview_pending_renderable: Group | None = None
+        # Inline-image renderer state. When the terminal supports
+        # iTerm2 inline images (WezTerm, iTerm2), we skip the half-
+        # block renderer and let the terminal rasterize the crop PNG
+        # directly — strictly better legibility at no grain cost.
+        # Capability detection runs once at construction from
+        # $TERM_PROGRAM. The cached renderable carries the escape
+        # sequence + padding so Rich's layout reserves the right
+        # vertical space.
+        self.focus_preview_inline_renderable: FocusPreviewInlineImage | None = None
+        self._inline_images_supported: bool = _supports_inline_images(
+            os.environ.get("TERM_PROGRAM")
+        )
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
@@ -2108,28 +2280,58 @@ class PaintDryDisplay:
         )
 
         focus_preview_panel = None
-        if self.focus_preview_renderable is not None:
+        have_inline = self.focus_preview_inline_renderable is not None
+        have_fallback = self.focus_preview_renderable is not None
+        if have_inline or have_fallback:
             preview_title = "[grey50]focus preview"
             if self.focus_preview_pending:
                 preview_title += " · pending"
             if self.focus_preview_label:
                 preview_title += f" · {self.focus_preview_label}"
             preview_title += "[/grey50]"
-            if self.focus_preview_pending and self.focus_preview_pixels is not None:
-                pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
-                if (
-                    self._focus_preview_pending_renderable is None
-                    or self._focus_preview_pending_bucket != pending_bucket
-                ):
-                    self._focus_preview_pending_renderable = _render_focus_preview_pixels(
-                        self.focus_preview_pixels,
-                        now=now,
-                        pending=True,
-                    )
-                    self._focus_preview_pending_bucket = pending_bucket
-                preview_renderable = self._focus_preview_pending_renderable
+            if have_inline:
+                # Inline image path: the terminal rasterizes the crop
+                # PNG directly. The custom Renderable reserves the
+                # exact vertical footprint Rich needs so the next
+                # panel lands below where the terminal paints the
+                # image. During pending (transition) state, fall
+                # through to the half-block animation since the
+                # inline path is static; the fallback may not exist
+                # at this point if the inline path is active, so
+                # check before using.
+                if self.focus_preview_pending and have_fallback and self.focus_preview_pixels is not None:
+                    pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                    if (
+                        self._focus_preview_pending_renderable is None
+                        or self._focus_preview_pending_bucket != pending_bucket
+                    ):
+                        self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                            self.focus_preview_pixels,
+                            now=now,
+                            pending=True,
+                        )
+                        self._focus_preview_pending_bucket = pending_bucket
+                    preview_renderable = self._focus_preview_pending_renderable
+                else:
+                    preview_renderable = self.focus_preview_inline_renderable
             else:
-                preview_renderable = self.focus_preview_renderable
+                # Half-block fallback path (no inline support or
+                # inline build failed).
+                if self.focus_preview_pending and self.focus_preview_pixels is not None:
+                    pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                    if (
+                        self._focus_preview_pending_renderable is None
+                        or self._focus_preview_pending_bucket != pending_bucket
+                    ):
+                        self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                            self.focus_preview_pixels,
+                            now=now,
+                            pending=True,
+                        )
+                        self._focus_preview_pending_bucket = pending_bucket
+                    preview_renderable = self._focus_preview_pending_renderable
+                else:
+                    preview_renderable = self.focus_preview_renderable
             focus_preview_panel = Panel(
                 Align.center(
                     preview_renderable
@@ -2430,7 +2632,10 @@ class PaintDryDisplay:
         self.frozen_line = ""
         self._frozen_line_parity = self._line_parity
         self._freeze_started_at = None
-        if self.focus_preview_renderable is not None:
+        if (
+            self.focus_preview_renderable is not None
+            or self.focus_preview_inline_renderable is not None
+        ):
             self.focus_preview_pending = True
             self.focus_preview_pending_started = header_now
             self._focus_preview_pending_bucket = None
@@ -2439,6 +2644,7 @@ class PaintDryDisplay:
             self.focus_preview_png = None
             self.focus_preview_pixels = None
             self.focus_preview_renderable = None
+            self.focus_preview_inline_renderable = None
             self.focus_preview_label = ""
             self.focus_preview_source = ""
             self.focus_preview_pending = False
@@ -2533,12 +2739,49 @@ class PaintDryDisplay:
                 term_width = self._console.size.width
             except Exception:
                 term_width = None
-        budget_width, budget_height = _focus_preview_budget(term_width)
         self.focus_preview_png = png_bytes
-        # Sample at 2× vertical density so the steady-state renderer can
-        # pack a top/bottom half-pixel pair into each terminal row via
-        # half-block (▀) cells. The pending/transition renderer averages
-        # pairs back down to its own density internally.
+        self.focus_preview_label = label
+        self.focus_preview_source = source
+        self.focus_preview_pending = False
+        self.focus_preview_pending_started = None
+        self._focus_preview_pending_bucket = None
+        self._focus_preview_pending_renderable = None
+
+        # Inline image path: primary on WezTerm/iTerm2. Bypasses the
+        # half-block renderer entirely and hands the full-resolution
+        # crop PNG to the terminal for pixel-for-pixel rasterization.
+        if self._inline_images_supported:
+            try:
+                pix = fitz.Pixmap(png_bytes)
+                cell_width, cell_height = _compute_inline_image_cell_dimensions(
+                    pix.width,
+                    pix.height,
+                    max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                    max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
+                )
+                self.focus_preview_inline_renderable = FocusPreviewInlineImage(
+                    png_bytes=png_bytes,
+                    cell_width=cell_width,
+                    cell_height=cell_height,
+                )
+                # No need to build the half-block fallback too — the
+                # inline path owns the panel when it's available.
+                self.focus_preview_pixels = None
+                self.focus_preview_renderable = None
+                return
+            except Exception:
+                # If building the inline renderable fails for any
+                # reason (corrupt PNG, fitz quirk), fall through to
+                # the half-block fallback so the operator still
+                # gets *something* in the panel.
+                self.focus_preview_inline_renderable = None
+
+        # Half-block fallback path: for terminals that don't support
+        # inline images, or when the inline path fails to build.
+        # Sample at 2× vertical density so the steady-state renderer
+        # can pack a top/bottom half-pixel pair into each terminal
+        # row via half-block (▀) cells.
+        budget_width, budget_height = _focus_preview_budget(term_width)
         self.focus_preview_pixels = _build_focus_preview_pixels(
             png_bytes,
             max_width_chars=budget_width,
@@ -2547,12 +2790,7 @@ class PaintDryDisplay:
         self.focus_preview_renderable = _render_focus_preview_pixels(
             self.focus_preview_pixels
         )
-        self.focus_preview_label = label
-        self.focus_preview_source = source
-        self.focus_preview_pending = False
-        self.focus_preview_pending_started = None
-        self._focus_preview_pending_bucket = None
-        self._focus_preview_pending_renderable = None
+        self.focus_preview_inline_renderable = None
 
     def on_topic(
         self,
