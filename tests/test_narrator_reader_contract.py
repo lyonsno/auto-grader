@@ -757,6 +757,7 @@ class NarratorReaderContract(unittest.TestCase):
         tally_value_top = scorebug_renderable.renderables[3]
         tally_value_mid = scorebug_renderable.renderables[4]
         tally_value_bottom = scorebug_renderable.renderables[5]
+        value_floor_gap = scorebug_renderable.renderables[6]
         zero_rows = _scorebug_big_value_rows("0.0/0.0")
 
         self.assertIn("CURRENT MODEL", scorebug_text)
@@ -769,6 +770,11 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn(zero_rows[0], tally_value_top.plain)
         self.assertIn(zero_rows[1], tally_value_mid.plain)
         self.assertIn(zero_rows[2], tally_value_bottom.plain)
+        self.assertEqual(
+            value_floor_gap.plain.strip(),
+            "",
+            "scorebug values should keep a blank gutter below the bottom numeral row so the strokes don't slam into the panel floor",
+        )
 
     def test_scorebug_slash_is_a_quieter_middle_row_divider(self):
         top, middle, bottom = _scorebug_big_value_rows("1.0/2.0")

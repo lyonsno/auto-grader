@@ -1527,6 +1527,7 @@ class PaintDryDisplay:
                         scorebug_values_top,
                         scorebug_values_middle,
                         scorebug_values_bottom,
+                        Text(" ", style="grey35"),
                     ]
                 )
             else:
@@ -1573,6 +1574,7 @@ class PaintDryDisplay:
                         scorebug_values_top,
                         scorebug_values_middle,
                         scorebug_values_bottom,
+                        Text(" ", style="grey35"),
                     ]
                 )
 
