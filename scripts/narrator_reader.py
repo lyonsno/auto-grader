@@ -383,7 +383,7 @@ _SCOREBUG_BIG_DIGITS = {
     "1": ("╔╗ ", " ║ ", " ╹ "),
     "2": ("╔═╗", "╔═╝", "╚═ "),
     "3": ("╔═╗", " ═╣", "╚═╝"),
-    "4": ("╔ ╗", "╚═╣", "  ║"),
+    "4": ("╔ ╗", "╚═╣", "  ╹"),
     "5": ("╔═ ", "╚═╗", "╚═╝"),
     "6": ("╔═ ", "╠═╗", "╚═╝"),
     "7": ("╔═╗", "╔╝ ", "║  "),
@@ -512,6 +512,39 @@ def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
         "".join(middle_parts),
         "".join(bottom_parts),
     )
+
+
+def _append_header_title(text: Text, title: str, phase: float) -> None:
+    """Render the title with a visible lacquered red/plum gradient.
+
+    The smoked surface needs the heading accent to read at a glance,
+    not just exist as a latent palette choice. Split the title into a
+    few stable spans and let them drift gently within the existing
+    burgundy/plum family so the top band stays alive without becoming
+    flashy.
+    """
+    body, separator, tail = title.partition(" · ")
+    words = body.split()
+    if not words:
+        text.append(title, style=f"bold {_rgb_to_hex(_BASE_RGB['header'])}")
+        return
+
+    for index, word in enumerate(words):
+        if index:
+            text.append(" ", style=f"bold {_rgb_to_hex(_BASE_RGB['header'])}")
+        weight = 0.16 + (index * 0.14)
+        weight += 0.08 * math.sin(2 * math.pi * (phase + (index * 0.11)))
+        text.append(
+            word,
+            style=f"bold {_rgb_to_hex(_interp_rgb(_BASE_RGB['header'], _SHIMMER_KIND_PEAK_RGB['header'], weight))}",
+        )
+
+    if separator:
+        tail_weight = 0.20 + (0.06 * math.sin(2 * math.pi * (phase + 0.41)))
+        text.append(
+            f"{separator}{tail}",
+            style=f"bold {_rgb_to_hex(_interp_rgb(_BASE_RGB['header'], _SHIMMER_KIND_PEAK_RGB['header'], tail_weight))}",
+        )
 
 
 def _append_scorebug_value_row(
@@ -1402,7 +1435,7 @@ class PaintDryDisplay:
         # the top chrome to balance the warm field below. Same color
         # family as the [item N/M] index markers in the history panel.
         header_text = Text()
-        header_text.append(self.title, style="bold bright_white")
+        _append_header_title(header_text, self.title, self._shimmer_phases.phase(0))
         header_text.append("   ", style="dim")
         header_text.append(self.subtitle, style="#5a73b4")
         header_text.append("   ", style="dim")
