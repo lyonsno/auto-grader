@@ -1214,7 +1214,11 @@ class NarratorReaderContract(unittest.TestCase):
             "the 1 glyph should carry its serif/cap in the upper row instead of reading as a thin post with all the weight at the bottom",
         )
         self.assertIn(" ║ ", middle)
-        self.assertIn(" ║ ", bottom)
+        self.assertIn(
+            " ╹ ",
+            bottom,
+            "the 1 glyph should end on a short foot now that the scorebug has a floor gutter, instead of drilling all the way down with another full stem row",
+        )
 
     def test_scorebug_skinny_family_packs_tightly_with_a_fuller_one_cap(self):
         top, middle, bottom = _scorebug_big_value_rows("17.0")
@@ -1226,7 +1230,7 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertNotIn("╔╗  ╔═╗", top)
         self.assertIn(" ║ ╔╝", middle)
-        self.assertIn(" ║ ║", bottom)
+        self.assertIn(" ╹ ║", bottom)
 
     def test_scorebug_seven_glyph_keeps_chunky_upper_hook(self):
         top, middle, bottom = _scorebug_big_value_rows("7.0")
