@@ -156,6 +156,13 @@ The system needs a minimal workflow for:
 A rough, cheap GUI is acceptable. A local web UI served from the app is acceptable. The UI
 is a tool, not the product.
 
+## Operator surfaces
+
+The repo also includes an operator-facing live narrator surface, "Project Paint
+Dry," used during smoke and eval runs to watch the grader's reasoning in flight.
+Its semantics, scorebug vocabulary, and checkpoint/history contract are
+documented in [docs/project_paint_dry.md](docs/project_paint_dry.md).
+
 ## Data model
 
 This is high-level and intentionally does not commit to table names yet.
