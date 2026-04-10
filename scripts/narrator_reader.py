@@ -364,11 +364,15 @@ _SCOREBUG_BIG_DIGITS = {
     "-": ("   ", "═══", "   "),
 }
 
-_HISTORY_GROUP_PHASE_LEAD = 0.05   # smaller between-item terrace jump —
-                                   # enough to separate items, but less than the
-                                   # earlier more aggressive lead
-_HISTORY_GROUP_RAKE = 0.04         # stronger within-item setback so each group
-                                   # still rakes back more than the next header
+_HISTORY_GROUP_SETBACK = 0.03      # lower item headers sit slightly behind the
+                                   # one above them, but not by enough to read
+                                   # as separate weather systems
+_HISTORY_GROUP_RAKE = 0.028        # gentler within-item rake than the last pass
+                                   # so the grouping reads structural, not
+                                   # algorithmically terraced
+_HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
+                                   # shared across even/odd item groups
+_HISTORY_GROUP_ALT_RATE = 0.55     # slower than the primary history field
 
 
 def _interp_rgb(
@@ -408,29 +412,51 @@ def _blend_rgb(
     )
 
 
-def _history_group_phase(base_phase: float, group_index: int) -> float:
-    """Advance each visible item group by a fixed terrace lead.
+def _history_group_phase(
+    base_phase: float,
+    secondary_phase: float,
+    group_index: int,
+) -> float:
+    """Set back each visible item group and add a subtle parity field.
 
     The history stack should feel coherent within an item, but item
     boundaries should not all lie on the exact same shimmer plane.
-    This helper keeps one local field per item and advances each
-    successive visible group by a stable phase offset.
+    This helper keeps one local field per item, sets lower headers
+    slightly back from the one above them, and layers in a faint
+    alternating parity field so neighboring groups do not ride the
+    same exact shimmer geometry.
     """
-    return (base_phase + (group_index * _HISTORY_GROUP_PHASE_LEAD)) % 1.0
+    parity_direction = -1.0 if group_index % 2 else 1.0
+    alternating_offset = (
+        math.sin(
+            2
+            * math.pi
+            * ((secondary_phase - 0.25) * _HISTORY_GROUP_ALT_RATE)
+        )
+        * _HISTORY_GROUP_ALT_FIELD
+        * parity_direction
+    )
+    return (
+        base_phase
+        - (group_index * _HISTORY_GROUP_SETBACK)
+        + alternating_offset
+    ) % 1.0
 
 
 def _history_entry_phase(
     base_phase: float,
+    secondary_phase: float,
     group_index: int,
     group_depth: int,
 ) -> float:
     """Phase for one visible history entry.
 
-    Item headers terrace forward a bit from the item above them, but
-    entries within an item rake back more aggressively so each item
-    reads as its own stepped mini-field rather than one long diagonal.
+    Item headers sit slightly behind the one above them, but entries
+    within an item still rake back enough to read as a local field.
+    A faint alternating parity field reinforces the item boundaries
+    without making the geometry feel mechanically terraced.
     """
-    group_phase = _history_group_phase(base_phase, group_index)
+    group_phase = _history_group_phase(base_phase, secondary_phase, group_index)
     return (group_phase - (group_depth * _HISTORY_GROUP_RAKE)) % 1.0
 
 
@@ -1586,6 +1612,7 @@ class PaintDryDisplay:
         # the wrap.
         display_entries = self._build_display_entries(wrap_width=wrap_width)
         history_text = Text(no_wrap=False, overflow="fold")
+        global_history_phase = self._shimmer_phases.phase(0)
         current_group_index = -1
         current_group_base_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
@@ -1612,6 +1639,7 @@ class PaintDryDisplay:
             # more aggressively inside that item.
             phase_override = _history_entry_phase(
                 current_group_base_phase,
+                global_history_phase,
                 current_group_index,
                 group_depth,
             )
