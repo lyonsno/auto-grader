@@ -262,11 +262,6 @@ _EXPLICIT_REVIEW_NEEDED_RE = re.compile(
     r"\b(review (?:is )?(?:needed|warranted)|human review)\b",
     re.IGNORECASE,
 )
-_LIVE_AMBIGUITY_SIGNAL_RE = re.compile(
-    r"\b(ambigu|unclear|uncertain|crossed[- ]?out|digit|read|reading|"
-    r"handwriting|smudge|squint|legib|either\b|written|wrote)\b",
-    re.IGNORECASE,
-)
 
 _GRADER_SCORE_RE = re.compile(r"(Grader:\s*)([^ ]+)")
 _PROF_SCORE_RE = re.compile(r"(Prof:\s*)([^ ]+)")
@@ -563,7 +558,6 @@ class ThinkingNarrator:
         self._item_turbulence_dedup_count = 0
         self._item_turbulence_status_dedup_count = 0
         self._item_turbulence_grooming_count = 0
-        self._item_live_ambiguity_queued = False
         self._legibility_jobs: list[dict] = []
         self._idle_legibility_pending = False
         self._idle_legibility_generation = 0
@@ -623,7 +617,6 @@ class ThinkingNarrator:
             self._item_turbulence_dedup_count = 0
             self._item_turbulence_status_dedup_count = 0
             self._item_turbulence_grooming_count = 0
-            self._item_live_ambiguity_queued = False
             self._legibility_jobs = []
             self._idle_legibility_pending = False
             self._idle_legibility_generation += 1
@@ -799,89 +792,11 @@ class ThinkingNarrator:
         with self._lock:
             self._prior_checkpoints.append(checkpoint_text)
 
-    def _build_consolidation_checkpoint_user_content(
-        self,
-        chunk: str,
-        accepted_line: str,
-        prior_thoughts: list[str],
-        prior_statuses: list[str],
-        prior_checkpoints: list[str],
-        dropped_thought: str,
-        dropped_status: str | None,
-    ) -> str:
-        blocks = [
-            self._build_checkpoint_user_content(
-                chunk,
-                accepted_line,
-                prior_thoughts,
-                prior_statuses,
-                prior_checkpoints,
-            )
-        ]
-        blocks.append(f"Dropped thought retry:\n- {dropped_thought}")
-        if dropped_status:
-            blocks.append(f"Dropped status retry:\n- {dropped_status}")
-        blocks.append(
-            "The retries above kept circling the same basin. "
-            "Use them to collapse that recurring issue into one canonical durable checkpoint."
-        )
-        return "\n\n".join(blocks)
-
-    def _emit_consolidation_checkpoint_from_dedupe(
-        self,
-        chunk: str,
-        accepted_line: str,
-        prior_thoughts: list[str],
-        prior_statuses: list[str],
-        prior_checkpoints: list[str],
-        dropped_thought: str,
-        dropped_status: str | None,
-    ) -> None:
-        checkpoint_user_content = self._build_consolidation_checkpoint_user_content(
-            chunk,
-            accepted_line,
-            prior_thoughts,
-            prior_statuses,
-            prior_checkpoints,
-            dropped_thought,
-            dropped_status,
-        )
-        checkpoint_messages = [
-            {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
-            {"role": "user", "content": checkpoint_user_content},
-        ]
-        checkpoint_text = self._chat_completion(
-            checkpoint_messages,
-            temperature=_CHECKPOINT_TEMPERATURE,
-            repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
-            presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
-        ).strip()
-        if not checkpoint_text:
-            return
-        if _checkpoint_line_breaks_contract(checkpoint_text):
-            self._sink.write_drop("contract-checkpoint", checkpoint_text)
-            return
-        if any(
-            self._checkpoint_lines_share_basin(
-                checkpoint_text,
-                prev,
-            )
-            for prev in prior_checkpoints
-        ):
-            self._sink.write_drop("dedup-checkpoint", checkpoint_text)
-            return
-        self._sink.write_checkpoint(checkpoint_text)
-        with self._lock:
-            self._prior_checkpoints.append(checkpoint_text)
-
     def _maybe_groom_after_repeated_dedup(
         self,
         chunk: str,
         prior_thoughts: list[str],
         prior_statuses: list[str],
-        *,
-        dropped_thought: str,
-        dropped_status: str | None,
     ) -> None:
         with self._lock:
             if self._dedupe_streak < _DEDUP_GROOMING_THRESHOLD:
@@ -897,100 +812,13 @@ class ThinkingNarrator:
             prior_checkpoints = list(self._prior_checkpoints)
         if not accepted_line:
             return
-        self._emit_consolidation_checkpoint_from_dedupe(
+        self._emit_checkpoint_from_context(
             chunk,
             accepted_line,
             prior_thoughts,
             prior_statuses,
             prior_checkpoints,
-            dropped_thought,
-            dropped_status,
         )
-
-    def _live_ambiguity_prompt_from_dedupe(
-        self,
-        chunk: str,
-        prior_thoughts: list[str],
-        prior_statuses: list[str],
-        prior_checkpoints: list[str],
-        dropped_thought: str,
-        dropped_status: str | None,
-    ) -> str | None:
-        with self._lock:
-            if self._item_live_ambiguity_queued:
-                return None
-            item_header = self._item_header or ""
-            current_status = self._current_status or ""
-            dedup_count = self._item_turbulence_dedup_count
-            status_dedup_count = self._item_turbulence_status_dedup_count
-            grooming_count = self._item_turbulence_grooming_count
-
-        texts = [
-            item_header,
-            current_status,
-            dropped_thought,
-            dropped_status or "",
-            *prior_statuses[-_STATUS_CONTEXT_LIMIT:],
-            *prior_thoughts[-_THOUGHT_CONTEXT_LIMIT:],
-            *prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:],
-        ]
-        if not any(_LIVE_AMBIGUITY_SIGNAL_RE.search(text) for text in texts if text):
-            return None
-
-        status_block = "\n".join(f"- {status}" for status in prior_statuses[-_STATUS_CONTEXT_LIMIT:]) or "- (none)"
-        thought_block = "\n".join(f"- {thought}" for thought in prior_thoughts[-_THOUGHT_CONTEXT_LIMIT:]) or "- (none)"
-        checkpoint_block = "\n".join(f"- {checkpoint}" for checkpoint in prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:]) or "- (none)"
-        current_status_block = current_status or "(none)"
-        item_header_block = item_header or "(unknown item)"
-        blocks = [
-            "Write one short row body for 'Ambiguity:'.",
-            "Name the concrete unstable read or interpretive fork the narrator keeps revisiting.",
-            "Do not mention loops, dedup, Bonsai, statuses, or human review.",
-            "Return ONLY the row body.",
-            "",
-            f"Item: {item_header_block}",
-            f"Current reasoning excerpt:\n{chunk}",
-            f"Current status: {current_status_block}",
-            f"Turbulence signals: thought dedup drops={dedup_count}, "
-            f"status dedup drops={status_dedup_count}, grooming passes={grooming_count}",
-            f"Dropped thought retry:\n- {dropped_thought}",
-        ]
-        if dropped_status:
-            blocks.append(f"Dropped status retry:\n- {dropped_status}")
-        blocks.extend(
-            [
-                f"Accepted statuses:\n{status_block}",
-                f"Accepted recent thoughts:\n{thought_block}",
-                f"Recent checkpoints:\n{checkpoint_block}",
-            ]
-        )
-        return "\n\n".join(blocks)
-
-    def _maybe_queue_live_ambiguity_from_dedupe(
-        self,
-        chunk: str,
-        prior_thoughts: list[str],
-        prior_statuses: list[str],
-        *,
-        dropped_thought: str,
-        dropped_status: str | None,
-    ) -> bool:
-        with self._lock:
-            prior_checkpoints = list(self._prior_checkpoints)
-        prompt = self._live_ambiguity_prompt_from_dedupe(
-            chunk,
-            prior_thoughts,
-            prior_statuses,
-            prior_checkpoints,
-            dropped_thought,
-            dropped_status,
-        )
-        if not prompt:
-            return False
-        self._enqueue_legibility_job("ambiguity", prompt=prompt)
-        with self._lock:
-            self._item_live_ambiguity_queued = True
-        return True
 
     def _retry_duplicate_as_status(
         self,
@@ -1402,9 +1230,7 @@ class ThinkingNarrator:
 
     def _handle_legibility_rows(self, prediction: Any, item: Any) -> None:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
-        with self._lock:
-            live_ambiguity_queued = self._item_live_ambiguity_queued
-        ambiguity_prompt = None if live_ambiguity_queued else self._ambiguity_prompt_from_turbulence(prediction, item)
+        ambiguity_prompt = self._ambiguity_prompt_from_turbulence(prediction, item)
         review_needed = self._review_needed_text(prediction)
         professor_mismatch = self._professor_mismatch_text(item)
 
@@ -1821,25 +1647,7 @@ class ThinkingNarrator:
                         chunk,
                         prior_thoughts,
                         prior_statuses,
-                        dropped_thought=full,
-                        dropped_status=(
-                            status_drop
-                            if status_drop_reason == "dedup-status"
-                            else None
-                        ),
                     )
-                    if self._maybe_queue_live_ambiguity_from_dedupe(
-                        chunk,
-                        prior_thoughts,
-                        prior_statuses,
-                        dropped_thought=full,
-                        dropped_status=(
-                            status_drop
-                            if status_drop_reason == "dedup-status"
-                            else None
-                        ),
-                    ):
-                        self._schedule_idle_legibility_if_needed()
                     return
                 full = status_full
                 committed_mode = "status"
