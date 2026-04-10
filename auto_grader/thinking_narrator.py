@@ -329,6 +329,21 @@ def _status_line_breaks_contract(text: str) -> bool:
     return bool(_STATUS_FIRST_PERSON_RE.search(text))
 
 
+def _canonicalize_status_retry(text: str) -> str:
+    stripped = " ".join(text.strip().split())
+    if not stripped:
+        return ""
+    canonical = re.sub(
+        r"^(?:i['’]?m|im|i am)\s+",
+        "",
+        stripped,
+        flags=re.IGNORECASE,
+    ).strip()
+    if not canonical:
+        return ""
+    return canonical[:1].upper() + canonical[1:]
+
+
 def _reasoning_warrants_human_review(text: str) -> bool:
     lowered = text.lower()
     return (
@@ -716,6 +731,7 @@ class ThinkingNarrator:
         full = full.strip()
         if not full:
             return None, status_user_content, None, None
+        full = _canonicalize_status_retry(full)
         if _status_line_breaks_contract(full):
             return None, status_user_content, "contract-status", full
 
