@@ -56,6 +56,13 @@ _TRICKY_PLUS_PICKS = [
     *_TRICKY_PICKS,
 ]
 
+_TRICKY_PLUS_PLUS_PICKS = [
+    ("15-blue", "fr-10b"),   # FOLLOW-ON: tiny numeric continuation after partial fr-10a
+    ("15-blue", "fr-11c"),   # EXACTNESS: small orbital-box count / visual exact-match
+    ("15-blue", "fr-12b"),   # RESONANCE: Lewis follow-on beyond basic structure
+    *_TRICKY_PLUS_PICKS,
+]
+
 
 def _default_run_dir(model: str, *, now: datetime | None = None) -> Path:
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
@@ -105,6 +112,8 @@ def _scorebug_session_meta(
         set_label = "TRICKY"
     elif args.tricky_plus:
         set_label = "TRICKY+"
+    elif args.tricky_plus_plus:
+        set_label = "TRICKY++"
     elif args.all:
         set_label = "ALL"
     elif args.pick:
@@ -269,6 +278,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Overrides --items."
         ),
     )
+    parser.add_argument(
+        "--tricky-plus-plus",
+        action="store_true",
+        help=(
+            "Grade TRICKY+ plus three more 15-blue stress items up front "
+            "for a denser 15-blue-heavy smoke. Overrides --items."
+        ),
+    )
     parser.add_argument("--narrate", action="store_true",
                         help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
     parser.add_argument("--narrate-stderr", action="store_true",
@@ -331,6 +348,9 @@ def main():
     elif args.tricky_plus:
         gt_index = {(item.exam_id, item.question_id): item for item in gt}
         subset = [gt_index[k] for k in _TRICKY_PLUS_PICKS if k in gt_index]
+    elif args.tricky_plus_plus:
+        gt_index = {(item.exam_id, item.question_id): item for item in gt}
+        subset = [gt_index[k] for k in _TRICKY_PLUS_PLUS_PICKS if k in gt_index]
     elif args.all:
         subset = gt
     else:
