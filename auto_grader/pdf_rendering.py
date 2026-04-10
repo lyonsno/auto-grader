@@ -4,7 +4,8 @@ This module intentionally keeps the paper surface small and explicit:
 
 - consume the generation artifact as the sole layout truth
 - render visible recovery codes onto the page
-- draw the exact bubble rectangles recorded in page space
+- draw the exact bubble circles recorded in page space
+- render duplicated identity QR codes and registration markers from the same artifact
 - avoid heavyweight PDF dependencies while the contract is still moving
 """
 

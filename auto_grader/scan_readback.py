@@ -1,3 +1,5 @@
+"""Read duplicated page-identity QR payloads from scan images."""
+
 from __future__ import annotations
 
 from typing import Any

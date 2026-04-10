@@ -13,10 +13,10 @@ The point is exam integrity (each student gets their own numerical variant and a
 mapping) and operational sanity (grading becomes fast, auditable, and resilient to the
 ordinary weirdness of paper/scanner workflows without assuming chaotic inputs).
 
-This README is intentionally written as a scope/spec document for a project that has been
-scoped well enough to start building, but not yet implemented. It emphasizes problem
-space, invariants, workflow, and favorable constraints rather than premature
-implementation detail.
+This README started as a scope/spec document, but it now also needs to stay honest about
+the slices that already exist. It still emphasizes problem space, invariants, workflow,
+and favorable constraints, but the MC/OpenCV sections below describe real implemented
+surfaces rather than a purely aspirational plan.
 
 ## Non-goals
 
@@ -189,6 +189,15 @@ Once pages are identified and registered:
 - answer keys are applied per-student variant
 - scores are computed
 - ambiguous cases are flagged for review rather than guessed
+
+Current implementation status on this grading surface:
+
+- page-identity QR readback is implemented via `auto_grader.scan_readback`
+- page registration is implemented via `auto_grader.scan_registration`
+- first-pass bubble readback is implemented via `auto_grader.bubble_interpretation`
+- scoring and review-state decisions on top of bubble readback are still the next slice,
+  so the system can currently tell you which bubble labels look marked but does not yet
+  convert that into finalized correctness or review workflow
 
 ### 6. Review + Export
 

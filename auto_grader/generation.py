@@ -1,12 +1,13 @@
 """Deterministic MC answer-sheet generation primitives.
 
-This module implements the smallest generation slice that the OpenCV grading
-lane can depend on without guessing:
+This module now owns the canonical paper artifact contract for the MC/OpenCV
+lane:
 
 - stable per-student exam-instance identity codes
 - rendered MC questions with deterministic choice shuffling
 - answer-key mappings from logical choice key to physical bubble label
-- canonical page-space rectangles for each bubble
+- explicit page-space bubble regions for readback
+- duplicated QR placements and registration markers for scan-side recovery
 """
 
 from __future__ import annotations

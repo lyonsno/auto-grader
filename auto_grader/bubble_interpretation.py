@@ -1,3 +1,5 @@
+"""Interpret marked MC bubble labels from normalized page images."""
+
 from __future__ import annotations
 
 from collections import defaultdict

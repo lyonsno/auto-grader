@@ -1,3 +1,5 @@
+"""Normalize skewed page scans back into canonical page space using corner markers."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
