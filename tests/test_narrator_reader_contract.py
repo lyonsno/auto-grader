@@ -89,6 +89,16 @@ class NarratorReaderContract(unittest.TestCase):
                 return span.style
         raise AssertionError(f"no style span found for substring {needle!r}")
 
+    def _style_for_normalized_scorebug_substring(self, text: Text, needle: str) -> str:
+        start = self._normalize_scorebug_texture(text.plain).index(needle)
+        for span in text.spans:
+            if (
+                isinstance(span.style, str)
+                and span.start <= start < span.end
+            ):
+                return span.style
+        raise AssertionError(f"no style span found for normalized substring {needle!r}")
+
     @staticmethod
     def _foreground_hex(style: str) -> str | None:
         for token in style.split():
@@ -109,6 +119,16 @@ class NarratorReaderContract(unittest.TestCase):
             for span in text.spans
             if isinstance(span.style, str) and span.style.startswith("#")
         ]
+
+    @staticmethod
+    def _normalize_scorebug_texture(text: str) -> str:
+        return text.translate({
+            ord("░"): ord(" "),
+            ord("▒"): ord(" "),
+            ord("·"): ord(" "),
+            ord("┈"): ord(" "),
+            ord("╎"): ord(" "),
+        })
 
     @staticmethod
     def _styles_in_range(text: Text, start: int, end: int) -> set[str]:
@@ -652,15 +672,18 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
-        self.assertIn(expected_on_target[0], tally_value_top.plain)
-        self.assertIn(expected_on_target[1], tally_value_mid.plain)
-        self.assertIn(expected_on_target[2], tally_value_bottom.plain)
-        self.assertIn(expected_left[0], tally_value_top.plain)
-        self.assertIn(expected_left[1], tally_value_mid.plain)
-        self.assertIn(expected_left[2], tally_value_bottom.plain)
-        self.assertIn(expected_bad[0], tally_value_top.plain)
-        self.assertIn(expected_bad[1], tally_value_mid.plain)
-        self.assertIn(expected_bad[2], tally_value_bottom.plain)
+        normalized_top = self._normalize_scorebug_texture(tally_value_top.plain)
+        normalized_mid = self._normalize_scorebug_texture(tally_value_mid.plain)
+        normalized_bottom = self._normalize_scorebug_texture(tally_value_bottom.plain)
+        self.assertIn(expected_on_target[0], normalized_top)
+        self.assertIn(expected_on_target[1], normalized_mid)
+        self.assertIn(expected_on_target[2], normalized_bottom)
+        self.assertIn(expected_left[0], normalized_top)
+        self.assertIn(expected_left[1], normalized_mid)
+        self.assertIn(expected_left[2], normalized_bottom)
+        self.assertIn(expected_bad[0], normalized_top)
+        self.assertIn(expected_bad[1], normalized_mid)
+        self.assertIn(expected_bad[2], normalized_bottom)
         current_model_bg = self._background_hex(
             self._style_for_substring(scorebug_text_obj, "CURRENT MODEL")
         )
@@ -735,34 +758,52 @@ class NarratorReaderContract(unittest.TestCase):
             0,
             cell_width,
         )
-        left_top_style = self._style_for_substring(
-            tally_value_top,
-            expected_left[0].strip(),
-        )
-        bad_top_style = self._style_for_substring(
-            tally_value_top,
-            expected_bad[0].strip(),
-        )
         self.assertGreaterEqual(
             len(on_target_styles),
             2,
             "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
         )
         on_target_top_bg = self._background_hex(
-            self._style_for_substring(tally_value_top, expected_on_target[0].strip())
+            self._style_for_normalized_scorebug_substring(
+                tally_value_top, expected_on_target[0].strip()
+            )
+        )
+        left_top_style = self._style_for_normalized_scorebug_substring(
+            tally_value_top,
+            expected_left[0].strip(),
+        )
+        bad_top_style = self._style_for_normalized_scorebug_substring(
+            tally_value_top,
+            expected_bad[0].strip(),
         )
         left_top_bg = self._background_hex(left_top_style)
         bad_top_bg = self._background_hex(bad_top_style)
         self.assertEqual(
-            len({on_target_top_bg, left_top_bg, bad_top_bg}),
-            3,
-            "the three scorebug cells should now act as deliberate side-by-side mockups with distinct field treatments",
+            {on_target_top_bg, left_top_bg, bad_top_bg},
+            {on_target_top_bg},
+            "the scorebug should go back to one unified field treatment instead of three tinted slabs",
+        )
+        self.assertTrue(
+            any(ch in tally_value_top.plain for ch in "░▒·┈╎"),
+            "the top score field should use visible UTF-8 texture characters instead of smooth colored whitespace",
+        )
+        self.assertTrue(
+            any(ch in tally_value_mid.plain for ch in "░▒·┈╎"),
+            "the middle score field should use visible UTF-8 texture characters instead of smooth colored whitespace",
+        )
+        self.assertTrue(
+            any(ch in tally_value_bottom.plain for ch in "░▒·┈╎"),
+            "the bottom score field should use visible UTF-8 texture characters instead of smooth colored whitespace",
         )
         on_target_mid_bg = self._background_hex(
-            self._style_for_substring(tally_value_mid, expected_on_target[1].strip())
+            self._style_for_normalized_scorebug_substring(
+                tally_value_mid, expected_on_target[1].strip()
+            )
         )
         on_target_bottom_bg = self._background_hex(
-            self._style_for_substring(tally_value_bottom, expected_on_target[2].strip())
+            self._style_for_normalized_scorebug_substring(
+                tally_value_bottom, expected_on_target[2].strip()
+            )
         )
         bg_lumas = [
             self._hex_luminance(on_target_top_bg),
@@ -780,7 +821,7 @@ class NarratorReaderContract(unittest.TestCase):
             "the score field should still have some subtle tonal breathing room instead of collapsing to one dead flat slab",
         )
         on_target_top_strong = tally_value_top.spans[1].style
-        on_target_bottom_style = self._style_for_substring(
+        on_target_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
             expected_on_target[2].strip(),
         )
@@ -789,11 +830,11 @@ class NarratorReaderContract(unittest.TestCase):
             on_target_bottom_style,
             "scorebug value rows should now drift tonally across the board instead of sitting on one flat background",
         )
-        left_bottom_style = self._style_for_substring(
+        left_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
             expected_left[2].strip(),
         )
-        bad_bottom_style = self._style_for_substring(
+        bad_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
             expected_bad[2].strip(),
         )
@@ -806,17 +847,6 @@ class NarratorReaderContract(unittest.TestCase):
             bad_top_style,
             bad_bottom_style,
             "bad-calls board should also drift tonally instead of reading as a flat tech slab",
-        )
-        self.assertEqual(
-            len(
-                {
-                    self._foreground_hex(on_target_top_strong),
-                    self._foreground_hex(left_top_style),
-                    self._foreground_hex(bad_top_style),
-                }
-            ),
-            3,
-            "each scorebug cell should carry its own numeral-stroke family so the human can compare three mockup directions at once",
         )
         self.assertTrue(
             all(
@@ -986,9 +1016,22 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
-        self.assertIn(zero_rows[0], tally_value_top.plain)
-        self.assertIn(zero_rows[1], tally_value_mid.plain)
-        self.assertIn(zero_rows[2], tally_value_bottom.plain)
+        self.assertIn(
+            zero_rows[0],
+            self._normalize_scorebug_texture(tally_value_top.plain),
+        )
+        self.assertIn(
+            zero_rows[1],
+            self._normalize_scorebug_texture(tally_value_mid.plain),
+        )
+        self.assertIn(
+            zero_rows[2],
+            self._normalize_scorebug_texture(tally_value_bottom.plain),
+        )
+        self.assertTrue(
+            any(ch in tally_value_top.plain for ch in "░▒·┈╎"),
+            "even the zeroed tally surface should keep the scorebug's UTF-8 field texture alive instead of reverting to smooth whitespace",
+        )
         self.assertEqual(
             value_floor_gap.plain.strip(),
             "",

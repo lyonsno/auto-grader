@@ -533,15 +533,23 @@ def _append_scorebug_value_row(
     *,
     strong_style: str,
     mid_style: str,
+    texture_style: str,
+    texture_pattern: str,
 ) -> None:
-    """Append one scoreboard value row with weighted two-tone strokes."""
+    """Append one scoreboard value row with weighted strokes and sparse field texture."""
     strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "═", "▪"}
-    mid_chars = {"╱", " "}
-    for ch in content:
+    mid_chars = {"╱"}
+    for idx, ch in enumerate(content):
         if ch in strong_chars:
             row.append(ch, style=strong_style)
         elif ch in mid_chars:
             row.append(ch, style=mid_style)
+        elif ch == " ":
+            texture_char = texture_pattern[idx % len(texture_pattern)]
+            if texture_char == " ":
+                row.append(" ", style=texture_style)
+            else:
+                row.append(texture_char, style=texture_style)
         else:
             row.append(ch, style=strong_style)
 
@@ -1177,6 +1185,7 @@ class PaintDryDisplay:
         label_style: str,
         value_row_styles: tuple[str, str, str],
         value_mid_row_styles: tuple[str, str, str],
+        value_texture_styles: tuple[str, str, str],
         separator_styles: tuple[str, str, str, str] = ("dim", "dim", "dim", "dim"),
         label_pad: int = 3,
         value_pad: int = 1,
@@ -1199,18 +1208,24 @@ class PaintDryDisplay:
             f"{' ' * value_pad}{top}{' ' * value_pad}",
             strong_style=value_row_styles[0],
             mid_style=value_mid_row_styles[0],
+            texture_style=value_texture_styles[0],
+            texture_pattern=" ░   ·   ░ ",
         )
         _append_scorebug_value_row(
             value_middle_row,
             f"{' ' * value_pad}{middle}{' ' * value_pad}",
             strong_style=value_row_styles[1],
             mid_style=value_mid_row_styles[1],
+            texture_style=value_texture_styles[1],
+            texture_pattern=" ┈   ╎   ┈ ",
         )
         _append_scorebug_value_row(
             value_bottom_row,
             f"{' ' * value_pad}{bottom}{' ' * value_pad}",
             strong_style=value_row_styles[2],
             mid_style=value_mid_row_styles[2],
+            texture_style=value_texture_styles[2],
+            texture_pattern=" ·  ░   ·  ",
         )
 
     def should_animate(self, now: float | None = None) -> bool:
@@ -1470,15 +1485,24 @@ class PaintDryDisplay:
             tally_top_separator_style = "bold #545048 on #35332f"
             tally_mid_separator_style = "bold #514c45 on #33312d"
             tally_bottom_separator_style = "bold #4c4741 on #302e2b"
-            on_target_top_bg = "#33362f"
-            on_target_mid_bg = "#31342d"
-            on_target_bottom_bg = "#2f312b"
-            left_top_bg = "#383228"
-            left_mid_bg = "#353025"
-            left_bottom_bg = "#322d23"
-            bad_top_bg = "#342f31"
-            bad_mid_bg = "#312c2e"
-            bad_bottom_bg = "#2e2a2c"
+            tally_top_bg = "#34322f"
+            tally_mid_bg = "#322f2d"
+            tally_bottom_bg = "#302d2b"
+            tally_value_strong_styles = (
+                f"bold #f0ece5 on {tally_top_bg}",
+                f"bold #e7e1d8 on {tally_mid_bg}",
+                f"bold #ddd7cd on {tally_bottom_bg}",
+            )
+            tally_value_mid_styles = (
+                f"bold #bdb4a8 on {tally_top_bg}",
+                f"bold #b2a898 on {tally_mid_bg}",
+                f"bold #a69c8d on {tally_bottom_bg}",
+            )
+            tally_value_texture_styles = (
+                f"#4a4742 on {tally_top_bg}",
+                f"#47433f on {tally_mid_bg}",
+                f"#433f3b on {tally_bottom_bg}",
+            )
             scorebug_top = Text()
             self._append_scorebug_cell(
                 scorebug_top,
@@ -1526,16 +1550,9 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
-                    value_row_styles=(
-                        f"bold #e7eee2 on {on_target_top_bg}",
-                        f"bold #ccd5ca on {on_target_mid_bg}",
-                        f"bold #c4cdc2 on {on_target_bottom_bg}",
-                    ),
-                    value_mid_row_styles=(
-                        f"bold #8a9488 on {on_target_top_bg}",
-                        f"bold #818a80 on {on_target_mid_bg}",
-                        f"bold #788177 on {on_target_bottom_bg}",
-                    ),
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -1554,16 +1571,9 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
-                    value_row_styles=(
-                        f"bold #eee2cf on {left_top_bg}",
-                        f"bold #d7cab2 on {left_mid_bg}",
-                        f"bold #ccbea5 on {left_bottom_bg}",
-                    ),
-                    value_mid_row_styles=(
-                        f"bold #9d8a67 on {left_top_bg}",
-                        f"bold #927f5d on {left_mid_bg}",
-                        f"bold #877453 on {left_bottom_bg}",
-                    ),
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -1582,16 +1592,9 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
                     label_style=f"bold #bc9589 on {tally_label_bg}",
-                    value_row_styles=(
-                        f"bold #eadcd8 on {bad_top_bg}",
-                        f"bold #cfbfbd on {bad_mid_bg}",
-                        f"bold #c4b3b2 on {bad_bottom_bg}",
-                    ),
-                    value_mid_row_styles=(
-                        f"bold #9a827f on {bad_top_bg}",
-                        f"bold #8f7774 on {bad_mid_bg}",
-                        f"bold #846d6a on {bad_bottom_bg}",
-                    ),
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -1621,16 +1624,9 @@ class PaintDryDisplay:
                     "ON TARGET",
                     "0.0/0.0",
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
-                    value_row_styles=(
-                        f"bold #e7eee2 on {on_target_top_bg}",
-                        f"bold #ccd5ca on {on_target_mid_bg}",
-                        f"bold #c4cdc2 on {on_target_bottom_bg}",
-                    ),
-                    value_mid_row_styles=(
-                        f"bold #8a9488 on {on_target_top_bg}",
-                        f"bold #818a80 on {on_target_mid_bg}",
-                        f"bold #788177 on {on_target_bottom_bg}",
-                    ),
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -1646,16 +1642,9 @@ class PaintDryDisplay:
                     "LEFT ON TABLE",
                     "0.0/0.0",
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
-                    value_row_styles=(
-                        f"bold #eee2cf on {left_top_bg}",
-                        f"bold #d7cab2 on {left_mid_bg}",
-                        f"bold #ccbea5 on {left_bottom_bg}",
-                    ),
-                    value_mid_row_styles=(
-                        f"bold #9d8a67 on {left_top_bg}",
-                        f"bold #927f5d on {left_mid_bg}",
-                        f"bold #877453 on {left_bottom_bg}",
-                    ),
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -1671,16 +1660,9 @@ class PaintDryDisplay:
                     "BAD CALLS",
                     "0.0/0.0",
                     label_style=f"bold #bc9589 on {tally_label_bg}",
-                    value_row_styles=(
-                        f"bold #eadcd8 on {bad_top_bg}",
-                        f"bold #cfbfbd on {bad_mid_bg}",
-                        f"bold #c4b3b2 on {bad_bottom_bg}",
-                    ),
-                    value_mid_row_styles=(
-                        f"bold #9a827f on {bad_top_bg}",
-                        f"bold #8f7774 on {bad_mid_bg}",
-                        f"bold #846d6a on {bad_bottom_bg}",
-                    ),
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
