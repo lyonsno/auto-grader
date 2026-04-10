@@ -424,6 +424,50 @@ class NarratorReaderContract(unittest.TestCase):
             "the higher horizontal budget should also buy a taller image so the preview stops reading like a chunky strip",
         )
 
+    def test_focus_preview_budget_scales_with_source_detail_instead_of_staying_fixed(self):
+        small_width, small_height = _focus_preview_budget(
+            140,
+            source_width_px=240,
+            source_height_px=120,
+        )
+        large_width, large_height = _focus_preview_budget(
+            140,
+            source_width_px=1600,
+            source_height_px=900,
+        )
+
+        self.assertGreater(
+            large_width,
+            small_width,
+            "high-detail crops should be allowed a denser preview raster than tiny crops on the same terminal",
+        )
+        self.assertGreater(
+            large_height,
+            small_height,
+            "source-aware budgeting should buy more vertical detail too, not only horizontal width",
+        )
+
+    def test_focus_preview_steady_state_uses_dense_glyphs_not_only_half_blocks(self):
+        pixels = []
+        for row in range(12):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(24):
+                value = 42 + ((row * 17 + col * 11) % 180)
+                rows.append((value, value - 6, value - 10))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        plain = _extract_plain(renderable)
+
+        self.assertTrue(
+            any(ch in plain for ch in ".,:;-=+*#%@"),
+            "steady-state previews should use a denser terminal glyph field instead of only block cells",
+        )
+
     def test_lines_render_newest_first_beneath_topic_within_each_header(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))

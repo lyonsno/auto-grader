@@ -83,6 +83,7 @@ _FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
 _FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)
 _FOCUS_PREVIEW_INK_RGB = (36, 40, 48)
 _FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
+_FOCUS_PREVIEW_GLYPH_RAMP = " .,:;-=+*#%@"
 _FOCUS_PREVIEW_OVERLAY_RGBS = (
     (108, 122, 154),
     (132, 115, 86),
@@ -545,22 +546,57 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     return msg_type in {"session_meta", "focus_preview", "wrap_up", "end"}
 
 
-def _focus_preview_budget(term_width: int | None) -> tuple[int, int]:
+def _focus_preview_budget(
+    term_width: int | None,
+    *,
+    source_width_px: int | None = None,
+    source_height_px: int | None = None,
+) -> tuple[int, int]:
     """Return a terminal-aware preview raster budget.
 
     The preview should feel like a real companion surface, not a
     postage stamp. Use most of the terminal width while leaving enough
-    margin that the panel still breathes.
+    margin that the panel still breathes, but let high-detail crops
+    earn a denser raster than tiny crops on the same terminal.
     """
     if term_width is None or term_width <= 0:
         return _FOCUS_PREVIEW_MIN_WIDTH_CHARS, _FOCUS_PREVIEW_MIN_HEIGHT_ROWS
+    available_width = min(_FOCUS_PREVIEW_MAX_WIDTH_CHARS, term_width - 8)
+    detail_factor = 1.0
+    if (
+        source_width_px is not None
+        and source_height_px is not None
+        and source_width_px > 0
+        and source_height_px > 0
+    ):
+        source_area = source_width_px * source_height_px
+        detail_factor = _clamp(
+            math.sqrt(source_area / float(900 * 500)),
+            0.35,
+            1.0,
+        )
     width_chars = max(
         _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
-        min(_FOCUS_PREVIEW_MAX_WIDTH_CHARS, term_width - 8),
+        int(
+            round(
+                _FOCUS_PREVIEW_MIN_WIDTH_CHARS
+                + ((available_width - _FOCUS_PREVIEW_MIN_WIDTH_CHARS) * detail_factor)
+            )
+        ),
     )
+    if (
+        source_width_px is not None
+        and source_height_px is not None
+        and source_width_px > 0
+        and source_height_px > 0
+    ):
+        source_aspect = source_height_px / source_width_px
+        height_target = int(round(width_chars * source_aspect * 0.62))
+    else:
+        height_target = int(round(width_chars * 0.30))
     height_rows = max(
         _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
-        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, int(round(width_chars * 0.30))),
+        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, height_target),
     )
     return width_chars, height_rows
 
@@ -629,12 +665,14 @@ def _render_focus_preview_pixels(
 ) -> Group:
     rows: list[Text] = []
     now = time.monotonic() if now is None else now
-    for char_row in range(0, len(pixels), 2):
+    for char_row, upper in enumerate(pixels):
         row = Text(no_wrap=True, overflow="ignore")
-        upper = pixels[char_row]
-        lower = pixels[char_row + 1] if char_row + 1 < len(pixels) else None
         for col, top_rgb in enumerate(upper):
-            bottom_rgb = lower[col] if lower is not None else _FOCUS_PREVIEW_BG_RGB
+            luminance = (
+                (0.299 * top_rgb[0])
+                + (0.587 * top_rgb[1])
+                + (0.114 * top_rgb[2])
+            ) / 255.0
             if pending:
                 flow = 0.5 + (
                     0.5
@@ -645,12 +683,12 @@ def _render_focus_preview_pixels(
                     * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
                 )
                 retention = 0.54 + (0.18 * flow)
-                top_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, retention)
-                bottom_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, bottom_rgb, retention)
+                toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, retention)
                 avg_luma = (
-                    (0.299 * top_rgb[0]) + (0.587 * top_rgb[1]) + (0.114 * top_rgb[2])
-                    + (0.299 * bottom_rgb[0]) + (0.587 * bottom_rgb[1]) + (0.114 * bottom_rgb[2])
-                ) / 2.0
+                    (0.299 * toned_rgb[0])
+                    + (0.587 * toned_rgb[1])
+                    + (0.114 * toned_rgb[2])
+                )
                 glyph_gate = 0.38 + (0.20 * pulse)
                 glyph_drive = (0.58 * flow) + (0.25 * pulse)
                 if glyph_drive > glyph_gate:
@@ -668,15 +706,26 @@ def _render_focus_preview_pixels(
                         _FOCUS_PREVIEW_PAPER_RGB,
                         0.16 + (0.18 * flow),
                     )
-                    bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, bottom_rgb, 0.88)
+                    bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
                     row.append(
                         _FOCUS_PREVIEW_OVERLAY_CHARS[char_index],
                         style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
                     )
                     continue
+                top_rgb = toned_rgb
+                luminance = avg_luma / 255.0
+            ramp_index = min(
+                len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1,
+                int(round(luminance * (len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1))),
+            )
+            glyph = _FOCUS_PREVIEW_GLYPH_RAMP[ramp_index]
+            bg_strength = 0.10 + (0.20 * luminance)
+            fg_strength = 0.42 + (0.44 * luminance)
+            bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, bg_strength)
+            fg_rgb = _interp_rgb(bg_rgb, top_rgb, fg_strength)
             row.append(
-                "▀",
-                style=f"{_rgb_to_hex(top_rgb)} on {_rgb_to_hex(bottom_rgb)}",
+                glyph,
+                style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
             )
         rows.append(row)
     return Group(*rows)
