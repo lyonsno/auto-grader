@@ -661,7 +661,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(len(top), len(middle))
         self.assertEqual(len(middle), len(bottom))
         self.assertIn("╔", top)
-        self.assertIn("║", middle)
+        self.assertRegex(middle, r"[║╠╣]")
         self.assertIn("╝", bottom)
         self.assertIn("╔═╝", middle, "the 2 glyph should have a chunky middle shoulder, not a skinny bend")
         self.assertNotIn("╱", top)
@@ -688,6 +688,17 @@ class NarratorReaderContract(unittest.TestCase):
             bottom,
             "the 4 glyph should keep a straight right stem on the bottom row instead of flaring into a T-shape",
         )
+
+    def test_scorebug_zero_glyph_uses_heavier_sidewalls(self):
+        top, middle, bottom = _scorebug_big_value_rows("0.0")
+
+        self.assertIn("╔═╗", top)
+        self.assertIn(
+            "╠ ╣",
+            middle,
+            "the 0 glyph should carry heavier sidewalls in the middle row so it feels planted instead of airy",
+        )
+        self.assertIn("╚═╝", bottom)
 
     def test_scorebug_one_glyph_uses_upper_cap_and_full_stem(self):
         top, middle, bottom = _scorebug_big_value_rows("1.0")
@@ -754,6 +765,17 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn(zero_rows[0], tally_value_top.plain)
         self.assertIn(zero_rows[1], tally_value_mid.plain)
         self.assertIn(zero_rows[2], tally_value_bottom.plain)
+
+    def test_scorebug_slash_is_a_quieter_middle_row_divider(self):
+        top, middle, bottom = _scorebug_big_value_rows("1.0/2.0")
+
+        self.assertNotIn("╱", top)
+        self.assertIn("╱", middle)
+        self.assertNotIn(
+            "╱",
+            bottom,
+            "the slash should stay in the middle row so it reads as a divider, not a competing full-height digit stroke",
+        )
 
     def test_live_undulation_drifts_leftward(self):
         dt = _LIVE_PER_CHAR_PHASE_OFFSET / (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
