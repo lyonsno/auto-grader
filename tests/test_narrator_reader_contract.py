@@ -518,6 +518,37 @@ class NarratorReaderContract(unittest.TestCase):
             "darker regions should use denser glyphs so handwriting and strokes survive the terminal rendering",
         )
 
+    def test_focus_preview_low_contrast_document_still_shows_structure(self):
+        pixels = []
+        for row in range(18):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(36):
+                if row in {0, 17} or col in {0, 35}:
+                    value = 62
+                elif row in {4, 11}:
+                    value = 96
+                else:
+                    value = 144 + ((col % 3) * 4)
+                rows.append((value, value, value))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        plain = _extract_plain(renderable)
+        lines = plain.splitlines()
+
+        self.assertTrue(
+            any(ch in lines[5] for ch in " .,"),
+            "quiet paper bands should recover to a genuinely lighter glyph field instead of flattening into the same mid-density marks as everything else",
+        )
+        self.assertTrue(
+            any(ch in plain for ch in "=+*#%@"),
+            "a low-contrast document preview should still recover denser marks for borders and handwritten strokes",
+        )
+
     def test_scaled_preview_size_respects_terminal_row_budget_in_glyph_mode(self):
         width, height = _scaled_preview_size(
             475,

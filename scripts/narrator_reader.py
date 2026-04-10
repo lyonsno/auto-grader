@@ -675,6 +675,18 @@ def _render_focus_preview_pixels(
 ) -> Group:
     rows: list[Text] = []
     now = time.monotonic() if now is None else now
+    luminances = [
+        ((0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2])) / 255.0
+        for row in pixels
+        for rgb in row
+    ]
+    if luminances:
+        luminance_floor = min(luminances)
+        luminance_ceil = max(luminances)
+    else:
+        luminance_floor = 0.0
+        luminance_ceil = 1.0
+    luminance_span = max(0.10, luminance_ceil - luminance_floor)
     for char_row, upper in enumerate(pixels):
         row = Text(no_wrap=True, overflow="ignore")
         for col, top_rgb in enumerate(upper):
@@ -724,14 +736,26 @@ def _render_focus_preview_pixels(
                     continue
                 top_rgb = toned_rgb
                 luminance = avg_luma / 255.0
-            darkness = 1.0 - luminance
+            normalized_luminance = _clamp(
+                (luminance - luminance_floor) / luminance_span,
+                0.0,
+                1.0,
+            )
+            if (luminance_ceil - luminance_floor) < 0.04:
+                display_luminance = luminance
+            else:
+                display_luminance = (
+                    (0.68 * normalized_luminance)
+                    + (0.32 * luminance)
+                )
+            darkness = 1.0 - display_luminance
             ramp_darkness = darkness ** 1.45
             ramp_index = min(
                 len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1,
                 int(round(ramp_darkness * (len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1))),
             )
             glyph = _FOCUS_PREVIEW_GLYPH_RAMP[ramp_index]
-            bg_strength = 0.28 + (0.52 * luminance)
+            bg_strength = 0.24 + (0.58 * display_luminance)
             fg_strength = 0.04 + (0.56 * darkness)
             bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, bg_strength)
             fg_rgb = _interp_rgb(bg_rgb, _FOCUS_PREVIEW_PAPER_RGB, fg_strength)
