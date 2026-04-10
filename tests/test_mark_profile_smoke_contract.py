@@ -100,6 +100,30 @@ class MarkProfileSmokeContractTests(unittest.TestCase):
             "lands inside the bubble.",
         )
         self.assertEqual(
+            profiles["small_check_tick"]["observed_status"],
+            "blank",
+            "A small check-like interior tick should still be ignored on the ordinary "
+            "office-scan tier rather than forcing routine manual review.",
+        )
+        self.assertEqual(
+            profiles["heavy_check_tick"]["observed_status"],
+            "blank",
+            "A heavier interior tick still should not become review work if it remains "
+            "a sparse stroke instead of a real fill attempt.",
+        )
+        self.assertEqual(
+            profiles["short_center_slash"]["observed_status"],
+            "blank",
+            "A short slash through the bubble should remain ignorable if we are "
+            "explicitly instructing students to use strong dark fills instead.",
+        )
+        self.assertEqual(
+            profiles["compact_center_scribble_only"]["observed_status"],
+            "correct",
+            "A dense compact interior scribble should cross into a real fill attempt "
+            "rather than staying trapped in incidental-mark limbo.",
+        )
+        self.assertEqual(
             profiles["correct_plus_wrong_dot"]["observed_status"],
             "correct",
             "A plainly filled correct bubble plus a tiny accidental dot on another "
@@ -229,6 +253,18 @@ class MarkProfileSmokeContractTests(unittest.TestCase):
             boundary["first_non_ignored_profile_id"],
             boundary["ordered_profile_ids"],
             "The first specimen that stops being ignored should be named explicitly.",
+        )
+        self.assertEqual(
+            boundary["strongest_ignored_profile_id"],
+            "short_center_slash",
+            "The incidental-mark line should move far enough that small ticks and short "
+            "slashes are still safely ignored on the ordinary office-scan tier.",
+        )
+        self.assertEqual(
+            boundary["first_non_ignored_profile_id"],
+            "compact_center_scribble_only",
+            "The first non-ignored specimen should be the one that finally looks like "
+            "an actual compact fill attempt, not a small incidental stroke.",
         )
         self.assertTrue(
             Path(boundary["strongest_ignored_image_path"]).exists(),

@@ -19,6 +19,7 @@ _DARK_PIXEL_THRESHOLD = 210
 _MARKED_CENTER_DARK_FRACTION_THRESHOLD = 0.30
 _AMBIGUOUS_CENTER_DARK_FRACTION_THRESHOLD = 0.10
 _AMBIGUOUS_CENTER_TO_RING_CONTRAST_THRESHOLD = 10.0
+_COMPACT_FILL_BBOX_FILL_RATIO_THRESHOLD = 0.34
 _ILLEGIBLE_CENTER_DARK_FRACTION_THRESHOLD = 0.20
 _ILLEGIBLE_RING_DARK_FRACTION_THRESHOLD = 0.18
 _ILLEGIBLE_MIN_CENTER_MEAN_THRESHOLD = 120.0
@@ -134,6 +135,9 @@ def _looks_marked(metrics: Mapping[str, float | int]) -> bool:
     center_mean = float(metrics["center_mean"])
     ring_mean = float(metrics["ring_mean"])
     center_dark_fraction = float(metrics["center_dark_fraction"])
+    center_dark_bbox_fill_ratio = float(metrics["center_dark_bbox_fill_ratio"])
+    if center_dark_bbox_fill_ratio < _COMPACT_FILL_BBOX_FILL_RATIO_THRESHOLD:
+        return False
     if center_mean <= _CENTER_DARKNESS_THRESHOLD:
         return True
     if center_dark_fraction >= _MARKED_CENTER_DARK_FRACTION_THRESHOLD:
@@ -149,6 +153,8 @@ def _looks_ambiguous(metrics: Mapping[str, float | int]) -> bool:
     ring_mean = float(metrics["ring_mean"])
     center_dark_fraction = float(metrics["center_dark_fraction"])
     if center_dark_fraction < _AMBIGUOUS_CENTER_DARK_FRACTION_THRESHOLD:
+        return False
+    if float(metrics["center_dark_bbox_fill_ratio"]) < _COMPACT_FILL_BBOX_FILL_RATIO_THRESHOLD:
         return False
     return (ring_mean - center_mean) >= _AMBIGUOUS_CENTER_TO_RING_CONTRAST_THRESHOLD
 
@@ -167,19 +173,22 @@ def _bubble_metrics(crop: np.ndarray) -> dict[str, float | int]:
     dark_mask = crop <= _DARK_PIXEL_THRESHOLD
     center_pixels = crop[center_mask]
     ring_pixels = crop[ring_mask]
-    center_dark_pixels = dark_mask[center_mask]
+    center_dark_mask = dark_mask & center_mask
+    center_dark_pixels = center_dark_mask[center_mask]
     ring_dark_pixels = dark_mask[ring_mask]
 
     center_mean = float(center_pixels.mean())
     ring_mean = float(ring_pixels.mean()) if ring_pixels.size else 255.0
     center_dark_fraction = float(center_dark_pixels.mean()) if center_dark_pixels.size else 0.0
     ring_dark_fraction = float(ring_dark_pixels.mean()) if ring_dark_pixels.size else 0.0
+    center_dark_bbox_fill_ratio = _dark_bbox_fill_ratio(center_dark_mask)
 
     return {
         "center_mean": center_mean,
         "ring_mean": ring_mean,
         "center_dark_fraction": center_dark_fraction,
         "ring_dark_fraction": ring_dark_fraction,
+        "center_dark_bbox_fill_ratio": center_dark_bbox_fill_ratio,
         "border_touch_sides": _dark_border_touch_sides(dark_mask),
     }
 
@@ -210,6 +219,18 @@ def _dark_border_touch_sides(dark_mask: np.ndarray) -> int:
     if dark_mask[:, -1].any():
         touches += 1
     return touches
+
+
+def _dark_bbox_fill_ratio(center_dark_mask: np.ndarray) -> float:
+    if not center_dark_mask.any():
+        return 0.0
+    ys, xs = np.where(center_dark_mask)
+    width = int(xs.max() - xs.min() + 1)
+    height = int(ys.max() - ys.min() + 1)
+    bbox_area = width * height
+    if bbox_area == 0:
+        return 0.0
+    return float(len(xs) / bbox_area)
 
 
 def _require_number(value: Any, label: str) -> int | float:

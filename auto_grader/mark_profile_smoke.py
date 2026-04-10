@@ -149,10 +149,10 @@ def run_mark_profile_smoke(
         },
         {
             "profile_id": "heavy_check_tick",
-            "description": "A heavier check-like tick that starts to look arguable as a fill attempt",
+            "description": "A heavier check-like tick that still remains a sparse stroke instead of a fill attempt",
             "mark_fn": lambda draw, bubble, scale: None,
             "bubble_labels": [],
-            "expected_behavior_band": "review",
+            "expected_behavior_band": "ignore",
             "incidental_pathology_rank": 3,
             "scan_profile_ids": ["office_scan"],
             "stray_marks": [
@@ -164,10 +164,10 @@ def run_mark_profile_smoke(
         },
         {
             "profile_id": "short_center_slash",
-            "description": "A short dark slash through the center that no longer looks safely ignorable",
+            "description": "A short dark slash through the center that still should not be mistaken for a filled bubble",
             "mark_fn": lambda draw, bubble, scale: None,
             "bubble_labels": [],
-            "expected_behavior_band": "review",
+            "expected_behavior_band": "ignore",
             "incidental_pathology_rank": 4,
             "scan_profile_ids": ["office_scan"],
             "stray_marks": [
@@ -179,10 +179,10 @@ def run_mark_profile_smoke(
         },
         {
             "profile_id": "compact_center_scribble_only",
-            "description": "A compact scribble inside the bubble with no other answer context",
+            "description": "A compact scribble inside the bubble that finally looks like a deliberate fill attempt",
             "mark_fn": lambda draw, bubble, scale: None,
             "bubble_labels": [],
-            "expected_behavior_band": "review",
+            "expected_behavior_band": "grade",
             "incidental_pathology_rank": 5,
             "scan_profile_ids": ["office_scan"],
             "stray_marks": [

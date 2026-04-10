@@ -214,7 +214,9 @@ Current implementation status on this grading surface:
 - that same harness now also reports an explicit incidental-mark pathology line
   on the ordinary `office_scan` tier: the strongest specimen still ignored as
   non-attempt noise, and the first stronger specimen that the current pipeline
-  no longer feels safe ignoring
+  no longer feels safe ignoring; today that line sits between a short interior
+  slash that is still ignored and a compact dark interior scribble that is
+  treated as a real fill attempt
 - richer review workflow, persistence, and operator-facing resolution state are still
   the next slice beyond that scoring surface
 
