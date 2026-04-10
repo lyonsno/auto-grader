@@ -211,6 +211,10 @@ Current implementation status on this grading surface:
   behavior band (`grade`, `review`, `ignore`, or outright pipeline failure) and
   the current strongest-handled boundary without requiring an immediate
   pen-and-scanner loop
+- that same harness now also reports an explicit incidental-mark pathology line
+  on the ordinary `office_scan` tier: the strongest specimen still ignored as
+  non-attempt noise, and the first stronger specimen that the current pipeline
+  no longer feels safe ignoring
 - richer review workflow, persistence, and operator-facing resolution state are still
   the next slice beyond that scoring surface
 

@@ -205,6 +205,40 @@ class MarkProfileSmokeContractTests(unittest.TestCase):
                 "implied cliff in the image directory.",
             )
 
+    def test_mark_profile_smoke_reports_incidental_mark_boundary_for_office_scan(self) -> None:
+        report = _run_cached_smoke(self)
+
+        boundary = report["incidental_mark_boundary"]
+        self.assertEqual(
+            boundary["scan_profile_id"],
+            "office_scan",
+            "The incidental-mark boundary should be reported on the realistic office "
+            "scan tier, not on an unrealistically clean or already-broken stress tier.",
+        )
+        self.assertTrue(
+            boundary["ordered_profile_ids"],
+            "The boundary report should expose the ordered incidental pathology ladder "
+            "instead of forcing humans to infer it from arbitrary filenames.",
+        )
+        self.assertIn(
+            boundary["strongest_ignored_profile_id"],
+            boundary["ordered_profile_ids"],
+            "The strongest ignored incidental specimen should be named explicitly.",
+        )
+        self.assertIn(
+            boundary["first_non_ignored_profile_id"],
+            boundary["ordered_profile_ids"],
+            "The first specimen that stops being ignored should be named explicitly.",
+        )
+        self.assertTrue(
+            Path(boundary["strongest_ignored_image_path"]).exists(),
+            "The strongest ignored specimen should have a saved artifact for human eyeballing.",
+        )
+        self.assertTrue(
+            Path(boundary["first_non_ignored_image_path"]).exists(),
+            "The first non-ignored specimen should have a saved artifact for human eyeballing.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

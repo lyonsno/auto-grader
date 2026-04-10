@@ -108,6 +108,8 @@ def run_mark_profile_smoke(
             "mark_fn": lambda draw, bubble, scale: None,
             "bubble_labels": [],
             "expected_behavior_band": "ignore",
+            "incidental_pathology_rank": 0,
+            "scan_profile_ids": ["office_scan"],
             "stray_marks": [
                 {
                     "bubble_label": correct_bubble_label,
@@ -121,10 +123,72 @@ def run_mark_profile_smoke(
             "mark_fn": lambda draw, bubble, scale: None,
             "bubble_labels": [],
             "expected_behavior_band": "ignore",
+            "incidental_pathology_rank": 1,
+            "scan_profile_ids": ["office_scan"],
             "stray_marks": [
                 {
                     "bubble_label": correct_bubble_label,
                     "draw_fn": _draw_tiny_center_dot,
+                }
+            ],
+        },
+        {
+            "profile_id": "small_check_tick",
+            "description": "A small check-like tick that brushes the interior but does not really fill the bubble",
+            "mark_fn": lambda draw, bubble, scale: None,
+            "bubble_labels": [],
+            "expected_behavior_band": "ignore",
+            "incidental_pathology_rank": 2,
+            "scan_profile_ids": ["office_scan"],
+            "stray_marks": [
+                {
+                    "bubble_label": correct_bubble_label,
+                    "draw_fn": _draw_small_check_tick,
+                }
+            ],
+        },
+        {
+            "profile_id": "heavy_check_tick",
+            "description": "A heavier check-like tick that starts to look arguable as a fill attempt",
+            "mark_fn": lambda draw, bubble, scale: None,
+            "bubble_labels": [],
+            "expected_behavior_band": "review",
+            "incidental_pathology_rank": 3,
+            "scan_profile_ids": ["office_scan"],
+            "stray_marks": [
+                {
+                    "bubble_label": correct_bubble_label,
+                    "draw_fn": _draw_heavy_check_tick,
+                }
+            ],
+        },
+        {
+            "profile_id": "short_center_slash",
+            "description": "A short dark slash through the center that no longer looks safely ignorable",
+            "mark_fn": lambda draw, bubble, scale: None,
+            "bubble_labels": [],
+            "expected_behavior_band": "review",
+            "incidental_pathology_rank": 4,
+            "scan_profile_ids": ["office_scan"],
+            "stray_marks": [
+                {
+                    "bubble_label": correct_bubble_label,
+                    "draw_fn": _draw_short_center_slash,
+                }
+            ],
+        },
+        {
+            "profile_id": "compact_center_scribble_only",
+            "description": "A compact scribble inside the bubble with no other answer context",
+            "mark_fn": lambda draw, bubble, scale: None,
+            "bubble_labels": [],
+            "expected_behavior_band": "review",
+            "incidental_pathology_rank": 5,
+            "scan_profile_ids": ["office_scan"],
+            "stray_marks": [
+                {
+                    "bubble_label": correct_bubble_label,
+                    "draw_fn": _draw_compact_center_scribble,
                 }
             ],
         },
@@ -232,6 +296,7 @@ def run_mark_profile_smoke(
                     "scan_profile_id": scan_profile["scan_profile_id"],
                     "scan_description": scan_profile["description"],
                     "severity_rank": scan_profile["severity_rank"],
+                    "incidental_pathology_rank": profile.get("incidental_pathology_rank"),
                     "image_path": str(image_path),
                     "normalized_image_path": str(normalized_path) if extracted is not None else None,
                     "decoded_payload": qr_payload,
@@ -253,6 +318,7 @@ def run_mark_profile_smoke(
         "profiles": report_profiles,
         "scan_profile_summaries": scan_profile_summaries,
         "practical_boundary": _practical_boundary(scan_profile_summaries),
+        "incidental_mark_boundary": _incidental_mark_boundary(report_profiles),
     }
     (output_dir / "summary.json").write_text(_json_dump(report))
     return report
@@ -592,6 +658,110 @@ def _draw_tiny_center_dot(
     )
 
 
+def _draw_small_check_tick(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    width = right - left
+    height = bottom - top
+    draw.line(
+        [
+            left + (0.36 * width),
+            top + (0.58 * height),
+            left + (0.46 * width),
+            top + (0.69 * height),
+            left + (0.60 * width),
+            top + (0.40 * height),
+        ],
+        fill=(150, 150, 150),
+        width=max(2, scale - 1),
+        joint="curve",
+    )
+
+
+def _draw_heavy_check_tick(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    width = right - left
+    height = bottom - top
+    draw.line(
+        [
+            left + (0.30 * width),
+            top + (0.60 * height),
+            left + (0.44 * width),
+            top + (0.74 * height),
+            left + (0.70 * width),
+            top + (0.30 * height),
+        ],
+        fill=(110, 110, 110),
+        width=max(3, scale),
+        joint="curve",
+    )
+
+
+def _draw_short_center_slash(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    width = right - left
+    height = bottom - top
+    draw.line(
+        [
+            left + (0.36 * width),
+            top + (0.66 * height),
+            left + (0.62 * width),
+            top + (0.36 * height),
+        ],
+        fill=(85, 85, 85),
+        width=max(3, scale),
+    )
+
+
+def _draw_compact_center_scribble(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    width = right - left
+    height = bottom - top
+    draw.line(
+        [
+            left + (0.34 * width),
+            top + (0.58 * height),
+            left + (0.48 * width),
+            top + (0.40 * height),
+            left + (0.56 * width),
+            top + (0.62 * height),
+            left + (0.66 * width),
+            top + (0.44 * height),
+        ],
+        fill=(75, 75, 75),
+        width=max(3, scale),
+    )
+    draw.line(
+        [
+            left + (0.40 * width),
+            top + (0.34 * height),
+            left + (0.60 * width),
+            top + (0.66 * height),
+        ],
+        fill=(95, 95, 95),
+        width=max(2, scale - 1),
+    )
+
+
 def _bubble_box(bubble: Mapping[str, Any], scale: int) -> tuple[float, float, float, float]:
     left = bubble["x"] * scale
     top = bubble["y"] * scale
@@ -754,7 +924,10 @@ def _summarize_scan_profiles(
     summaries: list[dict[str, Any]] = []
     for scan_profile in scan_profiles:
         profile_rows = [
-            row for row in report_profiles if row["scan_profile_id"] == scan_profile["scan_profile_id"]
+            row
+            for row in report_profiles
+            if row["scan_profile_id"] == scan_profile["scan_profile_id"]
+            and row["incidental_pathology_rank"] is None
         ]
         unexpected_cases = [
             {
@@ -791,6 +964,35 @@ def _practical_boundary(scan_profile_summaries: list[dict[str, Any]]) -> dict[st
     return {
         "strongest_all_expected_behavior_scan_profile_id": strongest_all_expected_behavior_scan_profile_id,
         "next_scan_profile_with_unexpected_cases": next_scan_profile_with_unexpected_cases,
+    }
+
+
+def _incidental_mark_boundary(report_profiles: list[dict[str, Any]]) -> dict[str, Any]:
+    ladder_rows = [
+        row
+        for row in report_profiles
+        if row["scan_profile_id"] == "office_scan" and row["incidental_pathology_rank"] is not None
+    ]
+    ladder_rows.sort(key=lambda row: int(row["incidental_pathology_rank"]))
+
+    strongest_ignored = None
+    first_non_ignored = None
+    for row in ladder_rows:
+        if row["observed_behavior_band"] == "ignore":
+            strongest_ignored = row
+            continue
+        first_non_ignored = row
+        break
+
+    return {
+        "scan_profile_id": "office_scan",
+        "ordered_profile_ids": [row["profile_id"] for row in ladder_rows],
+        "strongest_ignored_profile_id": None if strongest_ignored is None else strongest_ignored["profile_id"],
+        "strongest_ignored_status": None if strongest_ignored is None else strongest_ignored["observed_status"],
+        "strongest_ignored_image_path": None if strongest_ignored is None else strongest_ignored["image_path"],
+        "first_non_ignored_profile_id": None if first_non_ignored is None else first_non_ignored["profile_id"],
+        "first_non_ignored_status": None if first_non_ignored is None else first_non_ignored["observed_status"],
+        "first_non_ignored_image_path": None if first_non_ignored is None else first_non_ignored["image_path"],
     }
 
 
