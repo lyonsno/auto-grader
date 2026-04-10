@@ -36,6 +36,8 @@ class CompareRunsContract(unittest.TestCase):
         test_set_id: str,
         started_at: str,
         score: float,
+        corrected_score: float | None = None,
+        correction_reason: str = "",
     ) -> Path:
         run_dir = base / run_name
         run_dir.mkdir()
@@ -61,6 +63,27 @@ class CompareRunsContract(unittest.TestCase):
             )
             + "\n"
         )
+        prediction_record: dict[str, object] = {
+            "type": "prediction",
+            "exam_id": "15-blue",
+            "question_id": "fr-1",
+            "answer_type": "numeric",
+            "max_points": 2,
+            "professor_score": 2,
+            "professor_mark": "check",
+            "student_answer": "foo",
+            "model_score": score,
+            "model_confidence": 0.5,
+            "model_read": "foo",
+            "model_reasoning": "bar",
+            "raw_assistant": "{}",
+            "raw_reasoning": "abc",
+            "upstream_dependency": "none",
+            "if_dependent_then_consistent": None,
+        }
+        if corrected_score is not None:
+            prediction_record["corrected_score"] = corrected_score
+            prediction_record["correction_reason"] = correction_reason
         (run_dir / "predictions.jsonl").write_text(
             "\n".join(
                 [
@@ -72,26 +95,7 @@ class CompareRunsContract(unittest.TestCase):
                             "started": started_at,
                         }
                     ),
-                    json.dumps(
-                        {
-                            "type": "prediction",
-                            "exam_id": "15-blue",
-                            "question_id": "fr-1",
-                            "answer_type": "numeric",
-                            "max_points": 2,
-                            "professor_score": 2,
-                            "professor_mark": "check",
-                            "student_answer": "foo",
-                            "model_score": score,
-                            "model_confidence": 0.5,
-                            "model_read": "foo",
-                            "model_reasoning": "bar",
-                            "raw_assistant": "{}",
-                            "raw_reasoning": "abc",
-                            "upstream_dependency": "none",
-                            "if_dependent_then_consistent": None,
-                        }
-                    ),
+                    json.dumps(prediction_record),
                 ]
             )
             + "\n"
@@ -341,6 +345,145 @@ class CompareRunsContract(unittest.TestCase):
             self.assertIn("qwen-v1__score", header)
             self.assertIn(",2.0,", f",{row},")
             self.assertIn(",1.0,", f",{row},")
+
+    def test_load_run_records_picks_up_corrected_score_and_exposes_truth_score(self):
+        """compare_runs must use the corrected truth_score when present.
+
+        The eval harness's EvalItem exposes truth_score as a property that
+        returns corrected_score when set, otherwise professor_score. The
+        compare_runs surface has to mirror that contract so the same run
+        viewed through both surfaces reports the same accuracy baseline.
+        Pinning the invariant on RunRecord directly.
+        """
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            run_dir = self._write_run(
+                base,
+                run_name="corrected-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=0.0,
+                corrected_score=0.0,
+                correction_reason="prof methodology error",
+            )
+            records = module.load_run_records(run_dir)
+            record = records[("15-blue", "fr-1")]
+            self.assertEqual(
+                record.professor_score,
+                2.0,
+                "professor_score field must preserve the historical prof mark",
+            )
+            self.assertEqual(
+                record.corrected_score,
+                0.0,
+                "corrected_score field must be populated from the prediction record",
+            )
+            self.assertEqual(
+                record.truth_score,
+                0.0,
+                "truth_score must reflect the corrected value when corrected_score is present",
+            )
+
+    def test_load_run_records_truth_score_falls_back_to_professor_score(self):
+        """Without a correction, truth_score mirrors professor_score exactly.
+
+        This is the backwards-compat path: old prediction.jsonl files
+        from before corrected_score existed, and new prediction files
+        for items that don't need a correction, both must produce the
+        same truth_score they would have before this change.
+        """
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            run_dir = self._write_run(
+                base,
+                run_name="uncorrected-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=2.0,
+            )
+            records = module.load_run_records(run_dir)
+            record = records[("15-blue", "fr-1")]
+            self.assertEqual(record.professor_score, 2.0)
+            self.assertIsNone(
+                record.corrected_score,
+                "corrected_score must be None when the prediction record carried no correction",
+            )
+            self.assertEqual(
+                record.truth_score,
+                2.0,
+                "truth_score must fall back to professor_score when no correction is recorded",
+            )
+
+    def test_build_comparison_rows_emits_both_professor_and_truth_score_columns(self):
+        """CSV output must carry professor_score AND truth_score columns.
+
+        The historical record and the corrected baseline are both useful
+        to operators — we keep the distinction so past-prof-error cases
+        stay legible. When no correction is present, the two columns
+        match; when a correction is present, truth_score reflects it
+        while professor_score preserves the original prof mark.
+        """
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            run_dir = self._write_run(
+                base,
+                run_name="corrected-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=0.0,
+                corrected_score=0.0,
+                correction_reason="prof methodology error",
+            )
+            rows = module.build_comparison_rows([("only", run_dir)])
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(
+                row["professor_score"],
+                2.0,
+                "professor_score column must preserve the historical prof mark",
+            )
+            self.assertIn(
+                "truth_score",
+                row,
+                "build_comparison_rows must emit a truth_score column alongside professor_score",
+            )
+            self.assertEqual(
+                row["truth_score"],
+                0.0,
+                "truth_score column must reflect the corrected value when corrected_score is present",
+            )
+
+    def test_build_comparison_rows_truth_score_equals_professor_score_when_uncorrected(self):
+        """Backwards-compat: no correction means the two columns match."""
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            run_dir = self._write_run(
+                base,
+                run_name="uncorrected-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=2.0,
+            )
+            rows = module.build_comparison_rows([("only", run_dir)])
+            row = rows[0]
+            self.assertEqual(row["professor_score"], 2.0)
+            self.assertEqual(
+                row["truth_score"],
+                2.0,
+                "truth_score must equal professor_score when no correction is recorded",
+            )
 
     def test_main_rejects_mixed_path_and_query_mode_until_order_is_preserved(self):
         module = _load_compare_runs()
