@@ -1416,7 +1416,7 @@ class NarratorReaderContract(unittest.TestCase):
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=100.0):
             display.on_header("[item 1/6] 15-blue/fr-1")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         # Dial-language migration: TOTAL and TURN dials both carry the
         # 7s value in their value cells instead of a flat
         # ``total=7s``/``turn=7s`` telemetry tail.
@@ -1433,7 +1433,7 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_delta("Tracing")
         display.on_commit("status")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         # TURN dial at 5s, TOTAL dial at 5s too (both started at 200.0).
         self.assertIn("TURN", header_text)
         self.assertEqual(header_text.count("5s"), 2)
@@ -1442,7 +1442,7 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_delta("Rechecking")
         display.on_drop("dedup", "Rechecking the same unit conversion.")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         # At t=208.0, TURN=8s and TOTAL=8s (both 200.0).
         self.assertEqual(header_text.count("8s"), 2)
 
@@ -1450,14 +1450,14 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_delta("Tracing")
         display.on_rollback_live()
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         # At t=211.0, TURN=11s and TOTAL=11s.
         self.assertEqual(header_text.count("11s"), 2)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=212.0):
             display.on_header("[item 2/6] 15-blue/fr-2")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         # After the fr-2 header at t=212.0, TURN resets so at t=215.0
         # we have TOTAL=15s but TURN=3s — values now sit in distinct
         # dial cells instead of a shared flat line.
@@ -1510,10 +1510,8 @@ class NarratorReaderContract(unittest.TestCase):
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=507.0):
             group = display.render()
 
-        # Layout: scorebug at [0], header at [1]. This matches the
-        # existing timer tests which assume the scorebug is present
-        # because _make_display() sets current_model via on_header.
-        header_panel = group.renderables[1]
+        # Layout: top header band at [0], scorebug slab at [1].
+        header_panel = group.renderables[0]
         header_renderable = header_panel.renderable
         if isinstance(header_renderable, Align):
             header_renderable = header_renderable.renderable
