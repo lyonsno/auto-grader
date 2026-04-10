@@ -311,6 +311,28 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_checkpoint_renders_directly_under_header_before_thought_lines(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("line", "older line", 0))
+        display.history.append(
+            ("checkpoint", "Core issue: ozone drawing misses resonance.", None)
+        )
+        display.history.append(("line", "newer line", 1))
+
+        entries = display._build_display_entries()
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("checkpoint", "Core issue: ozone drawing misses resonance."),
+                ("line", "newer line"),
+                ("line", "older line"),
+            ],
+        )
+
     def test_wrapped_history_lines_consume_visual_row_budget(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))
@@ -582,6 +604,17 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertIn("╚═╝", bottom)
         self.assertIn("▪", bottom)
+
+    def test_scorebug_four_glyph_keeps_a_straight_right_stem(self):
+        top, middle, bottom = _scorebug_big_value_rows("4.0")
+
+        self.assertIn("║ ║", top)
+        self.assertIn("╚═╣", middle)
+        self.assertIn(
+            "  ║",
+            bottom,
+            "the 4 glyph should keep a straight right stem on the bottom row instead of flaring into a T-shape",
+        )
 
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
         display = self._make_display()
