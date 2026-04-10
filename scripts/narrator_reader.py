@@ -1121,11 +1121,14 @@ class PaintDryDisplay:
             value_top_row.append("  ", style="dim")
             value_middle_row.append("  ", style="dim")
             value_bottom_row.append("  ", style="dim")
+        top, middle, bottom = _scorebug_big_value_rows(value)
+        cell_width = len(f"{' ' * value_pad}{top}{' ' * value_pad}")
+        label_lead = ""
+        label_trail_width = max(0, cell_width - len(label_lead) - len(label))
         label_row.append(
-            f"{' ' * label_pad}{label}{' ' * label_pad}",
+            f"{label_lead}{label}{' ' * label_trail_width}",
             style=label_style,
         )
-        top, middle, bottom = _scorebug_big_value_rows(value)
         value_top_row.append(
             f"{' ' * value_pad}{top}{' ' * value_pad}",
             style=value_style,
