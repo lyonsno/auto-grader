@@ -2069,12 +2069,18 @@ class PaintDryDisplay:
             meta_separator_style = "bold #585149 on #383530"
             tally_label_bg = "#36342f"
             tally_label_separator_style = "bold #575149 on #36342f"
-            tally_top_bg = "#35332f"
-            tally_mid_bg = "#33312d"
-            tally_bottom_bg = "#302e2b"
             tally_top_separator_style = "bold #545048 on #35332f"
             tally_mid_separator_style = "bold #514c45 on #33312d"
             tally_bottom_separator_style = "bold #4c4741 on #302e2b"
+            on_target_top_bg = "#33362f"
+            on_target_mid_bg = "#31342d"
+            on_target_bottom_bg = "#2f312b"
+            left_top_bg = "#383228"
+            left_mid_bg = "#353025"
+            left_bottom_bg = "#322d23"
+            bad_top_bg = "#342f31"
+            bad_mid_bg = "#312c2e"
+            bad_bottom_bg = "#2e2a2c"
             scorebug_top = Text()
             self._append_scorebug_cell(
                 scorebug_top,
@@ -2123,14 +2129,14 @@ class PaintDryDisplay:
                     ),
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #dce2de on {tally_top_bg}",
-                        f"bold #d4dbd6 on {tally_mid_bg}",
-                        f"bold #cdd4cf on {tally_bottom_bg}",
+                        f"bold #d5ddd1 on {on_target_top_bg}",
+                        f"bold #ccd5ca on {on_target_mid_bg}",
+                        f"bold #c4cdc2 on {on_target_bottom_bg}",
                     ),
                     value_mid_row_styles=(
-                        f"bold #8f9fa0 on {tally_top_bg}",
-                        f"bold #869493 on {tally_mid_bg}",
-                        f"bold #7e8a89 on {tally_bottom_bg}",
+                        f"bold #8a9488 on {on_target_top_bg}",
+                        f"bold #818a80 on {on_target_mid_bg}",
+                        f"bold #788177 on {on_target_bottom_bg}",
                     ),
                     separator_styles=(
                         tally_label_separator_style,
@@ -2151,14 +2157,14 @@ class PaintDryDisplay:
                     ),
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #e3d9c5 on {tally_top_bg}",
-                        f"bold #dacfb9 on {tally_mid_bg}",
-                        f"bold #d0c4ac on {tally_bottom_bg}",
+                        f"bold #e1d5bf on {left_top_bg}",
+                        f"bold #d7cab2 on {left_mid_bg}",
+                        f"bold #ccbea5 on {left_bottom_bg}",
                     ),
                     value_mid_row_styles=(
-                        f"bold #9d8d6f on {tally_top_bg}",
-                        f"bold #938364 on {tally_mid_bg}",
-                        f"bold #88785a on {tally_bottom_bg}",
+                        f"bold #9d8a67 on {left_top_bg}",
+                        f"bold #927f5d on {left_mid_bg}",
+                        f"bold #877453 on {left_bottom_bg}",
                     ),
                     separator_styles=(
                         tally_label_separator_style,
@@ -2179,14 +2185,14 @@ class PaintDryDisplay:
                     ),
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #ddcdc7 on {tally_top_bg}",
-                        f"bold #d4c2bc on {tally_mid_bg}",
-                        f"bold #cab6b0 on {tally_bottom_bg}",
+                        f"bold #d9ccc9 on {bad_top_bg}",
+                        f"bold #cfbfbd on {bad_mid_bg}",
+                        f"bold #c4b3b2 on {bad_bottom_bg}",
                     ),
                     value_mid_row_styles=(
-                        f"bold #9c817a on {tally_top_bg}",
-                        f"bold #92756e on {tally_mid_bg}",
-                        f"bold #876962 on {tally_bottom_bg}",
+                        f"bold #9a827f on {bad_top_bg}",
+                        f"bold #8f7774 on {bad_mid_bg}",
+                        f"bold #846d6a on {bad_bottom_bg}",
                     ),
                     separator_styles=(
                         tally_label_separator_style,
@@ -2218,14 +2224,14 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #dce2de on {tally_top_bg}",
-                        f"bold #d4dbd6 on {tally_mid_bg}",
-                        f"bold #cdd4cf on {tally_bottom_bg}",
+                        f"bold #d5ddd1 on {on_target_top_bg}",
+                        f"bold #ccd5ca on {on_target_mid_bg}",
+                        f"bold #c4cdc2 on {on_target_bottom_bg}",
                     ),
                     value_mid_row_styles=(
-                        f"bold #8f9fa0 on {tally_top_bg}",
-                        f"bold #869493 on {tally_mid_bg}",
-                        f"bold #7e8a89 on {tally_bottom_bg}",
+                        f"bold #8a9488 on {on_target_top_bg}",
+                        f"bold #818a80 on {on_target_mid_bg}",
+                        f"bold #788177 on {on_target_bottom_bg}",
                     ),
                     separator_styles=(
                         tally_label_separator_style,
@@ -2243,14 +2249,14 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #e3d9c5 on {tally_top_bg}",
-                        f"bold #dacfb9 on {tally_mid_bg}",
-                        f"bold #d0c4ac on {tally_bottom_bg}",
+                        f"bold #e1d5bf on {left_top_bg}",
+                        f"bold #d7cab2 on {left_mid_bg}",
+                        f"bold #ccbea5 on {left_bottom_bg}",
                     ),
                     value_mid_row_styles=(
-                        f"bold #9d8d6f on {tally_top_bg}",
-                        f"bold #938364 on {tally_mid_bg}",
-                        f"bold #88785a on {tally_bottom_bg}",
+                        f"bold #9d8a67 on {left_top_bg}",
+                        f"bold #927f5d on {left_mid_bg}",
+                        f"bold #877453 on {left_bottom_bg}",
                     ),
                     separator_styles=(
                         tally_label_separator_style,
@@ -2268,14 +2274,14 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=(
-                        f"bold #ddcdc7 on {tally_top_bg}",
-                        f"bold #d4c2bc on {tally_mid_bg}",
-                        f"bold #cab6b0 on {tally_bottom_bg}",
+                        f"bold #d9ccc9 on {bad_top_bg}",
+                        f"bold #cfbfbd on {bad_mid_bg}",
+                        f"bold #c4b3b2 on {bad_bottom_bg}",
                     ),
                     value_mid_row_styles=(
-                        f"bold #9c817a on {tally_top_bg}",
-                        f"bold #92756e on {tally_mid_bg}",
-                        f"bold #876962 on {tally_bottom_bg}",
+                        f"bold #9a827f on {bad_top_bg}",
+                        f"bold #8f7774 on {bad_mid_bg}",
+                        f"bold #846d6a on {bad_bottom_bg}",
                     ),
                     separator_styles=(
                         tally_label_separator_style,
