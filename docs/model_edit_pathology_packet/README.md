@@ -257,3 +257,16 @@ boundary we care about:
 - weak secondary survivors next to a real answer
 - changed-answer residue
 - ugly but still gradable intentional fills
+
+## Evaluation Notes
+
+The first partial redelivery evaluation is recorded here:
+
+- [first_redelivery_evaluation_2026-04-10.md](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/first_redelivery_evaluation_2026-04-10.md)
+
+The short version is:
+
+- contact sheets are not a valid pipeline evaluation surface
+- full-resolution edited pages are usable
+- the first two real pages were interpretable and did not cause substrate collapse
+- the most valuable missing full-resolution probes are still prompt 06 and prompt 08
