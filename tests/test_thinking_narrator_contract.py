@@ -79,7 +79,7 @@ class _BadStatusRetryNarrator(ThinkingNarrator):
         return "I'm tracing the same unit conversion mistake."
 
 
-class _CanonicalizedStatusRetryNarrator(ThinkingNarrator):
+class _RunObservedFirstPersonStatusRetryNarrator(ThinkingNarrator):
     _PLAYBACK_CHUNK_DELAY_S = 0.0
 
     def __init__(self, sink: _DummySink) -> None:
@@ -216,9 +216,9 @@ class ThinkingNarratorContract(unittest.TestCase):
         )
         self.assertEqual(sink.deltas, [])
 
-    def test_status_retry_canonicalizes_run_observed_first_person_status_line(self):
+    def test_status_retry_rejects_run_observed_first_person_status_line(self):
         sink = _DummySink()
-        narrator = _CanonicalizedStatusRetryNarrator(sink)
+        narrator = _RunObservedFirstPersonStatusRetryNarrator(sink)
         narrator.start(item_header="15-blue/fr-1")
         narrator._thoughts_since_status = [
             "I'm tracing the same unit conversion mistake."
@@ -226,17 +226,15 @@ class ThinkingNarratorContract(unittest.TestCase):
 
         narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
 
-        self.assertEqual(sink.commits, ["status"])
-        self.assertEqual(sink.drops, [])
+        self.assertEqual(sink.commits, [])
         self.assertEqual(
-            "".join(sink.deltas),
-            "Verifying the units and the numeric answer.",
+            sink.drops,
+            [
+                ("dedup", "I'm tracing the same unit conversion mistake."),
+                ("contract-status", "I'm verifying the units and the numeric answer."),
+            ],
         )
-        self.assertEqual(sink.delta_modes, ["status"] * len(sink.deltas))
-        self.assertEqual(
-            narrator._prior_statuses[-1],
-            "Verifying the units and the numeric answer.",
-        )
+        self.assertEqual(sink.deltas, [])
 
     def test_thought_prompt_uses_current_status_and_last_four_thoughts_only(self):
         sink = _DummySink()

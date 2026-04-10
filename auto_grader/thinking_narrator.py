@@ -326,23 +326,10 @@ def _sanitize_after_action_text(text: str) -> str:
 
 
 def _status_line_breaks_contract(text: str) -> bool:
+    # Status is its own contract surface: a non-first-person present-participle
+    # sticky lane, not a lightly edited thought. If the model returns first
+    # person here, that is a contract failure to drop, not text to salvage.
     return bool(_STATUS_FIRST_PERSON_RE.search(text))
-
-
-def _canonicalize_status_retry(text: str) -> str:
-    stripped = " ".join(text.strip().split())
-    if not stripped:
-        return ""
-    canonical = re.sub(
-        r"^(?:i['’]?m|im|i am)\s+",
-        "",
-        stripped,
-        flags=re.IGNORECASE,
-    ).strip()
-    if not canonical:
-        return ""
-    return canonical[:1].upper() + canonical[1:]
-
 
 def _reasoning_warrants_human_review(text: str) -> bool:
     lowered = text.lower()
@@ -719,6 +706,12 @@ class ThinkingNarrator:
         chunk: str,
         prior_statuses: list[str],
     ) -> tuple[str | None, str, str | None, str | None]:
+        """Retry a repetitive thought as a strict status line.
+
+        Important contract note: the status lane is not a repaired first-person
+        thought. The retry must already satisfy the non-first-person
+        present-participle form, or it is rejected as ``contract-status``.
+        """
         status_user_content = self._build_status_user_content(
             chunk, prior_statuses
         )
@@ -731,7 +724,6 @@ class ThinkingNarrator:
         full = full.strip()
         if not full:
             return None, status_user_content, None, None
-        full = _canonicalize_status_retry(full)
         if _status_line_breaks_contract(full):
             return None, status_user_content, "contract-status", full
 
