@@ -86,6 +86,7 @@ _FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)
 _FOCUS_PREVIEW_INK_RGB = (36, 40, 48)
 _FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
 _FOCUS_PREVIEW_GLYPH_RAMP = " .,:;-=+*#%@"
+_FOCUS_PREVIEW_STEADY_RAMP = " .,:-="
 _FOCUS_PREVIEW_OVERLAY_RGBS = (
     (108, 122, 154),
     (132, 115, 86),
@@ -768,16 +769,33 @@ def _render_focus_preview_pixels(
                     + (0.32 * luminance)
                 )
             darkness = 1.0 - display_luminance
-            ramp_darkness = darkness ** 1.45
-            ramp_index = min(
-                len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1,
-                int(round(ramp_darkness * (len(_FOCUS_PREVIEW_GLYPH_RAMP) - 1))),
-            )
-            glyph = _FOCUS_PREVIEW_GLYPH_RAMP[ramp_index]
-            bg_strength = 0.24 + (0.58 * display_luminance)
-            fg_strength = 0.04 + (0.56 * darkness)
+            bg_strength = 0.28 + (0.62 * display_luminance)
             bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, bg_strength)
-            fg_rgb = _interp_rgb(bg_rgb, _FOCUS_PREVIEW_PAPER_RGB, fg_strength)
+            accent_strength = _clamp((darkness - 0.18) / 0.54, 0.0, 1.0)
+            visible_accent = _clamp((accent_strength - 0.50) / 0.50, 0.0, 1.0)
+            if visible_accent <= 0.0:
+                glyph = " "
+            else:
+                ramp_index = min(
+                    len(_FOCUS_PREVIEW_STEADY_RAMP) - 1,
+                    int(
+                        round(
+                            visible_accent
+                            * (len(_FOCUS_PREVIEW_STEADY_RAMP) - 1)
+                        )
+                    ),
+                )
+                glyph = _FOCUS_PREVIEW_STEADY_RAMP[ramp_index]
+            ink_rgb = _interp_rgb(
+                bg_rgb,
+                _FOCUS_PREVIEW_INK_RGB,
+                0.24 + (0.52 * visible_accent),
+            )
+            fg_rgb = _interp_rgb(
+                bg_rgb,
+                ink_rgb,
+                0.03 + (0.40 * visible_accent),
+            )
             row.append(
                 glyph,
                 style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",

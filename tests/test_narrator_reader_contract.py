@@ -479,7 +479,7 @@ class NarratorReaderContract(unittest.TestCase):
             "source-aware budgeting should buy more vertical detail too, not only horizontal width",
         )
 
-    def test_focus_preview_steady_state_uses_dense_glyphs_not_only_half_blocks(self):
+    def test_focus_preview_steady_state_uses_space_first_field_with_sparse_ink_accents(self):
         pixels = []
         for row in range(12):
             rows: list[tuple[int, int, int]] = []
@@ -494,10 +494,17 @@ class NarratorReaderContract(unittest.TestCase):
             pending=False,
         )
         plain = _extract_plain(renderable)
+        drawable = [ch for ch in plain if ch != "\n"]
+        space_ratio = drawable.count(" ") / len(drawable)
 
         self.assertTrue(
-            any(ch in plain for ch in ".,:;-=+*#%@"),
-            "steady-state previews should use a denser terminal glyph field instead of only block cells",
+            any(ch in plain for ch in ".,:-=+"),
+            "steady-state previews should still carry some faint ink accents instead of collapsing into a pure flat card",
+        )
+        self.assertGreater(
+            space_ratio,
+            0.45,
+            "steady-state previews should now read as a mostly image-backed field, not as a full-screen ASCII texture",
         )
 
     def test_focus_preview_bright_paper_stays_quiet_in_steady_state(self):
@@ -507,27 +514,49 @@ class NarratorReaderContract(unittest.TestCase):
             pending=False,
         )
         plain = _extract_plain(renderable)
+        drawable = [ch for ch in plain if ch != "\n"]
+        space_ratio = drawable.count(" ") / len(drawable)
 
         self.assertTrue(
             any(ch in plain for ch in " .,:"),
-            "bright paper should render with quiet low-density marks instead of a heavy glyph wall",
+            "bright paper should still render with a very faint field instead of disappearing entirely",
+        )
+        self.assertGreater(
+            space_ratio,
+            0.70,
+            "bright paper should be overwhelmingly space-backed rather than filled with texture glyphs",
         )
         self.assertFalse(
-            any(ch in plain for ch in "#%@"),
-            "bright paper should not light up with the densest glyphs",
+            any(ch in plain for ch in "*#%@"),
+            "bright paper should not light up with dense texture glyphs",
         )
 
     def test_focus_preview_dark_strokes_use_denser_marks_than_paper(self):
-        renderable = _render_focus_preview_pixels(
-            [[(70, 72, 76) for _ in range(24)] for _ in range(12)],
-            now=0.0,
-            pending=False,
+        paper = _extract_plain(
+            _render_focus_preview_pixels(
+                [[(220, 214, 206) for _ in range(24)] for _ in range(12)],
+                now=0.0,
+                pending=False,
+            )
         )
-        plain = _extract_plain(renderable)
+        strokes = _extract_plain(
+            _render_focus_preview_pixels(
+                [[(70, 72, 76) for _ in range(24)] for _ in range(12)],
+                now=0.0,
+                pending=False,
+            )
+        )
+        paper_drawable = [ch for ch in paper if ch not in {"\n", " "}]
+        stroke_drawable = [ch for ch in strokes if ch not in {"\n", " "}]
 
         self.assertTrue(
-            any(ch in plain for ch in "=+*#%@"),
-            "darker regions should use denser glyphs so handwriting and strokes survive the terminal rendering",
+            any(ch in strokes for ch in ".:-=+"),
+            "darker regions should still surface visible ink accents so handwriting survives the terminal rendering",
+        )
+        self.assertGreater(
+            len(stroke_drawable),
+            len(paper_drawable),
+            "darker strokes should carry more visible accent glyphs than bright paper",
         )
 
     def test_focus_preview_low_contrast_document_still_shows_structure(self):
@@ -553,12 +582,12 @@ class NarratorReaderContract(unittest.TestCase):
         lines = plain.splitlines()
 
         self.assertTrue(
-            any(ch in lines[5] for ch in " .,"),
-            "quiet paper bands should recover to a genuinely lighter glyph field instead of flattening into the same mid-density marks as everything else",
+            any(ch in lines[5] for ch in " .,:"),
+            "quiet paper bands should recover to a genuinely lighter field instead of flattening into the same accent density as everything else",
         )
         self.assertTrue(
-            any(ch in plain for ch in "=+*#%@"),
-            "a low-contrast document preview should still recover denser marks for borders and handwritten strokes",
+            any(ch in plain for ch in ".:-=+"),
+            "a low-contrast document preview should still recover visible accent marks for borders and handwritten strokes",
         )
 
     def test_focus_preview_sampling_preserves_thin_dark_strokes(self):
