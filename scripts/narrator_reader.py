@@ -131,10 +131,11 @@ _BASE_RGB = {
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
-    "header": (148, 58, 72),     # bruised wine lacquer — darker, redder,
-                                  # and a touch plum-led so structural
-                                  # titles read like settled varnish rather
-                                  # than active pumpkin-orange signal
+    "header": (156, 52, 62),     # lacquered burgundy — red-led enough to
+                                  # read warmer at a glance, but still dark
+                                  # enough that the plum undertone shows up
+                                  # as a secondary accent rather than the
+                                  # whole header drifting purple
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
@@ -174,7 +175,7 @@ _BASE_RGB = {
     # appearing purely as a verdict indicator) and pulses in sync with
     # the rest of the header so the painting reads as one stroke per
     # item: vermilion dash → indigo index → persimmon title.
-    "header_dash": (214, 126, 82),
+    "header_dash": (210, 118, 78),
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
@@ -215,9 +216,10 @@ _SHIMMER_KIND_PEAK_RGB = {
     "live": (245, 155, 80),       # persimmon ember — live field warms
                                    # toward the same lacquer-red as the
                                    # headers as the wave passes
-    "header": (208, 118, 132),    # fired wine-lacquer crest — brighter
-                                   # within the same dark red/plum family,
-                                   # not a return to simple orange-red
+    "header": (214, 104, 122),    # fired burgundy crest — visibly redder
+                                   # than the base, but still carrying plum
+                                   # on the high end so the header gets a
+                                   # subtle internal wine/plum undulation
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
@@ -242,7 +244,7 @@ _SHIMMER_KIND_PEAK_RGB = {
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
-    "header_dash": (246, 166, 118),      # fired apricot-vermilion — the dash
+    "header_dash": (234, 152, 108),      # fired apricot-vermilion — the dash
                                           # brightens toward the same
                                           # bright lacquer that the
                                           # topic_overshoot verdict uses,
@@ -1491,14 +1493,14 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #eef3ff on #32578e",
                     value_row_styles=(
-                        "bold #e4eeff on #264262",
-                        "bold #dce9ff on #1c2d47",
-                        "bold #d1deff on #16263d",
+                        "bold #dbe8ef on #33434c",
+                        "bold #d4e2eb on #2a3740",
+                        "bold #cad8e4 on #223038",
                     ),
                     value_mid_row_styles=(
-                        "bold #95acd4 on #264262",
-                        "bold #8ea5cb on #1c2d47",
-                        "bold #8398bc on #16263d",
+                        "bold #95a7b1 on #33434c",
+                        "bold #8ea1ac on #2a3740",
+                        "bold #8799a3 on #223038",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -1513,14 +1515,14 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #fff1d6 on #6b5028",
                     value_row_styles=(
-                        "bold #fff2d6 on #4b3921",
-                        "bold #ffefcf on #3e2f1b",
-                        "bold #f0deb8 on #342713",
+                        "bold #f7ecd0 on #5a4c31",
+                        "bold #f2e4c4 on #4d4028",
+                        "bold #e7d7b3 on #43381f",
                     ),
                     value_mid_row_styles=(
-                        "bold #a99770 on #4b3921",
-                        "bold #a18f66 on #3e2f1b",
-                        "bold #947f58 on #342713",
+                        "bold #ab9a72 on #5a4c31",
+                        "bold #a18f66 on #4d4028",
+                        "bold #95835b on #43381f",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -1535,14 +1537,14 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #ffe5dd on #7a392f",
                     value_row_styles=(
-                        "bold #ffe6dc on #552926",
-                        "bold #ffe3d8 on #47211d",
-                        "bold #f0d4cb on #3b1b18",
+                        "bold #f5ddd8 on #653738",
+                        "bold #f0d5cf on #552d2e",
+                        "bold #e5c7c2 on #492425",
                     ),
                     value_mid_row_styles=(
-                        "bold #ae8680 on #552926",
-                        "bold #a57e76 on #47211d",
-                        "bold #997069 on #3b1b18",
+                        "bold #a98a84 on #653738",
+                        "bold #9f7d78 on #552d2e",
+                        "bold #946f6b on #492425",
                     ),
                 )
                 scorebug_rows.extend(
@@ -1568,14 +1570,14 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style="bold #eef3ff on #32578e",
                     value_row_styles=(
-                        "bold #e4eeff on #264262",
-                        "bold #dce9ff on #1c2d47",
-                        "bold #d1deff on #16263d",
+                        "bold #dbe8ef on #33434c",
+                        "bold #d4e2eb on #2a3740",
+                        "bold #cad8e4 on #223038",
                     ),
                     value_mid_row_styles=(
-                        "bold #95acd4 on #264262",
-                        "bold #8ea5cb on #1c2d47",
-                        "bold #8398bc on #16263d",
+                        "bold #95a7b1 on #33434c",
+                        "bold #8ea1ac on #2a3740",
+                        "bold #8799a3 on #223038",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -1587,14 +1589,14 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style="bold #fff1d6 on #6b5028",
                     value_row_styles=(
-                        "bold #fff2d6 on #4b3921",
-                        "bold #ffefcf on #3e2f1b",
-                        "bold #f0deb8 on #342713",
+                        "bold #f7ecd0 on #5a4c31",
+                        "bold #f2e4c4 on #4d4028",
+                        "bold #e7d7b3 on #43381f",
                     ),
                     value_mid_row_styles=(
-                        "bold #a99770 on #4b3921",
-                        "bold #a18f66 on #3e2f1b",
-                        "bold #947f58 on #342713",
+                        "bold #ab9a72 on #5a4c31",
+                        "bold #a18f66 on #4d4028",
+                        "bold #95835b on #43381f",
                     ),
                 )
                 self._append_scorebug_big_value_cell(
@@ -1606,14 +1608,14 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style="bold #ffe5dd on #7a392f",
                     value_row_styles=(
-                        "bold #ffe6dc on #552926",
-                        "bold #ffe3d8 on #47211d",
-                        "bold #f0d4cb on #3b1b18",
+                        "bold #f5ddd8 on #653738",
+                        "bold #f0d5cf on #552d2e",
+                        "bold #e5c7c2 on #492425",
                     ),
                     value_mid_row_styles=(
-                        "bold #ae8680 on #552926",
-                        "bold #a57e76 on #47211d",
-                        "bold #997069 on #3b1b18",
+                        "bold #a98a84 on #653738",
+                        "bold #9f7d78 on #552d2e",
+                        "bold #946f6b on #492425",
                     ),
                 )
                 scorebug_rows.extend(
@@ -1977,14 +1979,14 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: scorebug, header, live, history, post-game, drops, [footer]
-        # The big tally cells are the most glanceable session-state
-        # surface, so they lead the stack. The project header drops
-        # below them as show identity rather than primary telemetry.
+        # Order: header, scorebug, live, history, post-game, drops, [footer]
+        # The PROJECT PAINT DRY band is the primary scene-setter again;
+        # the scorebug stays immediately below it as the denser
+        # instrumentation slab.
         panels = []
+        panels.append(header)
         if scorebug_panel is not None:
             panels.append(scorebug_panel)
-        panels.append(header)
         panels.extend([live_panel, history_panel])
         if wrap_panel is not None:
             panels.append(wrap_panel)

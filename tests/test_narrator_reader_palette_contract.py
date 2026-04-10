@@ -44,6 +44,26 @@ class NarratorReaderPaletteContract(unittest.TestCase):
             "header title should bring some plum depth into the heading family",
         )
 
+    def test_header_shimmer_peak_keeps_red_lead_with_plum_undertone(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._SHIMMER_KIND_PEAK_RGB["header"]
+
+        self.assertGreater(
+            red,
+            blue,
+            "header peak should still crest in burgundy-red rather than tipping fully violet",
+        )
+        self.assertGreater(
+            blue,
+            green,
+            "header peak should carry a visible plum undertone instead of flattening to plain red-orange",
+        )
+        self.assertLess(
+            green,
+            135,
+            "header peak should stay restrained and lacquered, not flare back toward orange glare",
+        )
+
     def test_match_verdict_base_color_reads_as_indigo_steel_not_aqua(self):
         module = _load_narrator_reader()
         red, green, blue = module._BASE_RGB["topic_match"]
