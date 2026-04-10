@@ -202,6 +202,37 @@ def _render_marked_page(
     return np.array(canvas)
 
 
+def _render_dominant_plus_secondary_page(
+    page: dict,
+    *,
+    question_id: str,
+    dominant_bubble_label: str,
+    secondary_bubble_label: str,
+    secondary_gray: int = 198,
+    scale: int = 4,
+) -> np.ndarray:
+    canvas = Image.fromarray(
+        _render_marked_page(page, marked_labels={question_id: [dominant_bubble_label]}, scale=scale)
+    )
+    draw = ImageDraw.Draw(canvas)
+
+    for bubble in page["bubble_regions"]:
+        if bubble["question_id"] != question_id or bubble["bubble_label"] != secondary_bubble_label:
+            continue
+        left = bubble["x"] * scale
+        top = bubble["y"] * scale
+        right = (bubble["x"] + bubble["width"]) * scale
+        bottom = (bubble["y"] + bubble["height"]) * scale
+        inset = 0.33 * bubble["width"] * scale
+        draw.ellipse(
+            [left + inset, top + inset, right - inset, bottom - inset],
+            fill=(secondary_gray, secondary_gray, secondary_gray),
+        )
+        break
+
+    return np.array(canvas)
+
+
 def _perspective_distort(image: np.ndarray) -> np.ndarray:
     height, width = image.shape[:2]
     source = np.float32(
@@ -284,6 +315,9 @@ class McPageExtractionContractTests(unittest.TestCase):
             "The matched-page extraction bundle should preserve the page identity callers already have.",
         )
         self.assertEqual(extracted["fallback_page_code"], page["fallback_page_code"])
+        self.assertIn("bubble_evidence", extracted)
+        self.assertIn(question_id, extracted["bubble_evidence"])
+        self.assertIn(correct_bubble, extracted["bubble_evidence"][question_id])
         self.assertEqual(extracted["marked_bubble_labels"], {question_id: [correct_bubble]})
         self.assertEqual(extracted["scored_questions"][question_id]["status"], "correct")
         self.assertFalse(extracted["scored_questions"][question_id]["review_required"])
@@ -312,6 +346,41 @@ class McPageExtractionContractTests(unittest.TestCase):
             "through the packaged scoring result.",
         )
         self.assertTrue(extracted["scored_questions"]["mc-1"]["review_required"])
+
+    def test_extract_scored_mc_page_prefers_one_dominant_mark_over_weaker_secondary_trace(self) -> None:
+        extract_scored_mc_page = _load_extraction_module(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        correct_bubble = artifact["answer_key"]["mc-1"]["correct_bubble_label"]
+        weaker_bubble = next(
+            choice["bubble_label"]
+            for choice in artifact["answer_key"]["mc-1"]["choices"]
+            if choice["bubble_label"] != correct_bubble
+        )
+
+        distorted = _perspective_distort(
+            _render_dominant_plus_secondary_page(
+                page,
+                question_id="mc-1",
+                dominant_bubble_label=correct_bubble,
+                secondary_bubble_label=weaker_bubble,
+            )
+        )
+
+        extracted = extract_scored_mc_page(distorted, page, artifact["answer_key"])
+
+        self.assertEqual(
+            extracted["scored_questions"]["mc-1"]["status"],
+            "correct",
+            "One clearly stronger filled bubble should remain machine-gradable even if "
+            "a weaker secondary trace survives readback on another bubble.",
+        )
+        self.assertEqual(extracted["scored_questions"]["mc-1"]["resolved_bubble_labels"], [correct_bubble])
+        self.assertEqual(
+            extracted["scored_questions"]["mc-1"]["ignored_incidental_bubble_labels"],
+            [weaker_bubble],
+        )
+        self.assertFalse(extracted["scored_questions"]["mc-1"]["review_required"])
 
     def test_extract_scored_mc_page_preserves_ambiguous_observation_surface(self) -> None:
         extract_scored_mc_page = _load_extraction_module(self)

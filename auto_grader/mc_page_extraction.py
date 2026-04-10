@@ -1,4 +1,4 @@
-"""Package matched-page registration, bubble readback, and MC scoring into one result."""
+"""Package matched-page registration, bubble readback, evidence, and MC scoring into one result."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from auto_grader.bubble_interpretation import read_bubble_observations
+from auto_grader.bubble_interpretation import read_bubble_evidence, read_bubble_observations
 from auto_grader.mc_scoring import score_marked_mc_bubbles
 from auto_grader.scan_registration import normalize_page_image
 
@@ -24,11 +24,16 @@ def extract_scored_mc_page(
 
     normalized_image = normalize_page_image(image, page)
     bubble_observations = read_bubble_observations(normalized_image, page)
+    bubble_evidence = read_bubble_evidence(normalized_image, page)
     marked_bubble_labels = {
         question_id: observation["marked_bubble_labels"]
         for question_id, observation in bubble_observations.items()
     }
-    scored_questions = score_marked_mc_bubbles(bubble_observations, answer_key)
+    scored_questions = score_marked_mc_bubbles(
+        bubble_observations,
+        answer_key,
+        bubble_evidence,
+    )
 
     return {
         "page_number": _require_int(page.get("page_number"), "page.page_number"),
@@ -38,6 +43,7 @@ def extract_scored_mc_page(
         ),
         "normalized_image": normalized_image,
         "bubble_observations": bubble_observations,
+        "bubble_evidence": bubble_evidence,
         "marked_bubble_labels": marked_bubble_labels,
         "scored_questions": scored_questions,
     }

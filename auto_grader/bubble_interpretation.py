@@ -66,30 +66,93 @@ def read_bubble_observations(
 
     observations_by_question: dict[str, dict[str, list[str]]] = {}
     for question_id, regions in grouped_regions.items():
-        question_observation = {
-            "marked_bubble_labels": [],
-            "ambiguous_bubble_labels": [],
-            "illegible_bubble_labels": [],
-        }
-        for region in sorted(
+        question_observation, _ = _analyze_question_regions(
+            grayscale,
             regions,
-            key=lambda item: (
-                _require_number(item.get("x"), "bubble_region.x"),
-                _require_string(item.get("bubble_label"), "bubble_region.bubble_label"),
-            ),
-        ):
-            crop = _crop_region(grayscale, region, pixels_per_point)
-            bubble_label = _require_string(region.get("bubble_label"), "bubble_region.bubble_label")
-            classification = _classify_bubble(crop)
-            if classification == "marked":
-                question_observation["marked_bubble_labels"].append(bubble_label)
-            elif classification == "ambiguous":
-                question_observation["ambiguous_bubble_labels"].append(bubble_label)
-            elif classification == "illegible":
-                question_observation["illegible_bubble_labels"].append(bubble_label)
+            pixels_per_point=pixels_per_point,
+        )
         observations_by_question[question_id] = question_observation
 
     return observations_by_question
+
+
+def read_bubble_evidence(
+    image: np.ndarray,
+    page: Mapping[str, Any],
+) -> dict[str, dict[str, dict[str, float | str]]]:
+    """Return per-bubble evidence values for question-level arbitration."""
+    if not isinstance(image, np.ndarray):
+        raise TypeError("image must be a numpy.ndarray")
+    if not isinstance(page, Mapping):
+        raise TypeError("page must be a mapping")
+
+    page_width = float(_require_number(page.get("width"), "page.width"))
+    page_height = float(_require_number(page.get("height"), "page.height"))
+    bubble_regions = page.get("bubble_regions")
+    if not isinstance(bubble_regions, list) or len(bubble_regions) == 0:
+        raise ValueError("page.bubble_regions must be a non-empty list")
+
+    grayscale = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    pixels_per_point = min(grayscale.shape[1] / page_width, grayscale.shape[0] / page_height)
+
+    grouped_regions: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for region in bubble_regions:
+        if not isinstance(region, Mapping):
+            raise ValueError("page.bubble_regions entries must be mappings")
+        question_id = _require_string(region.get("question_id"), "bubble_region.question_id")
+        grouped_regions[question_id].append(dict(region))
+
+    evidence_by_question: dict[str, dict[str, dict[str, float | str]]] = {}
+    for question_id, regions in grouped_regions.items():
+        _, question_evidence = _analyze_question_regions(
+            grayscale,
+            regions,
+            pixels_per_point=pixels_per_point,
+        )
+        evidence_by_question[question_id] = question_evidence
+    return evidence_by_question
+
+
+def _analyze_question_regions(
+    grayscale: np.ndarray,
+    regions: list[dict[str, Any]],
+    *,
+    pixels_per_point: float,
+) -> tuple[dict[str, list[str]], dict[str, dict[str, float | str]]]:
+    question_observation = {
+        "marked_bubble_labels": [],
+        "ambiguous_bubble_labels": [],
+        "illegible_bubble_labels": [],
+    }
+    question_evidence: dict[str, dict[str, float | str]] = {}
+    for region in sorted(
+        regions,
+        key=lambda item: (
+            _require_number(item.get("x"), "bubble_region.x"),
+            _require_string(item.get("bubble_label"), "bubble_region.bubble_label"),
+        ),
+    ):
+        crop = _crop_region(grayscale, region, pixels_per_point)
+        bubble_label = _require_string(region.get("bubble_label"), "bubble_region.bubble_label")
+        metrics = _bubble_metrics(crop)
+        classification = _classify_bubble_from_metrics(metrics)
+        if classification == "marked":
+            question_observation["marked_bubble_labels"].append(bubble_label)
+        elif classification == "ambiguous":
+            question_observation["ambiguous_bubble_labels"].append(bubble_label)
+        elif classification == "illegible":
+            question_observation["illegible_bubble_labels"].append(bubble_label)
+        question_evidence[bubble_label] = {
+            "classification": classification,
+            "fill_intent_score": float(
+                float(metrics["center_dark_fraction"]) * float(metrics["center_dark_bbox_fill_ratio"])
+            ),
+            "center_dark_fraction": float(metrics["center_dark_fraction"]),
+            "center_dark_bbox_fill_ratio": float(metrics["center_dark_bbox_fill_ratio"]),
+            "center_mean": float(metrics["center_mean"]),
+            "ring_mean": float(metrics["ring_mean"]),
+        }
+    return question_observation, question_evidence
 
 
 def _crop_region(
@@ -122,6 +185,10 @@ def _bubble_center_looks_marked(crop: np.ndarray) -> bool:
 
 def _classify_bubble(crop: np.ndarray) -> str:
     metrics = _bubble_metrics(crop)
+    return _classify_bubble_from_metrics(metrics)
+
+
+def _classify_bubble_from_metrics(metrics: Mapping[str, float | int]) -> str:
     if _looks_illegible(metrics):
         return "illegible"
     if _looks_marked(metrics):

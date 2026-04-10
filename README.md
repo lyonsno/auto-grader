@@ -197,10 +197,15 @@ Current implementation status on this grading surface:
 - first-pass bubble readback is implemented via `auto_grader.bubble_interpretation`
 - first-pass scoring decisions are implemented via `auto_grader.mc_scoring`
   for the core MC statuses `correct`, `incorrect`, `blank`, `multiple_marked`,
-  `ambiguous_mark`, and `illegible_mark`
+  `ambiguous_mark`, and `illegible_mark`; that scorer now also performs a
+  narrow question-level dominance arbitration pass so one clearly stronger
+  deliberate fill can beat much weaker secondary traces without forcing routine
+  manual review, while genuinely substantial co-equal fills still remain
+  explicit review work
 - matched-page extraction packaging is implemented via `auto_grader.mc_page_extraction`
   so downstream callers can consume one bundle containing the normalized page,
-  marked bubble labels, and scored MC outcomes for an already-matched page
+  marked bubble labels, per-bubble evidence, and scored MC outcomes for an
+  already-matched page
 - a synthetic student-mark smoke harness is implemented via
   `auto_grader.mark_profile_smoke`; it renders plausible filled, scribbled,
   off-center, smudged, faint, double-marked, hostile-glance, glancing-stray-only,
