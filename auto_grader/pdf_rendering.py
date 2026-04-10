@@ -11,6 +11,7 @@ This module intentionally keeps the paper surface small and explicit:
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 import textwrap
 from typing import Any
 
@@ -179,7 +180,7 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
             _require_number(region["y"], "bubble_region.y") for region in question_regions
         )
         prompt_left = _QUESTION_BLOCK_LEFT
-        prompt_lines = _wrap_prompt_text(f"{question_number}. {question.get('prompt', '')}")
+        prompt_lines = _wrap_prompt_text(_display_prompt(question_number, str(question.get("prompt", ""))))
         prompt_block_top = prompt_y_top - _PROMPT_LINE_GAP - (
             _PROMPT_LINE_SPACING * (len(prompt_lines) - 1)
         )
@@ -258,6 +259,16 @@ def _text_block(x: int | float, y: int | float, font_size: int | float, text: st
         f"({_escape_text(text)}) Tj",
         "ET",
     ]
+
+
+def _display_prompt(question_number: int, prompt: str) -> str:
+    normalized_prompt = re.sub(
+        rf"^\s*question\s+{question_number}\s*[:.\-]\s*",
+        "",
+        prompt,
+        flags=re.IGNORECASE,
+    )
+    return f"{question_number}. {normalized_prompt}"
 
 
 def _escape_text(text: str) -> str:

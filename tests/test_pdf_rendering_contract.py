@@ -468,6 +468,25 @@ class PdfRenderingContractTests(unittest.TestCase):
             "The renderer should not emit the full long prompt as one unwrapped line once prompt wrapping is supported.",
         )
 
+    def test_renderer_avoids_duplicate_question_label_when_prompt_is_already_numbered(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_dense_artifact()
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        self.assertIn(
+            b"8. Which statement best describes why increasing",
+            pdf_bytes,
+            "Dense-sheet prompts should keep the renderer's own numeric prefix without repeating "
+            "a second 'Question N:' label from the prompt text itself.",
+        )
+        self.assertNotIn(
+            b"Question 8:",
+            pdf_bytes,
+            "Rendered prompt text should not repeat 'Question N:' once the renderer already "
+            "numbers each item on the page.",
+        )
+
     def test_renderer_wraps_long_choice_lines_before_the_bubble_lane(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
         artifact = _build_wrapped_choice_artifact()
