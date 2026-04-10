@@ -16,6 +16,7 @@ class _DummySink:
         self.commits: list[str] = []
         self.drops: list[tuple[str, str]] = []
         self.topics: list[tuple[str, str | None]] = []
+        self.checkpoints: list[str] = []
 
     def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
@@ -32,6 +33,9 @@ class _DummySink:
 
     def write_topic(self, text: str, verdict: str | None = None, **kwargs) -> None:
         self.topics.append((text, verdict))
+
+    def write_checkpoint(self, text: str) -> None:
+        self.checkpoints.append(text)
 
 
 class _RetryNarrator(ThinkingNarrator):
@@ -74,6 +78,28 @@ class _AfterActionNarrator(ThinkingNarrator):
 
     def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
         return self._response
+
+
+class _CheckpointNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+        self._thoughts = [
+            "I'm tracing the limiting reagent path.",
+            "I'm checking the NH3 mole ratio.",
+            "I'm weighing the boxed answer against stoichiometry.",
+            "I'm catching the moles-versus-grams mixup.",
+        ]
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        text = self._thoughts.pop(0)
+        for token in text.split():
+            on_delta(token + " ")
+        return text
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return "Core issue: stoichiometry path is broken."
 
 
 class ThinkingNarratorContract(unittest.TestCase):
@@ -245,6 +271,19 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertIn(
             'Do not default to "I\'m noticing" or "I\'m seeing"; use stronger verbs unless the point is literal OCR or legibility.',
             prompt,
+        )
+
+    def test_every_fourth_accepted_line_emits_history_checkpoint(self):
+        sink = _DummySink()
+        narrator = _CheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-5b")
+
+        for idx in range(4):
+            narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(
+            sink.checkpoints,
+            ["Core issue: stoichiometry path is broken."],
         )
 
     def test_after_action_prompt_avoids_indexable_stock_examples(self):

@@ -157,6 +157,22 @@ rubric criterion when possible.
 - No preamble, no quotes. Output ONLY the status line.
 """
 
+_CHECKPOINT_SYSTEM_PROMPT = """\
+You write compact history checkpoints for a chemistry-grading narrator.
+
+Summarize the current state of play as one neutral sentence that is worth
+keeping in durable history. This is not a live thought and not a status line.
+
+Rules:
+- ONE sentence. 8-18 words.
+- Do NOT use first person.
+- Start with a short label: "Core issue:", "Evidence:", or "Lean:".
+- Be specific to this exact item: mention the concrete chemistry issue,
+  quantity, unit, species, or rubric dimension when possible.
+- Prefer synthesizing the repeated point over repeating the narrator's phrasing.
+- No quotes, no bullet points, no preamble. Output ONLY the checkpoint line.
+"""
+
 
 # Chunking parameters — denser than spoke's defaults so we get a real
 # play-by-play feel. The dedup + grounding fix means we can dispatch more
@@ -200,6 +216,8 @@ _STATUS_SIMILARITY_THRESHOLD = 0.90  # status-mode lines are ALLOWED to stay
                                      # same line again
 _STATUS_CONTEXT_LIMIT = 5
 _THOUGHT_CONTEXT_LIMIT = 4
+_CHECKPOINT_CONTEXT_LIMIT = 4
+_CHECKPOINT_EVERY_ACCEPTED = 4
 _DEDUP_BACKOFF_INITIAL_S = 4.0
 _DEDUP_BACKOFF_MAX_S = 24.0
 _PLAYBACK_CHUNK_DELAY_S = 0.03
@@ -495,6 +513,8 @@ class ThinkingNarrator:
         self._prior_statuses: list[str] = []
         self._current_status: str | None = None
         self._thoughts_since_status: list[str] = []
+        self._prior_checkpoints: list[str] = []
+        self._accepted_since_checkpoint = 0
         self._dedupe_backoff_until = 0.0
         self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
 
@@ -547,6 +567,8 @@ class ThinkingNarrator:
             self._prior_statuses = []
             self._current_status = None
             self._thoughts_since_status = []
+            self._prior_checkpoints = []
+            self._accepted_since_checkpoint = 0
             self._dedupe_backoff_until = 0.0
             self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
         with self._stats_lock:
@@ -605,6 +627,48 @@ class ThinkingNarrator:
         blocks.append(
             "You are still on the SAME point. Do not invent a new angle. "
             "Compress the ongoing state into one short present-participle status line."
+        )
+        return "\n\n".join(blocks)
+
+    def _build_checkpoint_user_content(
+        self,
+        chunk: str,
+        accepted_line: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+        prior_checkpoints: list[str],
+    ) -> str:
+        blocks = [f"Current reasoning excerpt:\n\n{chunk}"]
+        blocks.append(f"Latest accepted narrator line:\n- {accepted_line}")
+        if self._current_status:
+            blocks.append(f"Current status lane:\n- {self._current_status}")
+        if prior_thoughts:
+            blocks.append(
+                "Recent accepted first-person thoughts:\n"
+                + "\n".join(
+                    f"- {thought}"
+                    for thought in prior_thoughts[-_CHECKPOINT_CONTEXT_LIMIT:]
+                )
+            )
+        if prior_statuses:
+            blocks.append(
+                "Recent status lines:\n"
+                + "\n".join(
+                    f"- {status}"
+                    for status in prior_statuses[-_CHECKPOINT_CONTEXT_LIMIT:]
+                )
+            )
+        if prior_checkpoints:
+            blocks.append(
+                "Recent checkpoints (do not repeat them):\n"
+                + "\n".join(
+                    f"- {checkpoint}"
+                    for checkpoint in prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:]
+                )
+            )
+        blocks.append(
+            "Write one compact checkpoint line that captures the durable issue, "
+            "evidence, or likely direction of the grading call."
         )
         return "\n\n".join(blocks)
 
@@ -1142,6 +1206,7 @@ class ThinkingNarrator:
             self._play_accepted_line(full, mode=committed_mode)
             self._sink.commit_live(mode=committed_mode)
 
+            checkpoint_context: tuple[str, str, list[str], list[str], list[str]] | None = None
             with self._lock:
                 self._dedupe_backoff_until = 0.0
                 self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
@@ -1151,8 +1216,42 @@ class ThinkingNarrator:
                     self._thoughts_since_status = []
                 else:
                     self._thoughts_since_status.append(full)
+                self._accepted_since_checkpoint += 1
+                if self._accepted_since_checkpoint >= _CHECKPOINT_EVERY_ACCEPTED:
+                    checkpoint_context = (
+                        chunk,
+                        full,
+                        list(self._thoughts_since_status),
+                        list(self._prior_statuses),
+                        list(self._prior_checkpoints),
+                    )
+                    self._accepted_since_checkpoint = 0
             with self._stats_lock:
                 self._stat_summaries_emitted += 1
+            if checkpoint_context is not None:
+                (
+                    checkpoint_chunk,
+                    checkpoint_line,
+                    checkpoint_thoughts,
+                    checkpoint_statuses,
+                    checkpoint_prior,
+                ) = checkpoint_context
+                checkpoint_user_content = self._build_checkpoint_user_content(
+                    checkpoint_chunk,
+                    checkpoint_line,
+                    checkpoint_thoughts,
+                    checkpoint_statuses,
+                    checkpoint_prior,
+                )
+                checkpoint_messages = [
+                    {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
+                    {"role": "user", "content": checkpoint_user_content},
+                ]
+                checkpoint_text = self._chat_completion(checkpoint_messages).strip()
+                if checkpoint_text:
+                    self._sink.write_checkpoint(checkpoint_text)
+                    with self._lock:
+                        self._prior_checkpoints.append(checkpoint_text)
             logger.info("Narrator summary: %s", full)
         except Exception:
             logger.exception("Narrator dispatch failed")

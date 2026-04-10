@@ -209,6 +209,16 @@ class NarratorSink:
                 self._fallback.write(f"  -> {text}\n")
                 self._fallback.flush()
 
+    def write_checkpoint(self, text: str) -> None:
+        """Write a compact history checkpoint without touching the live row."""
+        with self._lock:
+            self._emit({"type": "checkpoint", "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"  ≈ {text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  ≈ {text}\n")
+                self._fallback.flush()
+
     def write_drop(self, reason: str, text: str) -> None:
         """Record a dropped summary (dedup, empty, etc.) for observability.
 

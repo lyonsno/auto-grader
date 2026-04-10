@@ -172,6 +172,9 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
+    "checkpoint": (160, 180, 205),        # fogged steel note — neutral,
+                                          # calmer than the live field and
+                                          # distinct from verdict rows
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -195,6 +198,7 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
+    "checkpoint": 0.95,
     "status": 1.15,
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
@@ -229,6 +233,8 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-fired earth
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
+    "checkpoint": (205, 220, 238),      # pale steel highlight for
+                                        # checkpoint synthesis lines
     "status": (188, 118, 68),           # ember-lit umber crest for the
                                         # sticky status rail — brighter
                                         # orange note without losing the
@@ -252,6 +258,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header_dash",
     "topic",
     "topic_match",
+    "checkpoint",
     "status",
     "topic_overshoot",
     "topic_undershoot",
@@ -372,7 +379,7 @@ _SCOREBUG_BIG_DIGITS = {
     "1": (" ╗ ", " ║ ", " ╩ "),
     "2": ("╔═╗", "╔═╝", "╚═ "),
     "3": ("╔═╗", " ═╣", "╚═╝"),
-    "4": ("║ ║", "╚═╣", "  ╩"),
+    "4": ("║ ║", "╚═╣", "  ║"),
     "5": ("╔═ ", "╚═╗", "╚═╝"),
     "6": ("╔═ ", "╠═╗", "╚═╝"),
     "7": ("╔═╗", "  ║", "  ╵"),
@@ -1393,7 +1400,7 @@ class PaintDryDisplay:
         self._freeze_started_at: float | None = None
 
         # History entries are 3-tuples (kind, text, parity):
-        #   kind in {"line", "header", "topic"}
+        #   kind in {"line", "header", "topic", "checkpoint"}
         #   parity is 0 or 1 for "line" entries (alternation), None for others
         # Drops live in their own deque, rendered in a separate panel
         # below post-game so they don't clutter the narrative thread.
@@ -1611,6 +1618,12 @@ class PaintDryDisplay:
             header = [pair for pair in group if pair[0][0] == "header"]
             lines = [pair for pair in group if pair[0][0] == "line"]
             rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
+            rest.sort(
+                key=lambda pair: {
+                    "topic": 0,
+                    "checkpoint": 1,
+                }.get(pair[0][0], 2)
+            )
             flat.extend(header)
             flat.extend(rest)
             flat.extend(reversed(lines))
@@ -1627,7 +1640,7 @@ class PaintDryDisplay:
         # essentials drop first — but the deque cap should make this
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic"):
+            if entry[0] in ("header", "topic", "checkpoint"):
                 row_cost = self._entry_visual_rows(entry, wrap_width)
                 if used_rows >= budget:
                     break
@@ -1643,7 +1656,7 @@ class PaintDryDisplay:
         optionals = [
             (pos, entry, idx)
             for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic")
+            if entry[0] not in ("header", "topic", "checkpoint")
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
 
@@ -2170,6 +2183,17 @@ class PaintDryDisplay:
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                     )
+            elif kind == "checkpoint":
+                indent = "  ≈ "
+                history_text.append(indent, style="grey50")
+                _apply_shimmer(
+                    history_text, text, "checkpoint",
+                    layer_index=render_layer,
+                    indent_width=len(indent),
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
             else:
                 indent = "    "
                 history_text.append(indent, style="dim")
@@ -2452,6 +2476,9 @@ class PaintDryDisplay:
             self.score_bad_call_points += grader_score - truth_score
             self.score_bad_call_potential += max(0.0, max_points - truth_score)
 
+    def on_checkpoint(self, text: str) -> None:
+        self.history.append(("checkpoint", text, None))
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -2595,6 +2622,8 @@ def main() -> int:
                             truth_score=msg.get("truth_score"),
                             max_points=msg.get("max_points"),
                         )
+                    elif msg_type == "checkpoint":
+                        display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":
                         display.on_drop(
                             msg.get("reason", "unknown"),

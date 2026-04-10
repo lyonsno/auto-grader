@@ -160,6 +160,28 @@ class TestWezTermResolution(unittest.TestCase):
             b"preview-bytes",
         )
 
+    def test_write_checkpoint_emits_checkpoint_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_checkpoint(
+                "Core issue: ozone drawing misses resonance and central octet."
+            )
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        checkpoint = next(event for event in events if event["type"] == "checkpoint")
+        self.assertEqual(
+            checkpoint["text"],
+            "Core issue: ozone drawing misses resonance and central octet.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
