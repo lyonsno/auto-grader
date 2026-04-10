@@ -35,6 +35,7 @@ class RunRecord:
     model_score: float
     critic_score: float | None
     model_confidence: float
+    score_basis: str
     is_obviously_fully_correct: bool | None
     is_obviously_wrong: bool | None
     upstream_dependency: str
@@ -169,6 +170,7 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
                 model_score=float(obj["model_score"]),
                 critic_score=critic_scores.get(key),
                 model_confidence=float(obj.get("model_confidence", 0.0)),
+                score_basis=str(obj.get("score_basis", "")),
                 is_obviously_fully_correct=obj.get(
                     "is_obviously_fully_correct", None
                 ),
@@ -224,6 +226,7 @@ def build_comparison_rows(
                 else record.model_score
             )
             row[prefix + "confidence"] = record.model_confidence
+            row[prefix + "score_basis"] = record.score_basis
             row[prefix + "is_obviously_fully_correct"] = (
                 record.is_obviously_fully_correct
             )

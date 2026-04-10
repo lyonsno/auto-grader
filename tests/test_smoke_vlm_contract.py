@@ -293,6 +293,7 @@ class SmokeVlmContract(unittest.TestCase):
             question_id="fr-5b",
             model_score=0.0,
             model_confidence=0.9,
+            score_basis="Wrong stoichiometric method, so no credit.",
             model_reasoning="caught the methodology error",
             model_read="14.2031 moles",
             raw_assistant='{"model_score": 0}',
@@ -336,6 +337,11 @@ class SmokeVlmContract(unittest.TestCase):
                 "correction_reason",
                 record,
                 "prediction record must carry correction_reason alongside corrected_score",
+            )
+            self.assertEqual(
+                record["score_basis"],
+                "Wrong stoichiometric method, so no credit.",
+                "prediction record must persist score_basis for downstream analysis",
             )
             self.assertIn(
                 "methodology",

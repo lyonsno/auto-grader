@@ -185,6 +185,7 @@ class _PredictionWriter:
                 "is_obviously_fully_correct": pred.is_obviously_fully_correct,
                 "is_obviously_wrong": pred.is_obviously_wrong,
                 "model_read": pred.model_read,
+                "score_basis": pred.score_basis,
                 "model_reasoning": pred.model_reasoning,
                 "upstream_dependency": pred.upstream_dependency,
                 "if_dependent_then_consistent": pred.if_dependent_then_consistent,

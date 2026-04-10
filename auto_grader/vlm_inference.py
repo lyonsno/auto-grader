@@ -121,19 +121,21 @@ Use is_obviously_fully_correct = true only for clearly correct answers needing n
 Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
 Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
 Treat mL and cm³ as equivalent unless the question explicitly tests form.
-If the setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
+If setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
 Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
-On Lewis-structure questions, rescue partial credit for correct connectivity, valence-electron counting, or bond-order pattern even if octets, formal charges, or resonance are incomplete.
+On Lewis-structure questions, rescue partial credit for correct connectivity, valence electrons, or bond order even if octets, formal charges, or resonance are incomplete.
 Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
 Grade what is written, not a more favorable answer you can imagine.
 If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
 After one careful pass, if ambiguity still affects the score, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.
-Consistent carry-forward still earns method credit.
-Answered-form rule: grade form.
+score_basis = short literal basis for the awarded score: credit earned vs lost.
+model_reasoning = broader reasoning only: ambiguity, OCR, rescue logic, or review handoff.
+Do not restate score_basis in model_reasoning.
+Answered-form rule: form matters.
 When the requested form is the thing being graded, do not award rescue credit for nearby ingredients unless the rubric explicitly does so.
 If the requested answer form is plainly missing, stop and score only what is on the page.
 Use upstream_dependency = "none" unless carry-forward is clear.
-JSON only. Include model_read, upstream_dependency, if_dependent_then_consistent, model_score, model_confidence, model_reasoning, plus "is_obviously_fully_correct": <true | false | null> and "is_obviously_wrong": <true | false | null>.
+JSON only. Include model_read, model_score, model_confidence, model_reasoning, upstream_dependency, if_dependent_then_consistent, "score_basis": <string>, "is_obviously_fully_correct": <true | false | null>, and "is_obviously_wrong": <true | false | null>.
 """
 
 
@@ -231,6 +233,7 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
     score_m = re.search(r'"?model_score"?\s*:\s*([\d.]+)', text)
     conf_m = re.search(r'"?model_confidence"?\s*:\s*([\d.]+)', text)
     read_m = re.search(r'"?model_read"?\s*:\s*"([^"]*)"', text)
+    score_basis_m = re.search(r'"?score_basis"?\s*:\s*"([^"]*)"', text)
     reason_m = re.search(r'"?model_reasoning"?\s*:\s*"([^"]*)"', text)
     obvious_full_m = re.search(
         r'"?is_obviously_fully_correct"?\s*:\s*(true|false|null)',
@@ -258,6 +261,7 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
             "model_score": float(score_m.group(1)),
             "model_confidence": float(conf_m.group(1)) if conf_m else 0.5,
             "model_read": read_m.group(1) if read_m else "",
+            "score_basis": score_basis_m.group(1) if score_basis_m else "",
             "model_reasoning": reason_m.group(1) if reason_m else "",
             "is_obviously_fully_correct": _boolish(obvious_full_m),
             "is_obviously_wrong": _boolish(obvious_wrong_m),
@@ -284,6 +288,7 @@ def _failure_prediction(
         question_id=item.question_id,
         model_score=0.0,
         model_confidence=0.0,
+        score_basis="",
         model_reasoning=message,
         model_read="",
         raw_assistant=raw_assistant,
@@ -459,6 +464,7 @@ def grade_single_item(
         question_id=item.question_id,
         model_score=float(parsed.get("model_score", 0)),
         model_confidence=float(parsed.get("model_confidence", 0.5)),
+        score_basis=str(parsed.get("score_basis", "")),
         model_reasoning=str(parsed.get("model_reasoning", "")),
         model_read=str(parsed.get("model_read", "")),
         raw_assistant=content,
