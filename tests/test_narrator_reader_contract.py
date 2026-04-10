@@ -1008,15 +1008,15 @@ class NarratorReaderContract(unittest.TestCase):
             "soft-warm live line should still stay pastel and friendly instead of pure hot red",
         )
 
-    def test_render_places_scorebug_above_header_when_model_known(self):
+    def test_render_places_project_paint_dry_header_above_scorebug_when_model_known(self):
         display = self._make_display()
         display.current_model = "qwen3p5-35B-A3B"
         display.on_header("[item 3/6] 15-blue/fr-5b")
 
         group = display.render()
 
-        scorebug_panel = group.renderables[0]
-        header_panel = group.renderables[1]
+        header_panel = group.renderables[0]
+        scorebug_panel = group.renderables[1]
         live_panel = group.renderables[2]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
@@ -1079,7 +1079,8 @@ class NarratorReaderContract(unittest.TestCase):
 
         group = display.render()
 
-        scorebug_panel = group.renderables[0]
+        header_panel = group.renderables[0]
+        scorebug_panel = group.renderables[1]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
         if isinstance(scorebug_renderable, Align):
@@ -1094,6 +1095,7 @@ class NarratorReaderContract(unittest.TestCase):
         expected_left = _scorebug_big_value_rows("1.0/1.0")
         expected_bad = _scorebug_big_value_rows("1.5/1.5")
 
+        self.assertIn("PROJECT PAINT DRY", _extract_plain(header_panel.renderable))
         self.assertIn("CURRENT MODEL", scorebug_text)
         self.assertIn("SET", scorebug_text)
         self.assertIn("TRICKY", scorebug_text)
@@ -1158,6 +1160,32 @@ class NarratorReaderContract(unittest.TestCase):
             on_target_top_strong,
             on_target_bottom_style,
             "scorebug value rows should now drift tonally across the board instead of sitting on one flat background",
+        )
+        left_top_style = self._style_for_substring(
+            tally_value_top,
+            expected_left[0].strip(),
+        )
+        left_bottom_style = self._style_for_substring(
+            tally_value_bottom,
+            expected_left[2].strip(),
+        )
+        bad_top_style = self._style_for_substring(
+            tally_value_top,
+            expected_bad[0].strip(),
+        )
+        bad_bottom_style = self._style_for_substring(
+            tally_value_bottom,
+            expected_bad[2].strip(),
+        )
+        self.assertNotEqual(
+            left_top_style,
+            left_bottom_style,
+            "left-on-table board should also drift tonally instead of reading as a flat tech slab",
+        )
+        self.assertNotEqual(
+            bad_top_style,
+            bad_bottom_style,
+            "bad-calls board should also drift tonally instead of reading as a flat tech slab",
         )
         self.assertEqual(
             tally_value_top.spans[2].style,
@@ -1262,7 +1290,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         group = display.render()
 
-        scorebug_panel = group.renderables[0]
+        scorebug_panel = group.renderables[1]
         scorebug_text = _extract_plain(scorebug_panel.renderable)
         scorebug_renderable = scorebug_panel.renderable
         if isinstance(scorebug_renderable, Align):
@@ -1388,7 +1416,7 @@ class NarratorReaderContract(unittest.TestCase):
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=100.0):
             display.on_header("[item 1/6] 15-blue/fr-1")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=107.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         self.assertIn("total=7s", header_text)
         self.assertIn("turn=7s", header_text)
 
@@ -1401,27 +1429,27 @@ class NarratorReaderContract(unittest.TestCase):
             display.on_delta("Tracing")
         display.on_commit("status")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=205.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         self.assertIn("turn=5s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=206.0):
             display.on_delta("Rechecking")
         display.on_drop("dedup", "Rechecking the same unit conversion.")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=208.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         self.assertIn("turn=8s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=209.0):
             display.on_delta("Tracing")
         display.on_rollback_live()
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=211.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         self.assertIn("turn=11s", header_text)
 
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=212.0):
             display.on_header("[item 2/6] 15-blue/fr-2")
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=215.0):
-            header_text = _extract_plain(display.render().renderables[1].renderable)
+            header_text = _extract_plain(display.render().renderables[0].renderable)
         self.assertIn("total=15s", header_text)
         self.assertIn("turn=3s", header_text)
 
