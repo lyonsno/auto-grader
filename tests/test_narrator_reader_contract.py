@@ -543,7 +543,17 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("╝", bottom)
         self.assertIn("╔═╝", middle, "the 2 glyph should have a chunky middle shoulder, not a skinny bend")
         self.assertNotIn("╱", top)
-        self.assertIn("╱", middle + bottom)
+
+    def test_scorebug_five_glyph_reads_as_open_then_hooked_five(self):
+        top, middle, bottom = _scorebug_big_value_rows("5.0")
+
+        self.assertIn("╔═╗", top)
+        self.assertIn(
+            "╚═╗",
+            middle,
+            "the 5 glyph should hook rightward in the middle row so it reads less like a closed box",
+        )
+        self.assertIn("╚═╝", bottom)
         self.assertIn("▪", bottom)
 
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
