@@ -129,6 +129,12 @@ def _perspective_distort(image: np.ndarray) -> np.ndarray:
     )
 
 
+def _occlude_top_left_marker(image: np.ndarray) -> np.ndarray:
+    damaged = image.copy()
+    damaged[:240, :260] = 255
+    return damaged
+
+
 class ScanRegistrationContractTests(unittest.TestCase):
     def test_normalize_page_image_restores_canonical_page_space_from_skewed_scan(self) -> None:
         normalize_page_image = _load_registration_module(self)
@@ -185,6 +191,16 @@ class ScanRegistrationContractTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "registration marker"):
             normalize_page_image(np.full((600, 900, 3), 255, dtype=np.uint8), page)
+
+    def test_normalize_page_image_rejects_scan_when_one_corner_marker_is_missing(self) -> None:
+        normalize_page_image = _load_registration_module(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        damaged = _occlude_top_left_marker(_perspective_distort(_render_synthetic_page(page)))
+
+        with self.assertRaisesRegex(ValueError, "registration marker"):
+            normalize_page_image(damaged, page)
 
 
 if __name__ == "__main__":

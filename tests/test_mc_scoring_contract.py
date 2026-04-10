@@ -80,6 +80,15 @@ class McScoringContractTests(unittest.TestCase):
         self.assertFalse(results["mc-1"]["is_correct"])
         self.assertFalse(results["mc-1"]["review_required"])
 
+    def test_scoring_treats_missing_question_entry_as_blank(self) -> None:
+        score_marked_mc_bubbles = _load_scoring_module(self)
+
+        results = score_marked_mc_bubbles({}, _answer_key())
+
+        self.assertEqual(results["mc-1"]["status"], "blank")
+        self.assertEqual(results["mc-1"]["marked_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["marked_choice_keys"], [])
+
     def test_scoring_preserves_multiple_marks_as_review_required(self) -> None:
         score_marked_mc_bubbles = _load_scoring_module(self)
 

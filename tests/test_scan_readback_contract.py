@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 import qrcode
 
 
@@ -37,6 +37,16 @@ def _synthetic_page(*payloads: str) -> np.ndarray:
     return np.array(canvas)
 
 
+def _page_with_one_qr_obscured() -> np.ndarray:
+    canvas = Image.new("RGB", (900, 600), "white")
+    canvas.paste(_qr_image("inst_test-p1"), (40, 40))
+    canvas.paste(_qr_image("inst_test-p1"), (620, 40))
+
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle([40, 40, 280, 280], fill="white")
+    return np.array(canvas)
+
+
 class ScanReadbackContractTests(unittest.TestCase):
     def test_readback_rejects_page_with_no_detectable_qr(self) -> None:
         read_page_identity_qr_payload = _load_readback_module(self)
@@ -53,6 +63,18 @@ class ScanReadbackContractTests(unittest.TestCase):
             payload,
             "inst_test-p1",
             "OpenCV readback should resolve a duplicated page-identity QR payload when both symbols agree.",
+        )
+
+    def test_readback_survives_one_obscured_duplicate_qr(self) -> None:
+        read_page_identity_qr_payload = _load_readback_module(self)
+
+        payload = read_page_identity_qr_payload(_page_with_one_qr_obscured())
+
+        self.assertEqual(
+            payload,
+            "inst_test-p1",
+            "Duplicated QR placement is meant to survive one damaged symbol; the "
+            "readback contract should prove that one intact duplicate is enough.",
         )
 
     def test_readback_rejects_mismatched_qr_payloads_as_ambiguous(self) -> None:

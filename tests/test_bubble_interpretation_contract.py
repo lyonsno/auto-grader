@@ -99,6 +99,65 @@ def _render_marked_page(
     return np.array(canvas)
 
 
+def _render_pencil_like_mark(
+    page: dict,
+    *,
+    question_id: str,
+    bubble_label: str,
+    scale: int = 4,
+    gray: int = 150,
+) -> np.ndarray:
+    canvas = Image.fromarray(_render_marked_page(page, marked_labels={}, scale=scale))
+    draw = ImageDraw.Draw(canvas)
+
+    for bubble in page["bubble_regions"]:
+        if bubble["question_id"] != question_id or bubble["bubble_label"] != bubble_label:
+            continue
+        left = bubble["x"] * scale
+        top = bubble["y"] * scale
+        right = (bubble["x"] + bubble["width"]) * scale
+        bottom = (bubble["y"] + bubble["height"]) * scale
+        inset = 0.28 * bubble["width"] * scale
+        draw.ellipse(
+            [left + inset, top + inset, right - inset, bottom - inset],
+            fill=(gray, gray, gray),
+        )
+        break
+
+    return np.array(canvas)
+
+
+def _render_edge_smudge(
+    page: dict,
+    *,
+    question_id: str,
+    bubble_label: str,
+    scale: int = 4,
+) -> np.ndarray:
+    canvas = Image.fromarray(_render_marked_page(page, marked_labels={}, scale=scale))
+    draw = ImageDraw.Draw(canvas)
+
+    for bubble in page["bubble_regions"]:
+        if bubble["question_id"] != question_id or bubble["bubble_label"] != bubble_label:
+            continue
+        left = bubble["x"] * scale
+        top = bubble["y"] * scale
+        width = bubble["width"] * scale
+        height = bubble["height"] * scale
+        draw.ellipse(
+            [
+                left + 1,
+                top + (0.35 * height),
+                left + (0.28 * width),
+                top + (0.7 * height),
+            ],
+            fill="black",
+        )
+        break
+
+    return np.array(canvas)
+
+
 def _perspective_distort(image: np.ndarray) -> np.ndarray:
     height, width = image.shape[:2]
     source = np.float32(
@@ -163,6 +222,44 @@ class BubbleInterpretationContractTests(unittest.TestCase):
             {"mc-1": ["B"]},
             "Bubble readback should recover the filled bubble label after registration "
             "returns the scan to canonical page space.",
+        )
+
+    def test_read_marked_bubble_labels_accepts_pencil_like_center_fill(self) -> None:
+        read_marked_bubble_labels, normalize_page_image = _load_modules(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        distorted = _perspective_distort(
+            _render_pencil_like_mark(page, question_id="mc-1", bubble_label="B")
+        )
+        normalized = normalize_page_image(distorted, page)
+
+        marked = read_marked_bubble_labels(normalized, page)
+
+        self.assertEqual(
+            marked,
+            {"mc-1": ["B"]},
+            "A reasonably dark pencil-like center fill should still count as a mark, "
+            "not require an unrealistically solid black bubble.",
+        )
+
+    def test_read_marked_bubble_labels_ignores_edge_smudge_without_center_fill(self) -> None:
+        read_marked_bubble_labels, normalize_page_image = _load_modules(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        distorted = _perspective_distort(
+            _render_edge_smudge(page, question_id="mc-1", bubble_label="B")
+        )
+        normalized = normalize_page_image(distorted, page)
+
+        marked = read_marked_bubble_labels(normalized, page)
+
+        self.assertEqual(
+            marked,
+            {"mc-1": []},
+            "A dark edge smudge without center fill should stay blank so the readback "
+            "surface does not overreact to incidental scanner noise.",
         )
 
     def test_read_marked_bubble_labels_preserves_multiple_marks_as_ambiguous_surface(self) -> None:

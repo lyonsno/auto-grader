@@ -22,9 +22,15 @@ def normalize_page_image(image: np.ndarray, page: Mapping[str, Any]) -> np.ndarr
     if not isinstance(registration_markers, list) or len(registration_markers) != 4:
         raise ValueError("page.registration_markers must contain exactly four markers")
 
-    detected_markers = _detect_registration_marker_boxes(image)
     image_height, image_width = image.shape[:2]
     pixels_per_point = min(image_width / page_width, image_height / page_height)
+    expected_marker_size = float(
+        _require_number(registration_markers[0].get("width"), "registration_marker.width")
+    ) * pixels_per_point
+    detected_markers = _detect_registration_marker_boxes(
+        image,
+        expected_marker_size=expected_marker_size,
+    )
     output_width = max(int(round(page_width * pixels_per_point)), int(page_width))
     output_height = max(int(round(page_height * pixels_per_point)), int(page_height))
     source_points = np.float32(
@@ -58,7 +64,11 @@ def normalize_page_image(image: np.ndarray, page: Mapping[str, Any]) -> np.ndarr
     )
 
 
-def _detect_registration_marker_boxes(image: np.ndarray) -> dict[str, list[tuple[float, float]]]:
+def _detect_registration_marker_boxes(
+    image: np.ndarray,
+    *,
+    expected_marker_size: float,
+) -> dict[str, list[tuple[float, float]]]:
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _, thresholded = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY_INV)
     contours, _ = cv2.findContours(thresholded, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
@@ -79,6 +89,7 @@ def _detect_registration_marker_boxes(image: np.ndarray) -> dict[str, list[tuple
         candidates.append(
             {
                 "center": (float(center_x), float(center_y)),
+                "size": float((width + height) / 2.0),
                 "box_points": _order_points(cv2.boxPoints(cv2.minAreaRect(contour))),
             }
         )
@@ -110,9 +121,23 @@ def _detect_registration_marker_boxes(image: np.ndarray) -> dict[str, list[tuple
             raise ValueError("Could not assign all registration markers uniquely")
         _, index, candidate = min(distances, key=lambda item: item[0])
         used_indices.add(index)
+        if not _candidate_matches_expected_marker_size(
+            candidate["size"],
+            expected_marker_size,
+        ):
+            raise ValueError(
+                "Could not assign all registration markers uniquely with the expected marker scale"
+            )
         assignments[marker_id] = candidate["box_points"]
 
     return assignments
+
+
+def _candidate_matches_expected_marker_size(
+    candidate_size: float,
+    expected_marker_size: float,
+) -> bool:
+    return 0.55 * expected_marker_size <= candidate_size <= 1.8 * expected_marker_size
 
 
 def _require_marker(
