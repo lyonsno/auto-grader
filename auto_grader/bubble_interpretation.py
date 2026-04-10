@@ -12,6 +12,9 @@ import numpy as np
 
 _CENTER_DARKNESS_THRESHOLD = 180.0
 _CENTER_RADIUS_SCALE = 0.22
+_SURROUNDING_RING_RADIUS_SCALE = 0.42
+_CENTER_TO_RING_CONTRAST_THRESHOLD = 24.0
+_CENTER_MAX_INTENSITY_FOR_CONTRAST = 235.0
 
 
 def read_marked_bubble_labels(
@@ -45,7 +48,7 @@ def read_marked_bubble_labels(
         marked_labels: list[str] = []
         for region in sorted(regions, key=lambda item: (_require_number(item.get("x"), "bubble_region.x"), _require_string(item.get("bubble_label"), "bubble_region.bubble_label"))):
             crop = _crop_region(grayscale, region, pixels_per_point)
-            if _bubble_center_mean_intensity(crop) <= _CENTER_DARKNESS_THRESHOLD:
+            if _bubble_center_looks_marked(crop):
                 marked_labels.append(
                     _require_string(region.get("bubble_label"), "bubble_region.bubble_label")
                 )
@@ -75,14 +78,36 @@ def _crop_region(
 
 
 def _bubble_center_mean_intensity(crop: np.ndarray) -> float:
+    center_mean, _ = _bubble_center_and_ring_mean_intensities(crop)
+    return center_mean
+
+
+def _bubble_center_looks_marked(crop: np.ndarray) -> bool:
+    center_mean, ring_mean = _bubble_center_and_ring_mean_intensities(crop)
+    if center_mean <= _CENTER_DARKNESS_THRESHOLD:
+        return True
+    return (
+        center_mean <= _CENTER_MAX_INTENSITY_FOR_CONTRAST
+        and (ring_mean - center_mean) >= _CENTER_TO_RING_CONTRAST_THRESHOLD
+    )
+
+
+def _bubble_center_and_ring_mean_intensities(crop: np.ndarray) -> tuple[float, float]:
     height, width = crop.shape[:2]
     center_x = (width - 1) / 2.0
     center_y = (height - 1) / 2.0
-    radius = min(width, height) * _CENTER_RADIUS_SCALE
+    min_dimension = min(width, height)
+    center_radius = min_dimension * _CENTER_RADIUS_SCALE
+    ring_radius = min_dimension * _SURROUNDING_RING_RADIUS_SCALE
 
     y_indices, x_indices = np.ogrid[:height, :width]
-    mask = (x_indices - center_x) ** 2 + (y_indices - center_y) ** 2 <= radius**2
-    return float(crop[mask].mean())
+    center_mask = (x_indices - center_x) ** 2 + (y_indices - center_y) ** 2 <= center_radius**2
+    ring_mask = (
+        (x_indices - center_x) ** 2 + (y_indices - center_y) ** 2 <= ring_radius**2
+    ) & ~center_mask
+    if not ring_mask.any():
+        return float(crop[center_mask].mean()), 255.0
+    return float(crop[center_mask].mean()), float(crop[ring_mask].mean())
 
 
 def _require_number(value: Any, label: str) -> int | float:

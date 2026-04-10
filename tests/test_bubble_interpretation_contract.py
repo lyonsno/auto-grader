@@ -127,6 +127,34 @@ def _render_pencil_like_mark(
     return np.array(canvas)
 
 
+def _render_light_pencil_like_mark(
+    page: dict,
+    *,
+    question_id: str,
+    bubble_label: str,
+    scale: int = 4,
+    gray: int = 188,
+) -> np.ndarray:
+    canvas = Image.fromarray(_render_marked_page(page, marked_labels={}, scale=scale))
+    draw = ImageDraw.Draw(canvas)
+
+    for bubble in page["bubble_regions"]:
+        if bubble["question_id"] != question_id or bubble["bubble_label"] != bubble_label:
+            continue
+        left = bubble["x"] * scale
+        top = bubble["y"] * scale
+        right = (bubble["x"] + bubble["width"]) * scale
+        bottom = (bubble["y"] + bubble["height"]) * scale
+        inset = 0.33 * bubble["width"] * scale
+        draw.ellipse(
+            [left + inset, top + inset, right - inset, bottom - inset],
+            fill=(gray, gray, gray),
+        )
+        break
+
+    return np.array(canvas)
+
+
 def _render_edge_smudge(
     page: dict,
     *,
@@ -243,6 +271,26 @@ class BubbleInterpretationContractTests(unittest.TestCase):
             "not require an unrealistically solid black bubble.",
         )
 
+    def test_read_marked_bubble_labels_accepts_light_center_fill_after_blur(self) -> None:
+        read_marked_bubble_labels, normalize_page_image = _load_modules(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        distorted = _perspective_distort(
+            _render_light_pencil_like_mark(page, question_id="mc-1", bubble_label="B")
+        )
+        blurred = cv2.GaussianBlur(distorted, (7, 7), 0)
+        normalized = normalize_page_image(blurred, page)
+
+        marked = read_marked_bubble_labels(normalized, page)
+
+        self.assertEqual(
+            marked,
+            {"mc-1": ["B"]},
+            "A centered but lighter pencil fill should still count after mild scan blur "
+            "instead of disappearing just because the graphite is not very dark.",
+        )
+
     def test_read_marked_bubble_labels_ignores_edge_smudge_without_center_fill(self) -> None:
         read_marked_bubble_labels, normalize_page_image = _load_modules(self)
         artifact = _build_artifact()
@@ -260,6 +308,27 @@ class BubbleInterpretationContractTests(unittest.TestCase):
             {"mc-1": []},
             "A dark edge smudge without center fill should stay blank so the readback "
             "surface does not overreact to incidental scanner noise.",
+        )
+
+    def test_read_marked_bubble_labels_keeps_blank_page_blank_after_blur_and_noise(self) -> None:
+        read_marked_bubble_labels, normalize_page_image = _load_modules(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        distorted = _perspective_distort(_render_marked_page(page, marked_labels={}))
+        blurred = cv2.GaussianBlur(distorted, (11, 11), 0)
+        noisy = blurred.copy().astype(np.int16)
+        noisy += np.random.default_rng(1).normal(0, 22, size=noisy.shape).astype(np.int16)
+        noisy = np.clip(noisy, 0, 255).astype(np.uint8)
+        normalized = normalize_page_image(noisy, page)
+
+        marked = read_marked_bubble_labels(normalized, page)
+
+        self.assertEqual(
+            marked,
+            {"mc-1": []},
+            "A blank page should remain blank under moderate blur and scanner-like noise "
+            "so hardening for lighter marks does not turn into false positives.",
         )
 
     def test_read_marked_bubble_labels_preserves_multiple_marks_as_ambiguous_surface(self) -> None:
