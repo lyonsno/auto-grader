@@ -5,6 +5,7 @@ import time
 import unittest
 from unittest import mock
 
+import fitz
 from rich.align import Align
 from rich.console import Console, Group
 from rich.text import Text
@@ -32,6 +33,7 @@ from scripts.narrator_reader import (
     _scorebug_big_value_rows,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
+    _otsu_threshold,
     _undulation_hue_deg,
     _render_layer_index,
 )
@@ -65,6 +67,22 @@ class NarratorReaderContract(unittest.TestCase):
                 force_terminal=True,
             )
         )
+
+    @staticmethod
+    def _make_png(
+        *,
+        width: int = 16,
+        height: int = 10,
+        rgb: tuple[int, int, int] = (180, 150, 120),
+    ) -> bytes:
+        pix = fitz.Pixmap(
+            fitz.csRGB,
+            width,
+            height,
+            bytes(rgb * (width * height)),
+            False,
+        )
+        return pix.tobytes("png")
 
     @staticmethod
     def _rgb_from_hex(style: str) -> tuple[int, int, int]:

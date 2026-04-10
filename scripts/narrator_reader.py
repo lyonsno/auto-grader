@@ -25,6 +25,7 @@ below live), pushing older lines down.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -37,6 +38,7 @@ from collections import deque
 from pathlib import Path
 from typing import Deque
 
+import fitz
 from rich.align import Align
 from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
@@ -74,6 +76,28 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
+_FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
+_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 116
+_FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
+_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
+_FOCUS_PREVIEW_COMPANION_SCALE = 0.69
+_FOCUS_PREVIEW_PENDING_FPS = 8.0
+_FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
+_FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)  # used only by the transition
+                                             # (pending) glyph overlay; the
+                                             # steady-state renderer uses
+                                             # the harder colors below
+# Legibility-first steady-state palette. High luminance delta against the
+# panel background so binary-thresholded cells read as page, not as mush.
+# Aesthetics are explicitly deferred — pick whatever reads cleanest first.
+_FOCUS_PREVIEW_HARD_INK_RGB = (50, 54, 62)
+_FOCUS_PREVIEW_HARD_PAPER_RGB = (238, 232, 220)
+_FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
+_FOCUS_PREVIEW_OVERLAY_RGBS = (
+    (108, 122, 154),
+    (132, 115, 86),
+    (94, 116, 106),
+)
 _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
                                    # descending deeper into the stack before
                                    # it settles at the floor.
@@ -2684,7 +2708,10 @@ class PaintDryDisplay:
         panels.append(header)
         if scorebug_panel is not None:
             panels.append(scorebug_panel)
-        panels.extend([live_panel, history_panel])
+        panels.append(live_panel)
+        if focus_preview_panel is not None:
+            panels.append(focus_preview_panel)
+        panels.append(history_panel)
         if wrap_panel is not None:
             panels.append(wrap_panel)
         if drops_panel is not None:
