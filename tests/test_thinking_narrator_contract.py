@@ -17,6 +17,8 @@ class _DummySink:
         self.drops: list[tuple[str, str]] = []
         self.topics: list[tuple[str, str | None]] = []
         self.checkpoints: list[str] = []
+        self.basis_rows: list[str] = []
+        self.review_markers: list[str] = []
 
     def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
@@ -36,6 +38,12 @@ class _DummySink:
 
     def write_checkpoint(self, text: str) -> None:
         self.checkpoints.append(text)
+
+    def write_basis(self, text: str) -> None:
+        self.basis_rows.append(text)
+
+    def write_review_marker(self, text: str) -> None:
+        self.review_markers.append(text)
 
 
 class _RetryNarrator(ThinkingNarrator):
@@ -612,6 +620,71 @@ class ThinkingNarratorContract(unittest.TestCase):
                 )
             ],
         )
+
+    def test_after_action_emits_basis_row_from_score_basis(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(
+            sink,
+            "Grader: 1/2 (partial credit). Prof: 1/2 (same).",
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-12a",
+            answer_type="lewis_structure",
+            page=1,
+            professor_score=1.0,
+            max_points=2.0,
+            professor_mark="partial",
+            student_answer="O3",
+            notes="partial",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-12a",
+            model_score=1.0,
+            model_confidence=0.8,
+            score_basis="Correct connectivity; lost credit for missing lone pairs and octet completion.",
+            model_reasoning="Student has the right skeleton but the structure is incomplete.",
+            model_read="O-O-O with single bonds",
+        )
+
+        narrator._produce_after_action(88.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.basis_rows,
+            ["Correct connectivity; lost credit for missing lone pairs and octet completion."],
+        )
+
+    def test_after_action_emits_review_marker_when_reasoning_calls_for_human_review(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(
+            sink,
+            "Grader: 1/2 (partial credit). Prof: 1/2 (same).",
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-12a",
+            answer_type="lewis_structure",
+            page=1,
+            professor_score=1.0,
+            max_points=2.0,
+            professor_mark="partial",
+            student_answer="O3",
+            notes="partial",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-12a",
+            model_score=1.0,
+            model_confidence=0.3,
+            score_basis="Correct connectivity; lost credit for missing lone pairs and octet completion.",
+            model_reasoning="Ambiguity remains in the scan; human review is warranted before trusting the exact partial split.",
+            model_read="O-O-O with single bonds",
+        )
+
+        narrator._produce_after_action(88.0, prediction, item, template_question=None)
+
+        self.assertEqual(sink.review_markers, ["Human review warranted."])
 
     def test_after_action_prompt_mentions_corrected_truth_when_present(self):
         sink = _DummySink()

@@ -16,6 +16,8 @@ just routes events to its outputs. JSON line protocol over the fifo:
     ...
     {"type": "commit", "mode": "thought"}
     {"type": "topic",  "text": "Thought for 47s · density calc"}
+    {"type": "basis", "text": "Correct setup, lost credit for units."}
+    {"type": "review_marker", "text": "Human review warranted."}
     {"type": "end"}
 """
 
@@ -54,6 +56,7 @@ class NarratorSink:
             sink.write_delta(" the")
             sink.commit_live()
             sink.write_topic("Thought for 47s · density calc")
+            sink.write_basis("Correct setup, lost credit for units.")
     """
 
     def __init__(self, config: SinkConfig | None = None):
@@ -216,6 +219,26 @@ class NarratorSink:
                 self._txt_file.write(f"  ≈ {text}\n")
             if not self.config.spawn_terminal:
                 self._fallback.write(f"  ≈ {text}\n")
+                self._fallback.flush()
+
+    def write_basis(self, text: str) -> None:
+        """Write a compact post-game basis row into durable history."""
+        with self._lock:
+            self._emit({"type": "basis", "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"  ≡ Basis: {text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  ≡ Basis: {text}\n")
+                self._fallback.flush()
+
+    def write_review_marker(self, text: str) -> None:
+        """Write a post-game review-needed marker into durable history."""
+        with self._lock:
+            self._emit({"type": "review_marker", "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"  ! Review needed: {text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  ! Review needed: {text}\n")
                 self._fallback.flush()
 
     def write_drop(self, reason: str, text: str) -> None:

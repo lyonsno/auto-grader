@@ -579,7 +579,7 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     idle and active motion feel consistent. Only boundary moments that would
     feel laggy at 12 FPS get an immediate forced refresh.
     """
-    return msg_type in {"session_meta", "wrap_up", "end"}
+    return msg_type in {"session_meta", "wrap_up", "basis", "review_marker", "end"}
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -1080,7 +1080,7 @@ class PaintDryDisplay:
         self._freeze_started_at: float | None = None
 
         # History entries are 3-tuples (kind, text, parity):
-        #   kind in {"line", "header", "topic", "checkpoint"}
+        #   kind in {"line", "header", "topic", "basis", "review_marker", "checkpoint"}
         #   parity is 0 or 1 for "line" entries (alternation), None for others
         # Drops live in their own deque, rendered in a separate panel
         # below post-game so they don't clutter the narrative thread.
@@ -1225,6 +1225,10 @@ class PaintDryDisplay:
             prefix_width = len("─ ")
         elif kind == "topic":
             prefix_width = len("  · ")
+        elif kind == "basis":
+            prefix_width = len("  ≡ Basis: ")
+        elif kind == "review_marker":
+            prefix_width = len("  ! Review needed: ")
         else:
             prefix_width = len("    ")
 
@@ -1292,7 +1296,9 @@ class PaintDryDisplay:
             rest.sort(
                 key=lambda pair: {
                     "topic": 0,
-                    "checkpoint": 1,
+                    "basis": 1,
+                    "review_marker": 2,
+                    "checkpoint": 3,
                 }.get(pair[0][0], 2)
             )
             flat.extend(header)
@@ -1311,7 +1317,7 @@ class PaintDryDisplay:
         # essentials drop first — but the deque cap should make this
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic", "checkpoint"):
+            if entry[0] in ("header", "topic", "basis", "review_marker", "checkpoint"):
                 row_cost = self._entry_visual_rows(entry, wrap_width)
                 if used_rows >= budget:
                     break
@@ -1327,7 +1333,7 @@ class PaintDryDisplay:
         optionals = [
             (pos, entry, idx)
             for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic", "checkpoint")
+            if entry[0] not in ("header", "topic", "basis", "review_marker", "checkpoint")
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
 
@@ -1823,6 +1829,36 @@ class PaintDryDisplay:
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                     )
+            elif kind == "basis":
+                indent = "  ≡ "
+                history_text.append(indent, style="grey50")
+                history_text.append(
+                    "Basis: ",
+                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
+                _apply_shimmer(
+                    history_text, text, "checkpoint_alt",
+                    layer_index=render_layer,
+                    indent_width=len(indent) + len("Basis: "),
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
+            elif kind == "review_marker":
+                indent = "  ! "
+                history_text.append(indent, style="grey50")
+                history_text.append(
+                    "Review needed: ",
+                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
+                _apply_shimmer(
+                    history_text, text, "topic_undershoot",
+                    layer_index=render_layer,
+                    indent_width=len(indent) + len("Review needed: "),
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
             elif kind == "checkpoint":
                 indent = "  ≈ "
                 _apply_shimmer(
@@ -2085,6 +2121,12 @@ class PaintDryDisplay:
         )
         self.history.append(("checkpoint", text, checkpoint_parity))
 
+    def on_basis(self, text: str) -> None:
+        self.history.append(("basis", text, None))
+
+    def on_review_marker(self, text: str) -> None:
+        self.history.append(("review_marker", text, None))
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -2215,6 +2257,10 @@ def main() -> int:
                             truth_score=msg.get("truth_score"),
                             max_points=msg.get("max_points"),
                         )
+                    elif msg_type == "basis":
+                        display.on_basis(msg.get("text", ""))
+                    elif msg_type == "review_marker":
+                        display.on_review_marker(msg.get("text", ""))
                     elif msg_type == "checkpoint":
                         display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":

@@ -155,6 +155,43 @@ class TestWezTermResolution(unittest.TestCase):
             "Core issue: ozone drawing misses resonance and central octet.",
         )
 
+    def test_write_basis_emits_basis_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_basis("Correct setup, lost credit for octet violation.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        basis = next(event for event in events if event["type"] == "basis")
+        self.assertEqual(
+            basis["text"],
+            "Correct setup, lost credit for octet violation.",
+        )
+
+    def test_write_review_marker_emits_review_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_review_marker("Human review warranted.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        review = next(event for event in events if event["type"] == "review_marker")
+        self.assertEqual(review["text"], "Human review warranted.")
+
 
 if __name__ == "__main__":
     unittest.main()

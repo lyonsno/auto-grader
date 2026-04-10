@@ -329,6 +329,15 @@ def _status_line_breaks_contract(text: str) -> bool:
     return bool(_STATUS_FIRST_PERSON_RE.search(text))
 
 
+def _reasoning_warrants_human_review(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "human review" in lowered
+        or "review warranted" in lowered
+        or "needs review" in lowered
+    )
+
+
 def _checkpoint_line_breaks_contract(text: str) -> bool:
     stripped = text.strip()
     label, body = ThinkingNarrator._split_checkpoint_label(stripped)
@@ -1086,6 +1095,13 @@ class ThinkingNarrator:
                     truth_score=truth_score,
                     max_points=item.max_points,
                 )
+            score_basis = str(getattr(prediction, "score_basis", "") or "")
+            if score_basis:
+                self._sink.write_basis(score_basis)
+            if _reasoning_warrants_human_review(
+                str(getattr(prediction, "model_reasoning", "") or "")
+            ):
+                self._sink.write_review_marker("Human review warranted.")
         except Exception:
             logger.exception("Failed to produce after-action summary")
 
