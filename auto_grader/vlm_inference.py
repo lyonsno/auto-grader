@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -645,6 +646,23 @@ _EXAM_PDF_MAP = {
 }
 
 
+def _report_focus_preview_failure(sink: Any, item: EvalItem, exc: Exception) -> None:
+    """Surface preview-pipeline failures without killing the grading run.
+
+    The focus preview is an operator affordance, not a reason to abort scoring.
+    But failures in that pipeline must not vanish silently, because the human
+    is actively evaluating the surface live in Paint Dry.
+    """
+    msg = (
+        f"{item.exam_id}/{item.question_id} · "
+        f"focus preview unavailable ({type(exc).__name__})"
+    )
+    try:
+        sink.write_drop("focus-preview-error", msg)
+    except Exception:
+        print(f"[focus-preview-error] {msg}", file=sys.stderr)
+
+
 def grade_all_items(
     ground_truth: list[EvalItem],
     scans_dir: Path,
@@ -727,8 +745,8 @@ def grade_all_items(
                         page_image=page_cache[cache_key],
                         template_question=tq,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _report_focus_preview_failure(sink, item, exc)
             narrator.start(item_header=narrator_context)
             on_delta = narrator.feed
         else:

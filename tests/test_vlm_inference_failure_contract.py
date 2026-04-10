@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import tempfile
 from unittest import mock
 import unittest
 
-from auto_grader.eval_harness import EvalItem
+from pathlib import Path
+
+from auto_grader.eval_harness import EvalItem, Prediction
 from auto_grader.vlm_inference import (
     ServerConfig,
     _consume_streaming_response,
+    grade_all_items,
     grade_single_item,
 )
 
@@ -141,6 +145,50 @@ class VlmInferenceFailureContract(unittest.TestCase):
             "The student set up the ratio correctly. Then they slipped on the arithmetic.",
         )
         self.assertEqual("".join(seen), reasoning)
+
+    def test_focus_preview_callback_failure_surfaces_drop_and_grading_continues(self):
+        item = self._item()
+        pred = Prediction(
+            exam_id=item.exam_id,
+            question_id=item.question_id,
+            model_score=2.0,
+            model_confidence=0.8,
+            model_reasoning="setup right, arithmetic wrong",
+            model_read=item.student_answer,
+        )
+        sink = mock.Mock()
+        narrator = mock.Mock()
+        focus_preview_callback = mock.Mock(
+            side_effect=RuntimeError("preview blew up")
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
+            "auto_grader.vlm_inference.extract_page_image",
+            return_value=b"png",
+        ), mock.patch(
+            "auto_grader.vlm_inference.grade_single_item",
+            return_value=pred,
+        ):
+            scans_dir = Path(tmpdir)
+            (scans_dir / "15 blue.pdf").write_bytes(b"%PDF-1.4")
+
+            predictions = grade_all_items(
+                [item],
+                scans_dir=scans_dir,
+                config=self._config(),
+                narrator=narrator,
+                sink=sink,
+                focus_preview_callback=focus_preview_callback,
+            )
+
+        self.assertEqual(predictions, [pred])
+        sink.write_header.assert_called_once()
+        sink.write_drop.assert_called_once_with(
+            "focus-preview-error",
+            "15-blue/fr-11a · focus preview unavailable (RuntimeError)",
+        )
+        narrator.start.assert_called_once()
+        narrator.stop_and_summarize.assert_called_once()
 
 
 if __name__ == "__main__":
