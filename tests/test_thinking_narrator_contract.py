@@ -490,6 +490,16 @@ class ThinkingNarratorContract(unittest.TestCase):
             prompt,
         )
 
+    def test_status_system_prompt_uses_examples_and_bad_good_rewrite_pair(self):
+        prompt = ThinkingNarrator(_DummySink())._compose_system_prompt(status_mode=True)
+
+        self.assertIn("Good examples:", prompt)
+        self.assertIn("- Rechecking photon-energy formula.", prompt)
+        self.assertIn("- Tracing valence-electron count.", prompt)
+        self.assertIn("- Comparing net ionic form.", prompt)
+        self.assertIn('Bad: "I\'m rechecking the units."', prompt)
+        self.assertIn('Good: "Rechecking units."', prompt)
+
     def test_every_fourth_accepted_line_emits_history_checkpoint(self):
         sink = _DummySink()
         narrator = _CheckpointNarrator(sink)

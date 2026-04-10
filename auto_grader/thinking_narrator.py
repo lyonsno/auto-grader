@@ -149,14 +149,21 @@ Rules:
 - ONE fragment or short sentence. 3-8 words.
 - Start with a present participle: Rechecking, Tracing, Revisiting, \
 Weighing, Comparing, Checking, Squinting at, Staying on, etc.
-- Do NOT use "I".
-- If the source line starts with "I'm" or "I am", strip that wrapper \
-and keep the participle instead of copying the first-person form.
+- Never write I / I'm / I am.
 - Do NOT give a final verdict or score.
 - Be concrete: mention the actual issue, quantity, unit, species, or \
 rubric criterion when possible.
 - This is an IN-PROGRESS state line, not a new thought and not a conclusion.
 - No preamble, no quotes. Output ONLY the status line.
+
+Good examples:
+- Rechecking photon-energy formula.
+- Tracing valence-electron count.
+- Comparing net ionic form.
+
+Bad -> good rewrite:
+- Bad: "I'm rechecking the units."
+- Good: "Rechecking units."
 """
 
 _CHECKPOINT_SYSTEM_PROMPT = """\
