@@ -79,6 +79,8 @@ _FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
 _FOCUS_PREVIEW_MAX_WIDTH_CHARS = 116
 _FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
 _FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
+_FOCUS_PREVIEW_COMPANION_SCALE = 0.69
+_FOCUS_PREVIEW_PENDING_FPS = 8.0
 _FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
 _FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)
 _FOCUS_PREVIEW_INK_RGB = (36, 40, 48)
@@ -561,7 +563,10 @@ def _focus_preview_budget(
     """
     if term_width is None or term_width <= 0:
         return _FOCUS_PREVIEW_MIN_WIDTH_CHARS, _FOCUS_PREVIEW_MIN_HEIGHT_ROWS
-    available_width = min(_FOCUS_PREVIEW_MAX_WIDTH_CHARS, term_width - 8)
+    available_width = min(
+        _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
+        int(round((term_width - 8) * _FOCUS_PREVIEW_COMPANION_SCALE)),
+    )
     detail_factor = 1.0
     if (
         source_width_px is not None
@@ -591,9 +596,9 @@ def _focus_preview_budget(
         and source_height_px > 0
     ):
         source_aspect = source_height_px / source_width_px
-        height_target = int(round(width_chars * source_aspect * 0.62))
+        height_target = int(round(width_chars * source_aspect * 0.46))
     else:
-        height_target = int(round(width_chars * 0.30))
+        height_target = int(round(width_chars * 0.24))
     height_rows = max(
         _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
         min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, height_target),
@@ -1340,6 +1345,8 @@ class PaintDryDisplay:
         self.focus_preview_source: str = ""
         self.focus_preview_pending: bool = False
         self.focus_preview_pending_started: float | None = None
+        self._focus_preview_pending_bucket: int | None = None
+        self._focus_preview_pending_renderable: Group | None = None
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
@@ -1885,11 +1892,18 @@ class PaintDryDisplay:
                 preview_title += f" · {self.focus_preview_label}"
             preview_title += "[/grey50]"
             if self.focus_preview_pending and self.focus_preview_pixels is not None:
-                preview_renderable = _render_focus_preview_pixels(
-                    self.focus_preview_pixels,
-                    now=now,
-                    pending=True,
-                )
+                pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                if (
+                    self._focus_preview_pending_renderable is None
+                    or self._focus_preview_pending_bucket != pending_bucket
+                ):
+                    self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                        self.focus_preview_pixels,
+                        now=now,
+                        pending=True,
+                    )
+                    self._focus_preview_pending_bucket = pending_bucket
+                preview_renderable = self._focus_preview_pending_renderable
             else:
                 preview_renderable = self.focus_preview_renderable
             focus_preview_panel = Panel(
@@ -2176,6 +2190,8 @@ class PaintDryDisplay:
         if self.focus_preview_renderable is not None:
             self.focus_preview_pending = True
             self.focus_preview_pending_started = header_now
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
         else:
             self.focus_preview_png = None
             self.focus_preview_pixels = None
@@ -2184,6 +2200,8 @@ class PaintDryDisplay:
             self.focus_preview_source = ""
             self.focus_preview_pending = False
             self.focus_preview_pending_started = None
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
         m = _HEADER_INDEX_RE.match(text)
         if m:
             self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
@@ -2288,6 +2306,8 @@ class PaintDryDisplay:
         self.focus_preview_source = source
         self.focus_preview_pending = False
         self.focus_preview_pending_started = None
+        self._focus_preview_pending_bucket = None
+        self._focus_preview_pending_renderable = None
 
     def on_topic(
         self,

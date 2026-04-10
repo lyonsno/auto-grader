@@ -401,8 +401,13 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertGreaterEqual(
             width_chars,
-            72,
-            "preview should use most of the terminal width instead of a tiny fixed stamp",
+            60,
+            "the companion preview should still be comfortably readable on a 100-column terminal",
+        )
+        self.assertLessEqual(
+            width_chars,
+            70,
+            "the preview should no longer sprawl across most of the terminal width now that it is a calmer companion surface",
         )
         self.assertGreaterEqual(
             height_rows,
@@ -410,18 +415,32 @@ class NarratorReaderContract(unittest.TestCase):
             "preview should get enough rows that the vignette and handwriting survive downsampling",
         )
 
-    def test_focus_preview_budget_breaks_past_the_old_postage_stamp_cap_on_wide_terminals(self):
-        width_chars, height_rows = _focus_preview_budget(140)
+    def test_focus_preview_budget_uses_a_smaller_companion_surface_on_wide_terminals(self):
+        width_chars, height_rows = _focus_preview_budget(
+            140,
+            source_width_px=1600,
+            source_height_px=900,
+        )
 
         self.assertGreaterEqual(
             width_chars,
-            104,
-            "wide terminals should get a materially denser preview raster than the old 88-char ceiling",
+            80,
+            "wide terminals should still get a preview that reads clearly instead of collapsing back to a postage stamp",
+        )
+        self.assertLessEqual(
+            width_chars,
+            92,
+            "the focus preview should read as a companion surface, not a giant wall of glyphs that dominates the terminal",
         )
         self.assertGreaterEqual(
             height_rows,
-            28,
-            "the higher horizontal budget should also buy a taller image so the preview stops reading like a chunky strip",
+            20,
+            "the smaller companion surface still needs enough rows to preserve the handwriting and vignette",
+        )
+        self.assertLessEqual(
+            height_rows,
+            24,
+            "the preview should stay closer to the 70% scale the operator asked for instead of ballooning back upward",
         )
 
     def test_focus_preview_budget_scales_with_source_detail_instead_of_staying_fixed(self):
@@ -466,6 +485,32 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertTrue(
             any(ch in plain for ch in ".,:;-=+*#%@"),
             "steady-state previews should use a denser terminal glyph field instead of only block cells",
+        )
+
+    def test_pending_focus_preview_rerender_is_quantized_instead_of_rebuilding_every_tick(self):
+        display = self._make_display()
+        display.on_focus_preview(
+            self._make_png(width=64, height=36),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+        display.on_header("[item 2/12] 27-blue-2023/fr-3 (balanced_equation, 4.0 pts)")
+
+        with mock.patch(
+            "scripts.narrator_reader._render_focus_preview_pixels",
+            return_value=Group(Text("preview")),
+        ) as render_mock:
+            with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1.01):
+                display.render()
+            with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1.05):
+                display.render()
+            with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1.15):
+                display.render()
+
+        self.assertEqual(
+            render_mock.call_count,
+            2,
+            "pending preview frames should be cached within a transition bucket instead of rebuilding on every 24 FPS tick",
         )
 
     def test_lines_render_newest_first_beneath_topic_within_each_header(self):
