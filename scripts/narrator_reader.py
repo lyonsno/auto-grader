@@ -502,6 +502,25 @@ def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
     )
 
 
+def _append_scorebug_value_row(
+    row: Text,
+    content: str,
+    *,
+    strong_style: str,
+    mid_style: str,
+) -> None:
+    """Append one scoreboard value row with weighted two-tone strokes."""
+    strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "▪"}
+    mid_chars = {"═", "╱", " "}
+    for ch in content:
+        if ch in strong_chars:
+            row.append(ch, style=strong_style)
+        elif ch in mid_chars:
+            row.append(ch, style=mid_style)
+        else:
+            row.append(ch, style=strong_style)
+
+
 def _live_placeholder(now_s: float) -> str:
     idx = int(now_s // _LIVE_PLACEHOLDER_ROTATE_S) % len(_LIVE_PLACEHOLDER_OPTIONS)
     return _LIVE_PLACEHOLDER_OPTIONS[idx]
@@ -1425,6 +1444,7 @@ class PaintDryDisplay:
         *,
         label_style: str,
         value_style: str,
+        value_mid_style: str,
         label_pad: int = 3,
         value_pad: int = 1,
     ) -> None:
@@ -1441,17 +1461,23 @@ class PaintDryDisplay:
             f"{label_lead}{label}{' ' * label_trail_width}",
             style=label_style,
         )
-        value_top_row.append(
+        _append_scorebug_value_row(
+            value_top_row,
             f"{' ' * value_pad}{top}{' ' * value_pad}",
-            style=value_style,
+            strong_style=value_style,
+            mid_style=value_mid_style,
         )
-        value_middle_row.append(
+        _append_scorebug_value_row(
+            value_middle_row,
             f"{' ' * value_pad}{middle}{' ' * value_pad}",
-            style=value_style,
+            strong_style=value_style,
+            mid_style=value_mid_style,
         )
-        value_bottom_row.append(
+        _append_scorebug_value_row(
+            value_bottom_row,
             f"{' ' * value_pad}{bottom}{' ' * value_pad}",
-            style=value_style,
+            strong_style=value_style,
+            mid_style=value_mid_style,
         )
 
     def should_animate(self, now: float | None = None) -> bool:
@@ -1743,6 +1769,7 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #eef3ff on #32578e",
                     value_style="bold #dce9ff on #1c2d47",
+                    value_mid_style="bold #8ea5cb on #1c2d47",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1756,6 +1783,7 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #fff1d6 on #6b5028",
                     value_style="bold #ffefcf on #3e2f1b",
+                    value_mid_style="bold #a18f66 on #3e2f1b",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1769,6 +1797,7 @@ class PaintDryDisplay:
                     ),
                     label_style="bold #ffe5dd on #7a392f",
                     value_style="bold #ffe3d8 on #47211d",
+                    value_mid_style="bold #a57e76 on #47211d",
                 )
                 scorebug_rows.extend(
                     [
@@ -1792,6 +1821,7 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style="bold #eef3ff on #32578e",
                     value_style="bold #dce9ff on #1c2d47",
+                    value_mid_style="bold #8ea5cb on #1c2d47",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1802,6 +1832,7 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style="bold #fff1d6 on #6b5028",
                     value_style="bold #ffefcf on #3e2f1b",
+                    value_mid_style="bold #a18f66 on #3e2f1b",
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1812,6 +1843,7 @@ class PaintDryDisplay:
                     "0.0/0.0",
                     label_style="bold #ffe5dd on #7a392f",
                     value_style="bold #ffe3d8 on #47211d",
+                    value_mid_style="bold #a57e76 on #47211d",
                 )
                 scorebug_rows.extend(
                     [
