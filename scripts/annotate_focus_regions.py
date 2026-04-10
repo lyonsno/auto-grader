@@ -18,6 +18,11 @@ Usage:
 Keys while the window is open:
     click-drag      draw new box (replaces any existing box for this target)
     Enter / Space   accept current box, advance to next target
+    d               ditto: copy the immediately previous target's in-session
+                    accepted box, mark current accepted, advance. Useful for
+                    multi-part questions (fr-7a/b/c/d/e) that share one
+                    physical answer region on the page. Strict semantics:
+                    skipping a target breaks the ditto chain.
     s / Right       skip this target (keep existing box unchanged)
     r / Backspace   clear current drawing, re-drag
     q / Esc         save and exit immediately
@@ -53,6 +58,25 @@ _GROUND_TRUTH_PATH = _REPO_ROOT / "eval" / "ground_truth.yaml"
 _MAX_DISPLAY_WIDTH = 1400
 _MAX_DISPLAY_HEIGHT = 1600
 _DPI = 160
+
+
+def _ditto_box_for(
+    current_index: int,
+    session_accepted: dict,
+):
+    """Return the box to copy when the operator hits ditto at the
+    current target, or None if no previous operator-accepted box is
+    available.
+
+    Strict semantics: copies the IMMEDIATELY previous target's
+    in-session accepted box (index == current - 1) or nothing. Does
+    not walk backward past gaps — skipping a target breaks the ditto
+    chain, which is the right behavior because otherwise ditto would
+    silently copy coordinates from an unrelated earlier target.
+    """
+    if current_index <= 0:
+        return None
+    return session_accepted.get(current_index - 1)
 
 
 def _load_exam_question_sequence(exam_id: str) -> list[str]:
@@ -161,6 +185,12 @@ class AnnotationApp:
         self.targets = targets
         self.existing = dict(existing)  # copy; will be mutated on accept
         self.result: dict[tuple[str, str], FocusRegion] = dict(existing)
+        # Session-scoped map of target index → box accepted in this
+        # session. Distinct from `existing` (which is the loaded config)
+        # and from `result` (which is the merged output). The ditto
+        # affordance reads only from this map, never from `existing`,
+        # so it cannot silently copy stale coordinates.
+        self.session_accepted: dict[int, FocusRegion] = {}
         self.current_index = 0
         self.scale = _compute_display_scale(page_width_px, page_height_px)
         self.display_width = int(round(page_width_px * self.scale))
@@ -209,6 +239,7 @@ class AnnotationApp:
         self.root.bind("<Right>", self._on_skip)
         self.root.bind("<r>", self._on_reset_current)
         self.root.bind("<BackSpace>", self._on_reset_current)
+        self.root.bind("<d>", self._on_ditto)
         self.root.bind("<q>", self._on_quit)
         self.root.bind("<Escape>", self._on_quit)
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
@@ -266,7 +297,7 @@ class AnnotationApp:
             existing_msg = " (no existing box)"
         self.status_var.set(
             f"{progress}  ·  {label}  (page {self.pdf_page_number}){existing_msg}   "
-            f"[drag to draw · enter=accept · s=skip · r=reset · q=quit]"
+            f"[drag=draw · enter=accept · d=ditto prev · s=skip · r=reset · q=quit]"
         )
 
     def _on_press(self, event: tk.Event) -> None:
@@ -325,7 +356,7 @@ class AnnotationApp:
             return
         key = self.targets[self.current_index]
         x, y, w, h = self.current_normalized
-        self.result[key] = FocusRegion(
+        region = FocusRegion(
             page=self.pdf_page_number,
             x=x,
             y=y,
@@ -333,10 +364,32 @@ class AnnotationApp:
             height=h,
             source="operator_annotated",
         )
+        self.result[key] = region
+        self.session_accepted[self.current_index] = region
         self.current_index += 1
         self._load_current_target()
 
     def _on_skip(self, _event=None) -> None:
+        self.current_index += 1
+        self._load_current_target()
+
+    def _on_ditto(self, _event=None) -> None:
+        previous = _ditto_box_for(self.current_index, self.session_accepted)
+        if previous is None:
+            # Nothing to copy. Don't advance, don't beep — just leave
+            # the operator on the current target so they can draw.
+            return
+        key = self.targets[self.current_index]
+        region = FocusRegion(
+            page=self.pdf_page_number,
+            x=previous.x,
+            y=previous.y,
+            width=previous.width,
+            height=previous.height,
+            source="operator_annotated",
+        )
+        self.result[key] = region
+        self.session_accepted[self.current_index] = region
         self.current_index += 1
         self._load_current_target()
 

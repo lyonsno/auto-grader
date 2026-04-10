@@ -149,6 +149,49 @@ class FocusRegionsRoundTripContract(unittest.TestCase):
         with self.assertRaises(SystemExit):
             annotator._parse_targets("15-blue/fr-1..fr-999")
 
+    def test_ditto_box_none_when_no_previous_target(self):
+        annotator = _load_annotator_module()
+        # First target in sequence — no previous, no ditto.
+        result = annotator._ditto_box_for(0, {})
+        self.assertIsNone(result)
+
+    def test_ditto_box_none_when_previous_was_not_accepted(self):
+        annotator = _load_annotator_module()
+        # Current is index 1, but index 0 was skipped (not in session_accepted).
+        result = annotator._ditto_box_for(1, {})
+        self.assertIsNone(result)
+
+    def test_ditto_box_returns_immediately_previous_accepted(self):
+        annotator = _load_annotator_module()
+        box_a = FocusRegion(
+            page=1, x=0.1, y=0.2, width=0.3, height=0.4, source="operator_annotated"
+        )
+        result = annotator._ditto_box_for(1, {0: box_a})
+        self.assertEqual(result, box_a)
+
+    def test_ditto_box_does_not_walk_back_past_gaps(self):
+        annotator = _load_annotator_module()
+        # Current is index 3. Index 2 was skipped. Index 0 was accepted.
+        # Ditto must NOT silently walk back to index 0 — that would
+        # surprise the operator by copying a box from an unrelated
+        # earlier target.
+        box_a = FocusRegion(
+            page=1, x=0.1, y=0.2, width=0.3, height=0.4, source="operator_annotated"
+        )
+        result = annotator._ditto_box_for(3, {0: box_a})
+        self.assertIsNone(result)
+
+    def test_ditto_box_uses_most_recent_accepted_at_previous_index(self):
+        annotator = _load_annotator_module()
+        box_a = FocusRegion(
+            page=1, x=0.1, y=0.2, width=0.3, height=0.4, source="operator_annotated"
+        )
+        box_c = FocusRegion(
+            page=1, x=0.5, y=0.6, width=0.2, height=0.1, source="operator_annotated"
+        )
+        result = annotator._ditto_box_for(3, {0: box_a, 2: box_c})
+        self.assertEqual(result, box_c)
+
     def test_migrated_default_file_loads(self):
         # The on-disk default file must parse cleanly and produce the
         # expected number of entries. This is a minimal reality check
