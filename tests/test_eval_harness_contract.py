@@ -277,6 +277,18 @@ class TestScorePerfectPredictions(unittest.TestCase):
         )
         self.assertEqual(matched.model_score, item.truth_score)
 
+    def test_34_blue_fr_8_is_recorded_as_corrected_truth(self):
+        item = next(
+            item
+            for item in self.ground_truth
+            if item.exam_id == "34-blue" and item.question_id == "fr-8"
+        )
+
+        self.assertEqual(item.professor_score, 2.0)
+        self.assertEqual(item.corrected_score, 4.0)
+        self.assertEqual(item.truth_score, 4.0)
+        self.assertIn("Hess", item.correction_reason)
+
 
 # ---------------------------------------------------------------------------
 # Contract: score_predictions — deliberately wrong predictions

@@ -329,6 +329,88 @@ class ThinkingNarratorContract(unittest.TestCase):
             ],
         )
 
+    def test_after_action_uses_truth_for_corrected_historical_scores(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(
+            sink,
+            "Grader: 4/4 (correct Hess's Law combination). "
+            "Truth: 4/4 (corrected after review). · "
+            "Historical prof: 2/4 (batch-mark partial for confused work).",
+        )
+        item = EvalItem(
+            exam_id="34-blue",
+            question_id="fr-8",
+            answer_type="numeric",
+            page=2,
+            professor_score=2.0,
+            max_points=4.0,
+            professor_mark="partial",
+            student_answer="-186.2 kJ",
+            notes="Partial. Correct answer but confused intermediate work.",
+            corrected_score=4.0,
+            correction_reason="Reviewed from page image: Hess's Law reversal, cancellation, and final enthalpy are coherent and correct.",
+        )
+        prediction = Prediction(
+            exam_id="34-blue",
+            question_id="fr-8",
+            model_score=4.0,
+            model_confidence=1.0,
+            model_reasoning="Correct Hess's Law manipulation and final enthalpy.",
+            model_read="SnCl2 + Cl2 -> SnCl4 ; -186.2 kJ",
+        )
+
+        narrator._produce_after_action(50.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.topics,
+            [
+                (
+                    "50s · Grader: 4/4 (correct Hess's Law combination). "
+                    "Truth: 4/4 (corrected after review). · "
+                    "Historical prof: 2/4 (batch-mark partial for confused work).",
+                    "match",
+                )
+            ],
+        )
+
+    def test_after_action_prompt_mentions_corrected_truth_when_present(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink)
+        item = EvalItem(
+            exam_id="34-blue",
+            question_id="fr-8",
+            answer_type="numeric",
+            page=2,
+            professor_score=2.0,
+            max_points=4.0,
+            professor_mark="partial",
+            student_answer="-186.2 kJ",
+            notes="Partial. Correct answer but confused intermediate work.",
+            corrected_score=4.0,
+            correction_reason="Reviewed from page image: Hess's Law reversal, cancellation, and final enthalpy are coherent and correct.",
+        )
+        prediction = Prediction(
+            exam_id="34-blue",
+            question_id="fr-8",
+            model_score=4.0,
+            model_confidence=1.0,
+            model_reasoning="Correct Hess's Law manipulation and final enthalpy.",
+            model_read="SnCl2 + Cl2 -> SnCl4 ; -186.2 kJ",
+        )
+
+        with mock.patch.object(
+            narrator,
+            "_chat_completion",
+            return_value="Grader: 4/4 (correct Hess's Law combination). Truth: 4/4 (corrected after review). · Historical prof: 2/4 (batch-mark partial for confused work).",
+        ) as completion_mock:
+            narrator._produce_after_action(50.0, prediction, item, template_question=None)
+
+        user_prompt = completion_mock.call_args.args[0][1]["content"]
+        self.assertIn("Truth awarded: 4.0 pts", user_prompt)
+        self.assertIn("Historical professor awarded: 2.0 pts", user_prompt)
+        self.assertIn("Correction reason:", user_prompt)
+        self.assertIn("Truth: <score>", user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
