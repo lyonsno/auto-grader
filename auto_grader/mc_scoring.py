@@ -7,7 +7,7 @@ from typing import Any
 
 
 def score_marked_mc_bubbles(
-    marked_labels_by_question: Mapping[str, list[str]],
+    marked_labels_by_question: Mapping[str, Any],
     answer_key: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     if not isinstance(marked_labels_by_question, Mapping):
@@ -19,7 +19,14 @@ def score_marked_mc_bubbles(
     for question_id, question_answer_key in answer_key.items():
         if not isinstance(question_answer_key, Mapping):
             raise TypeError("answer_key entries must be mappings")
-        marked_bubble_labels = list(marked_labels_by_question.get(question_id, []))
+        question_surface = _normalize_question_surface(
+            marked_labels_by_question.get(question_id, []),
+            question_id=question_id,
+        )
+        marked_bubble_labels = question_surface["marked_bubble_labels"]
+        ambiguous_bubble_labels = question_surface["ambiguous_bubble_labels"]
+        illegible_bubble_labels = question_surface["illegible_bubble_labels"]
+
         bubble_to_choice = _bubble_to_choice_key(question_answer_key)
         marked_choice_keys = _map_marked_choice_keys(
             marked_bubble_labels,
@@ -37,12 +44,16 @@ def score_marked_mc_bubbles(
 
         status, is_correct, review_required = _score_status(
             marked_bubble_labels,
+            ambiguous_bubble_labels,
+            illegible_bubble_labels,
             correct_bubble_label,
         )
         results[question_id] = {
             "question_id": question_id,
             "status": status,
             "marked_bubble_labels": marked_bubble_labels,
+            "ambiguous_bubble_labels": ambiguous_bubble_labels,
+            "illegible_bubble_labels": illegible_bubble_labels,
             "marked_choice_keys": marked_choice_keys,
             "correct_bubble_label": correct_bubble_label,
             "correct_choice_key": correct_choice_key,
@@ -51,6 +62,36 @@ def score_marked_mc_bubbles(
         }
 
     return results
+
+
+def _normalize_question_surface(
+    raw_question_surface: Any,
+    *,
+    question_id: str,
+) -> dict[str, list[str]]:
+    if isinstance(raw_question_surface, Mapping):
+        return {
+            "marked_bubble_labels": _require_string_list(
+                raw_question_surface.get("marked_bubble_labels", []),
+                f"{question_id}.marked_bubble_labels",
+            ),
+            "ambiguous_bubble_labels": _require_string_list(
+                raw_question_surface.get("ambiguous_bubble_labels", []),
+                f"{question_id}.ambiguous_bubble_labels",
+            ),
+            "illegible_bubble_labels": _require_string_list(
+                raw_question_surface.get("illegible_bubble_labels", []),
+                f"{question_id}.illegible_bubble_labels",
+            ),
+        }
+    return {
+        "marked_bubble_labels": _require_string_list(
+            raw_question_surface,
+            f"{question_id}.marked_bubble_labels",
+        ),
+        "ambiguous_bubble_labels": [],
+        "illegible_bubble_labels": [],
+    }
 
 
 def _bubble_to_choice_key(question_answer_key: Mapping[str, Any]) -> dict[str, str]:
@@ -87,8 +128,14 @@ def _map_marked_choice_keys(
 
 def _score_status(
     marked_bubble_labels: list[str],
+    ambiguous_bubble_labels: list[str],
+    illegible_bubble_labels: list[str],
     correct_bubble_label: str,
 ) -> tuple[str, bool, bool]:
+    if illegible_bubble_labels:
+        return ("illegible_mark", False, True)
+    if ambiguous_bubble_labels:
+        return ("ambiguous_mark", False, True)
     if len(marked_bubble_labels) == 0:
         return ("blank", False, False)
     if len(marked_bubble_labels) > 1:
@@ -102,3 +149,12 @@ def _require_string(value: Any, label: str) -> str:
     if not isinstance(value, str) or value == "":
         raise TypeError(f"{label} must be a non-empty string")
     return value
+
+
+def _require_string_list(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list):
+        raise TypeError(f"{label} must be a list of non-empty strings")
+    normalized: list[str] = []
+    for item in value:
+        normalized.append(_require_string(item, label))
+    return normalized

@@ -58,16 +58,37 @@ class MarkProfileSmokeContractTests(unittest.TestCase):
             )
             self.assertEqual(
                 profiles["faint_center"]["observed_status"],
-                "blank",
-                "The smoke should keep reporting where the current blank boundary "
-                "still is instead of flattering the handled surface.",
+                "ambiguous_mark",
+                "A very faint centered fill should now surface as review work instead "
+                "of quietly vanishing into blank.",
             )
+            self.assertTrue(profiles["faint_center"]["review_required"])
             self.assertEqual(
                 profiles["double_mark"]["observed_status"],
                 "multiple_marked",
                 "The mark-profile smoke should preserve the explicit multi-mark "
                 "review path instead of collapsing it into a guessed answer.",
             )
+            self.assertEqual(
+                profiles["hostile_correct_plus_glance"]["observed_status"],
+                "correct",
+                "A correct fill plus a glancing stray on another bubble should stay "
+                "within the handled surface instead of escalating into fake review work.",
+            )
+            self.assertEqual(
+                profiles["ambiguous_patchy_center"]["observed_status"],
+                "ambiguous_mark",
+                "A patchy center fill near the boundary should surface as explicit "
+                "review work instead of quietly becoming blank.",
+            )
+            self.assertTrue(profiles["ambiguous_patchy_center"]["review_required"])
+            self.assertEqual(
+                profiles["illegible_scratchout"]["observed_status"],
+                "illegible_mark",
+                "A scratchy unreadable fill should surface as illegible review work "
+                "instead of pretending to be blank or confidently marked.",
+            )
+            self.assertTrue(profiles["illegible_scratchout"]["review_required"])
             self.assertTrue(profiles["double_mark"]["review_required"])
             self.assertFalse(profiles["solid_center"]["review_required"])
 

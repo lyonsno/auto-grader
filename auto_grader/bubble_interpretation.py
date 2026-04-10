@@ -15,13 +15,33 @@ _CENTER_RADIUS_SCALE = 0.22
 _SURROUNDING_RING_RADIUS_SCALE = 0.42
 _CENTER_TO_RING_CONTRAST_THRESHOLD = 24.0
 _CENTER_MAX_INTENSITY_FOR_CONTRAST = 235.0
+_DARK_PIXEL_THRESHOLD = 210
+_MARKED_CENTER_DARK_FRACTION_THRESHOLD = 0.30
+_AMBIGUOUS_CENTER_DARK_FRACTION_THRESHOLD = 0.10
+_AMBIGUOUS_CENTER_TO_RING_CONTRAST_THRESHOLD = 10.0
+_ILLEGIBLE_CENTER_DARK_FRACTION_THRESHOLD = 0.20
+_ILLEGIBLE_RING_DARK_FRACTION_THRESHOLD = 0.18
+_ILLEGIBLE_MIN_CENTER_MEAN_THRESHOLD = 120.0
+_ILLEGIBLE_MAX_RING_MEAN_THRESHOLD = 215.0
 
 
 def read_marked_bubble_labels(
     image: np.ndarray,
     page: Mapping[str, Any],
 ) -> dict[str, list[str]]:
-    """Return the marked bubble labels per question from a normalized page image."""
+    """Return the clearly marked bubble labels per question from a normalized page image."""
+    observations = read_bubble_observations(image, page)
+    return {
+        question_id: question_observation["marked_bubble_labels"]
+        for question_id, question_observation in observations.items()
+    }
+
+
+def read_bubble_observations(
+    image: np.ndarray,
+    page: Mapping[str, Any],
+) -> dict[str, dict[str, list[str]]]:
+    """Return explicit bubble observations per question from a normalized page image."""
     if not isinstance(image, np.ndarray):
         raise TypeError("image must be a numpy.ndarray")
     if not isinstance(page, Mapping):
@@ -43,18 +63,32 @@ def read_marked_bubble_labels(
         question_id = _require_string(region.get("question_id"), "bubble_region.question_id")
         grouped_regions[question_id].append(dict(region))
 
-    marked_labels_by_question: dict[str, list[str]] = {}
+    observations_by_question: dict[str, dict[str, list[str]]] = {}
     for question_id, regions in grouped_regions.items():
-        marked_labels: list[str] = []
-        for region in sorted(regions, key=lambda item: (_require_number(item.get("x"), "bubble_region.x"), _require_string(item.get("bubble_label"), "bubble_region.bubble_label"))):
+        question_observation = {
+            "marked_bubble_labels": [],
+            "ambiguous_bubble_labels": [],
+            "illegible_bubble_labels": [],
+        }
+        for region in sorted(
+            regions,
+            key=lambda item: (
+                _require_number(item.get("x"), "bubble_region.x"),
+                _require_string(item.get("bubble_label"), "bubble_region.bubble_label"),
+            ),
+        ):
             crop = _crop_region(grayscale, region, pixels_per_point)
-            if _bubble_center_looks_marked(crop):
-                marked_labels.append(
-                    _require_string(region.get("bubble_label"), "bubble_region.bubble_label")
-                )
-        marked_labels_by_question[question_id] = marked_labels
+            bubble_label = _require_string(region.get("bubble_label"), "bubble_region.bubble_label")
+            classification = _classify_bubble(crop)
+            if classification == "marked":
+                question_observation["marked_bubble_labels"].append(bubble_label)
+            elif classification == "ambiguous":
+                question_observation["ambiguous_bubble_labels"].append(bubble_label)
+            elif classification == "illegible":
+                question_observation["illegible_bubble_labels"].append(bubble_label)
+        observations_by_question[question_id] = question_observation
 
-    return marked_labels_by_question
+    return observations_by_question
 
 
 def _crop_region(
@@ -78,13 +112,31 @@ def _crop_region(
 
 
 def _bubble_center_mean_intensity(crop: np.ndarray) -> float:
-    center_mean, _ = _bubble_center_and_ring_mean_intensities(crop)
-    return center_mean
+    return _bubble_metrics(crop)["center_mean"]
 
 
 def _bubble_center_looks_marked(crop: np.ndarray) -> bool:
-    center_mean, ring_mean = _bubble_center_and_ring_mean_intensities(crop)
+    return _classify_bubble(crop) == "marked"
+
+
+def _classify_bubble(crop: np.ndarray) -> str:
+    metrics = _bubble_metrics(crop)
+    if _looks_illegible(metrics):
+        return "illegible"
+    if _looks_marked(metrics):
+        return "marked"
+    if _looks_ambiguous(metrics):
+        return "ambiguous"
+    return "blank"
+
+
+def _looks_marked(metrics: Mapping[str, float | int]) -> bool:
+    center_mean = float(metrics["center_mean"])
+    ring_mean = float(metrics["ring_mean"])
+    center_dark_fraction = float(metrics["center_dark_fraction"])
     if center_mean <= _CENTER_DARKNESS_THRESHOLD:
+        return True
+    if center_dark_fraction >= _MARKED_CENTER_DARK_FRACTION_THRESHOLD:
         return True
     return (
         center_mean <= _CENTER_MAX_INTENSITY_FOR_CONTRAST
@@ -92,7 +144,47 @@ def _bubble_center_looks_marked(crop: np.ndarray) -> bool:
     )
 
 
-def _bubble_center_and_ring_mean_intensities(crop: np.ndarray) -> tuple[float, float]:
+def _looks_ambiguous(metrics: Mapping[str, float | int]) -> bool:
+    center_mean = float(metrics["center_mean"])
+    ring_mean = float(metrics["ring_mean"])
+    center_dark_fraction = float(metrics["center_dark_fraction"])
+    if center_dark_fraction < _AMBIGUOUS_CENTER_DARK_FRACTION_THRESHOLD:
+        return False
+    return (ring_mean - center_mean) >= _AMBIGUOUS_CENTER_TO_RING_CONTRAST_THRESHOLD
+
+
+def _looks_illegible(metrics: Mapping[str, float | int]) -> bool:
+    return (
+        float(metrics["center_mean"]) >= _ILLEGIBLE_MIN_CENTER_MEAN_THRESHOLD
+        and float(metrics["center_dark_fraction"]) >= _ILLEGIBLE_CENTER_DARK_FRACTION_THRESHOLD
+        and float(metrics["ring_dark_fraction"]) >= _ILLEGIBLE_RING_DARK_FRACTION_THRESHOLD
+        and float(metrics["ring_mean"]) <= _ILLEGIBLE_MAX_RING_MEAN_THRESHOLD
+    )
+
+
+def _bubble_metrics(crop: np.ndarray) -> dict[str, float | int]:
+    center_mask, ring_mask = _bubble_masks(crop)
+    dark_mask = crop <= _DARK_PIXEL_THRESHOLD
+    center_pixels = crop[center_mask]
+    ring_pixels = crop[ring_mask]
+    center_dark_pixels = dark_mask[center_mask]
+    ring_dark_pixels = dark_mask[ring_mask]
+
+    center_mean = float(center_pixels.mean())
+    ring_mean = float(ring_pixels.mean()) if ring_pixels.size else 255.0
+    center_dark_fraction = float(center_dark_pixels.mean()) if center_dark_pixels.size else 0.0
+    ring_dark_fraction = float(ring_dark_pixels.mean()) if ring_dark_pixels.size else 0.0
+
+    return {
+        "center_mean": center_mean,
+        "ring_mean": ring_mean,
+        "center_dark_fraction": center_dark_fraction,
+        "ring_dark_fraction": ring_dark_fraction,
+        "border_touch_sides": _dark_border_touch_sides(dark_mask),
+    }
+
+
+def _bubble_masks(crop: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     height, width = crop.shape[:2]
     center_x = (width - 1) / 2.0
     center_y = (height - 1) / 2.0
@@ -101,13 +193,23 @@ def _bubble_center_and_ring_mean_intensities(crop: np.ndarray) -> tuple[float, f
     ring_radius = min_dimension * _SURROUNDING_RING_RADIUS_SCALE
 
     y_indices, x_indices = np.ogrid[:height, :width]
-    center_mask = (x_indices - center_x) ** 2 + (y_indices - center_y) ** 2 <= center_radius**2
-    ring_mask = (
-        (x_indices - center_x) ** 2 + (y_indices - center_y) ** 2 <= ring_radius**2
-    ) & ~center_mask
-    if not ring_mask.any():
-        return float(crop[center_mask].mean()), 255.0
-    return float(crop[center_mask].mean()), float(crop[ring_mask].mean())
+    distance_squared = (x_indices - center_x) ** 2 + (y_indices - center_y) ** 2
+    center_mask = distance_squared <= center_radius**2
+    ring_mask = (distance_squared <= ring_radius**2) & ~center_mask
+    return center_mask, ring_mask
+
+
+def _dark_border_touch_sides(dark_mask: np.ndarray) -> int:
+    touches = 0
+    if dark_mask[0, :].any():
+        touches += 1
+    if dark_mask[-1, :].any():
+        touches += 1
+    if dark_mask[:, 0].any():
+        touches += 1
+    if dark_mask[:, -1].any():
+        touches += 1
+    return touches
 
 
 def _require_number(value: Any, label: str) -> int | float:

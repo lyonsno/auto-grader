@@ -313,6 +313,35 @@ class McPageExtractionContractTests(unittest.TestCase):
         )
         self.assertTrue(extracted["scored_questions"]["mc-1"]["review_required"])
 
+    def test_extract_scored_mc_page_preserves_ambiguous_observation_surface(self) -> None:
+        extract_scored_mc_page = _load_extraction_module(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        from tests.test_bubble_interpretation_contract import _render_patchy_center_mark
+
+        distorted = _perspective_distort(
+            _render_patchy_center_mark(page, question_id="mc-1", bubble_label="B")
+        )
+
+        extracted = extract_scored_mc_page(distorted, page, artifact["answer_key"])
+
+        self.assertEqual(
+            extracted["bubble_observations"],
+            {
+                "mc-1": {
+                    "marked_bubble_labels": [],
+                    "ambiguous_bubble_labels": ["B"],
+                    "illegible_bubble_labels": [],
+                }
+            },
+            "Matched-page extraction should expose explicit bubble observations so "
+            "borderline fills do not disappear into a flat blank surface.",
+        )
+        self.assertEqual(extracted["marked_bubble_labels"], {"mc-1": []})
+        self.assertEqual(extracted["scored_questions"]["mc-1"]["status"], "ambiguous_mark")
+        self.assertTrue(extracted["scored_questions"]["mc-1"]["review_required"])
+
     def test_extract_scored_mc_page_keeps_blank_question_explicit(self) -> None:
         extract_scored_mc_page = _load_extraction_module(self)
         artifact = _build_artifact()

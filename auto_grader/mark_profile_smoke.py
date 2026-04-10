@@ -79,6 +79,30 @@ def run_mark_profile_smoke(
             "mark_fn": lambda draw, bubble, scale: _draw_dark_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label, alternate_bubble_label],
         },
+        {
+            "profile_id": "hostile_correct_plus_glance",
+            "description": "Correct fill plus a glancing stray on a neighboring wrong bubble",
+            "mark_fn": lambda draw, bubble, scale: _draw_dark_center(draw, bubble, scale=scale),
+            "bubble_labels": [correct_bubble_label],
+            "stray_marks": [
+                {
+                    "bubble_label": alternate_bubble_label,
+                    "draw_fn": _draw_glancing_stray,
+                }
+            ],
+        },
+        {
+            "profile_id": "ambiguous_patchy_center",
+            "description": "Patchy center fill near the current ambiguous boundary",
+            "mark_fn": lambda draw, bubble, scale: _draw_patchy_center(draw, bubble, scale=scale),
+            "bubble_labels": [correct_bubble_label],
+        },
+        {
+            "profile_id": "illegible_scratchout",
+            "description": "Scratchy unreadable fill that drags across the bubble",
+            "mark_fn": lambda draw, bubble, scale: _draw_illegible_scratchout(draw, bubble, scale=scale),
+            "bubble_labels": [correct_bubble_label],
+        },
     ]
 
     report_profiles: list[dict[str, Any]] = []
@@ -88,6 +112,7 @@ def run_mark_profile_smoke(
             page,
             bubble_labels=profile["bubble_labels"],
             mark_fn=profile["mark_fn"],
+            stray_marks=profile.get("stray_marks"),
         )
         degraded = _degrade_scan(rendered)
         image_path = output_dir / f"{profile['profile_id']}.png"
@@ -99,6 +124,7 @@ def run_mark_profile_smoke(
         Image.fromarray(extracted["normalized_image"]).save(normalized_path)
 
         question_result = extracted["scored_questions"]["mc-1"]
+        question_observation = extracted["bubble_observations"]["mc-1"]
         report_profiles.append(
             {
                 "profile_id": profile["profile_id"],
@@ -107,6 +133,8 @@ def run_mark_profile_smoke(
                 "normalized_image_path": str(normalized_path),
                 "decoded_payload": qr_payload,
                 "observed_marked_bubble_labels": extracted["marked_bubble_labels"]["mc-1"],
+                "observed_ambiguous_bubble_labels": question_observation["ambiguous_bubble_labels"],
+                "observed_illegible_bubble_labels": question_observation["illegible_bubble_labels"],
                 "observed_status": question_result["status"],
                 "review_required": question_result["review_required"],
             }
@@ -207,6 +235,7 @@ def _render_profile_page(
     *,
     bubble_labels: list[str],
     mark_fn: Callable[[ImageDraw.ImageDraw, Mapping[str, Any], int], None],
+    stray_marks: list[Mapping[str, Any]] | None = None,
     scale: int = 4,
 ) -> np.ndarray:
     canvas = Image.fromarray(base_page.copy())
@@ -214,7 +243,13 @@ def _render_profile_page(
     for bubble in page["bubble_regions"]:
         if bubble["question_id"] != "mc-1" or bubble["bubble_label"] not in bubble_labels:
             continue
-        mark_fn(draw, bubble, scale)
+        mark_fn(draw, bubble, scale=scale)
+    for stray_mark in stray_marks or []:
+        for bubble in page["bubble_regions"]:
+            if bubble["question_id"] != "mc-1" or bubble["bubble_label"] != stray_mark["bubble_label"]:
+                continue
+            stray_mark["draw_fn"](draw, bubble, scale=scale)
+            break
     return np.array(canvas)
 
 
@@ -307,8 +342,8 @@ def _draw_off_center_patch(
 ) -> None:
     left, top, right, bottom = _bubble_box(bubble, scale)
     draw.ellipse(
-        [left + 20, top + 12, right - 6, bottom - 18],
-        fill=(165, 165, 165),
+        [left + 22, top + 16, right - 16, bottom - 20],
+        fill=(160, 160, 160),
     )
 
 
@@ -329,6 +364,98 @@ def _draw_edge_smudge(
             top + (0.70 * height),
         ],
         fill="black",
+    )
+
+
+def _draw_patchy_center(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    width = right - left
+    height = bottom - top
+    draw.ellipse(
+        [
+            left + (0.37 * width),
+            top + (0.35 * height),
+            left + (0.53 * width),
+            top + (0.51 * height),
+        ],
+        fill=(198, 198, 198),
+    )
+    draw.ellipse(
+        [
+            left + (0.49 * width),
+            top + (0.47 * height),
+            left + (0.62 * width),
+            top + (0.60 * height),
+        ],
+        fill=(206, 206, 206),
+    )
+
+
+def _draw_illegible_scratchout(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    width = max(3, scale + 1)
+    span_x = right - left
+    span_y = bottom - top
+    draw.line(
+        [
+            left - (0.08 * span_x),
+            top + (0.18 * span_y),
+            right + (0.08 * span_x),
+            bottom - (0.18 * span_y),
+        ],
+        fill="black",
+        width=width,
+    )
+    draw.line(
+        [
+            left + (0.12 * span_x),
+            bottom + (0.04 * span_y),
+            right - (0.08 * span_x),
+            top - (0.05 * span_y),
+        ],
+        fill="black",
+        width=width,
+    )
+    draw.line(
+        [
+            left - (0.04 * span_x),
+            top + (0.58 * span_y),
+            right + (0.06 * span_x),
+            top + (0.38 * span_y),
+        ],
+        fill="black",
+        width=width,
+    )
+
+
+def _draw_glancing_stray(
+    draw: ImageDraw.ImageDraw,
+    bubble: Mapping[str, Any],
+    *,
+    scale: int,
+) -> None:
+    left, top, right, bottom = _bubble_box(bubble, scale)
+    span_x = right - left
+    span_y = bottom - top
+    draw.line(
+        [
+            left + (0.03 * span_x),
+            top + (0.56 * span_y),
+            left + (0.31 * span_x),
+            top + (0.28 * span_y),
+        ],
+        fill="black",
+        width=max(2, scale),
     )
 
 

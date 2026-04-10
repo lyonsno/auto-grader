@@ -44,6 +44,8 @@ class McScoringContractTests(unittest.TestCase):
                     "question_id": "mc-1",
                     "status": "correct",
                     "marked_bubble_labels": ["C"],
+                    "ambiguous_bubble_labels": [],
+                    "illegible_bubble_labels": [],
                     "marked_choice_keys": ["A"],
                     "correct_bubble_label": "C",
                     "correct_choice_key": "A",
@@ -66,6 +68,8 @@ class McScoringContractTests(unittest.TestCase):
             "A single marked bubble that maps to the wrong logical choice should score "
             "as incorrect.",
         )
+        self.assertEqual(results["mc-1"]["ambiguous_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["illegible_bubble_labels"], [])
         self.assertEqual(results["mc-1"]["marked_choice_keys"], ["B"])
         self.assertFalse(results["mc-1"]["is_correct"])
         self.assertFalse(results["mc-1"]["review_required"])
@@ -76,6 +80,8 @@ class McScoringContractTests(unittest.TestCase):
         results = score_marked_mc_bubbles({"mc-1": []}, _answer_key())
 
         self.assertEqual(results["mc-1"]["status"], "blank")
+        self.assertEqual(results["mc-1"]["ambiguous_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["illegible_bubble_labels"], [])
         self.assertEqual(results["mc-1"]["marked_choice_keys"], [])
         self.assertFalse(results["mc-1"]["is_correct"])
         self.assertFalse(results["mc-1"]["review_required"])
@@ -87,6 +93,8 @@ class McScoringContractTests(unittest.TestCase):
 
         self.assertEqual(results["mc-1"]["status"], "blank")
         self.assertEqual(results["mc-1"]["marked_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["ambiguous_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["illegible_bubble_labels"], [])
         self.assertEqual(results["mc-1"]["marked_choice_keys"], [])
 
     def test_scoring_preserves_multiple_marks_as_review_required(self) -> None:
@@ -95,7 +103,51 @@ class McScoringContractTests(unittest.TestCase):
         results = score_marked_mc_bubbles({"mc-1": ["A", "C"]}, _answer_key())
 
         self.assertEqual(results["mc-1"]["status"], "multiple_marked")
+        self.assertEqual(results["mc-1"]["ambiguous_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["illegible_bubble_labels"], [])
         self.assertEqual(results["mc-1"]["marked_choice_keys"], ["D", "A"])
+        self.assertFalse(results["mc-1"]["is_correct"])
+        self.assertTrue(results["mc-1"]["review_required"])
+
+    def test_scoring_surfaces_ambiguous_mark_as_review_required(self) -> None:
+        score_marked_mc_bubbles = _load_scoring_module(self)
+
+        results = score_marked_mc_bubbles(
+            {
+                "mc-1": {
+                    "marked_bubble_labels": [],
+                    "ambiguous_bubble_labels": ["C"],
+                    "illegible_bubble_labels": [],
+                }
+            },
+            _answer_key(),
+        )
+
+        self.assertEqual(results["mc-1"]["status"], "ambiguous_mark")
+        self.assertEqual(results["mc-1"]["ambiguous_bubble_labels"], ["C"])
+        self.assertEqual(results["mc-1"]["illegible_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["marked_choice_keys"], [])
+        self.assertFalse(results["mc-1"]["is_correct"])
+        self.assertTrue(results["mc-1"]["review_required"])
+
+    def test_scoring_surfaces_illegible_mark_as_review_required(self) -> None:
+        score_marked_mc_bubbles = _load_scoring_module(self)
+
+        results = score_marked_mc_bubbles(
+            {
+                "mc-1": {
+                    "marked_bubble_labels": [],
+                    "ambiguous_bubble_labels": [],
+                    "illegible_bubble_labels": ["C"],
+                }
+            },
+            _answer_key(),
+        )
+
+        self.assertEqual(results["mc-1"]["status"], "illegible_mark")
+        self.assertEqual(results["mc-1"]["ambiguous_bubble_labels"], [])
+        self.assertEqual(results["mc-1"]["illegible_bubble_labels"], ["C"])
+        self.assertEqual(results["mc-1"]["marked_choice_keys"], [])
         self.assertFalse(results["mc-1"]["is_correct"])
         self.assertTrue(results["mc-1"]["review_required"])
 

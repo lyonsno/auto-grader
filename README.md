@@ -196,14 +196,16 @@ Current implementation status on this grading surface:
 - page registration is implemented via `auto_grader.scan_registration`
 - first-pass bubble readback is implemented via `auto_grader.bubble_interpretation`
 - first-pass scoring decisions are implemented via `auto_grader.mc_scoring`
-  for the core MC statuses `correct`, `incorrect`, `blank`, and `multiple_marked`
+  for the core MC statuses `correct`, `incorrect`, `blank`, `multiple_marked`,
+  `ambiguous_mark`, and `illegible_mark`
 - matched-page extraction packaging is implemented via `auto_grader.mc_page_extraction`
   so downstream callers can consume one bundle containing the normalized page,
   marked bubble labels, and scored MC outcomes for an already-matched page
 - a synthetic student-mark smoke harness is implemented via
   `auto_grader.mark_profile_smoke`; it renders plausible filled, scribbled,
-  off-center, smudged, faint, and double-marked bubbles, runs them through the
-  real QR/readback/registration/scoring path, and records what the current lane
+  off-center, smudged, faint, double-marked, hostile-glance, ambiguous-patchy,
+  and scratchout-illegible bubbles, runs them through the real
+  QR/readback/registration/scoring path, and records what the current lane
   actually handles without requiring an immediate pen-and-scanner loop
 - richer review workflow, persistence, and operator-facing resolution state are still
   the next slice beyond that scoring surface

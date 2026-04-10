@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from auto_grader.bubble_interpretation import read_marked_bubble_labels
+from auto_grader.bubble_interpretation import read_bubble_observations
 from auto_grader.mc_scoring import score_marked_mc_bubbles
 from auto_grader.scan_registration import normalize_page_image
 
@@ -23,8 +23,12 @@ def extract_scored_mc_page(
         raise TypeError("answer_key must be a mapping")
 
     normalized_image = normalize_page_image(image, page)
-    marked_bubble_labels = read_marked_bubble_labels(normalized_image, page)
-    scored_questions = score_marked_mc_bubbles(marked_bubble_labels, answer_key)
+    bubble_observations = read_bubble_observations(normalized_image, page)
+    marked_bubble_labels = {
+        question_id: observation["marked_bubble_labels"]
+        for question_id, observation in bubble_observations.items()
+    }
+    scored_questions = score_marked_mc_bubbles(bubble_observations, answer_key)
 
     return {
         "page_number": _require_int(page.get("page_number"), "page.page_number"),
@@ -33,6 +37,7 @@ def extract_scored_mc_page(
             "page.fallback_page_code",
         ),
         "normalized_image": normalized_image,
+        "bubble_observations": bubble_observations,
         "marked_bubble_labels": marked_bubble_labels,
         "scored_questions": scored_questions,
     }
