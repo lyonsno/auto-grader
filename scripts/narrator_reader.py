@@ -559,7 +559,7 @@ def _append_scorebug_value_row(
     strong_style: str,
     mid_style: str,
     texture_style: str,
-    texture_pattern: str,
+    texture_seed: int,
 ) -> None:
     """Append one scoreboard value row with weighted strokes and sparse field texture."""
     strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "═", "▪"}
@@ -570,13 +570,30 @@ def _append_scorebug_value_row(
         elif ch in mid_chars:
             row.append(ch, style=mid_style)
         elif ch == " ":
-            texture_char = texture_pattern[idx % len(texture_pattern)]
+            texture_char = _scorebug_texture_char(idx, texture_seed)
             if texture_char == " ":
                 row.append(" ", style=texture_style)
             else:
                 row.append(texture_char, style=texture_style)
         else:
             row.append(ch, style=strong_style)
+
+
+def _scorebug_texture_char(slot_index: int, seed: int) -> str:
+    """Return a sparse deterministic texture character for the scorebug field.
+
+    The field should read like low-frequency terminal texture, not like a
+    repeating wallpaper. Keep density low and avoid strong vertical glyphs.
+    """
+    mixed = (slot_index * 73) + (seed * 29) + ((slot_index // 3) * 17)
+    bucket = mixed % 37
+    if bucket == 0:
+        return "░"
+    if bucket in {7, 19}:
+        return "·"
+    if bucket == 27:
+        return "┈"
+    return " "
 
 
 def _live_placeholder(now_s: float) -> str:
@@ -1824,7 +1841,7 @@ class PaintDryDisplay:
             strong_style=value_row_styles[0],
             mid_style=value_mid_row_styles[0],
             texture_style=value_texture_styles[0],
-            texture_pattern=" ░   ·   ░ ",
+            texture_seed=0,
         )
         _append_scorebug_value_row(
             value_middle_row,
@@ -1832,7 +1849,7 @@ class PaintDryDisplay:
             strong_style=value_row_styles[1],
             mid_style=value_mid_row_styles[1],
             texture_style=value_texture_styles[1],
-            texture_pattern=" ┈   ╎   ┈ ",
+            texture_seed=1,
         )
         _append_scorebug_value_row(
             value_bottom_row,
@@ -1840,7 +1857,7 @@ class PaintDryDisplay:
             strong_style=value_row_styles[2],
             mid_style=value_mid_row_styles[2],
             texture_style=value_texture_styles[2],
-            texture_pattern=" ·  ░   ·  ",
+            texture_seed=2,
         )
 
     def should_animate(self, now: float | None = None) -> bool:
