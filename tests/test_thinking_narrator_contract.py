@@ -175,11 +175,10 @@ class ThinkingNarratorContract(unittest.TestCase):
         )
         self.assertEqual(narrator._thoughts_since_status, [])
 
-    def test_status_retry_rejects_first_person_leak(self):
+    def test_status_retry_rejects_first_person_leak_as_contract_failure(self):
         sink = _DummySink()
         narrator = _BadStatusRetryNarrator(sink)
         narrator.start(item_header="15-blue/fr-1")
-        narrator._prior_statuses = ["Tracing the setup."]
         narrator._thoughts_since_status = [
             "I'm tracing the unit conversion mistake."
         ]
@@ -191,7 +190,7 @@ class ThinkingNarratorContract(unittest.TestCase):
             sink.drops,
             [
                 ("dedup", "I'm tracing the same unit conversion mistake."),
-                ("dedup-status", "I'm noticing the same unit conversion."),
+                ("contract-status", "I'm noticing the same unit conversion."),
             ],
         )
         self.assertEqual(sink.deltas, [])
