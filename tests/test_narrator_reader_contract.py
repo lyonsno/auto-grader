@@ -333,6 +333,44 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_checkpoint_uses_structural_mark_and_cooler_anchor_ink(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(
+            ("checkpoint", "Core issue: ozone drawing misses resonance.", None)
+        )
+        display.history.append(("line", "I'm tracing the ozone structure.", 0))
+
+        group = display.render()
+        history_panel = group.renderables[-1]
+        history_text = history_panel.renderable
+
+        checkpoint_mark_style = self._style_for_substring(history_text, "≈")
+        checkpoint_text_style = self._style_for_substring(
+            history_text,
+            "Core issue: ozone drawing misses resonance.",
+        )
+        line_style = self._style_for_substring(
+            history_text,
+            "I'm tracing the ozone structure.",
+        )
+
+        self.assertNotEqual(
+            checkpoint_mark_style,
+            "grey50",
+            "checkpoint mark should carry its own structural ink instead of reading like a dead placeholder gutter",
+        )
+        self.assertNotEqual(
+            checkpoint_text_style,
+            line_style,
+            "checkpoint text should not read like an ordinary thought line",
+        )
+        self.assertGreater(
+            self._hex_luminance(checkpoint_text_style),
+            self._hex_luminance(line_style),
+            "checkpoint text should sit a little brighter and more anchored than an ordinary thought line",
+        )
+
     def test_wrapped_history_lines_consume_visual_row_budget(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))
