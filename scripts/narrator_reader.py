@@ -82,11 +82,16 @@ _FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
 _FOCUS_PREVIEW_COMPANION_SCALE = 0.69
 _FOCUS_PREVIEW_PENDING_FPS = 8.0
 _FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
-_FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)
-_FOCUS_PREVIEW_INK_RGB = (36, 40, 48)
+_FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)  # used only by the transition
+                                             # (pending) glyph overlay; the
+                                             # steady-state renderer uses
+                                             # the harder colors below
+# Legibility-first steady-state palette. High luminance delta against the
+# panel background so binary-thresholded cells read as page, not as mush.
+# Aesthetics are explicitly deferred — pick whatever reads cleanest first.
+_FOCUS_PREVIEW_HARD_INK_RGB = (50, 54, 62)
+_FOCUS_PREVIEW_HARD_PAPER_RGB = (238, 232, 220)
 _FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
-_FOCUS_PREVIEW_GLYPH_RAMP = " .,:;-=+*#%@"
-_FOCUS_PREVIEW_STEADY_RAMP = " .,:-="
 _FOCUS_PREVIEW_OVERLAY_RGBS = (
     (108, 122, 154),
     (132, 115, 86),
@@ -659,12 +664,75 @@ def _focus_preview_budget(
     return width_chars, height_rows
 
 
+def _otsu_threshold(luminances) -> float:
+    """Classic Otsu's method: pick the luminance cut that maximizes
+    between-class variance across a 256-bin histogram.
+
+    Returns a float threshold in [0, 255]. Degenerate inputs (empty,
+    uniform) return a safe midpoint rather than raising — the renderer
+    treats such crops as "no ink" and the exact cut doesn't matter.
+    """
+    histogram = [0] * 256
+    total = 0
+    for value in luminances:
+        bucket = int(value)
+        if bucket < 0:
+            bucket = 0
+        elif bucket > 255:
+            bucket = 255
+        histogram[bucket] += 1
+        total += 1
+    if total == 0:
+        return 127.5
+
+    sum_total = 0.0
+    for i in range(256):
+        sum_total += i * histogram[i]
+
+    sum_bg = 0.0
+    weight_bg = 0
+    best_variance = -1.0
+    best_threshold = 127.5
+    for i in range(256):
+        weight_bg += histogram[i]
+        if weight_bg == 0:
+            continue
+        weight_fg = total - weight_bg
+        if weight_fg == 0:
+            break
+        sum_bg += i * histogram[i]
+        mean_bg = sum_bg / weight_bg
+        mean_fg = (sum_total - sum_bg) / weight_fg
+        variance = weight_bg * weight_fg * (mean_bg - mean_fg) ** 2
+        if variance > best_variance:
+            best_variance = variance
+            best_threshold = float(i)
+    # Return the upper edge of the chosen histogram bin. The histogram
+    # is integer-binned (`int(luma)`), so any float luma that fell into
+    # bin `i` is in [i, i+1). Returning `i + 1.0` means strict `<` at
+    # the caller correctly classifies every member of that bin as
+    # background (the darker / ink class).
+    return best_threshold + 1.0
+
+
 def _build_focus_preview_pixels(
     png_bytes: bytes,
     *,
     max_width_chars: int,
     max_height_rows: int,
 ) -> list[list[tuple[int, int, int]]]:
+    """Sample a source crop into a grid of average-RGB pixels.
+
+    The returned grid has exactly ``target_height`` rows and
+    ``target_width`` cols, where those dimensions are ``_scaled_preview_size``
+    applied to the source. The caller controls whether this is
+    "one row per terminal row" or "two rows per terminal row" (for
+    half-blocks) by passing the appropriate ``max_height_rows``.
+
+    No tone mapping. No filmic. No paper/ink lerp. The downstream
+    renderer is responsible for turning these raw samples into
+    whatever output surface is appropriate.
+    """
     pix = fitz.Pixmap(png_bytes)
     target_width, target_height = _scaled_preview_size(
         pix.width,
@@ -676,43 +744,17 @@ def _build_focus_preview_pixels(
     for y in range(target_height):
         row: list[tuple[int, int, int]] = []
         for x in range(target_width):
-            row.append(
-                _tone_focus_preview_rgb(
-                    _sample_preview_rgb(pix, x, y, target_width, target_height)
-                )
-            )
+            row.append(_sample_preview_rgb(pix, x, y, target_width, target_height))
         pixels.append(row)
     return pixels
 
 
-def _tone_focus_preview_rgb(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Compress document whites and map toward a terminal-friendly paper/ink range."""
-    normalized = [channel / 255.0 for channel in rgb]
-    compressed = [_aces_filmic(channel) for channel in normalized]
-    luminance = (
-        (0.299 * compressed[0])
-        + (0.587 * compressed[1])
-        + (0.114 * compressed[2])
-    )
-    paper_mix = min(1.0, (luminance ** 1.18) * 0.88)
-    base = _interp_rgb(_FOCUS_PREVIEW_INK_RGB, _FOCUS_PREVIEW_PAPER_RGB, paper_mix)
-    chroma_mix = 0.10
-    return tuple(
-        int(round(_clamp((base[idx] * (1.0 - chroma_mix)) + (compressed[idx] * 255.0 * chroma_mix), 0.0, 255.0)))
-        for idx in range(3)
-    )
-
-
-def _aces_filmic(value: float) -> float:
-    numerator = value * ((2.51 * value) + 0.03)
-    denominator = value * ((2.43 * value) + 0.59) + 0.14
-    if denominator <= 0.0:
-        return 0.0
-    return _clamp(numerator / denominator, 0.0, 1.0)
-
-
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _pixel_luma(rgb: tuple[int, int, int]) -> float:
+    return (0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2])
 
 
 def _render_focus_preview_pixels(
@@ -721,110 +763,168 @@ def _render_focus_preview_pixels(
     now: float | None = None,
     pending: bool = False,
 ) -> Group:
-    rows: list[Text] = []
+    """Render a sampled pixel grid as a Rich Group.
+
+    ``pixels`` is expected to be sampled at 2× vertical density relative
+    to the terminal row budget — each pair of source rows (2y, 2y+1)
+    becomes one terminal row. The steady-state renderer uses that pair
+    as the top and bottom halves of a half-block (▀). The pending
+    (transition) renderer averages each pair back down to a single
+    per-cell RGB and then runs its existing glyph-overlay animation.
+    """
     now = time.monotonic() if now is None else now
-    luminances = [
-        ((0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2])) / 255.0
-        for row in pixels
-        for rgb in row
-    ]
-    if luminances:
-        luminance_floor = min(luminances)
-        luminance_ceil = max(luminances)
-    else:
-        luminance_floor = 0.0
-        luminance_ceil = 1.0
-    luminance_span = max(0.10, luminance_ceil - luminance_floor)
+    if pending:
+        return _render_focus_preview_pending(pixels, now=now)
+    return _render_focus_preview_steady(pixels)
 
-    def _display_luminance(rgb: tuple[int, int, int]) -> float:
-        luminance = (
-            (0.299 * rgb[0])
-            + (0.587 * rgb[1])
-            + (0.114 * rgb[2])
-        ) / 255.0
-        normalized = _clamp(
-            (luminance - luminance_floor) / luminance_span,
-            0.0,
-            1.0,
-        )
-        if (luminance_ceil - luminance_floor) < 0.04:
-            return luminance
-        return (0.68 * normalized) + (0.32 * luminance)
 
-    for char_row, pixel_row in enumerate(pixels):
+def _render_focus_preview_steady(
+    pixels: list[list[tuple[int, int, int]]],
+) -> Group:
+    """Legibility-first steady-state renderer.
+
+    Binary Otsu threshold across all sampled luminances, half-block
+    cells (one terminal cell = one top half-pixel + one bottom
+    half-pixel), hard ink/paper palette. No tone mapping, no lerp,
+    no gradient. Ugly is acceptable; illegible is not.
+    """
+    if not pixels or not pixels[0]:
+        return Group()
+
+    source_height = len(pixels)
+    source_width = len(pixels[0])
+
+    # Collect all luminances for Otsu. Use ink and paper colors
+    # that are actually visually distinct from the panel background,
+    # so thresholded cells read as "page" and not as "void".
+    luminances = [_pixel_luma(rgb) for row in pixels for rgb in row]
+    threshold = _otsu_threshold(luminances)
+
+    # If the crop is effectively single-tone (variance too low for Otsu
+    # to find a meaningful cut), fall back to marking everything as paper.
+    # This keeps blank regions rendering as page instead of as garbled noise.
+    lum_span = max(luminances) - min(luminances) if luminances else 0.0
+    degenerate = lum_span < 12.0
+
+    ink_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_INK_RGB)
+    paper_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_PAPER_RGB)
+
+    def _color_for(rgb: tuple[int, int, int]) -> str:
+        if degenerate:
+            return paper_hex
+        return ink_hex if _pixel_luma(rgb) < threshold else paper_hex
+
+    rows: list[Text] = []
+    # Walk source rows in pairs. If the source has an odd number of rows,
+    # the dangling final row pairs with itself (top == bottom).
+    y = 0
+    while y < source_height:
+        top_row = pixels[y]
+        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
+        text = Text(no_wrap=True, overflow="ignore")
+        for col in range(source_width):
+            top_color = _color_for(top_row[col])
+            bottom_color = (
+                _color_for(bottom_row[col])
+                if col < len(bottom_row)
+                else top_color
+            )
+            # ▀ = U+2580 UPPER HALF BLOCK. Foreground is the top half,
+            # background is the bottom half. Exactly what we want for a
+            # binary-threshold image surface.
+            text.append("\u2580", style=f"{top_color} on {bottom_color}")
+        rows.append(text)
+        y += 2
+    return Group(*rows)
+
+
+def _render_focus_preview_pending(
+    pixels: list[list[tuple[int, int, int]]],
+    *,
+    now: float,
+) -> Group:
+    """Transition-layer renderer (unchanged animation, now fed from a
+    2×-vertical pixel grid by averaging row pairs back down to 1×)."""
+    if not pixels or not pixels[0]:
+        return Group()
+
+    # Average pairs of sampled rows back down to one row per terminal
+    # row, so the existing glyph-overlay animation keeps working
+    # against the density it was tuned for.
+    source_height = len(pixels)
+    source_width = len(pixels[0])
+    collapsed: list[list[tuple[int, int, int]]] = []
+    y = 0
+    while y < source_height:
+        top_row = pixels[y]
+        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
+        merged: list[tuple[int, int, int]] = []
+        for col in range(source_width):
+            top_rgb = top_row[col]
+            bottom_rgb = bottom_row[col] if col < len(bottom_row) else top_rgb
+            merged.append(
+                (
+                    (top_rgb[0] + bottom_rgb[0]) // 2,
+                    (top_rgb[1] + bottom_rgb[1]) // 2,
+                    (top_rgb[2] + bottom_rgb[2]) // 2,
+                )
+            )
+        collapsed.append(merged)
+        y += 2
+
+    rows: list[Text] = []
+    for char_row, pixel_row in enumerate(collapsed):
         row = Text(no_wrap=True, overflow="ignore")
         for col, rgb in enumerate(pixel_row):
             avg_rgb = rgb
-            if pending:
-                flow = 0.5 + (
-                    0.5
-                    * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
-                )
-                pulse = 0.5 + (
-                    0.5
-                    * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
-                )
-                retention = 0.54 + (0.18 * flow)
-                toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, avg_rgb, retention)
-                avg_luma = (
-                    (0.299 * toned_rgb[0])
-                    + (0.587 * toned_rgb[1])
-                    + (0.114 * toned_rgb[2])
-                )
-                glyph_gate = 0.38 + (0.20 * pulse)
-                glyph_drive = (0.58 * flow) + (0.25 * pulse)
-                if glyph_drive > glyph_gate:
-                    char_phase = (0.62 * flow) + (0.38 * (avg_luma / 255.0))
-                    char_index = min(
-                        len(_FOCUS_PREVIEW_OVERLAY_CHARS) - 1,
-                        int(char_phase * len(_FOCUS_PREVIEW_OVERLAY_CHARS)),
-                    )
-                    palette_index = min(
-                        len(_FOCUS_PREVIEW_OVERLAY_RGBS) - 1,
-                        int((avg_luma / 255.0) * len(_FOCUS_PREVIEW_OVERLAY_RGBS)),
-                    )
-                    fg_rgb = _interp_rgb(
-                        _FOCUS_PREVIEW_OVERLAY_RGBS[palette_index],
-                        _FOCUS_PREVIEW_PAPER_RGB,
-                        0.16 + (0.18 * flow),
-                    )
-                    bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
-                    row.append(
-                        _FOCUS_PREVIEW_OVERLAY_CHARS[char_index],
-                        style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
-                    )
-                    continue
-                avg_rgb = toned_rgb
-
-            display = _display_luminance(avg_rgb)
-            bg_rgb = _interp_rgb(
-                _FOCUS_PREVIEW_BG_RGB,
-                avg_rgb,
-                0.10 + (0.42 * display),
+            flow = 0.5 + (
+                0.5
+                * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
             )
-            if display > 0.84:
-                bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, bg_rgb, 0.94)
+            pulse = 0.5 + (
+                0.5
+                * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
+            )
+            retention = 0.54 + (0.18 * flow)
+            toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, avg_rgb, retention)
+            avg_luma = (
+                (0.299 * toned_rgb[0])
+                + (0.587 * toned_rgb[1])
+                + (0.114 * toned_rgb[2])
+            )
+            glyph_gate = 0.38 + (0.20 * pulse)
+            glyph_drive = (0.58 * flow) + (0.25 * pulse)
+            if glyph_drive > glyph_gate:
+                char_phase = (0.62 * flow) + (0.38 * (avg_luma / 255.0))
+                char_index = min(
+                    len(_FOCUS_PREVIEW_OVERLAY_CHARS) - 1,
+                    int(char_phase * len(_FOCUS_PREVIEW_OVERLAY_CHARS)),
+                )
+                palette_index = min(
+                    len(_FOCUS_PREVIEW_OVERLAY_RGBS) - 1,
+                    int((avg_luma / 255.0) * len(_FOCUS_PREVIEW_OVERLAY_RGBS)),
+                )
+                fg_rgb = _interp_rgb(
+                    _FOCUS_PREVIEW_OVERLAY_RGBS[palette_index],
+                    _FOCUS_PREVIEW_PAPER_RGB,
+                    0.16 + (0.18 * flow),
+                )
+                bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
+                row.append(
+                    _FOCUS_PREVIEW_OVERLAY_CHARS[char_index],
+                    style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
+                )
+                continue
+            # Non-glyph cells during the transition: render as a faded
+            # block color. The transition animation no longer tries to
+            # produce a legible steady-state image underneath itself.
+            bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
             row.append(
                 " ",
                 style=f"{_rgb_to_hex(bg_rgb)} on {_rgb_to_hex(bg_rgb)}",
             )
         rows.append(row)
     return Group(*rows)
-
-
-def _render_focus_preview_terminal(
-    png_bytes: bytes,
-    *,
-    max_width_chars: int = _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
-    max_height_rows: int = _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
-) -> Group:
-    """Render a PNG preview as a terminal-safe literal image surface."""
-    pixels = _build_focus_preview_pixels(
-        png_bytes,
-        max_width_chars=max_width_chars,
-        max_height_rows=max_height_rows,
-    )
-    return _render_focus_preview_pixels(pixels)
 
 
 def _scaled_preview_size(
@@ -2435,10 +2535,14 @@ class PaintDryDisplay:
                 term_width = None
         budget_width, budget_height = _focus_preview_budget(term_width)
         self.focus_preview_png = png_bytes
+        # Sample at 2× vertical density so the steady-state renderer can
+        # pack a top/bottom half-pixel pair into each terminal row via
+        # half-block (▀) cells. The pending/transition renderer averages
+        # pairs back down to its own density internally.
         self.focus_preview_pixels = _build_focus_preview_pixels(
             png_bytes,
             max_width_chars=budget_width,
-            max_height_rows=budget_height,
+            max_height_rows=budget_height * 2,
         )
         self.focus_preview_renderable = _render_focus_preview_pixels(
             self.focus_preview_pixels

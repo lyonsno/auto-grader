@@ -29,7 +29,7 @@ from scripts.narrator_reader import (
     _scorebug_big_value_rows,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
-    _tone_focus_preview_rgb,
+    _otsu_threshold,
     _undulation_hue_deg,
     _render_layer_index,
 )
@@ -280,20 +280,6 @@ class NarratorReaderContract(unittest.TestCase):
             "pending preview should use a dim character veil rather than only geometric block shading",
         )
 
-    def test_focus_preview_tone_map_compresses_harsh_whites(self):
-        toned = _tone_focus_preview_rgb((255, 255, 255))
-
-        self.assertLess(
-            max(toned),
-            190,
-            "preview whites should compress below terminal-white so document crops stop blasting the dark UI",
-        )
-        self.assertGreaterEqual(
-            toned[0],
-            toned[2],
-            "preview toning should stay at least slightly warm-neutral rather than shifting colder than the interface",
-        )
-
     def test_focus_preview_is_rasterized_once_per_item_not_each_frame(self):
         display = self._make_display()
         sentinel_pixels = [[(10, 20, 30)]]
@@ -312,12 +298,12 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(build_mock.call_count, 1)
 
-    def test_focus_preview_samples_at_literal_cell_density_for_steady_rendering(self):
+    def test_focus_preview_samples_at_double_vertical_density_for_half_blocks(self):
         display = self._make_display()
 
         with mock.patch(
             "scripts.narrator_reader._build_focus_preview_pixels",
-            return_value=[[(10, 20, 30)]],
+            return_value=[[(10, 20, 30)], [(10, 20, 30)]],
         ) as build_mock:
             display.on_focus_preview(
                 self._make_png(width=48, height=72),
@@ -332,8 +318,8 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(call["max_width_chars"], budget_width)
         self.assertEqual(
             call["max_height_rows"],
-            budget_height,
-            "steady-state preview should sample at literal cell density so the renderer paints a direct image surface instead of packing multi-pixel masks into each terminal cell",
+            2 * budget_height,
+            "half-block renderer should sample at 2× the terminal row budget so each terminal row can encode a top/bottom half-pixel pair",
         )
 
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
@@ -517,7 +503,8 @@ class NarratorReaderContract(unittest.TestCase):
             "source-aware budgeting should buy more vertical detail too, not only horizontal width",
         )
 
-    def test_focus_preview_steady_state_uses_literal_background_cells(self):
+    def test_focus_preview_steady_state_uses_half_block_image_cells(self):
+        # 16 sampled rows = 8 terminal rows when half-blocks pair them up.
         pixels = []
         for row in range(16):
             rows: list[tuple[int, int, int]] = []
@@ -533,34 +520,50 @@ class NarratorReaderContract(unittest.TestCase):
         )
         plain = _extract_plain(renderable)
 
+        # Steady state must be a static image surface, not animated glyph
+        # texture: only half-block characters (and spaces for all-paper
+        # regions) are allowed.
         self.assertTrue(
-            set(plain.replace("\n", "")) <= {" "},
-            "steady-state previews should render as a literal image surface, not as visible texture glyphs",
+            set(plain.replace("\n", "")) <= {" ", "\u2580"},
+            "steady-state previews should render as half-block image cells, not as visible texture glyphs",
         )
         self.assertEqual(
             len(plain.splitlines()),
-            16,
-            "steady-state preview should dedicate one terminal row to each sampled image row",
+            8,
+            "half-block renderer should collapse each pair of sampled image rows into one terminal row",
         )
 
-    def test_focus_preview_bright_paper_stays_quiet_in_steady_state(self):
+    def test_focus_preview_steady_state_emits_foreground_and_background_per_cell(self):
+        # A vertical 2-column ink bar on paper should produce cells that
+        # carry *both* a foreground (top half-pixel) and a background
+        # (bottom half-pixel) color — that's what half-blocks are for.
+        pixels = []
+        for row in range(16):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(24):
+                if col in {12, 13}:
+                    rows.append((30, 30, 30))
+                else:
+                    rows.append((230, 225, 215))
+            pixels.append(rows)
+
         renderable = _render_focus_preview_pixels(
-            [[(220, 214, 206) for _ in range(24)] for _ in range(16)],
+            pixels,
             now=0.0,
             pending=False,
         )
-        plain = _extract_plain(renderable)
-
+        styles_with_both = [
+            span.style
+            for row in renderable.renderables
+            for span in row.spans
+            if isinstance(span.style, str) and " on " in span.style
+        ]
         self.assertTrue(
-            set(plain.replace("\n", "")) <= {" ", "\u2800"},
-            "bright paper should render as a mostly blank image field rather than textured glyphs",
-        )
-        self.assertFalse(
-            any(ch in plain for ch in ".,:-=+*#%@▀▄"),
-            "bright paper should not light up with textural or chunky block glyphs in steady state",
+            styles_with_both,
+            "half-block cells should carry fg+bg style pairs representing the top and bottom sampled rows",
         )
 
-    def test_focus_preview_dark_strokes_preserve_per_cell_background_detail(self):
+    def test_focus_preview_dark_strokes_produce_spatial_variation(self):
         pixels = []
         for row in range(16):
             rows: list[tuple[int, int, int]] = []
@@ -588,84 +591,15 @@ class NarratorReaderContract(unittest.TestCase):
             span_styles,
             "steady-state image cells should carry foreground/background styles so adjacent pixel rows survive as an image",
         )
-        bg_colors = [style.split(" on ")[1] for style in span_styles]
-        self.assertTrue(
-            len(set(bg_colors)) > 2,
-            "a dark stroke against lighter paper should still create multiple distinct cell tones instead of one flat slab",
-        )
-
-    def test_focus_preview_steady_state_keeps_background_field_restrained(self):
-        pixels = []
-        for row in range(16):
-            rows: list[tuple[int, int, int]] = []
-            for col in range(24):
-                if col in {12, 13} and 2 <= row <= 13:
-                    rows.append((70, 72, 76))
-                elif col < 12:
-                    rows.append((220, 214, 206))
-                else:
-                    rows.append((190, 184, 176))
-            pixels.append(rows)
-
-        renderable = _render_focus_preview_pixels(
-            pixels,
-            now=0.0,
-            pending=False,
-        )
-        bg_sums: list[int] = []
-        for row in renderable.renderables:
-            for span in row.spans:
-                if isinstance(span.style, str) and " on " in span.style:
-                    _fg, bg = span.style.split(" on ")
-                    bg_rgb = (
-                        int(bg[1:3], 16),
-                        int(bg[3:5], 16),
-                        int(bg[5:7], 16),
-                    )
-                    bg_sums.append(sum(bg_rgb))
-
-        self.assertLess(
-            max(bg_sums) - min(bg_sums),
-            260,
-            "steady-state preview backgrounds should stay relatively restrained so large blurry gray plates do not dominate the image",
-        )
-
-    def test_focus_preview_low_contrast_document_still_shows_structure(self):
-        pixels = []
-        for row in range(20):
-            rows: list[tuple[int, int, int]] = []
-            for col in range(36):
-                if row in {0, 19} or col in {0, 35}:
-                    value = 62
-                elif row in {4, 12}:
-                    value = 96
-                else:
-                    value = 144 + ((col % 3) * 4)
-                rows.append((value, value, value))
-            pixels.append(rows)
-
-        renderable = _render_focus_preview_pixels(
-            pixels,
-            now=0.0,
-            pending=False,
-        )
-        plain = _extract_plain(renderable)
-        lines = plain.splitlines()
-
-        self.assertTrue(
-            any(line for line in lines),
-            "low-contrast previews should still produce a visible image field",
-        )
-        span_styles = [
-            span.style
-            for row in renderable.renderables
-            for span in row.spans
-            if isinstance(span.style, str) and " on " in span.style
-        ]
-        self.assertGreater(
-            len({style.split(" on ")[1] for style in span_styles}),
-            4,
-            "low-contrast document previews should still preserve multiple background tones instead of collapsing into one flat field",
+        # Binary-threshold renderer: a dark stroke against lighter paper must
+        # produce AT LEAST two distinct cell styles (the ink cells and the
+        # paper cells). Anything less means the stroke was swallowed by
+        # thresholding and the renderer is producing a uniform slab again,
+        # which would be a regression to the old mush behavior.
+        self.assertGreaterEqual(
+            len(set(span_styles)),
+            2,
+            "a dark stroke against lighter paper must produce spatial variation in output cells (ink cells AND paper cells), not a single uniform slab",
         )
 
     def test_focus_preview_sampling_preserves_thin_dark_strokes(self):
@@ -694,6 +628,95 @@ class NarratorReaderContract(unittest.TestCase):
             min(center_luminances),
             0.45,
             "downsampling should preserve a materially darker center stripe instead of averaging thin ink strokes back into the paper",
+        )
+
+    def test_otsu_threshold_separates_bimodal_distribution(self):
+        # Two clear clusters: 200 samples around 40 (ink), 200 around 220 (paper).
+        luminances = [40.0] * 200 + [220.0] * 200
+        threshold = _otsu_threshold(luminances)
+        self.assertGreater(
+            threshold,
+            40.0,
+            "Otsu threshold must fall above the ink cluster",
+        )
+        self.assertLess(
+            threshold,
+            220.0,
+            "Otsu threshold must fall below the paper cluster",
+        )
+
+    def test_otsu_threshold_handles_uniform_input(self):
+        # Degenerate case: all one value. The function must not crash;
+        # the exact returned threshold is unconstrained since the input
+        # is not bimodal, but it should be a real finite number.
+        threshold = _otsu_threshold([128.0] * 50)
+        self.assertIsInstance(threshold, (int, float))
+        self.assertTrue(math.isfinite(float(threshold)))
+
+    def test_half_block_pipeline_preserves_ink_position(self):
+        # End-to-end invariant: if we render a pure-black horizontal strip
+        # across the TOP half of a pure-white field, the rendered output
+        # must have ink-colored cells in the upper rows and paper-colored
+        # cells in the lower rows. This is the single most important
+        # legibility guarantee — ink position through the pipeline.
+        width = 96
+        height = 96
+        paper = (235, 230, 222)
+        ink = (15, 15, 15)
+        buf = bytearray(paper * (width * height))
+        for y in range(0, height // 2):
+            for x in range(width):
+                offset = (y * width + x) * 3
+                buf[offset : offset + 3] = bytes(ink)
+        pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(buf), False)
+
+        pixels = _build_focus_preview_pixels(
+            pix.tobytes("png"),
+            max_width_chars=12,
+            # 12 terminal rows = 24 sampled rows (half-blocks = 2× vertical)
+            max_height_rows=24,
+        )
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+
+        def _row_avg_luma(row_text) -> float:
+            # Collect all bg colors from all spans in the row; also treat
+            # fg (top half-pixel) as contributing to the visible luminance
+            # of that terminal row. For a row entirely above the ink/paper
+            # boundary, both fg and bg should be ink-dark.
+            lumas: list[float] = []
+            for span in row_text.spans:
+                if not isinstance(span.style, str) or " on " not in span.style:
+                    continue
+                fg, bg = span.style.split(" on ")
+                for hex_color in (fg, bg):
+                    hex_color = hex_color.lstrip("#")
+                    if len(hex_color) != 6:
+                        continue
+                    r = int(hex_color[0:2], 16)
+                    g = int(hex_color[2:4], 16)
+                    b = int(hex_color[4:6], 16)
+                    lumas.append(0.299 * r + 0.587 * g + 0.114 * b)
+            if not lumas:
+                return float("nan")
+            return sum(lumas) / len(lumas)
+
+        rows = list(renderable.renderables)
+        self.assertGreaterEqual(
+            len(rows),
+            6,
+            "pipeline should emit multiple terminal rows for a 24-sample-row input",
+        )
+        top_luma = _row_avg_luma(rows[1])  # skip row 0 to avoid boundary
+        bottom_luma = _row_avg_luma(rows[-2])
+        self.assertLess(
+            top_luma,
+            bottom_luma - 80,
+            "ink strip at the top of the source must render as distinctly darker "
+            "terminal rows than the paper at the bottom",
         )
 
     def test_scaled_preview_size_respects_terminal_row_budget_in_glyph_mode(self):
