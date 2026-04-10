@@ -145,8 +145,12 @@ Current implementation status on the MC/OpenCV prerequisite lane:
 - `auto_grader.scan_readback` now performs the first OpenCV-facing readback
   slice by decoding duplicated page-identity QR payloads from scan images and
   rejecting mismatched payload pairs as ambiguous
-- page registration and bubble interpretation are still future work; they should
-  extend the same page artifact rather than inventing a second layout truth
+- `auto_grader.scan_registration` now performs the first page-registration
+  slice by using the filled corner markers to normalize a skewed page back into
+  canonical page aspect and marker-aligned page space while preserving practical
+  scan resolution
+- bubble interpretation is still future work; it should extend the same page
+  artifact rather than inventing a second layout truth
 
 ### 4. Ingestion (Scans -> Identified pages)
 
