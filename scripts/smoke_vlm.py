@@ -50,11 +50,24 @@ _TRICKY_TEST_SET_ID = "tricky-v1"
 
 
 def _progress(i: int, total: int, item, pred):
-    mark = "=" if pred.model_score == item.professor_score else "X"
+    # Mark against truth_score (corrected when present, else professor_score)
+    # so the live display agrees with score_predictions for corrected items.
+    # Comparing against professor_score would make the live mark contradict
+    # the eval report for items where a human-investigated correction has
+    # been recorded.
+    truth = item.truth_score
+    mark = "=" if pred.model_score == truth else "X"
+    # Display the truth baseline; when a correction is present, also show
+    # the historical professor_score in parens so operators can see both
+    # the original prof mark and the corrected value at a glance.
+    if item.corrected_score is not None and item.corrected_score != item.professor_score:
+        baseline = f"truth={truth}/{item.max_points} (prof={item.professor_score})"
+    else:
+        baseline = f"prof={item.professor_score}/{item.max_points}"
     print(
         f"  [{i}/{total}] {item.exam_id}/{item.question_id} "
         f"({item.answer_type}) "
-        f"prof={item.professor_score}/{item.max_points} "
+        f"{baseline} "
         f"model={pred.model_score} conf={pred.model_confidence:.2f} [{mark}]"
     )
 
