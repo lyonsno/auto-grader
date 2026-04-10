@@ -298,7 +298,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(build_mock.call_count, 1)
 
-    def test_focus_preview_samples_at_double_row_density_for_half_block_rendering(self):
+    def test_focus_preview_samples_at_braille_density_for_steady_rendering(self):
         display = self._make_display()
 
         with mock.patch(
@@ -315,11 +315,11 @@ class NarratorReaderContract(unittest.TestCase):
         budget_width, budget_height = _focus_preview_budget(
             display._console.width,
         )
-        self.assertEqual(call["max_width_chars"], budget_width)
+        self.assertEqual(call["max_width_chars"], budget_width * 2)
         self.assertEqual(
             call["max_height_rows"],
-            budget_height * 2,
-            "steady-state preview should sample at double row density so the packed terminal image has more vertical detail than a one-row-per-pixel-field render",
+            budget_height * 4,
+            "steady-state preview should sample at braille density so the packed terminal image has meaningfully more vertical detail than a one-row-per-pixel-field render",
         )
 
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
@@ -503,9 +503,9 @@ class NarratorReaderContract(unittest.TestCase):
             "source-aware budgeting should buy more vertical detail too, not only horizontal width",
         )
 
-    def test_focus_preview_steady_state_uses_half_block_image_cells(self):
+    def test_focus_preview_steady_state_uses_braille_image_cells(self):
         pixels = []
-        for row in range(12):
+        for row in range(16):
             rows: list[tuple[int, int, int]] = []
             for col in range(24):
                 value = 42 + ((row * 17 + col * 11) % 180)
@@ -520,41 +520,43 @@ class NarratorReaderContract(unittest.TestCase):
         plain = _extract_plain(renderable)
 
         self.assertTrue(
-            any(ch in plain for ch in "▀▄"),
-            "steady-state previews should render as a packed image field instead of a punctuation texture",
+            any(0x2800 <= ord(ch) <= 0x28FF for ch in plain if ch != "\n"),
+            "steady-state previews should render as a packed braille image field instead of punctuation or chunky block cells",
         )
         self.assertEqual(
             len(plain.splitlines()),
-            6,
-            "steady-state preview should pack two pixel rows into one terminal row",
+            4,
+            "steady-state preview should pack four sampled rows into one terminal row",
         )
 
     def test_focus_preview_bright_paper_stays_quiet_in_steady_state(self):
         renderable = _render_focus_preview_pixels(
-            [[(220, 214, 206) for _ in range(24)] for _ in range(12)],
+            [[(220, 214, 206) for _ in range(24)] for _ in range(16)],
             now=0.0,
             pending=False,
         )
         plain = _extract_plain(renderable)
 
         self.assertTrue(
-            set(plain.replace("\n", "")) <= {" ", "▀", "▄"},
-            "bright paper should render as quiet image cells rather than punctuation texture",
+            set(plain.replace("\n", "")) <= {" ", "\u2800"},
+            "bright paper should render as a mostly blank image field rather than textured glyphs",
         )
         self.assertFalse(
-            any(ch in plain for ch in ".,:-=+*#%@"),
-            "bright paper should not light up with textural glyphs in steady state",
+            any(ch in plain for ch in ".,:-=+*#%@▀▄"),
+            "bright paper should not light up with textural or chunky block glyphs in steady state",
         )
 
-    def test_focus_preview_dark_strokes_preserve_fg_bg_separation(self):
+    def test_focus_preview_dark_strokes_preserve_braille_detail_and_fg_bg_separation(self):
         pixels = []
-        for row in range(12):
+        for row in range(16):
             rows: list[tuple[int, int, int]] = []
-            for _col in range(24):
-                if row % 2 == 0:
+            for col in range(24):
+                if col in {12, 13} and 2 <= row <= 13:
+                    rows.append((70, 72, 76))
+                elif col < 12:
                     rows.append((220, 214, 206))
                 else:
-                    rows.append((70, 72, 76))
+                    rows.append((190, 184, 176))
             pixels.append(rows)
 
         renderable = _render_focus_preview_pixels(
@@ -562,28 +564,33 @@ class NarratorReaderContract(unittest.TestCase):
             now=0.0,
             pending=False,
         )
-        first_row = renderable.renderables[0]
-        first_style = first_row.spans[0].style
-
+        span_styles = [
+            span.style
+            for row in renderable.renderables
+            for span in row.spans
+            if isinstance(span.style, str) and " on " in span.style
+        ]
         self.assertTrue(
-            isinstance(first_style, str) and " on " in first_style,
-            "steady-state image cells should carry distinct foreground/background colors so adjacent pixel rows survive as an image",
+            span_styles,
+            "steady-state image cells should carry foreground/background styles so adjacent pixel rows survive as an image",
         )
-        fg, bg = first_style.split(" on ")
-        self.assertNotEqual(
-            fg,
-            bg,
+        self.assertTrue(
+            any(fg != bg for fg, bg in (style.split(" on ") for style in span_styles)),
             "a dark stroke against lighter paper should not collapse to one flat cell color",
+        )
+        self.assertTrue(
+            any(0x2800 <= ord(ch) <= 0x28FF for ch in _extract_plain(renderable) if ch != "\n"),
+            "dark structure should surface as braille detail instead of only flat fills",
         )
 
     def test_focus_preview_low_contrast_document_still_shows_structure(self):
         pixels = []
-        for row in range(18):
+        for row in range(20):
             rows: list[tuple[int, int, int]] = []
             for col in range(36):
-                if row in {0, 17} or col in {0, 35}:
+                if row in {0, 19} or col in {0, 35}:
                     value = 62
-                elif row in {4, 11}:
+                elif row in {4, 12}:
                     value = 96
                 else:
                     value = 144 + ((col % 3) * 4)
@@ -603,8 +610,8 @@ class NarratorReaderContract(unittest.TestCase):
             "low-contrast previews should still produce a visible image field",
         )
         self.assertTrue(
-            any(ch in plain for ch in "▀▄"),
-            "low-contrast document previews should still render as packed image cells instead of punctuation texture",
+            any(0x2800 <= ord(ch) <= 0x28FF for ch in plain if ch != "\n"),
+            "low-contrast document previews should still render as packed braille image cells instead of punctuation texture",
         )
 
     def test_focus_preview_sampling_preserves_thin_dark_strokes(self):
