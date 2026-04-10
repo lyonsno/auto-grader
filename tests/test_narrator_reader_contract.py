@@ -689,6 +689,28 @@ class NarratorReaderContract(unittest.TestCase):
             "the 4 glyph should keep a straight right stem on the bottom row instead of flaring into a T-shape",
         )
 
+    def test_scorebug_one_glyph_uses_upper_cap_and_full_stem(self):
+        top, middle, bottom = _scorebug_big_value_rows("1.0")
+
+        self.assertIn(
+            "╺╗ ",
+            top,
+            "the 1 glyph should carry its serif/cap in the upper row instead of reading as a thin post with all the weight at the bottom",
+        )
+        self.assertIn(" ║ ", middle)
+        self.assertIn(" ║ ", bottom)
+
+    def test_scorebug_seven_glyph_keeps_chunky_upper_hook(self):
+        top, middle, bottom = _scorebug_big_value_rows("7.0")
+
+        self.assertIn("╔═╗", top)
+        self.assertIn(
+            " ╔╝",
+            middle,
+            "the 7 glyph should keep a chunkier upper hook instead of dropping immediately into a thin centered post",
+        )
+        self.assertIn(" ║ ", bottom)
+
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
         display = self._make_display()
         display.on_session_meta(
