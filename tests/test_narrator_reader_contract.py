@@ -547,7 +547,7 @@ class NarratorReaderContract(unittest.TestCase):
     def test_scorebug_five_glyph_reads_as_open_then_hooked_five(self):
         top, middle, bottom = _scorebug_big_value_rows("5.0")
 
-        self.assertIn("╔═╗", top)
+        self.assertIn("╔═ ", top)
         self.assertIn(
             "╚═╗",
             middle,
