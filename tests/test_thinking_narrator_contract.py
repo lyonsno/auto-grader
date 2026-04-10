@@ -92,6 +92,26 @@ class _RunObservedFirstPersonStatusRetryNarrator(ThinkingNarrator):
         return "I'm tracing the same unit conversion mistake."
 
 
+class _EventuallyValidStatusRetryNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+        self._status_attempts = 0
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        if "present-participle status line" in system:
+            self._status_attempts += 1
+            if self._status_attempts < 3:
+                return "I'm verifying the setup and units of the photon energy calculation."
+            text = "Rechecking the student's answer for consistency with the given energy value and mole calculation."
+            for token in text.split():
+                on_delta(token + " ")
+            return text
+        return "I'm noticing the student used negative values for energy and frequency, which is inconsistent with standard photon energy calculations."
+
+
 class _AfterActionNarrator(ThinkingNarrator):
     def __init__(self, sink: _DummySink, response: str) -> None:
         super().__init__(sink)
@@ -200,6 +220,7 @@ class ThinkingNarratorContract(unittest.TestCase):
         sink = _DummySink()
         narrator = _BadStatusRetryNarrator(sink)
         narrator.start(item_header="15-blue/fr-1")
+        narrator._prior_statuses = ["Tracing the unit conversion mistake."]
         narrator._thoughts_since_status = [
             "I'm tracing the unit conversion mistake."
         ]
@@ -220,6 +241,7 @@ class ThinkingNarratorContract(unittest.TestCase):
         sink = _DummySink()
         narrator = _RunObservedFirstPersonStatusRetryNarrator(sink)
         narrator.start(item_header="15-blue/fr-1")
+        narrator._prior_statuses = ["Tracing the unit conversion mistake."]
         narrator._thoughts_since_status = [
             "I'm tracing the same unit conversion mistake."
         ]
@@ -235,6 +257,39 @@ class ThinkingNarratorContract(unittest.TestCase):
             ],
         )
         self.assertEqual(sink.deltas, [])
+
+    def test_prestatus_contract_failures_do_not_count_as_dedup_before_first_status_lands(self):
+        sink = _DummySink()
+        narrator = _EventuallyValidStatusRetryNarrator(sink)
+        narrator.start(item_header="15-blue/fr-10b")
+        narrator._thoughts_since_status = [
+            "I'm noticing the student used negative values for energy and frequency, which is inconsistent with standard photon energy calculations."
+        ]
+
+        narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+        narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+        narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(
+            sink.drops,
+            [
+                (
+                    "contract-status",
+                    "I'm verifying the setup and units of the photon energy calculation.",
+                ),
+                (
+                    "contract-status",
+                    "I'm verifying the setup and units of the photon energy calculation.",
+                ),
+            ],
+        )
+        self.assertEqual(sink.commits, ["status"])
+        self.assertEqual(
+            narrator._prior_statuses,
+            [
+                "Rechecking the student's answer for consistency with the given energy value and mole calculation.",
+            ],
+        )
 
     def test_thought_prompt_uses_current_status_and_last_four_thoughts_only(self):
         sink = _DummySink()

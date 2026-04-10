@@ -1215,6 +1215,7 @@ class ThinkingNarrator:
                 self._lines_too_similar(full, prev)
                 for prev in prior_thoughts
             ):
+                status_established = bool(prior_statuses)
                 logger.info(
                     "Narrator: first-person summary was repetitive, retrying in status mode: %s",
                     full,
@@ -1228,20 +1229,22 @@ class ThinkingNarrator:
                     chunk, prior_statuses
                 )
                 if not status_full:
-                    with self._stats_lock:
-                        self._stat_drops_dedup += 1
-                    self._sink.write_drop("dedup", full)
+                    if status_established:
+                        with self._stats_lock:
+                            self._stat_drops_dedup += 1
+                        self._sink.write_drop("dedup", full)
                     if status_drop_reason and status_drop:
                         self._sink.write_drop(status_drop_reason, status_drop)
                     logger.info("Narrator: dropped repetitive summary: %s", full)
-                    with self._lock:
-                        self._dedupe_backoff_until = (
-                            time.monotonic() + self._dedupe_backoff_s
-                        )
-                        self._dedupe_backoff_s = min(
-                            self._dedupe_backoff_s * 2,
-                            self._DEDUP_BACKOFF_MAX_S,
-                        )
+                    if status_established:
+                        with self._lock:
+                            self._dedupe_backoff_until = (
+                                time.monotonic() + self._dedupe_backoff_s
+                            )
+                            self._dedupe_backoff_s = min(
+                                self._dedupe_backoff_s * 2,
+                                self._DEDUP_BACKOFF_MAX_S,
+                            )
                     return
                 full = status_full
                 committed_mode = "status"
