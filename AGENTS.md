@@ -2,6 +2,16 @@
 
 These repo-specific instructions supplement the global Codex defaults.
 
+## Integration protocol
+
+- If the user asks you to "manage the integration", "make an integration branch",
+  "pull everything in", or otherwise make a union smoke surface current, read
+  [docs/integration.md](/private/tmp/auto-grader-project-solipsism-0409/docs/integration.md)
+  before acting.
+- Do not declare an integration lane current from memory, from `origin/*` alone,
+  or from one sibling lane at a time. Follow the receipt-driven protocol in that
+  doc and report the result explicitly.
+
 ## Postgres contract suite
 
 - Keep `tests.test_db_postgres_contract` as a real Postgres-backed contract suite.
