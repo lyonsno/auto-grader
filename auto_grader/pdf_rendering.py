@@ -15,6 +15,8 @@ import re
 import textwrap
 from typing import Any
 
+import qrcode
+
 
 _PROMPT_OFFSET = 96
 _PROMPT_LINE_GAP = 28
@@ -156,6 +158,16 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
             )
         )
 
+    identity_qr_codes = page.get("identity_qr_codes")
+    if not isinstance(identity_qr_codes, list):
+        raise ValueError("page.identity_qr_codes must be a list")
+
+    for raw_qr_code in identity_qr_codes:
+        if not isinstance(raw_qr_code, Mapping):
+            raise ValueError("page.identity_qr_codes entries must be mappings")
+        qr_code = dict(raw_qr_code)
+        content_lines.extend(_render_qr_code(height, qr_code))
+
     questions = artifact.get("mc_questions")
     if not isinstance(questions, list):
         raise ValueError("artifact.mc_questions must be a list")
@@ -269,6 +281,70 @@ def _display_prompt(question_number: int, prompt: str) -> str:
         flags=re.IGNORECASE,
     )
     return f"{question_number}. {normalized_prompt}"
+
+
+def _render_qr_code(page_height: int | float, qr_code: Mapping[str, Any]) -> list[str]:
+    if qr_code.get("kind") != "page_identity_qr":
+        raise ValueError("identity_qr_codes.kind must be 'page_identity_qr'")
+    if qr_code.get("encoding") != "qr":
+        raise ValueError("identity_qr_codes.encoding must be 'qr'")
+
+    qr_x = _require_number(qr_code["x"], "identity_qr_code.x")
+    qr_y = _require_number(qr_code["y"], "identity_qr_code.y")
+    qr_width = _require_number(qr_code["width"], "identity_qr_code.width")
+    qr_height = _require_number(qr_code["height"], "identity_qr_code.height")
+    if qr_width != qr_height:
+        raise ValueError("identity_qr_codes must be square")
+
+    matrix = _qr_matrix(
+        str(qr_code["payload"]),
+        error_correction=str(qr_code["error_correction"]),
+        border_modules=int(qr_code["border_modules"]),
+    )
+    module_width = qr_width / len(matrix)
+    module_height = qr_height / len(matrix)
+    commands: list[str] = []
+
+    for row_index, row in enumerate(matrix):
+        for col_index, is_black in enumerate(row):
+            if not is_black:
+                continue
+            module_x = qr_x + (col_index * module_width)
+            module_y = qr_y + (row_index * module_height)
+            commands.append(
+                (
+                    f"{_pdf_number(module_x)} "
+                    f"{_pdf_number(_pdf_rect_y(page_height, module_y, module_height))} "
+                    f"{_pdf_number(module_width)} "
+                    f"{_pdf_number(module_height)} re f"
+                )
+            )
+
+    return commands
+
+
+def _qr_matrix(payload: str, *, error_correction: str, border_modules: int) -> list[list[bool]]:
+    correction_levels = {
+        "L": qrcode.constants.ERROR_CORRECT_L,
+        "M": qrcode.constants.ERROR_CORRECT_M,
+        "Q": qrcode.constants.ERROR_CORRECT_Q,
+        "H": qrcode.constants.ERROR_CORRECT_H,
+    }
+    try:
+        correction_level = correction_levels[error_correction]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported QR error correction level: {error_correction!r}"
+        ) from exc
+
+    qr = qrcode.QRCode(
+        border=border_modules,
+        error_correction=correction_level,
+        box_size=1,
+    )
+    qr.add_data(payload)
+    qr.make(fit=True)
+    return qr.get_matrix()
 
 
 def _escape_text(text: str) -> str:

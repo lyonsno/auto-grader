@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import qrcode
+
 
 def _template() -> dict:
     return {
@@ -193,6 +195,23 @@ def _pdf_number(value: int | float) -> str:
     if float(value).is_integer():
         return str(int(value))
     return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _qr_matrix(payload: str, *, error_correction: str, border_modules: int) -> list[list[bool]]:
+    correction_levels = {
+        "L": qrcode.constants.ERROR_CORRECT_L,
+        "M": qrcode.constants.ERROR_CORRECT_M,
+        "Q": qrcode.constants.ERROR_CORRECT_Q,
+        "H": qrcode.constants.ERROR_CORRECT_H,
+    }
+    qr = qrcode.QRCode(
+        border=border_modules,
+        error_correction=correction_levels[error_correction],
+        box_size=1,
+    )
+    qr.add_data(payload)
+    qr.make(fit=True)
+    return qr.get_matrix()
 
 
 class PdfRenderingContractTests(unittest.TestCase):
@@ -428,6 +447,47 @@ class PdfRenderingContractTests(unittest.TestCase):
                 "Registration markers should be drawn at the exact page-space "
                 "coordinates recorded in the artifact.",
             )
+
+    def test_renderer_draws_identity_qr_modules_at_artifact_coordinates(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        qr_code = page["identity_qr_codes"][0]
+        matrix = _qr_matrix(
+            qr_code["payload"],
+            error_correction=qr_code["error_correction"],
+            border_modules=qr_code["border_modules"],
+        )
+        module_width = qr_code["width"] / len(matrix)
+        module_height = qr_code["height"] / len(matrix)
+
+        asserted_modules = 0
+        for row_index, row in enumerate(matrix):
+            for col_index, is_black in enumerate(row):
+                if not is_black:
+                    continue
+                module_x = qr_code["x"] + (col_index * module_width)
+                module_y = page["height"] - (qr_code["y"] + ((row_index + 1) * module_height))
+                module_command = (
+                    f"{_pdf_number(module_x)} "
+                    f"{_pdf_number(module_y)} "
+                    f"{_pdf_number(module_width)} "
+                    f"{_pdf_number(module_height)} re f"
+                ).encode("utf-8")
+                self.assertIn(
+                    module_command,
+                    pdf_bytes,
+                    "Rendered pages should draw real QR modules from the artifact payload "
+                    "instead of leaving identity markers as future placeholders.",
+                )
+                asserted_modules += 1
+                if asserted_modules >= 3:
+                    return
+
+        self.fail("Expected at least three black QR modules to assert against.")
 
     def test_renderer_emits_multiple_pages_for_dense_mc_sheets(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)

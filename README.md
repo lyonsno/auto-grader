@@ -131,17 +131,22 @@ Current implementation status on the MC/OpenCV prerequisite lane:
 - `auto_grader.generation` produces the canonical answer-sheet artifact
 - `auto_grader.pdf_rendering` now renders a minimal answer-sheet PDF directly
   from that artifact
+- each rendered page now carries two duplicated QR codes encoding the page
+  fallback code from the same artifact contract
 - the rendered PDF currently carries visible instance/page recovery codes,
   rendered prompt text, filled registration markers for scan normalization,
-  circular answer bubbles with direct `A/B/C/D` labels, and a vertically
-  stacked choice list placed underneath each prompt to the left of the bubble
-  row, with larger question typography and human-markable bubble sizing, all
-  still derived from the same page contract
+  duplicated QR identity markers, circular answer bubbles with direct `A/B/C/D`
+  labels, and a vertically stacked choice list placed underneath each prompt to
+  the left of the bubble row, with larger question typography and human-markable
+  bubble sizing, all still derived from the same page contract
 - dense MC sheets now paginate across multiple pages instead of forcing a fake
   one-page contract, and long prompts wrap within the question block rather
   than bleeding across the sheet
-- QR-code placement is still future work; it should be added as an explicit
-  extension of the same page artifact rather than as a second layout truth
+- `auto_grader.scan_readback` now performs the first OpenCV-facing readback
+  slice by decoding duplicated page-identity QR payloads from scan images and
+  rejecting mismatched payload pairs as ambiguous
+- page registration and bubble interpretation are still future work; they should
+  extend the same page artifact rather than inventing a second layout truth
 
 ### 4. Ingestion (Scans -> Identified pages)
 

@@ -33,6 +33,10 @@ _MAX_ROWS_PER_PAGE = 4
 _MAX_PAGES = 5
 _REGISTRATION_MARKER_SIZE = 18
 _REGISTRATION_MARKER_INSET = 24
+_IDENTITY_QR_SIZE = 56
+_IDENTITY_QR_TOP = 36
+_IDENTITY_QR_LEFT = 420
+_IDENTITY_QR_GAP = 10
 
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
@@ -262,6 +266,7 @@ def _build_page_layouts(
     for page_index, start in enumerate(range(0, len(rendered_questions), _MAX_ROWS_PER_PAGE), start=1):
         bubble_regions: list[dict[str, Any]] = []
         page_questions = rendered_questions[start : start + _MAX_ROWS_PER_PAGE]
+        fallback_page_code = f"{opaque_instance_code}-p{page_index}"
 
         for row, question in enumerate(page_questions):
             row_y = _LAYOUT_TOP + (row * _ROW_HEIGHT)
@@ -283,13 +288,14 @@ def _build_page_layouts(
         pages.append(
             {
                 "page_number": page_index,
-                "fallback_page_code": f"{opaque_instance_code}-p{page_index}",
+                "fallback_page_code": fallback_page_code,
                 "layout_version": "mc_answer_sheet_v1",
                 "units": "pt",
                 "origin": "top_left",
                 "y_axis": "down",
                 "width": _LETTER_WIDTH,
                 "height": _LETTER_HEIGHT,
+                "identity_qr_codes": _build_identity_qr_codes(fallback_page_code),
                 "registration_markers": registration_markers,
                 "bubble_regions": bubble_regions,
             }
@@ -333,6 +339,35 @@ def _build_registration_markers() -> list[dict[str, Any]]:
             "y": _LETTER_HEIGHT - inset - size,
             "width": size,
             "height": size,
+        },
+    ]
+
+
+def _build_identity_qr_codes(payload: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "qr_id": "header_left",
+            "kind": "page_identity_qr",
+            "encoding": "qr",
+            "payload": payload,
+            "error_correction": "M",
+            "border_modules": 4,
+            "x": _IDENTITY_QR_LEFT,
+            "y": _IDENTITY_QR_TOP,
+            "width": _IDENTITY_QR_SIZE,
+            "height": _IDENTITY_QR_SIZE,
+        },
+        {
+            "qr_id": "header_right",
+            "kind": "page_identity_qr",
+            "encoding": "qr",
+            "payload": payload,
+            "error_correction": "M",
+            "border_modules": 4,
+            "x": _IDENTITY_QR_LEFT + _IDENTITY_QR_SIZE + _IDENTITY_QR_GAP,
+            "y": _IDENTITY_QR_TOP,
+            "width": _IDENTITY_QR_SIZE,
+            "height": _IDENTITY_QR_SIZE,
         },
     ]
 

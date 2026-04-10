@@ -229,6 +229,29 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
             self.assertLessEqual(marker["x"] + marker["width"], page["width"])
             self.assertLessEqual(marker["y"] + marker["height"], page["height"])
 
+    def test_page_exposes_duplicated_identity_qr_codes_for_machine_readback(self):
+        artifact = self._build_one()
+
+        page = artifact["pages"][0]
+        qr_codes = page["identity_qr_codes"]
+        self.assertEqual(
+            len(qr_codes),
+            2,
+            "Each page should carry two duplicated QR placements so scan identification "
+            "can survive one damaged or unreadable symbol.",
+        )
+
+        for qr_code in qr_codes:
+            self.assertEqual(qr_code["kind"], "page_identity_qr")
+            self.assertEqual(qr_code["encoding"], "qr")
+            self.assertEqual(qr_code["payload"], page["fallback_page_code"])
+            self.assertEqual(qr_code["error_correction"], "M")
+            self.assertEqual(qr_code["border_modules"], 4)
+            self.assertGreater(qr_code["width"], 0)
+            self.assertEqual(qr_code["width"], qr_code["height"])
+            self.assertLessEqual(qr_code["x"] + qr_code["width"], page["width"])
+            self.assertLessEqual(qr_code["y"] + qr_code["height"], page["height"])
+
     def test_bubble_regions_leave_readable_horizontal_gaps_between_choices(self):
         artifact = self._build_one()
 
