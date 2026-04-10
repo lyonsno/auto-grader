@@ -830,10 +830,15 @@ def _render_focus_preview_pixels(
                 for rgb, display in zip(block_pixels, display_values, strict=True)
             ]
             avg_display = sum(display_values) / len(display_values)
-            bg_rgb = (
+            raw_bg_rgb = (
                 int(round(sum(rgb[0] for rgb in toned_pixels) / len(toned_pixels))),
                 int(round(sum(rgb[1] for rgb in toned_pixels) / len(toned_pixels))),
                 int(round(sum(rgb[2] for rgb in toned_pixels) / len(toned_pixels))),
+            )
+            bg_rgb = _interp_rgb(
+                _FOCUS_PREVIEW_BG_RGB,
+                raw_bg_rgb,
+                0.10 + (0.34 * avg_display),
             )
             block_darkness = [1.0 - display for display in display_values]
             dark_mean = sum(block_darkness) / len(block_darkness)

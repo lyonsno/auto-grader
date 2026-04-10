@@ -583,6 +583,42 @@ class NarratorReaderContract(unittest.TestCase):
             "dark structure should surface as braille detail instead of only flat fills",
         )
 
+    def test_focus_preview_steady_state_keeps_background_field_restrained(self):
+        pixels = []
+        for row in range(16):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(24):
+                if col in {12, 13} and 2 <= row <= 13:
+                    rows.append((70, 72, 76))
+                elif col < 12:
+                    rows.append((220, 214, 206))
+                else:
+                    rows.append((190, 184, 176))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        bg_sums: list[int] = []
+        for row in renderable.renderables:
+            for span in row.spans:
+                if isinstance(span.style, str) and " on " in span.style:
+                    _fg, bg = span.style.split(" on ")
+                    bg_rgb = (
+                        int(bg[1:3], 16),
+                        int(bg[3:5], 16),
+                        int(bg[5:7], 16),
+                    )
+                    bg_sums.append(sum(bg_rgb))
+
+        self.assertLess(
+            max(bg_sums) - min(bg_sums),
+            260,
+            "steady-state preview backgrounds should stay relatively restrained so large blurry gray plates do not dominate the image",
+        )
+
     def test_focus_preview_low_contrast_document_still_shows_structure(self):
         pixels = []
         for row in range(20):
