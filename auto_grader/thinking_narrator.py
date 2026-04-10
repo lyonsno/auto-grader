@@ -169,7 +169,9 @@ Rules:
 - Start with a short label: "Core issue:", "Evidence:", or "Lean:".
 - Be specific to this exact item: mention the concrete chemistry issue,
   quantity, unit, species, or rubric dimension when possible.
-- Prefer synthesizing the repeated point over repeating the narrator's phrasing.
+- Prefer a small stable vocabulary over novelty. If the issue has already
+  been summarized recently, reuse the same canonical wording instead of
+  paraphrasing it.
 - No quotes, no bullet points, no preamble. Output ONLY the checkpoint line.
 """
 
@@ -218,6 +220,9 @@ _STATUS_CONTEXT_LIMIT = 5
 _THOUGHT_CONTEXT_LIMIT = 4
 _CHECKPOINT_CONTEXT_LIMIT = 4
 _CHECKPOINT_EVERY_ACCEPTED = 4
+_CHECKPOINT_TEMPERATURE = 0.5
+_CHECKPOINT_REPETITION_PENALTY = 1.0
+_CHECKPOINT_PRESENCE_PENALTY = 0.0
 _DEDUP_BACKOFF_INITIAL_S = 4.0
 _DEDUP_BACKOFF_MAX_S = 24.0
 _PLAYBACK_CHUNK_DELAY_S = 0.03
@@ -660,7 +665,7 @@ class ThinkingNarrator:
             )
         if prior_checkpoints:
             blocks.append(
-                "Recent checkpoints (do not repeat them):\n"
+                "Recent checkpoints (reuse the same wording if the issue is the same; do not paraphrase it):\n"
                 + "\n".join(
                     f"- {checkpoint}"
                     for checkpoint in prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:]
@@ -669,6 +674,9 @@ class ThinkingNarrator:
         blocks.append(
             "Write one compact checkpoint line that captures the durable issue, "
             "evidence, or likely direction of the grading call."
+        )
+        blocks.append(
+            "If the issue matches a recent checkpoint, reuse its wording instead of paraphrasing it."
         )
         return "\n\n".join(blocks)
 
@@ -1247,13 +1255,17 @@ class ThinkingNarrator:
                     {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
                     {"role": "user", "content": checkpoint_user_content},
                 ]
-                checkpoint_text = self._chat_completion(checkpoint_messages).strip()
+                checkpoint_text = self._chat_completion(
+                    checkpoint_messages,
+                    temperature=_CHECKPOINT_TEMPERATURE,
+                    repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
+                    presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
+                ).strip()
                 if checkpoint_text:
                     if any(
-                        self._lines_too_similar(
+                        self._checkpoint_lines_share_basin(
                             checkpoint_text,
                             prev,
-                            threshold=_STATUS_SIMILARITY_THRESHOLD,
                         )
                         for prev in checkpoint_prior
                     ):
@@ -1309,6 +1321,53 @@ class ThinkingNarrator:
         overlap = len(words_a & words_b)
         smaller = min(len(words_a), len(words_b))
         return (overlap / smaller) > threshold
+
+    @staticmethod
+    def _checkpoint_lines_share_basin(a: str, b: str) -> bool:
+        label_a, body_a = ThinkingNarrator._split_checkpoint_label(a)
+        label_b, body_b = ThinkingNarrator._split_checkpoint_label(b)
+        if label_a != label_b:
+            return False
+        norm_a = ThinkingNarrator._normalize_checkpoint_body(body_a)
+        norm_b = ThinkingNarrator._normalize_checkpoint_body(body_b)
+        if not norm_a or not norm_b:
+            return False
+        if norm_a == norm_b:
+            return True
+        return ThinkingNarrator._lines_too_similar(
+            norm_a,
+            norm_b,
+            threshold=0.70,
+        )
+
+    @staticmethod
+    def _split_checkpoint_label(text: str) -> tuple[str, str]:
+        match = re.match(r"^(Core issue|Evidence|Lean):\s*(.*)$", text.strip(), re.IGNORECASE)
+        if not match:
+            return "", text.strip()
+        return match.group(1).lower(), match.group(2).strip()
+
+    @staticmethod
+    def _normalize_checkpoint_body(text: str) -> str:
+        normalized = text.lower()
+        replacements = {
+            "cm^3": "volume_unit",
+            "cm³": "volume_unit",
+            "cm3": "volume_unit",
+            "ml": "volume_unit",
+            "moles-versus-grams": "unit_mixup",
+            "moles vs grams": "unit_mixup",
+            "moles and grams": "unit_mixup",
+            "net ionic": "net_ionic",
+            "valence electrons": "valence_electrons",
+            "electron count": "valence_electrons",
+            "octet rule": "octet",
+        }
+        for old, new in replacements.items():
+            normalized = normalized.replace(old, new)
+        normalized = re.sub(r"[^a-z0-9_/ -]+", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
 
     def _chat_completion(
         self,

@@ -329,6 +329,36 @@ class ThinkingNarratorContract(unittest.TestCase):
             sink.drops,
         )
 
+    def test_checkpoint_bonsai_call_uses_colder_more_canonical_sampler(self):
+        sink = _DummySink()
+        narrator = _CheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-5b")
+
+        with mock.patch.object(
+            narrator,
+            "_chat_completion",
+            return_value="Core issue: stoichiometry path is broken.",
+        ) as completion_mock:
+            for idx in range(4):
+                narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(completion_mock.call_args.kwargs["temperature"], 0.5)
+        self.assertEqual(completion_mock.call_args.kwargs["presence_penalty"], 0.0)
+        self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.0)
+
+    def test_checkpoint_prompt_prefers_reusing_canonical_wording_over_paraphrase(self):
+        self.assertIn(
+            "If the issue matches a recent checkpoint, reuse its wording instead of paraphrasing it.",
+            ThinkingNarrator._build_checkpoint_user_content(
+                ThinkingNarrator(_DummySink()),
+                "chunk",
+                "I'm tracing the limiting reagent path.",
+                ["I'm tracing the limiting reagent path."],
+                ["Checking NH3 stoichiometry."],
+                ["Core issue: stoichiometry path is broken."],
+            ),
+        )
+
     def test_after_action_prompt_avoids_indexable_stock_examples(self):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink)

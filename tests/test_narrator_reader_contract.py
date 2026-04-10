@@ -143,6 +143,20 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.streaming_line, "")
         self.assertEqual(display.status_streaming_line, "")
 
+    def test_thought_commit_freezes_live_line_without_persisting_history_row(self):
+        display = PaintDryDisplay()
+        display.on_header("[item 1/6] first")
+        display.on_delta("I'm tracing the stoichiometry.")
+
+        display.on_commit("thought")
+
+        self.assertEqual(display.frozen_line, "I'm tracing the stoichiometry.")
+        self.assertEqual(
+            list(display.history),
+            [("header", "[item 1/6] first", None)],
+            "live thought commits should stay in the live lane and no longer persist line rows into history",
+        )
+
     def test_active_animation_fps_is_doubled_for_smoother_motion(self):
         self.assertEqual(
             _ACTIVE_ANIMATION_FPS,
@@ -1126,6 +1140,28 @@ class NarratorReaderContract(unittest.TestCase):
             bottom,
             "the 4 glyph should keep a straight right stem on the bottom row instead of flaring into a T-shape",
         )
+
+    def test_scorebug_one_glyph_uses_upper_cap_and_full_stem(self):
+        top, middle, bottom = _scorebug_big_value_rows("1.0")
+
+        self.assertIn(
+            "╺╗ ",
+            top,
+            "the 1 glyph should carry its serif/cap in the upper row instead of reading as a thin post with all the weight at the bottom",
+        )
+        self.assertIn(" ║ ", middle)
+        self.assertIn(" ║ ", bottom)
+
+    def test_scorebug_seven_glyph_keeps_chunky_upper_hook(self):
+        top, middle, bottom = _scorebug_big_value_rows("7.0")
+
+        self.assertIn("╔═╗", top)
+        self.assertIn(
+            " ╔╝",
+            middle,
+            "the 7 glyph should keep a chunkier upper hook instead of dropping immediately into a thin centered post",
+        )
+        self.assertIn(" ║ ", bottom)
 
     def test_scorebug_shows_zeroed_tally_row_before_any_topics_arrive(self):
         display = self._make_display()

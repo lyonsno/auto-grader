@@ -397,13 +397,13 @@ _EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
 
 _SCOREBUG_BIG_DIGITS = {
     "0": ("╔═╗", "║ ║", "╚═╝"),
-    "1": (" ╗ ", " ║ ", " ╩ "),
+    "1": ("╺╗ ", " ║ ", " ║ "),
     "2": ("╔═╗", "╔═╝", "╚═ "),
     "3": ("╔═╗", " ═╣", "╚═╝"),
     "4": ("║ ║", "╚═╣", "  ║"),
     "5": ("╔═ ", "╚═╗", "╚═╝"),
     "6": ("╔═ ", "╠═╗", "╚═╝"),
-    "7": ("╔═╗", "  ║", "  ╵"),
+    "7": ("╔═╗", " ╔╝", " ║ "),
     "8": ("╔═╗", "╠═╣", "╚═╝"),
     "9": ("╔═╗", "╚═╣", "  ╝"),
     ".": ("   ", "   ", " ▪ "),
@@ -2428,16 +2428,14 @@ class PaintDryDisplay:
             self.streaming_line += text
 
     def on_commit(self, mode: str = "thought") -> None:
-        # Thought commits land in the history and become the sticky
-        # frozen line. Status commits update only the sticky status rail.
+        # Thought commits now stay in the sticky live lane only.
+        # Durable history is carried by headers, topic lines, and
+        # checkpoints. Status commits update only the sticky status rail.
         if self.status_streaming_line and mode == "status":
             self.status_line = self.status_streaming_line
             self.status_streaming_line = ""
         elif self.streaming_line:
             committed_parity = self._line_parity
-            self.history.append(
-                ("line", self.streaming_line, committed_parity)
-            )
             self._frozen_line_parity = committed_parity
             self._line_parity = 1 - self._line_parity
             self.stat_emitted += 1
