@@ -128,9 +128,25 @@ You are grading a chemistry exam. You will be shown a scanned page from a \
 student's exam and asked to grade a specific question.
 
 Grading philosophy:
-- Be charitable. If a reasonable reading supports correctness, give credit.
+- Be charitable toward handwriting and notation: if the student's marks \
+admit a reasonable reading as correct, read them that way. Do not penalize \
+sloppy handwriting, ambiguous symbols, or nonstandard notation when a \
+reasonable reading supports correctness.
+- Do not be charitable toward errors you can see. If the work contains a \
+mistake that is clearly present — wrong formula, wrong geometry, wrong \
+count, wrong concept, wrong approach — grade the mistake. Noticing an \
+error and then forgiving it because the student "demonstrated the core \
+concept" is not charity; it is abandoning the rubric. If you see the \
+error, it counts.
 - If the student shows correct method but makes an arithmetic slip, award \
-partial credit for the method.
+partial credit for the method. This is the one case where a visible error \
+is forgiven — and only when the approach itself is correct.
+- Wrong-concept vs. wrong-execution: distinguish "right approach, wrong \
+arithmetic" (partial credit for method) from "wrong approach that happens \
+to share surface features with the right one" (no method credit). Writing \
+a formula that contains the right symbols is not the same as applying the \
+right formula. If the student's approach would not produce a correct \
+answer even with perfect execution, do not award method credit.
 - Internal consistency rule: if this part depends on an earlier wrong answer \
 but the student applies their own earlier result correctly here, award full \
 credit for the method in this part. Do not double-penalize one earlier error.
@@ -145,8 +161,7 @@ For each question, you must:
 problem. If yes, name that earlier part. If no, say "none".
 4. If it does depend on an earlier part, decide whether the student's work \
 here is internally consistent with their own earlier result.
-5. Award a score, erring on the side of generosity while respecting the \
-requested answer form.
+5. Award a score, respecting the requested answer form and the rules above.
 
 Respond in EXACTLY this JSON format (no other text). The
 upstream_dependency and if_dependent_then_consistent fields are
@@ -163,7 +178,7 @@ must be filled in before model_score:
 }
 """
 
-GRADING_PROMPT_VERSION = "2026-04-08-condensed-v1"
+GRADING_PROMPT_VERSION = "2026-04-10-split-charity-v1"
 
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
