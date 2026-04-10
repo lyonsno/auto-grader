@@ -9,7 +9,7 @@ from auto_grader.mark_profile_smoke import run_mark_profile_smoke
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Render and evaluate a synthetic student-like bubble mark profile matrix."
+        description="Render and evaluate a synthetic student-like bubble mark profile matrix across realistic scan variants."
     )
     parser.add_argument(
         "--output-dir",

@@ -204,9 +204,12 @@ Current implementation status on this grading surface:
 - a synthetic student-mark smoke harness is implemented via
   `auto_grader.mark_profile_smoke`; it renders plausible filled, scribbled,
   off-center, smudged, faint, double-marked, hostile-glance, ambiguous-patchy,
-  and scratchout-illegible bubbles, runs them through the real
-  QR/readback/registration/scoring path, and records what the current lane
-  actually handles without requiring an immediate pen-and-scanner loop
+  and scratchout-illegible bubbles, runs them through a small ladder of
+  realistic scan variants (`clean_scan`, `office_scan`, `stressed_scan`) on the
+  real QR/readback/registration/scoring path, and records both the observed
+  behavior band (`grade`, `review`, `ignore`, or outright pipeline failure) and
+  the current strongest-handled boundary without requiring an immediate
+  pen-and-scanner loop
 - richer review workflow, persistence, and operator-facing resolution state are still
   the next slice beyond that scoring surface
 

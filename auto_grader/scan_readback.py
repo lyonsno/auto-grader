@@ -50,7 +50,7 @@ def _detect_multiple(detector: cv2.QRCodeDetector, image: np.ndarray) -> list[di
         detections.append(
             {
                 "payload": normalized_payload,
-                "points": [[float(x), float(y)] for x, y in point_set],
+                "points": _normalize_qr_points(point_set),
             }
         )
     return detections
@@ -66,7 +66,7 @@ def _detect_single(
         return None
     return {
         "payload": normalized_payload,
-        "points": [[float(x), float(y)] for x, y in points],
+        "points": _normalize_qr_points(points),
     }
 
 
@@ -139,3 +139,11 @@ def _sliding_positions(limit: int, window_size: int, step: int) -> list[int]:
     if positions[-1] != final_position:
         positions.append(final_position)
     return positions
+
+
+def _normalize_qr_points(points: Any) -> list[list[float]]:
+    array = np.asarray(points, dtype=np.float32)
+    reshaped = array.reshape(-1, 2)
+    if reshaped.shape[0] < 4:
+        raise ValueError("QR detection points must contain at least four corners")
+    return [[float(x), float(y)] for x, y in reshaped[:4]]

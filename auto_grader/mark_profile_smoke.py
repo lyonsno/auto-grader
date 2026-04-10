@@ -42,48 +42,59 @@ def run_mark_profile_smoke(
             "description": "Dark centered fill",
             "mark_fn": lambda draw, bubble, scale: _draw_dark_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "grade",
+            "scan_profile_ids": ["clean_scan", "office_scan", "stressed_scan"],
         },
         {
             "profile_id": "light_center",
             "description": "Lighter centered pencil fill",
             "mark_fn": lambda draw, bubble, scale: _draw_light_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "grade",
         },
         {
             "profile_id": "scribble_center",
             "description": "Scribbly centered student fill",
             "mark_fn": lambda draw, bubble, scale: _draw_scribble_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "grade",
         },
         {
             "profile_id": "off_center_patch",
             "description": "Off-center but still intentional fill inside the bubble",
             "mark_fn": lambda draw, bubble, scale: _draw_off_center_patch(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "grade",
         },
         {
             "profile_id": "edge_smudge",
             "description": "Edge-only smudge with no center fill",
             "mark_fn": lambda draw, bubble, scale: _draw_edge_smudge(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "ignore",
+            "scan_profile_ids": ["clean_scan", "office_scan", "stressed_scan"],
         },
         {
             "profile_id": "faint_center",
             "description": "Very faint centered fill near the current blank boundary",
             "mark_fn": lambda draw, bubble, scale: _draw_faint_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "review",
         },
         {
             "profile_id": "double_mark",
             "description": "Two clearly filled bubbles",
             "mark_fn": lambda draw, bubble, scale: _draw_dark_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label, alternate_bubble_label],
+            "expected_behavior_band": "review",
+            "scan_profile_ids": ["clean_scan", "office_scan", "stressed_scan"],
         },
         {
             "profile_id": "hostile_correct_plus_glance",
             "description": "Correct fill plus a glancing stray on a neighboring wrong bubble",
             "mark_fn": lambda draw, bubble, scale: _draw_dark_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "grade",
             "stray_marks": [
                 {
                     "bubble_label": alternate_bubble_label,
@@ -96,53 +107,113 @@ def run_mark_profile_smoke(
             "description": "Patchy center fill near the current ambiguous boundary",
             "mark_fn": lambda draw, bubble, scale: _draw_patchy_center(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "review",
         },
         {
             "profile_id": "illegible_scratchout",
             "description": "Scratchy unreadable fill that drags across the bubble",
             "mark_fn": lambda draw, bubble, scale: _draw_illegible_scratchout(draw, bubble, scale=scale),
             "bubble_labels": [correct_bubble_label],
+            "expected_behavior_band": "review",
+        },
+    ]
+
+    scan_profiles = [
+        {
+            "scan_profile_id": "clean_scan",
+            "description": "Near-flat clean scan with mild paper and sensor noise",
+            "severity_rank": 0,
+        },
+        {
+            "scan_profile_id": "office_scan",
+            "description": "Ordinary institutional scanner stress with mild skew, blur, and noise",
+            "severity_rank": 1,
+        },
+        {
+            "scan_profile_id": "stressed_scan",
+            "description": "Harsher but still plausible copier stress with stronger blur, warp, and contrast loss",
+            "severity_rank": 2,
         },
     ]
 
     report_profiles: list[dict[str, Any]] = []
-    for profile in profiles:
-        rendered = _render_profile_page(
-            base_page,
-            page,
-            bubble_labels=profile["bubble_labels"],
-            mark_fn=profile["mark_fn"],
-            stray_marks=profile.get("stray_marks"),
-        )
-        degraded = _degrade_scan(rendered)
-        image_path = output_dir / f"{profile['profile_id']}.png"
-        Image.fromarray(degraded).save(image_path)
+    for scan_profile in scan_profiles:
+        for profile in profiles:
+            enabled_scan_profile_ids = profile.get("scan_profile_ids", ["office_scan"])
+            if scan_profile["scan_profile_id"] not in enabled_scan_profile_ids:
+                continue
+            rendered = _render_profile_page(
+                base_page,
+                page,
+                bubble_labels=profile["bubble_labels"],
+                mark_fn=profile["mark_fn"],
+                stray_marks=profile.get("stray_marks"),
+            )
+            degraded = _degrade_scan(
+                rendered,
+                scan_profile_id=scan_profile["scan_profile_id"],
+                rng=np.random.default_rng(seed + (100 * scan_profile["severity_rank"]) + len(profile["profile_id"])),
+            )
+            stem = f"{profile['profile_id']}__{scan_profile['scan_profile_id']}"
+            image_path = output_dir / f"{stem}.png"
+            Image.fromarray(degraded).save(image_path)
 
-        qr_payload = read_page_identity_qr_payload(degraded)
-        extracted = extract_scored_mc_page(degraded, page, answer_key)
-        normalized_path = output_dir / f"{profile['profile_id']}_normalized.png"
-        Image.fromarray(extracted["normalized_image"]).save(normalized_path)
+            normalized_path = output_dir / f"{stem}_normalized.png"
+            qr_payload, extracted, pipeline_error = _extract_with_failure_capture(
+                degraded,
+                page=page,
+                answer_key=answer_key,
+            )
 
-        question_result = extracted["scored_questions"]["mc-1"]
-        question_observation = extracted["bubble_observations"]["mc-1"]
-        report_profiles.append(
-            {
-                "profile_id": profile["profile_id"],
-                "description": profile["description"],
-                "image_path": str(image_path),
-                "normalized_image_path": str(normalized_path),
-                "decoded_payload": qr_payload,
-                "observed_marked_bubble_labels": extracted["marked_bubble_labels"]["mc-1"],
-                "observed_ambiguous_bubble_labels": question_observation["ambiguous_bubble_labels"],
-                "observed_illegible_bubble_labels": question_observation["illegible_bubble_labels"],
-                "observed_status": question_result["status"],
-                "review_required": question_result["review_required"],
-            }
-        )
+            observed_marked_bubble_labels: list[str] = []
+            observed_ambiguous_bubble_labels: list[str] = []
+            observed_illegible_bubble_labels: list[str] = []
+            observed_status: str | None = None
+            review_required = False
+            if extracted is not None:
+                Image.fromarray(extracted["normalized_image"]).save(normalized_path)
+                question_result = extracted["scored_questions"]["mc-1"]
+                question_observation = extracted["bubble_observations"]["mc-1"]
+                observed_marked_bubble_labels = extracted["marked_bubble_labels"]["mc-1"]
+                observed_ambiguous_bubble_labels = question_observation["ambiguous_bubble_labels"]
+                observed_illegible_bubble_labels = question_observation["illegible_bubble_labels"]
+                observed_status = question_result["status"]
+                review_required = question_result["review_required"]
 
+            observed_behavior_band = _behavior_band_from_status(observed_status)
+            expected_behavior_band = _require_behavior_band(
+                profile["expected_behavior_band"],
+                label=f"profile[{profile['profile_id']}].expected_behavior_band",
+            )
+
+            report_profiles.append(
+                {
+                    "profile_id": profile["profile_id"],
+                    "description": profile["description"],
+                    "scan_profile_id": scan_profile["scan_profile_id"],
+                    "scan_description": scan_profile["description"],
+                    "severity_rank": scan_profile["severity_rank"],
+                    "image_path": str(image_path),
+                    "normalized_image_path": str(normalized_path) if extracted is not None else None,
+                    "decoded_payload": qr_payload,
+                    "expected_behavior_band": expected_behavior_band,
+                    "observed_behavior_band": observed_behavior_band,
+                    "behavior_matches_expectation": observed_behavior_band == expected_behavior_band,
+                    "pipeline_error": pipeline_error,
+                    "observed_marked_bubble_labels": observed_marked_bubble_labels,
+                    "observed_ambiguous_bubble_labels": observed_ambiguous_bubble_labels,
+                    "observed_illegible_bubble_labels": observed_illegible_bubble_labels,
+                    "observed_status": observed_status,
+                    "review_required": review_required,
+                }
+            )
+
+    scan_profile_summaries = _summarize_scan_profiles(report_profiles, scan_profiles)
     report = {
         "page_code": page["fallback_page_code"],
         "profiles": report_profiles,
+        "scan_profile_summaries": scan_profile_summaries,
+        "practical_boundary": _practical_boundary(scan_profile_summaries),
     }
     (output_dir / "summary.json").write_text(_json_dump(report))
     return report
@@ -467,7 +538,85 @@ def _bubble_box(bubble: Mapping[str, Any], scale: int) -> tuple[float, float, fl
     return left, top, right, bottom
 
 
-def _degrade_scan(image: np.ndarray) -> np.ndarray:
+def _extract_with_failure_capture(
+    degraded: np.ndarray,
+    *,
+    page: Mapping[str, Any],
+    answer_key: Mapping[str, Any],
+) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    qr_payload: str | None = None
+    extracted: dict[str, Any] | None = None
+    try:
+        qr_payload = read_page_identity_qr_payload(degraded)
+        extracted = extract_scored_mc_page(degraded, page, answer_key)
+        return qr_payload, extracted, None
+    except Exception as exc:
+        return qr_payload, extracted, f"{type(exc).__name__}: {exc}"
+
+
+def _degrade_scan(
+    image: np.ndarray,
+    *,
+    scan_profile_id: str,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    if scan_profile_id == "clean_scan":
+        config = {
+            "destination": np.float32(
+                [
+                    [28, 20],
+                    [image.shape[1] - 34, 16],
+                    [18, image.shape[0] - 28],
+                    [image.shape[1] - 20, image.shape[0] - 24],
+                ]
+            ),
+            "blur_kernel": (3, 3),
+            "noise_sigma": 5.0,
+            "contrast": 0.99,
+            "brightness_shift": 1.0,
+            "paper_sigma": 2.5,
+            "streak_alpha": 0.025,
+            "resize_scale": 0.70,
+        }
+    elif scan_profile_id == "office_scan":
+        config = {
+            "destination": np.float32(
+                [
+                    [90, 45],
+                    [image.shape[1] - 120, 35],
+                    [55, image.shape[0] - 95],
+                    [image.shape[1] - 25, image.shape[0] - 55],
+                ]
+            ),
+            "blur_kernel": (7, 7),
+            "noise_sigma": 16.0,
+            "contrast": 0.965,
+            "brightness_shift": 4.0,
+            "paper_sigma": 5.5,
+            "streak_alpha": 0.055,
+            "resize_scale": 0.58,
+        }
+    elif scan_profile_id == "stressed_scan":
+        config = {
+            "destination": np.float32(
+                [
+                    [106, 62],
+                    [image.shape[1] - 138, 52],
+                    [68, image.shape[0] - 124],
+                    [image.shape[1] - 34, image.shape[0] - 72],
+                ]
+            ),
+            "blur_kernel": (9, 9),
+            "noise_sigma": 18.0,
+            "contrast": 0.945,
+            "brightness_shift": 7.0,
+            "paper_sigma": 7.0,
+            "streak_alpha": 0.075,
+            "resize_scale": 0.52,
+        }
+    else:
+        raise ValueError(f"Unknown scan_profile_id {scan_profile_id!r}")
+
     height, width = image.shape[:2]
     source = np.float32(
         [
@@ -477,15 +626,7 @@ def _degrade_scan(image: np.ndarray) -> np.ndarray:
             [width - 1, height - 1],
         ]
     )
-    destination = np.float32(
-        [
-            [90, 45],
-            [width - 120, 35],
-            [55, height - 95],
-            [width - 25, height - 55],
-        ]
-    )
-    transform = cv2.getPerspectiveTransform(source, destination)
+    transform = cv2.getPerspectiveTransform(source, config["destination"])
     distorted = cv2.warpPerspective(
         image,
         transform,
@@ -494,10 +635,107 @@ def _degrade_scan(image: np.ndarray) -> np.ndarray:
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=(255, 255, 255),
     )
-    blurred = cv2.GaussianBlur(distorted, (7, 7), 0)
-    noisy = blurred.astype(np.int16)
-    noisy += np.random.default_rng(7).normal(0, 16, size=noisy.shape).astype(np.int16)
-    return np.clip(noisy, 0, 255).astype(np.uint8)
+    blurred = cv2.GaussianBlur(distorted, config["blur_kernel"], 0)
+    working = blurred.astype(np.float32) * float(config["contrast"]) + float(config["brightness_shift"])
+    working += _paper_texture(height, width, sigma=float(config["paper_sigma"]), rng=rng)
+    working += _scanner_streaks(height, width, alpha=float(config["streak_alpha"]), rng=rng)
+    working += rng.normal(0, float(config["noise_sigma"]), size=working.shape)
+    clipped = np.clip(working, 0, 255).astype(np.uint8)
+    resized = cv2.resize(
+        clipped,
+        dsize=None,
+        fx=float(config["resize_scale"]),
+        fy=float(config["resize_scale"]),
+        interpolation=cv2.INTER_AREA,
+    )
+    return resized
+
+
+def _paper_texture(
+    height: int,
+    width: int,
+    *,
+    sigma: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    texture = rng.normal(0, sigma, size=(height, width, 1))
+    return np.repeat(texture, 3, axis=2).astype(np.float32)
+
+
+def _scanner_streaks(
+    height: int,
+    width: int,
+    *,
+    alpha: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    horizontal = rng.normal(0, 255 * alpha, size=(height, 1, 1))
+    vertical = rng.normal(0, 255 * (alpha * 0.45), size=(1, width, 1))
+    field = horizontal + vertical
+    return np.repeat(field, 3, axis=2).astype(np.float32)
+
+
+def _behavior_band_from_status(status: str | None) -> str:
+    if status in {"correct", "incorrect"}:
+        return "grade"
+    if status in {"multiple_marked", "ambiguous_mark", "illegible_mark"}:
+        return "review"
+    if status == "blank":
+        return "ignore"
+    return "failure"
+
+
+def _summarize_scan_profiles(
+    report_profiles: list[dict[str, Any]],
+    scan_profiles: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for scan_profile in scan_profiles:
+        profile_rows = [
+            row for row in report_profiles if row["scan_profile_id"] == scan_profile["scan_profile_id"]
+        ]
+        unexpected_cases = [
+            {
+                "profile_id": row["profile_id"],
+                "observed_behavior_band": row["observed_behavior_band"],
+                "expected_behavior_band": row["expected_behavior_band"],
+                "pipeline_error": row["pipeline_error"],
+            }
+            for row in profile_rows
+            if not row["behavior_matches_expectation"]
+        ]
+        summaries.append(
+            {
+                "scan_profile_id": scan_profile["scan_profile_id"],
+                "description": scan_profile["description"],
+                "severity_rank": scan_profile["severity_rank"],
+                "unexpected_case_count": len(unexpected_cases),
+                "unexpected_cases": unexpected_cases,
+                "all_expected_behavior_held": len(unexpected_cases) == 0,
+            }
+        )
+    return summaries
+
+
+def _practical_boundary(scan_profile_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    strongest_all_expected_behavior_scan_profile_id: str | None = None
+    next_scan_profile_with_unexpected_cases: str | None = None
+    for summary in sorted(scan_profile_summaries, key=lambda item: item["severity_rank"]):
+        if summary["all_expected_behavior_held"]:
+            strongest_all_expected_behavior_scan_profile_id = summary["scan_profile_id"]
+            continue
+        next_scan_profile_with_unexpected_cases = summary["scan_profile_id"]
+        break
+    return {
+        "strongest_all_expected_behavior_scan_profile_id": strongest_all_expected_behavior_scan_profile_id,
+        "next_scan_profile_with_unexpected_cases": next_scan_profile_with_unexpected_cases,
+    }
+
+
+def _require_behavior_band(value: Any, *, label: str) -> str:
+    if value not in {"grade", "review", "ignore"}:
+        raise ValueError(f"{label} must be one of 'grade', 'review', or 'ignore'")
+    return value
 
 
 def _json_dump(report: Mapping[str, Any]) -> str:
