@@ -201,6 +201,29 @@ class SmokeVlmContract(unittest.TestCase):
 
         self.assertTrue(all(region is not None for region in resolved))
 
+    def test_lewis_mock_focus_regions_hug_the_student_work_not_the_whole_page(self) -> None:
+        for key in [
+            ("15-blue", "fr-12a"),
+            ("27-blue-2023", "fr-12a"),
+            ("34-blue", "fr-12a"),
+        ]:
+            focus = smoke_vlm._TRICKY_FOCUS_REGION_MOCKS[key]
+            self.assertGreaterEqual(
+                focus.y,
+                0.06,
+                "Lewis mock boxes should start below the top margin so they stop spending preview budget on blank paper",
+            )
+            self.assertLessEqual(
+                focus.width,
+                0.54,
+                "Lewis mock boxes should tighten around the resonance drawings instead of carrying a page-wide banner crop",
+            )
+            self.assertLessEqual(
+                focus.height,
+                0.24,
+                "Lewis mock boxes should exclude the next question block so the crop reads like the graded work, not a mini page",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

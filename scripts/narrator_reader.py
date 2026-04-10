@@ -76,10 +76,18 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
 _FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
-_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 88
+_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 116
 _FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
-_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 24
+_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
 _FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
+_FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)
+_FOCUS_PREVIEW_INK_RGB = (36, 40, 48)
+_FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
+_FOCUS_PREVIEW_OVERLAY_RGBS = (
+    (108, 122, 154),
+    (132, 115, 86),
+    (94, 116, 106),
+)
 _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
                                    # descending deeper into the stack before
                                    # it settles at the floor.
@@ -548,11 +556,11 @@ def _focus_preview_budget(term_width: int | None) -> tuple[int, int]:
         return _FOCUS_PREVIEW_MIN_WIDTH_CHARS, _FOCUS_PREVIEW_MIN_HEIGHT_ROWS
     width_chars = max(
         _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
-        min(_FOCUS_PREVIEW_MAX_WIDTH_CHARS, term_width - 12),
+        min(_FOCUS_PREVIEW_MAX_WIDTH_CHARS, term_width - 8),
     )
     height_rows = max(
         _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
-        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, int(round(width_chars * 0.28))),
+        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, int(round(width_chars * 0.30))),
     )
     return width_chars, height_rows
 
@@ -574,9 +582,43 @@ def _build_focus_preview_pixels(
     for y in range(target_height):
         row: list[tuple[int, int, int]] = []
         for x in range(target_width):
-            row.append(_sample_preview_rgb(pix, x, y, target_width, target_height))
+            row.append(
+                _tone_focus_preview_rgb(
+                    _sample_preview_rgb(pix, x, y, target_width, target_height)
+                )
+            )
         pixels.append(row)
     return pixels
+
+
+def _tone_focus_preview_rgb(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Compress document whites and map toward a terminal-friendly paper/ink range."""
+    normalized = [channel / 255.0 for channel in rgb]
+    compressed = [_aces_filmic(channel) for channel in normalized]
+    luminance = (
+        (0.299 * compressed[0])
+        + (0.587 * compressed[1])
+        + (0.114 * compressed[2])
+    )
+    paper_mix = min(1.0, (luminance ** 1.18) * 0.88)
+    base = _interp_rgb(_FOCUS_PREVIEW_INK_RGB, _FOCUS_PREVIEW_PAPER_RGB, paper_mix)
+    chroma_mix = 0.10
+    return tuple(
+        int(round(_clamp((base[idx] * (1.0 - chroma_mix)) + (compressed[idx] * 255.0 * chroma_mix), 0.0, 255.0)))
+        for idx in range(3)
+    )
+
+
+def _aces_filmic(value: float) -> float:
+    numerator = value * ((2.51 * value) + 0.03)
+    denominator = value * ((2.43 * value) + 0.59) + 0.14
+    if denominator <= 0.0:
+        return 0.0
+    return _clamp(numerator / denominator, 0.0, 1.0)
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 def _render_focus_preview_pixels(
@@ -594,11 +636,44 @@ def _render_focus_preview_pixels(
         for col, top_rgb in enumerate(upper):
             bottom_rgb = lower[col] if lower is not None else _FOCUS_PREVIEW_BG_RGB
             if pending:
-                phase = ((col * 0.19) + (char_row * 0.07) - (now * 2.1))
-                wave = 0.5 + (0.5 * math.sin(phase))
-                retention = 0.58 + (0.16 * wave)
+                flow = 0.5 + (
+                    0.5
+                    * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
+                )
+                pulse = 0.5 + (
+                    0.5
+                    * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
+                )
+                retention = 0.54 + (0.18 * flow)
                 top_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, top_rgb, retention)
                 bottom_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, bottom_rgb, retention)
+                avg_luma = (
+                    (0.299 * top_rgb[0]) + (0.587 * top_rgb[1]) + (0.114 * top_rgb[2])
+                    + (0.299 * bottom_rgb[0]) + (0.587 * bottom_rgb[1]) + (0.114 * bottom_rgb[2])
+                ) / 2.0
+                glyph_gate = 0.38 + (0.20 * pulse)
+                glyph_drive = (0.58 * flow) + (0.25 * pulse)
+                if glyph_drive > glyph_gate:
+                    char_phase = (0.62 * flow) + (0.38 * (avg_luma / 255.0))
+                    char_index = min(
+                        len(_FOCUS_PREVIEW_OVERLAY_CHARS) - 1,
+                        int(char_phase * len(_FOCUS_PREVIEW_OVERLAY_CHARS)),
+                    )
+                    palette_index = min(
+                        len(_FOCUS_PREVIEW_OVERLAY_RGBS) - 1,
+                        int((avg_luma / 255.0) * len(_FOCUS_PREVIEW_OVERLAY_RGBS)),
+                    )
+                    fg_rgb = _interp_rgb(
+                        _FOCUS_PREVIEW_OVERLAY_RGBS[palette_index],
+                        _FOCUS_PREVIEW_PAPER_RGB,
+                        0.16 + (0.18 * flow),
+                    )
+                    bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, bottom_rgb, 0.88)
+                    row.append(
+                        _FOCUS_PREVIEW_OVERLAY_CHARS[char_index],
+                        style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
+                    )
+                    continue
             row.append(
                 "▀",
                 style=f"{_rgb_to_hex(top_rgb)} on {_rgb_to_hex(bottom_rgb)}",

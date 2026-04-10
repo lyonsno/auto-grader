@@ -13,6 +13,7 @@ from rich.text import Text
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
     _focus_preview_budget,
+    _render_focus_preview_pixels,
     _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
     PaintDryDisplay,
@@ -26,6 +27,7 @@ from scripts.narrator_reader import (
     _scorebug_big_value_rows,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
+    _tone_focus_preview_rgb,
     _undulation_hue_deg,
     _render_layer_index,
 )
@@ -238,6 +240,33 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertFalse(display.focus_preview_pending)
         self.assertEqual(display.focus_preview_label, "27-blue-2023/fr-3")
 
+    def test_pending_focus_preview_uses_character_overlay_not_just_block_noise(self):
+        renderable = _render_focus_preview_pixels(
+            [[(230, 230, 230) for _ in range(12)] for _ in range(8)],
+            now=0.0,
+            pending=True,
+        )
+        plain = _extract_plain(renderable)
+
+        self.assertTrue(
+            any(ch in plain for ch in "01./:"),
+            "pending preview should use a dim character veil rather than only geometric block shading",
+        )
+
+    def test_focus_preview_tone_map_compresses_harsh_whites(self):
+        toned = _tone_focus_preview_rgb((255, 255, 255))
+
+        self.assertLess(
+            max(toned),
+            190,
+            "preview whites should compress below terminal-white so document crops stop blasting the dark UI",
+        )
+        self.assertGreaterEqual(
+            toned[0],
+            toned[2],
+            "preview toning should stay at least slightly warm-neutral rather than shifting colder than the interface",
+        )
+
     def test_focus_preview_is_rasterized_once_per_item_not_each_frame(self):
         display = self._make_display()
         sentinel_pixels = [[(10, 20, 30)]]
@@ -379,6 +408,20 @@ class NarratorReaderContract(unittest.TestCase):
             height_rows,
             18,
             "preview should get enough rows that the vignette and handwriting survive downsampling",
+        )
+
+    def test_focus_preview_budget_breaks_past_the_old_postage_stamp_cap_on_wide_terminals(self):
+        width_chars, height_rows = _focus_preview_budget(140)
+
+        self.assertGreaterEqual(
+            width_chars,
+            104,
+            "wide terminals should get a materially denser preview raster than the old 88-char ceiling",
+        )
+        self.assertGreaterEqual(
+            height_rows,
+            28,
+            "the higher horizontal budget should also buy a taller image so the preview stops reading like a chunky strip",
         )
 
     def test_lines_render_newest_first_beneath_topic_within_each_header(self):

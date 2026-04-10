@@ -47,7 +47,7 @@ _TRICKY_FOCUS_REGION_MOCKS: dict[tuple[str, str], FocusRegion] = {
         page=1, x=0.14, y=0.42, width=0.66, height=0.28, source="mock_tricky_plus"
     ),
     ("27-blue-2023", "fr-12a"): FocusRegion(
-        page=4, x=0.14, y=0.04, width=0.62, height=0.28, source="mock_tricky_plus"
+        page=4, x=0.16, y=0.08, width=0.46, height=0.20, source="mock_tricky_plus"
     ),
     ("39-blue-redacted", "fr-10a"): FocusRegion(
         page=3, x=0.14, y=0.20, width=0.62, height=0.24, source="mock_tricky_plus"
@@ -56,7 +56,7 @@ _TRICKY_FOCUS_REGION_MOCKS: dict[tuple[str, str], FocusRegion] = {
         page=2, x=0.16, y=0.32, width=0.58, height=0.24, source="mock_tricky_plus"
     ),
     ("34-blue", "fr-12a"): FocusRegion(
-        page=4, x=0.14, y=0.04, width=0.62, height=0.28, source="mock_tricky_plus"
+        page=4, x=0.18, y=0.07, width=0.50, height=0.18, source="mock_tricky_plus"
     ),
     ("15-blue", "fr-1"): FocusRegion(
         page=1, x=0.16, y=0.05, width=0.60, height=0.22, source="mock_tricky"
@@ -74,7 +74,7 @@ _TRICKY_FOCUS_REGION_MOCKS: dict[tuple[str, str], FocusRegion] = {
         page=3, x=0.16, y=0.40, width=0.58, height=0.22, source="mock_tricky"
     ),
     ("15-blue", "fr-12a"): FocusRegion(
-        page=4, x=0.14, y=0.04, width=0.62, height=0.28, source="mock_tricky"
+        page=4, x=0.16, y=0.08, width=0.48, height=0.19, source="mock_tricky"
     ),
 }
 
