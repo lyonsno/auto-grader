@@ -350,7 +350,7 @@ def _reasoning_warrants_human_review(text: str) -> bool:
 
 
 def _checkpoint_line_breaks_contract(text: str) -> bool:
-    stripped = text.strip()
+    stripped = ThinkingNarrator._canonicalize_checkpoint_text(text)
     label, body = ThinkingNarrator._split_checkpoint_label(stripped)
     if label not in {"core issue", "evidence", "lean"}:
         return True
@@ -1324,6 +1324,9 @@ class ThinkingNarrator:
                     presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
                 ).strip()
                 if checkpoint_text:
+                    checkpoint_text = self._canonicalize_checkpoint_text(
+                        checkpoint_text
+                    )
                     if _checkpoint_line_breaks_contract(checkpoint_text):
                         self._sink.write_drop("contract-checkpoint", checkpoint_text)
                     elif any(
@@ -1406,10 +1409,26 @@ class ThinkingNarrator:
 
     @staticmethod
     def _split_checkpoint_label(text: str) -> tuple[str, str]:
-        match = re.match(r"^(Core issue|Evidence|Lean):\s*(.*)$", text.strip(), re.IGNORECASE)
+        match = re.match(
+            r"^(?:\*+|`+)?\s*(Core issue|Evidence|Lean)\s*:\s*(?:\*+|`+)?\s*(.*)$",
+            text.strip(),
+            re.IGNORECASE,
+        )
         if not match:
             return "", text.strip()
         return match.group(1).lower(), match.group(2).strip()
+
+    @staticmethod
+    def _canonicalize_checkpoint_text(text: str) -> str:
+        label, body = ThinkingNarrator._split_checkpoint_label(text)
+        if label not in {"core issue", "evidence", "lean"} or not body:
+            return text.strip()
+        canonical_labels = {
+            "core issue": "Core issue",
+            "evidence": "Evidence",
+            "lean": "Lean",
+        }
+        return f"{canonical_labels[label]}: {body}"
 
     @staticmethod
     def _normalize_checkpoint_body(text: str) -> str:

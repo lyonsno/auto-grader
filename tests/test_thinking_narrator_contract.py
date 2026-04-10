@@ -211,6 +211,11 @@ class _RunObservedDashPrefixedCheckpointNarrator(_CheckpointNarrator):
         return "- I'm noticing the student used the initial energy instead of the energy change for the photon calculation."
 
 
+class _MarkdownEmphasizedCheckpointNarrator(_CheckpointNarrator):
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return "**Core issue:** Student applied Hess's Law with sign changes and arithmetic, leading to correct final answer."
+
+
 class ThinkingNarratorContract(unittest.TestCase):
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
@@ -624,6 +629,28 @@ class ThinkingNarratorContract(unittest.TestCase):
             (
                 "contract-checkpoint",
                 "- I'm noticing the student used the initial energy instead of the energy change for the photon calculation.",
+            ),
+            sink.drops,
+        )
+
+    def test_markdown_emphasized_checkpoint_label_is_normalized_and_persisted(self):
+        sink = _DummySink()
+        narrator = _MarkdownEmphasizedCheckpointNarrator(sink)
+        narrator.start(item_header="34-blue/fr-8")
+
+        for idx in range(4):
+            narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(
+            sink.checkpoints,
+            [
+                "Core issue: Student applied Hess's Law with sign changes and arithmetic, leading to correct final answer."
+            ],
+        )
+        self.assertNotIn(
+            (
+                "contract-checkpoint",
+                "**Core issue:** Student applied Hess's Law with sign changes and arithmetic, leading to correct final answer.",
             ),
             sink.drops,
         )
