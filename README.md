@@ -137,6 +137,9 @@ Current implementation status on the MC/OpenCV prerequisite lane:
   stacked choice list placed underneath each prompt to the left of the bubble
   row, with larger question typography and human-markable bubble sizing, all
   still derived from the same page contract
+- dense MC sheets now paginate across multiple pages instead of forcing a fake
+  one-page contract, and long prompts wrap within the question block rather
+  than bleeding across the sheet
 - QR-code placement is still future work; it should be added as an explicit
   extension of the same page artifact rather than as a second layout truth
 

@@ -11,11 +11,13 @@ This module intentionally keeps the paper surface small and explicit:
 from __future__ import annotations
 
 from collections.abc import Mapping
+import textwrap
 from typing import Any
 
 
 _PROMPT_OFFSET = 96
 _PROMPT_LINE_GAP = 28
+_QUESTION_BLOCK_LEFT = 72
 _HEADER_LEFT = 60
 _HEADER_TITLE_TOP = 36
 _HEADER_INSTANCE_TOP = 62
@@ -29,6 +31,8 @@ _BUBBLE_LABEL_TOP_OFFSET = 6
 _CHOICE_LEGEND_LEFT_OFFSET = 12
 _CHOICE_LEGEND_TOP_OFFSET = 4
 _CHOICE_LEGEND_LINE_SPACING = 14
+_PROMPT_LINE_SPACING = 14
+_PROMPT_WRAP_WIDTH = 52
 
 
 def render_mc_answer_sheet_pdf(artifact: Mapping[str, Any]) -> bytes:
@@ -170,21 +174,23 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
             region_lookup[(question_id, str(choice["bubble_label"]))]
             for choice in choices
         ]
-        prompt_x = min(
-            _require_number(region["x"], "bubble_region.x") for region in question_regions
-        ) - _PROMPT_OFFSET
         prompt_y_top = min(
             _require_number(region["y"], "bubble_region.y") for region in question_regions
         )
-        prompt_left = max(36, prompt_x)
-        content_lines.extend(
-            _text_block(
-                prompt_left,
-                _pdf_text_y(height, prompt_y_top - _PROMPT_LINE_GAP),
-                _QUESTION_FONT_SIZE,
-                f"{question_number}. {question.get('prompt', '')}",
-            )
+        prompt_left = _QUESTION_BLOCK_LEFT
+        prompt_lines = _wrap_prompt_text(f"{question_number}. {question.get('prompt', '')}")
+        prompt_block_top = prompt_y_top - _PROMPT_LINE_GAP - (
+            _PROMPT_LINE_SPACING * (len(prompt_lines) - 1)
         )
+        for line_index, prompt_line in enumerate(prompt_lines):
+            content_lines.extend(
+                _text_block(
+                    prompt_left,
+                    _pdf_text_y(height, prompt_block_top + (line_index * _PROMPT_LINE_SPACING)),
+                    _QUESTION_FONT_SIZE,
+                    prompt_line,
+                )
+            )
 
         first_bubble_x = min(
             _require_number(region["x"], "bubble_region.x") for region in question_regions
@@ -246,6 +252,16 @@ def _text_block(x: int | float, y: int | float, font_size: int | float, text: st
 
 def _escape_text(text: str) -> str:
     return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _wrap_prompt_text(text: str) -> list[str]:
+    wrapped = textwrap.wrap(
+        text,
+        width=_PROMPT_WRAP_WIDTH,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return wrapped or [text]
 
 
 def _circle_path(x: int | float, y: int | float, width: int | float, height: int | float) -> str:

@@ -24,12 +24,13 @@ _BUBBLE_LABELS = tuple("ABCDE")
 _LETTER_WIDTH = 612
 _LETTER_HEIGHT = 792
 _LAYOUT_LEFT = 72
-_LAYOUT_TOP = 144
-_COLUMN_WIDTH = 234
-_ROW_HEIGHT = 96
+_LAYOUT_TOP = 188
+_ROW_HEIGHT = 150
 _BUBBLE_SIZE = 22
 _BUBBLE_GAP = 28
-_MAX_ROWS_PER_PAGE = 10
+_BUBBLE_ROW_LEFT = 320
+_MAX_ROWS_PER_PAGE = 4
+_MAX_PAGES = 5
 _REGISTRATION_MARKER_SIZE = 18
 _REGISTRATION_MARKER_INSET = 24
 
@@ -51,9 +52,9 @@ def build_mc_answer_sheet(
     mc_questions = _collect_mc_questions(template_dict)
     if not mc_questions:
         raise ValueError("Template must contain at least one multiple-choice question")
-    if len(mc_questions) > (_MAX_ROWS_PER_PAGE * 2):
+    if len(mc_questions) > (_MAX_ROWS_PER_PAGE * _MAX_PAGES):
         raise ValueError(
-            "MC answer-sheet v0 supports at most 20 multiple-choice questions per page"
+            "MC answer-sheet v0 supports at most 20 multiple-choice questions total"
         )
 
     opaque_instance_code = _build_opaque_instance_code(
@@ -85,7 +86,7 @@ def build_mc_answer_sheet(
             ],
         }
 
-    page = _build_page_layout(opaque_instance_code, rendered_questions)
+    pages = _build_page_layouts(opaque_instance_code, rendered_questions)
 
     return {
         "template_slug": str(template_dict["slug"]),
@@ -94,7 +95,7 @@ def build_mc_answer_sheet(
         "opaque_instance_code": opaque_instance_code,
         "mc_questions": rendered_questions,
         "answer_key": answer_key,
-        "pages": [page],
+        "pages": pages,
     }
 
 
@@ -251,46 +252,50 @@ def _stringify_value(value: Any) -> str:
     return str(value)
 
 
-def _build_page_layout(
+def _build_page_layouts(
     opaque_instance_code: str,
     rendered_questions: list[dict[str, Any]],
-) -> dict[str, Any]:
-    bubble_regions: list[dict[str, Any]] = []
-
-    for question_index, question in enumerate(rendered_questions):
-        column = question_index // _MAX_ROWS_PER_PAGE
-        row = question_index % _MAX_ROWS_PER_PAGE
-        row_y = _LAYOUT_TOP + (row * _ROW_HEIGHT)
-        base_x = _LAYOUT_LEFT + (column * _COLUMN_WIDTH)
-        bubbles_x = base_x + 96
-
-        for choice_index, choice in enumerate(question["choices"]):
-            bubble_regions.append(
-                {
-                    "question_id": question["question_id"],
-                    "bubble_label": choice["bubble_label"],
-                    "shape": "circle",
-                    "x": bubbles_x + choice_index * (_BUBBLE_SIZE + _BUBBLE_GAP),
-                    "y": row_y,
-                    "width": _BUBBLE_SIZE,
-                    "height": _BUBBLE_SIZE,
-                }
-            )
-
+) -> list[dict[str, Any]]:
+    pages: list[dict[str, Any]] = []
     registration_markers = _build_registration_markers()
 
-    return {
-        "page_number": 1,
-        "fallback_page_code": f"{opaque_instance_code}-p1",
-        "layout_version": "mc_answer_sheet_v1",
-        "units": "pt",
-        "origin": "top_left",
-        "y_axis": "down",
-        "width": _LETTER_WIDTH,
-        "height": _LETTER_HEIGHT,
-        "registration_markers": registration_markers,
-        "bubble_regions": bubble_regions,
-    }
+    for page_index, start in enumerate(range(0, len(rendered_questions), _MAX_ROWS_PER_PAGE), start=1):
+        bubble_regions: list[dict[str, Any]] = []
+        page_questions = rendered_questions[start : start + _MAX_ROWS_PER_PAGE]
+
+        for row, question in enumerate(page_questions):
+            row_y = _LAYOUT_TOP + (row * _ROW_HEIGHT)
+            bubbles_x = _BUBBLE_ROW_LEFT
+
+            for choice_index, choice in enumerate(question["choices"]):
+                bubble_regions.append(
+                    {
+                        "question_id": question["question_id"],
+                        "bubble_label": choice["bubble_label"],
+                        "shape": "circle",
+                        "x": bubbles_x + choice_index * (_BUBBLE_SIZE + _BUBBLE_GAP),
+                        "y": row_y,
+                        "width": _BUBBLE_SIZE,
+                        "height": _BUBBLE_SIZE,
+                    }
+                )
+
+        pages.append(
+            {
+                "page_number": page_index,
+                "fallback_page_code": f"{opaque_instance_code}-p{page_index}",
+                "layout_version": "mc_answer_sheet_v1",
+                "units": "pt",
+                "origin": "top_left",
+                "y_axis": "down",
+                "width": _LETTER_WIDTH,
+                "height": _LETTER_HEIGHT,
+                "registration_markers": registration_markers,
+                "bubble_regions": bubble_regions,
+            }
+        )
+
+    return pages
 
 
 def _build_registration_markers() -> list[dict[str, Any]]:

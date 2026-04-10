@@ -91,6 +91,35 @@ def _variableized_template(variable_order: tuple[str, ...]) -> dict:
     }
 
 
+def _dense_template(question_count: int = 20) -> dict:
+    questions = []
+    for index in range(1, question_count + 1):
+        questions.append(
+            {
+                "id": f"mc-{index}",
+                "points": 2,
+                "answer_type": "multiple_choice",
+                "prompt": (
+                    f"Question {index}: Which statement best describes why increasing "
+                    "surface area speeds up a heterogeneous reaction in a powder sample?"
+                ),
+                "choices": {
+                    "A": "More exposed particles create more collision opportunities",
+                    "B": "The activation energy always drops to zero",
+                    "C": "The equilibrium constant becomes larger",
+                    "D": "The sample gains additional electrons",
+                },
+                "correct": "A",
+                "shuffle": True,
+            }
+        )
+    return {
+        "slug": "quiz-dense",
+        "title": "Dense Quiz",
+        "sections": [{"id": "mc", "title": "Multiple Choice", "questions": questions}],
+    }
+
+
 class TestMcAnswerSheetGeneration(unittest.TestCase):
     def _build_one(self, student_id: str = "s-001", seed: int = 17):
         from auto_grader.generation import build_mc_answer_sheet
@@ -280,3 +309,39 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
         )
 
         self.assertEqual(first, second)
+
+    def test_dense_mc_sheets_paginate_instead_of_cramming_twenty_questions_onto_one_page(self):
+        from auto_grader.generation import build_mc_answer_sheet
+
+        artifact = build_mc_answer_sheet(
+            _dense_template(),
+            {"student_id": "s-001", "student_name": "Ada Lovelace"},
+            attempt_number=1,
+            seed=17,
+        )
+
+        self.assertEqual(
+            len(artifact["pages"]),
+            5,
+            "A dense 20-question MC sheet should paginate instead of forcing two busy "
+            "columns onto one page.",
+        )
+        self.assertEqual(
+            [page["fallback_page_code"] for page in artifact["pages"]],
+            [
+                f"{artifact['opaque_instance_code']}-p1",
+                f"{artifact['opaque_instance_code']}-p2",
+                f"{artifact['opaque_instance_code']}-p3",
+                f"{artifact['opaque_instance_code']}-p4",
+                f"{artifact['opaque_instance_code']}-p5",
+            ],
+        )
+        page_question_ids = [
+            {region["question_id"] for region in page["bubble_regions"]}
+            for page in artifact["pages"]
+        ]
+        self.assertEqual(page_question_ids[0], {f"mc-{index}" for index in range(1, 5)})
+        self.assertEqual(page_question_ids[1], {f"mc-{index}" for index in range(5, 9)})
+        self.assertEqual(page_question_ids[2], {f"mc-{index}" for index in range(9, 13)})
+        self.assertEqual(page_question_ids[3], {f"mc-{index}" for index in range(13, 17)})
+        self.assertEqual(page_question_ids[4], {f"mc-{index}" for index in range(17, 21)})

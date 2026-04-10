@@ -57,6 +57,85 @@ def _build_artifact() -> dict:
     )
 
 
+def _build_dense_artifact() -> dict:
+    from auto_grader.generation import build_mc_answer_sheet
+
+    questions = []
+    for index in range(1, 21):
+        questions.append(
+            {
+                "id": f"mc-{index}",
+                "points": 2,
+                "answer_type": "multiple_choice",
+                "prompt": (
+                    f"Question {index}: Which statement best describes why increasing "
+                    "surface area speeds up a heterogeneous reaction in a powder sample?"
+                ),
+                "choices": {
+                    "A": "More exposed particles create more collision opportunities",
+                    "B": "The activation energy always drops to zero",
+                    "C": "The equilibrium constant becomes larger",
+                    "D": "The sample gains additional electrons",
+                },
+                "correct": "A",
+                "shuffle": True,
+            }
+        )
+
+    template = {
+        "slug": "quiz-dense",
+        "title": "Dense Quiz",
+        "sections": [{"id": "mc", "title": "Multiple Choice", "questions": questions}],
+    }
+    return build_mc_answer_sheet(
+        template,
+        {"student_id": "s-001", "student_name": "Ada Lovelace"},
+        attempt_number=1,
+        seed=17,
+    )
+
+
+def _build_wrapped_prompt_artifact() -> dict:
+    from auto_grader.generation import build_mc_answer_sheet
+
+    template = {
+        "slug": "quiz-wrap",
+        "title": "Wrap Quiz",
+        "sections": [
+            {
+                "id": "mc",
+                "title": "Multiple Choice",
+                "questions": [
+                    {
+                        "id": "mc-wrap-1",
+                        "points": 2,
+                        "answer_type": "multiple_choice",
+                        "prompt": (
+                            "Which statement best describes why increasing surface area "
+                            "speeds up a heterogeneous reaction in a powder sample "
+                            "during a busy laboratory period?"
+                        ),
+                        "choices": {
+                            "A": "More exposed particles create more collision opportunities",
+                            "B": "The activation energy always drops to zero",
+                            "C": "The equilibrium constant becomes larger",
+                            "D": "The sample gains additional electrons",
+                        },
+                        "correct": "A",
+                        "shuffle": False,
+                    }
+                ],
+            }
+        ],
+    }
+    return build_mc_answer_sheet(
+        template,
+        {"student_id": "s-001", "student_name": "Ada Lovelace"},
+        attempt_number=1,
+        seed=17,
+    )
+
+
 def _load_pdf_renderer(test_case: unittest.TestCase):
     try:
         from auto_grader.pdf_rendering import render_mc_answer_sheet_pdf
@@ -149,7 +228,7 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         pdf_bytes = render_mc_answer_sheet_pdf(artifact)
 
-        prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
+        prompt_x = 72
         prompt_y = _pdf_number(page["height"] - (min(region["y"] for region in first_question_regions) - 28) - 10)
         prompt_command = (
             f"BT\n/F1 13 Tf\n{_pdf_number(prompt_x)} {prompt_y} Td\n"
@@ -197,7 +276,7 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         pdf_bytes = render_mc_answer_sheet_pdf(artifact)
 
-        prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
+        prompt_x = 72
         prompt_y = _pdf_number(page["height"] - (min(region["y"] for region in first_question_regions) - 28) - 10)
         prompt_command = (
             f"BT\n/F1 13 Tf\n{_pdf_number(prompt_x)} {prompt_y} Td\n"
@@ -260,8 +339,8 @@ class PdfRenderingContractTests(unittest.TestCase):
 
         pdf_bytes = render_mc_answer_sheet_pdf(artifact)
 
-        prompt_x = max(36, min(region["x"] for region in first_question_regions) - 96)
-        legend_x = prompt_x + 12
+        prompt_x = 72
+        legend_x = 84
         line_spacing = 14
         first_row_top = min(region["y"] for region in first_question_regions)
         first_bubble_x = min(region["x"] for region in first_question_regions)
@@ -281,6 +360,12 @@ class PdfRenderingContractTests(unittest.TestCase):
             )
             self.assertLess(legend_x, first_bubble_x)
             self.assertLess(legend_y, prompt_y)
+            self.assertGreaterEqual(
+                first_bubble_x - legend_x,
+                180,
+                "The choice list needs a real horizontal gutter before the bubble row "
+                "so longer distractors do not crash into the circles.",
+            )
 
     def test_renderer_draws_registration_markers_at_artifact_coordinates(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
@@ -303,6 +388,45 @@ class PdfRenderingContractTests(unittest.TestCase):
                 "Registration markers should be drawn at the exact page-space "
                 "coordinates recorded in the artifact.",
             )
+
+    def test_renderer_emits_multiple_pages_for_dense_mc_sheets(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_dense_artifact()
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        self.assertIn(
+            b"<< /Type /Pages /Count 5 /Kids [4 0 R 6 0 R 8 0 R 10 0 R 12 0 R] >>",
+            pdf_bytes,
+            "A dense 20-question sheet should render as a multi-page PDF rather than a single overflowing page.",
+        )
+        self.assertIn(artifact["pages"][1]["fallback_page_code"].encode("utf-8"), pdf_bytes)
+        self.assertIn(b"(9. ", pdf_bytes)
+
+    def test_renderer_wraps_long_prompts_within_the_question_block(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_wrapped_prompt_artifact()
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        self.assertIn(
+            b"(1. Which statement best describes why increasing)",
+            pdf_bytes,
+            "Long prompts should wrap onto multiple renderer lines instead of staying as one unbounded text run.",
+        )
+        self.assertIn(
+            b"(surface area speeds up a heterogeneous reaction in a)",
+            pdf_bytes,
+        )
+        self.assertIn(
+            b"(powder sample during a busy laboratory period?)",
+            pdf_bytes,
+        )
+        self.assertNotIn(
+            b"(1. Which statement best describes why increasing surface area speeds up a heterogeneous reaction in a powder sample during a busy laboratory period?)",
+            pdf_bytes,
+            "The renderer should not emit the full long prompt as one unwrapped line once prompt wrapping is supported.",
+        )
 
 
 def _escape_pdf_text(text: str) -> str:
