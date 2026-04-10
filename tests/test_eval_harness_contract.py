@@ -9,6 +9,7 @@ accuracy/calibration reports.  Tests are written before the implementation
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -153,6 +154,7 @@ class TestLoadGroundTruth(unittest.TestCase):
             "professor_mark",
             "student_answer",
             "notes",
+            "focus_region",
         ):
             self.assertTrue(
                 hasattr(item, field), f"EvalItem missing field: {field}"
@@ -195,6 +197,199 @@ class TestLoadGroundTruth(unittest.TestCase):
 
         with self.assertRaises(FileNotFoundError):
             load_ground_truth(Path("/nonexistent/path.yaml"))
+
+    def test_focus_region_defaults_to_none_when_absent(self):
+        from auto_grader.eval_harness import load_ground_truth
+
+        result = load_ground_truth(_GROUND_TRUTH_PATH)
+        self.assertIsNone(result[0].focus_region)
+
+    def test_optional_focus_region_is_parsed_from_ground_truth_yaml(self):
+        from auto_grader.eval_harness import FocusRegion, load_ground_truth
+
+        yaml_str = """
+exams:
+  - exam_id: mock-exam
+    items:
+      - question_id: fr-1
+        answer_type: numeric
+        page: 2
+        professor_score: 2
+        max_points: 2
+        professor_mark: check
+        student_answer: "42"
+        notes: "mock"
+        focus_region:
+          x: 0.15
+          y: 0.25
+          width: 0.30
+          height: 0.12
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ground_truth.yaml"
+            path.write_text(yaml_str)
+            result = load_ground_truth(path)
+
+        self.assertEqual(
+            result[0].focus_region,
+            FocusRegion(
+                page=2,
+                x=0.15,
+                y=0.25,
+                width=0.30,
+                height=0.12,
+                source="ground_truth",
+            ),
+        )
+
+
+class TestFocusRegionResolution(unittest.TestCase):
+    def test_resolve_focus_region_prefers_item_override(self):
+        from auto_grader.eval_harness import EvalItem, FocusRegion, resolve_focus_region
+
+        item = EvalItem(
+            exam_id="exam-1",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=2,
+            max_points=2,
+            professor_mark="check",
+            student_answer="42",
+            notes="mock",
+            focus_region=FocusRegion(
+                page=1,
+                x=0.10,
+                y=0.20,
+                width=0.25,
+                height=0.10,
+                source="ground_truth",
+            ),
+        )
+        template = {
+            "sections": [
+                {
+                    "id": "s1",
+                    "questions": [
+                        {
+                            "id": "fr-1",
+                            "focus_region": {
+                                "x": 0.40,
+                                "y": 0.50,
+                                "width": 0.20,
+                                "height": 0.15,
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+
+        resolved = resolve_focus_region(item, template)
+        self.assertEqual(resolved, item.focus_region)
+
+    def test_resolve_focus_region_falls_back_to_template_metadata(self):
+        from auto_grader.eval_harness import EvalItem, FocusRegion, resolve_focus_region
+
+        item = EvalItem(
+            exam_id="exam-1",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=3,
+            professor_score=2,
+            max_points=2,
+            professor_mark="check",
+            student_answer="42",
+            notes="mock",
+        )
+        template = {
+            "sections": [
+                {
+                    "id": "s1",
+                    "questions": [
+                        {
+                            "id": "fr-1",
+                            "focus_region": {
+                                "x": 0.40,
+                                "y": 0.50,
+                                "width": 0.20,
+                                "height": 0.15,
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+
+        self.assertEqual(
+            resolve_focus_region(item, template),
+            FocusRegion(
+                page=3,
+                x=0.40,
+                y=0.50,
+                width=0.20,
+                height=0.15,
+                source="template",
+            ),
+        )
+
+    def test_resolve_focus_region_recurses_into_parts(self):
+        from auto_grader.eval_harness import EvalItem, FocusRegion, resolve_focus_region
+
+        item = EvalItem(
+            exam_id="exam-1",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=4,
+            professor_score=0,
+            max_points=2,
+            professor_mark="x",
+            student_answer="0",
+            notes="mock",
+        )
+        template = {
+            "sections": [
+                {
+                    "id": "s1",
+                    "questions": [
+                        {
+                            "id": "fr-5",
+                            "points": 4,
+                            "parts": [
+                                {
+                                    "id": "fr-5a",
+                                    "points": 2,
+                                    "answer_type": "numeric",
+                                },
+                                {
+                                    "id": "fr-5b",
+                                    "points": 2,
+                                    "answer_type": "numeric",
+                                    "focus_region": {
+                                        "x": 0.18,
+                                        "y": 0.62,
+                                        "width": 0.25,
+                                        "height": 0.11,
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        self.assertEqual(
+            resolve_focus_region(item, template),
+            FocusRegion(
+                page=4,
+                x=0.18,
+                y=0.62,
+                width=0.25,
+                height=0.11,
+                source="template",
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------

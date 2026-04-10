@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,22 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # Prompt construction
 # ---------------------------------------------------------------------------
 
+# Grading philosophy, in project terms:
+#
+# - The grader's job is to award the highest score justified by the work
+#   actually on the page, not merely to mark errors.
+# - "Generous" here means lawful rescue, not speculative charity: actively
+#   search for rubric-grounded setup credit, method credit, carry-forward
+#   credit, and Lewis-structure partials, but do not imagine missing work.
+# - Answered-form requirements still bound rescue. If the requested form is the
+#   thing being graded, nearby chemical ingredients do not magically become the
+#   requested answer.
+# - Ambiguity should not turn into endless overthinking. After one careful pass,
+#   choose the best-supported reading, record uncertainty in model_reasoning,
+#   lower confidence when warranted, and stop.
+#
+# Keep this explanation next to the system prompt so future prompt edits do not
+# quietly drift back toward vague "be charitable" language.
 _SYSTEM_PROMPT = """\
 Award the highest score justified by the student's written work under the rubric.
 Actively rescue as much lawful partial credit as possible.
@@ -629,6 +646,23 @@ _EXAM_PDF_MAP = {
 }
 
 
+def _report_focus_preview_failure(sink: Any, item: EvalItem, exc: Exception) -> None:
+    """Surface preview-pipeline failures without killing the grading run.
+
+    The focus preview is an operator affordance, not a reason to abort scoring.
+    But failures in that pipeline must not vanish silently, because the human
+    is actively evaluating the surface live in Paint Dry.
+    """
+    msg = (
+        f"{item.exam_id}/{item.question_id} · "
+        f"focus preview unavailable ({type(exc).__name__})"
+    )
+    try:
+        sink.write_drop("focus-preview-error", msg)
+    except Exception:
+        print(f"[focus-preview-error] {msg}", file=sys.stderr)
+
+
 def grade_all_items(
     ground_truth: list[EvalItem],
     scans_dir: Path,
@@ -637,6 +671,7 @@ def grade_all_items(
     progress_callback: Any = None,
     narrator: Any = None,
     sink: Any = None,
+    focus_preview_callback: Any = None,
 ) -> list[Prediction]:
     """Grade all ground truth items against VLM, returning predictions.
 
@@ -703,6 +738,15 @@ def grade_all_items(
             )
             narrator_context = "\n".join(narrator_context_parts)
             sink.write_header(header)
+            if focus_preview_callback is not None:
+                try:
+                    focus_preview_callback(
+                        item=item,
+                        page_image=page_cache[cache_key],
+                        template_question=tq,
+                    )
+                except Exception as exc:
+                    _report_focus_preview_failure(sink, item, exc)
             narrator.start(item_header=narrator_context)
             on_delta = narrator.feed
         else:

@@ -4,6 +4,7 @@ import io
 import json
 import tempfile
 import unittest
+import base64
 from pathlib import Path
 from unittest import mock
 
@@ -132,6 +133,32 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertEqual(topic["grader_score"], 0.0)
         self.assertEqual(topic["truth_score"], 0.0)
         self.assertEqual(topic["max_points"], 4.0)
+
+    def test_write_focus_preview_emits_base64_preview_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_focus_preview(
+                b"preview-bytes",
+                label="15-blue/fr-12a",
+                source="mock_tricky",
+            )
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        preview = next(event for event in events if event["type"] == "focus_preview")
+        self.assertEqual(preview["label"], "15-blue/fr-12a")
+        self.assertEqual(preview["source"], "mock_tricky")
+        self.assertEqual(
+            base64.b64decode(preview["png_base64"]),
+            b"preview-bytes",
+        )
 
     def test_write_checkpoint_emits_checkpoint_event(self):
         with tempfile.TemporaryDirectory() as tmpdir:

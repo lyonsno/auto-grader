@@ -17,13 +17,17 @@ from datetime import datetime
 
 from auto_grader.eval_harness import (
     EvalItem,
+    FocusRegion,
     Prediction,
     load_ground_truth,
+    resolve_focus_region,
     score_predictions,
 )
+from auto_grader.focus_preview import render_focus_preview
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
 from auto_grader.vlm_inference import ServerConfig, grade_all_items
+import yaml
 
 
 _GROUND_TRUTH = Path(__file__).resolve().parent.parent / "eval" / "ground_truth.yaml"
@@ -36,6 +40,44 @@ _TEMPLATE = (
 )
 
 _DEFAULT_NARRATOR_URL = "http://nlmb2p.local:8002"
+_TRICKY_FOCUS_REGION_MOCKS: dict[tuple[str, str], FocusRegion] = {
+    ("27-blue-2023", "fr-3"): FocusRegion(
+        page=1, x=0.14, y=0.18, width=0.66, height=0.24, source="mock_tricky_plus"
+    ),
+    ("27-blue-2023", "fr-5b"): FocusRegion(
+        page=1, x=0.14, y=0.42, width=0.66, height=0.28, source="mock_tricky_plus"
+    ),
+    ("27-blue-2023", "fr-12a"): FocusRegion(
+        page=4, x=0.16, y=0.08, width=0.46, height=0.20, source="mock_tricky_plus"
+    ),
+    ("39-blue-redacted", "fr-10a"): FocusRegion(
+        page=3, x=0.14, y=0.20, width=0.62, height=0.24, source="mock_tricky_plus"
+    ),
+    ("34-blue", "fr-8"): FocusRegion(
+        page=2, x=0.16, y=0.32, width=0.58, height=0.24, source="mock_tricky_plus"
+    ),
+    ("34-blue", "fr-12a"): FocusRegion(
+        page=4, x=0.18, y=0.07, width=0.50, height=0.18, source="mock_tricky_plus"
+    ),
+    ("15-blue", "fr-1"): FocusRegion(
+        page=1, x=0.16, y=0.05, width=0.60, height=0.22, source="mock_tricky"
+    ),
+    ("15-blue", "fr-3"): FocusRegion(
+        page=1, x=0.14, y=0.18, width=0.64, height=0.24, source="mock_tricky"
+    ),
+    ("15-blue", "fr-5b"): FocusRegion(
+        page=1, x=0.14, y=0.42, width=0.66, height=0.28, source="mock_tricky"
+    ),
+    ("15-blue", "fr-10a"): FocusRegion(
+        page=3, x=0.14, y=0.20, width=0.62, height=0.24, source="mock_tricky"
+    ),
+    ("15-blue", "fr-11a"): FocusRegion(
+        page=3, x=0.16, y=0.40, width=0.58, height=0.22, source="mock_tricky"
+    ),
+    ("15-blue", "fr-12a"): FocusRegion(
+        page=4, x=0.16, y=0.08, width=0.48, height=0.19, source="mock_tricky"
+    ),
+}
 
 _TRICKY_PICKS = [
     ("15-blue", "fr-1"),    # easy warmup (numeric, density)
@@ -116,6 +158,44 @@ def _scorebug_session_meta(
         "set_label": set_label,
         "subset_count": subset_count,
     }
+
+
+def _load_template_document(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+def _resolve_preview_focus_region(
+    item: EvalItem,
+    *,
+    template_document: dict | None,
+) -> FocusRegion | None:
+    resolved = resolve_focus_region(item, template_document)
+    if resolved is not None:
+        return resolved
+    return _TRICKY_FOCUS_REGION_MOCKS.get((item.exam_id, item.question_id))
+
+
+def _emit_focus_preview(
+    sink: NarratorSink,
+    *,
+    item: EvalItem,
+    page_image: bytes,
+    template_document: dict | None,
+) -> None:
+    focus_region = _resolve_preview_focus_region(
+        item,
+        template_document=template_document,
+    )
+    if focus_region is None:
+        return
+    sink.write_focus_preview(
+        render_focus_preview(page_image, focus_region),
+        label=f"{item.exam_id}/{item.question_id}",
+        source=focus_region.source,
+    )
 
 
 class _PredictionWriter:
@@ -302,6 +382,7 @@ def main():
         args.narrator_model = _validate_narrator_model(args.narrator_model)
 
     gt = load_ground_truth(_GROUND_TRUTH)
+    template_document = _load_template_document(_TEMPLATE)
 
     if args.pick:
         wanted = []
@@ -404,6 +485,15 @@ def main():
             if narrator_enabled
             else None
         )
+        focus_preview_callback = None
+        if narrator_enabled and sink is not None:
+            def focus_preview_callback(*, item, page_image, template_question=None):
+                _emit_focus_preview(
+                    sink,
+                    item=item,
+                    page_image=page_image,
+                    template_document=template_document,
+                )
         try:
             predictions = grade_all_items(
                 subset, _SCANS_DIR, config,
@@ -411,6 +501,7 @@ def main():
                 progress_callback=_on_item,
                 narrator=narrator,
                 sink=sink,
+                focus_preview_callback=focus_preview_callback,
             )
         except KeyboardInterrupt:
             interrupted = True

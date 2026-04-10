@@ -7,6 +7,7 @@ change the harness.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,29 @@ import yaml
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FocusRegion:
+    """Optional page-local focus box for display/cropping affordances.
+
+    Coordinates are normalized to the rendered page: x/y are the top-left
+    corner, width/height are box dimensions, all in the closed interval
+    [0, 1] with positive width/height.
+
+    This is intentionally a display seam, not an OCR or box-detection claim.
+    A focus region may come from hand-authored ground truth, template metadata,
+    or a temporary mock map while the detector path does not exist yet.
+    Consumers should treat it as "best available crop hint for this item", not
+    as proof that the crop was discovered automatically.
+    """
+
+    page: int
+    x: float
+    y: float
+    width: float
+    height: float
+    source: str = "ground_truth"
 
 
 @dataclass(frozen=True)
@@ -41,6 +65,7 @@ class EvalItem:
     professor_mark: str  # check | x | partial | unclear
     student_answer: str
     notes: str
+    focus_region: FocusRegion | None = None
     corrected_score: float | None = None
     correction_reason: str = ""
 
@@ -159,11 +184,98 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
                     professor_mark=raw["professor_mark"],
                     student_answer=raw["student_answer"],
                     notes=raw["notes"],
+                    focus_region=_parse_focus_region(
+                        raw.get("focus_region"),
+                        page=int(raw["page"]),
+                        default_source="ground_truth",
+                    ),
                     corrected_score=corrected,
                     correction_reason=raw.get("correction_reason", ""),
                 )
             )
     return items
+
+
+def resolve_focus_region(
+    item: EvalItem,
+    template: Mapping[str, Any] | None = None,
+) -> FocusRegion | None:
+    """Return the best available focus region for an eval item.
+
+    Explicit item-level metadata wins. If absent, the resolver will look up a
+    question- or part-level ``focus_region`` block in the provided template and
+    attach it to the item's page.
+
+    This is a metadata seam for UI/display consumers. It is allowed to return
+    human-authored or mocked boxes while the real detector path is still
+    unbuilt; callers should not assume any particular provenance beyond the
+    ``source`` field on the returned region.
+    """
+    if item.focus_region is not None:
+        return item.focus_region
+    if template is None:
+        return None
+
+    raw_focus = _find_template_focus_region(
+        template.get("sections", []),
+        question_id=item.question_id,
+    )
+    return _parse_focus_region(
+        raw_focus,
+        page=item.page,
+        default_source="template",
+    )
+
+
+def _parse_focus_region(
+    raw_focus: Any,
+    *,
+    page: int,
+    default_source: str,
+) -> FocusRegion | None:
+    if raw_focus is None:
+        return None
+    if not isinstance(raw_focus, dict):
+        raise ValueError("focus_region must be a mapping when provided")
+
+    raw_page = raw_focus.get("page", page)
+    x = float(raw_focus["x"])
+    y = float(raw_focus["y"])
+    width = float(raw_focus["width"])
+    height = float(raw_focus["height"])
+    source = str(raw_focus.get("source", default_source))
+    return FocusRegion(
+        page=int(raw_page),
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        source=source,
+    )
+
+
+def _find_template_focus_region(
+    nodes: list[dict[str, Any]],
+    *,
+    question_id: str,
+) -> dict[str, Any] | None:
+    for node in nodes:
+        if node.get("id") == question_id and "focus_region" in node:
+            raw_focus = node["focus_region"]
+            if isinstance(raw_focus, dict):
+                return raw_focus
+            return None
+        parts = node.get("parts")
+        if isinstance(parts, list):
+            nested = _find_template_focus_region(parts, question_id=question_id)
+            if nested is not None:
+                return nested
+        questions = node.get("questions")
+        if isinstance(questions, list):
+            nested = _find_template_focus_region(questions, question_id=question_id)
+            if nested is not None:
+                return nested
+    return None
 
 
 # ---------------------------------------------------------------------------

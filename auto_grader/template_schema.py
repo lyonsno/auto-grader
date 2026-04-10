@@ -181,6 +181,8 @@ def _validate_question(
         if not isinstance(figure, str) or not figure.strip():
             errors.append(f"{path}: figure must be a non-blank string")
 
+    _validate_focus_region(q.get("focus_region"), path, errors)
+
     # Resolve variables: merge parent variables with question-level variables
     q_vars = q.get("variables", {})
     merged_vars = dict(variables or {})
@@ -264,6 +266,8 @@ def _validate_question_or_part(
     if figure is not None:
         if not isinstance(figure, str) or not figure.strip():
             errors.append(f"{path}: figure must be a non-blank string")
+
+    _validate_focus_region(part.get("focus_region"), path, errors)
 
     # Merge any part-level variables with parent
     part_vars = part.get("variables", {})
@@ -462,6 +466,51 @@ def _validate_tolerance(tolerance: Any, path: str, errors: list[str]) -> None:
         errors.append(f"{path}: tolerance requires 'value'")
     elif not isinstance(tvalue, (int, float)) or tvalue <= 0:
         errors.append(f"{path}: tolerance.value must be a positive number, got {tvalue!r}")
+
+
+def _validate_focus_region(
+    focus_region: Any,
+    path: str,
+    errors: list[str],
+) -> None:
+    if focus_region is None:
+        return
+    if not isinstance(focus_region, dict):
+        errors.append(f"{path}: focus_region must be a mapping")
+        return
+
+    required_fields = ("x", "y", "width", "height")
+    missing = [field for field in required_fields if field not in focus_region]
+    for field in missing:
+        errors.append(f"{path}.focus_region: missing required field: {field}")
+    if missing:
+        return
+
+    coords: dict[str, float] = {}
+    for field in required_fields:
+        raw = focus_region[field]
+        if not isinstance(raw, (int, float)):
+            errors.append(
+                f"{path}.focus_region.{field}: must be a number, got {raw!r}"
+            )
+            continue
+        coords[field] = float(raw)
+
+    if len(coords) != len(required_fields):
+        return
+
+    if coords["x"] < 0 or coords["x"] > 1:
+        errors.append(f"{path}.focus_region.x: must be within [0, 1]")
+    if coords["y"] < 0 or coords["y"] > 1:
+        errors.append(f"{path}.focus_region.y: must be within [0, 1]")
+    if coords["width"] <= 0 or coords["width"] > 1:
+        errors.append(f"{path}.focus_region.width: must be within (0, 1]")
+    if coords["height"] <= 0 or coords["height"] > 1:
+        errors.append(f"{path}.focus_region.height: must be within (0, 1]")
+    if coords["x"] + coords["width"] > 1:
+        errors.append(f"{path}.focus_region: x + width must be <= 1")
+    if coords["y"] + coords["height"] > 1:
+        errors.append(f"{path}.focus_region: y + height must be <= 1")
 
 
 # ---------------------------------------------------------------------------

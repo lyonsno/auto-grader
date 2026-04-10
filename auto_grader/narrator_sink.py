@@ -21,6 +21,7 @@ just routes events to its outputs. JSON line protocol over the fifo:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -231,6 +232,32 @@ class NarratorSink:
             if not self.config.spawn_terminal:
                 self._fallback.write(f"  [drop:{reason}] {text}\n")
                 self._fallback.flush()
+
+    def write_focus_preview(
+        self,
+        png_bytes: bytes,
+        *,
+        label: str | None = None,
+        source: str | None = None,
+    ) -> None:
+        """Emit a terminal-preview image for the current item.
+
+        Preview images are JSONL/fifo-only. They intentionally do not
+        go into the plain-text transcript because the transcript is the
+        accepted textual narrator feed, not an image log.
+        """
+        if not png_bytes:
+            return
+        with self._lock:
+            msg = {
+                "type": "focus_preview",
+                "png_base64": base64.b64encode(png_bytes).decode("ascii"),
+            }
+            if label:
+                msg["label"] = label
+            if source:
+                msg["source"] = source
+            self._emit(msg)
 
     def rollback_live(self) -> None:
         """Discard the in-flight live line without committing it to history.
