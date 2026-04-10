@@ -21,7 +21,11 @@ def score_marked_mc_bubbles(
             raise TypeError("answer_key entries must be mappings")
         marked_bubble_labels = list(marked_labels_by_question.get(question_id, []))
         bubble_to_choice = _bubble_to_choice_key(question_answer_key)
-        marked_choice_keys = [bubble_to_choice[label] for label in marked_bubble_labels]
+        marked_choice_keys = _map_marked_choice_keys(
+            marked_bubble_labels,
+            bubble_to_choice,
+            question_id=question_id,
+        )
         correct_bubble_label = _require_string(
             question_answer_key.get("correct_bubble_label"),
             "answer_key.correct_bubble_label",
@@ -62,6 +66,23 @@ def _bubble_to_choice_key(question_answer_key: Mapping[str, Any]) -> dict[str, s
         choice_key = _require_string(raw_choice.get("choice_key"), "answer_key.choice.choice_key")
         mapping[bubble_label] = choice_key
     return mapping
+
+
+def _map_marked_choice_keys(
+    marked_bubble_labels: list[str],
+    bubble_to_choice: Mapping[str, str],
+    *,
+    question_id: str,
+) -> list[str]:
+    marked_choice_keys: list[str] = []
+    for bubble_label in marked_bubble_labels:
+        choice_key = bubble_to_choice.get(bubble_label)
+        if choice_key is None:
+            raise ValueError(
+                f"Unknown bubble label {bubble_label!r} for question {question_id!r}"
+            )
+        marked_choice_keys.append(choice_key)
+    return marked_choice_keys
 
 
 def _score_status(

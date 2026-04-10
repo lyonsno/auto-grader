@@ -176,6 +176,19 @@ class McPageExtractionContractTests(unittest.TestCase):
         )
         self.assertTrue(extracted["scored_questions"]["mc-1"]["review_required"])
 
+    def test_extract_scored_mc_page_keeps_blank_question_explicit(self) -> None:
+        extract_scored_mc_page = _load_extraction_module(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+
+        distorted = _perspective_distort(_render_marked_page(page, marked_labels={}))
+
+        extracted = extract_scored_mc_page(distorted, page, artifact["answer_key"])
+
+        self.assertEqual(extracted["marked_bubble_labels"], {"mc-1": []})
+        self.assertEqual(extracted["scored_questions"]["mc-1"]["status"], "blank")
+        self.assertFalse(extracted["scored_questions"]["mc-1"]["review_required"])
+
 
 if __name__ == "__main__":
     unittest.main()

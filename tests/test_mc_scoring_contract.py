@@ -90,6 +90,12 @@ class McScoringContractTests(unittest.TestCase):
         self.assertFalse(results["mc-1"]["is_correct"])
         self.assertTrue(results["mc-1"]["review_required"])
 
+    def test_scoring_rejects_unknown_bubble_labels_in_readback_surface(self) -> None:
+        score_marked_mc_bubbles = _load_scoring_module(self)
+
+        with self.assertRaisesRegex(ValueError, "Unknown bubble label"):
+            score_marked_mc_bubbles({"mc-1": ["Z"]}, _answer_key())
+
 
 if __name__ == "__main__":
     unittest.main()

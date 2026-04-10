@@ -38,6 +38,12 @@ def _synthetic_page(*payloads: str) -> np.ndarray:
 
 
 class ScanReadbackContractTests(unittest.TestCase):
+    def test_readback_rejects_page_with_no_detectable_qr(self) -> None:
+        read_page_identity_qr_payload = _load_readback_module(self)
+
+        with self.assertRaisesRegex(ValueError, "No page-identity QR code"):
+            read_page_identity_qr_payload(np.full((600, 900, 3), 255, dtype=np.uint8))
+
     def test_readback_returns_payload_when_duplicate_qrs_agree(self) -> None:
         read_page_identity_qr_payload = _load_readback_module(self)
 
