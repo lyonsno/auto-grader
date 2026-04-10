@@ -90,6 +90,19 @@ class NarratorReaderContract(unittest.TestCase):
         raise AssertionError(f"no style span found for substring {needle!r}")
 
     @staticmethod
+    def _foreground_hex(style: str) -> str | None:
+        for token in style.split():
+            if token.startswith("#"):
+                return token
+        return None
+
+    @staticmethod
+    def _background_hex(style: str) -> str | None:
+        if " on " not in style:
+            return None
+        return style.split(" on ", 1)[1].split()[0]
+
+    @staticmethod
     def _content_hexes(text: Text) -> list[str]:
         return [
             span.style
@@ -546,7 +559,7 @@ class NarratorReaderContract(unittest.TestCase):
             "item indicator should live in its own scorebug cell",
         )
 
-    def test_header_title_uses_visible_lacquer_gradient_in_rendered_surface(self):
+    def test_header_title_returns_to_white_scene_setter(self):
         display = self._make_display()
         display.current_model = "qwen3p5-35B-A3B"
         display.on_header("[item 4/6] 15-blue/fr-10a")
@@ -559,21 +572,16 @@ class NarratorReaderContract(unittest.TestCase):
             header_renderable = header_renderable.renderable
 
         title_end = header_renderable.plain.index(" · sumi-e")
-        title_styles = {
-            style
-            for style in self._styles_in_range(header_renderable, 0, title_end)
-            if "#" in style
-        }
+        title_styles = self._styles_in_range(header_renderable, 0, title_end)
 
-        self.assertGreaterEqual(
-            len(title_styles),
-            2,
-            "PROJECT PAINT DRY should carry multiple lacquer-family spans so the header accent actually reads in the smoked surface",
-        )
-        self.assertNotIn(
+        self.assertIn(
             "bold bright_white",
-            self._styles_in_range(header_renderable, 0, title_end),
-            "PROJECT PAINT DRY should no longer render as a single flat bright-white title",
+            title_styles,
+            "PROJECT PAINT DRY should go back to a flat bright-white scene-setter instead of participating in the accent system",
+        )
+        self.assertFalse(
+            any("#" in style for style in title_styles),
+            "PROJECT PAINT DRY should not carry lacquer-color spans in the rebuilt reference-led surface",
         )
 
     def test_scorebug_can_render_set_and_running_tally_cells(self):
@@ -643,15 +651,41 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn(expected_bad[0], tally_value_top.plain)
         self.assertIn(expected_bad[1], tally_value_mid.plain)
         self.assertIn(expected_bad[2], tally_value_bottom.plain)
-        self.assertIn(
-            "on #",
-            self._style_for_substring(scorebug_text_obj, "SET"),
-            "set label should also read like a scoreboard cell",
+        current_model_bg = self._background_hex(
+            self._style_for_substring(scorebug_text_obj, "CURRENT MODEL")
         )
-        self.assertIn(
-            "on #",
-            self._style_for_substring(tally_text_obj, "ON TARGET"),
-            "running tally labels should render as scorebug cells, not plain text",
+        set_bg = self._background_hex(
+            self._style_for_substring(scorebug_text_obj, "SET")
+        )
+        item_bg = self._background_hex(
+            self._style_for_substring(scorebug_text_obj, "ITEM")
+        )
+        self.assertEqual(
+            {current_model_bg, set_bg, item_bg},
+            {current_model_bg},
+            "the metadata strip should read as one shared smoke field, not three separate categorical capsules",
+        )
+        on_target_label_style = self._style_for_substring(tally_text_obj, "ON TARGET")
+        left_label_style = self._style_for_substring(tally_text_obj, "LEFT ON TABLE")
+        bad_label_style = self._style_for_substring(tally_text_obj, "BAD CALLS")
+        on_target_label_bg = self._background_hex(on_target_label_style)
+        left_label_bg = self._background_hex(left_label_style)
+        bad_label_bg = self._background_hex(bad_label_style)
+        self.assertEqual(
+            {on_target_label_bg, left_label_bg, bad_label_bg},
+            {on_target_label_bg},
+            "the tally labels should sit on one shared charcoal field instead of three color-coded boards",
+        )
+        self.assertGreaterEqual(
+            len(
+                {
+                    self._foreground_hex(on_target_label_style),
+                    self._foreground_hex(left_label_style),
+                    self._foreground_hex(bad_label_style),
+                }
+            ),
+            2,
+            "the labels can still carry restrained accent differences, but only in the foreground ink, not in separate slab backgrounds",
         )
         cell_width = len(f" {expected_on_target[0]} ")
         separator_width = 2
@@ -675,10 +709,28 @@ class NarratorReaderContract(unittest.TestCase):
             0,
             cell_width,
         )
+        left_top_style = self._style_for_substring(
+            tally_value_top,
+            expected_left[0].strip(),
+        )
+        bad_top_style = self._style_for_substring(
+            tally_value_top,
+            expected_bad[0].strip(),
+        )
         self.assertGreaterEqual(
             len(on_target_styles),
             2,
             "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
+        )
+        on_target_top_bg = self._background_hex(
+            self._style_for_substring(tally_value_top, expected_on_target[0].strip())
+        )
+        left_top_bg = self._background_hex(left_top_style)
+        bad_top_bg = self._background_hex(bad_top_style)
+        self.assertEqual(
+            {on_target_top_bg, left_top_bg, bad_top_bg},
+            {on_target_top_bg},
+            "the top numeral row should use one continuous smoke background across all three scoreboard categories",
         )
         on_target_top_strong = tally_value_top.spans[1].style
         on_target_bottom_style = self._style_for_substring(
@@ -690,17 +742,9 @@ class NarratorReaderContract(unittest.TestCase):
             on_target_bottom_style,
             "scorebug value rows should now drift tonally across the board instead of sitting on one flat background",
         )
-        left_top_style = self._style_for_substring(
-            tally_value_top,
-            expected_left[0].strip(),
-        )
         left_bottom_style = self._style_for_substring(
             tally_value_bottom,
             expected_left[2].strip(),
-        )
-        bad_top_style = self._style_for_substring(
-            tally_value_top,
-            expected_bad[0].strip(),
         )
         bad_bottom_style = self._style_for_substring(
             tally_value_bottom,
