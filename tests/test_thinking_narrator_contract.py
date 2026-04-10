@@ -157,22 +157,22 @@ class ThinkingNarratorContract(unittest.TestCase):
         thread_mock.assert_called_once()
         thread.start.assert_called_once()
 
-    def test_streaming_bonsai_default_temperature_is_one(self):
+    def test_streaming_bonsai_default_sampler_splits_the_difference(self):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink)
 
         def _raise_and_capture(request, timeout):
             body = json.loads(request.data.decode())
-            self.assertEqual(body["temperature"], 1.0)
+            self.assertEqual(body["temperature"], 0.8)
             self.assertEqual(body["presence_penalty"], 1.0)
-            self.assertEqual(body["repetition_penalty"], 1.01)
+            self.assertEqual(body["repetition_penalty"], 1.005)
             raise RuntimeError("boom")
 
         with mock.patch("urllib.request.urlopen", side_effect=_raise_and_capture):
             with self.assertRaises(RuntimeError):
                 narrator._chat_completion_stream([{"role": "system", "content": "x"}], lambda _: None)
 
-    def test_after_action_bonsai_call_uses_temperature_one(self):
+    def test_after_action_bonsai_call_uses_split_difference_sampler(self):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink)
         prediction = type(
@@ -202,9 +202,9 @@ class ThinkingNarratorContract(unittest.TestCase):
                 template_question={"answer": "density", "notes": "n/a"},
             )
 
-        self.assertEqual(completion_mock.call_args.kwargs["temperature"], 1.0)
+        self.assertEqual(completion_mock.call_args.kwargs["temperature"], 0.8)
         self.assertEqual(completion_mock.call_args.kwargs["presence_penalty"], 1.0)
-        self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.01)
+        self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.005)
 
     def test_after_action_prompt_avoids_indexable_stock_examples(self):
         sink = _DummySink()
