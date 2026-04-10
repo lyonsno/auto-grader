@@ -54,6 +54,19 @@ class _RetryNarrator(ThinkingNarrator):
         return text
 
 
+class _BadStatusRetryNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        if "present-participle status line" in system:
+            return "I'm noticing the same unit conversion."
+        return "I'm tracing the same unit conversion mistake."
+
+
 class _AfterActionNarrator(ThinkingNarrator):
     def __init__(self, sink: _DummySink, response: str) -> None:
         super().__init__(sink)
@@ -89,6 +102,27 @@ class ThinkingNarratorContract(unittest.TestCase):
             "Rechecking the same unit conversion.",
         )
         self.assertEqual(narrator._thoughts_since_status, [])
+
+    def test_status_retry_rejects_first_person_leak(self):
+        sink = _DummySink()
+        narrator = _BadStatusRetryNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._prior_statuses = ["Tracing the setup."]
+        narrator._thoughts_since_status = [
+            "I'm tracing the unit conversion mistake."
+        ]
+
+        narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(sink.commits, [])
+        self.assertEqual(
+            sink.drops,
+            [
+                ("dedup", "I'm tracing the same unit conversion mistake."),
+                ("dedup-status", "I'm noticing the same unit conversion."),
+            ],
+        )
+        self.assertEqual(sink.deltas, [])
 
     def test_thought_prompt_uses_current_status_and_last_four_thoughts_only(self):
         sink = _DummySink()
@@ -205,6 +239,13 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(completion_mock.call_args.kwargs["temperature"], 0.8)
         self.assertEqual(completion_mock.call_args.kwargs["presence_penalty"], 1.0)
         self.assertEqual(completion_mock.call_args.kwargs["repetition_penalty"], 1.005)
+
+    def test_first_person_prompt_discourages_defaulting_to_im_noticing(self):
+        prompt = ThinkingNarrator._compose_system_prompt(ThinkingNarrator(_DummySink()))
+        self.assertIn(
+            'Do not default to "I\'m noticing" or "I\'m seeing"; use stronger verbs unless the point is literal OCR or legibility.',
+            prompt,
+        )
 
     def test_after_action_prompt_avoids_indexable_stock_examples(self):
         sink = _DummySink()
