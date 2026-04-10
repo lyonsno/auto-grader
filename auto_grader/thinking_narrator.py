@@ -710,6 +710,7 @@ class ThinkingNarrator:
     def _retry_duplicate_as_status(
         self,
         chunk: str,
+        rejected_thought: str,
         prior_statuses: list[str],
     ) -> tuple[str | None, str, str | None, str | None]:
         """Retry a repetitive thought as a strict status line.
@@ -719,7 +720,7 @@ class ThinkingNarrator:
         present-participle form, or it is rejected as ``contract-status``.
         """
         status_user_content = self._build_status_user_content(
-            chunk, chunk, prior_statuses
+            chunk, rejected_thought, prior_statuses
         )
         messages = [
             {"role": "system", "content": self._compose_system_prompt(status_mode=True)},
@@ -1232,7 +1233,7 @@ class ThinkingNarrator:
                     status_drop_reason,
                     status_drop,
                 ) = self._retry_duplicate_as_status(
-                    chunk, prior_statuses
+                    chunk, full, prior_statuses
                 )
                 if not status_full:
                     if status_established:
