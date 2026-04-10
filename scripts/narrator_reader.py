@@ -554,20 +554,35 @@ def _sample_preview_rgb(
     target_width: int,
     target_height: int,
 ) -> tuple[int, int, int]:
-    src_x = min(
-        pix.width - 1,
-        max(0, int(((x + 0.5) / target_width) * pix.width)),
+    src_x0 = max(0, int((x / target_width) * pix.width))
+    src_x1 = min(
+        pix.width,
+        max(src_x0 + 1, int(math.ceil(((x + 1) / target_width) * pix.width))),
     )
-    src_y = min(
-        pix.height - 1,
-        max(0, int(((y + 0.5) / target_height) * pix.height)),
+    src_y0 = max(0, int((y / target_height) * pix.height))
+    src_y1 = min(
+        pix.height,
+        max(src_y0 + 1, int(math.ceil(((y + 1) / target_height) * pix.height))),
     )
-    offset = ((src_y * pix.width) + src_x) * pix.n
     samples = pix.samples
+    red = 0
+    green = 0
+    blue = 0
+    count = 0
+    for src_y in range(src_y0, src_y1):
+        row_offset = src_y * pix.width * pix.n
+        for src_x in range(src_x0, src_x1):
+            offset = row_offset + (src_x * pix.n)
+            red += samples[offset]
+            green += samples[offset + 1]
+            blue += samples[offset + 2]
+            count += 1
+    if count == 0:
+        return _FOCUS_PREVIEW_BG_RGB
     return (
-        samples[offset],
-        samples[offset + 1],
-        samples[offset + 2],
+        int(round(red / count)),
+        int(round(green / count)),
+        int(round(blue / count)),
     )
 
 
@@ -1102,6 +1117,7 @@ class PaintDryDisplay:
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
         self.focus_preview_png: bytes | None = None
+        self.focus_preview_renderable: Group | None = None
         self.focus_preview_label: str = ""
         self.focus_preview_source: str = ""
         # When True, render() shows a "press Enter to close" footer and
@@ -1640,14 +1656,14 @@ class PaintDryDisplay:
         )
 
         focus_preview_panel = None
-        if self.focus_preview_png:
+        if self.focus_preview_renderable is not None:
             preview_title = "[grey50]focus preview"
             if self.focus_preview_label:
                 preview_title += f" · {self.focus_preview_label}"
             preview_title += "[/grey50]"
             focus_preview_panel = Panel(
                 Align.center(
-                    _render_focus_preview_terminal(self.focus_preview_png)
+                    self.focus_preview_renderable
                 ),
                 border_style="#3d4458",
                 padding=(0, 1),
@@ -1925,6 +1941,7 @@ class PaintDryDisplay:
         self._frozen_line_parity = self._line_parity
         self._freeze_started_at = None
         self.focus_preview_png = None
+        self.focus_preview_renderable = None
         self.focus_preview_label = ""
         self.focus_preview_source = ""
         m = _HEADER_INDEX_RE.match(text)
@@ -2012,6 +2029,7 @@ class PaintDryDisplay:
         source: str = "",
     ) -> None:
         self.focus_preview_png = png_bytes
+        self.focus_preview_renderable = _render_focus_preview_terminal(png_bytes)
         self.focus_preview_label = label
         self.focus_preview_source = source
 

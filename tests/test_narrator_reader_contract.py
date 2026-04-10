@@ -196,6 +196,24 @@ class NarratorReaderContract(unittest.TestCase):
             titled_panels.index("[grey50]history[/grey50]"),
         )
 
+    def test_focus_preview_is_rasterized_once_per_item_not_each_frame(self):
+        display = self._make_display()
+        sentinel = Group(Text("preview"))
+
+        with mock.patch(
+            "scripts.narrator_reader._render_focus_preview_terminal",
+            return_value=sentinel,
+        ) as render_mock:
+            display.on_focus_preview(
+                self._make_png(),
+                label="15-blue/fr-12a",
+                source="mock_tricky",
+            )
+            display.render()
+            display.render()
+
+        self.assertEqual(render_mock.call_count, 1)
+
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):
         display = self._make_display()
         display.frozen_line = "I'm tracing the previous item."

@@ -128,6 +128,19 @@ class SmokeVlmContract(unittest.TestCase):
 
         self.assertEqual(focus, item.focus_region)
 
+    def test_mock_tricky_focus_regions_are_not_ribbon_thin(self) -> None:
+        for focus in smoke_vlm._TRICKY_FOCUS_REGION_MOCKS.values():
+            self.assertGreaterEqual(
+                focus.height,
+                0.18,
+                "mock tricky previews should be tall enough to read as focused crops, not banner strips",
+            )
+            self.assertLessEqual(
+                focus.width / focus.height,
+                3.5,
+                "mock tricky previews should avoid ultra-wide aspect ratios until we have real boxes",
+            )
+
     def test_scorebug_session_meta_labels_tricky_plus_subset(self) -> None:
         parser = smoke_vlm._build_arg_parser()
         args = parser.parse_args(
