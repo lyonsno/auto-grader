@@ -62,11 +62,15 @@ class EvalItem:
 class Prediction:
     """Model output for one eval item.
 
-    raw_assistant and raw_reasoning preserve the unparsed grader output so
-    a downstream critic pass can read the verbatim <think> trace where
-    consistency-rule violations actually live (the curated model_reasoning
-    field is too short to capture them). Both default to empty string for
-    backward compatibility with predictions constructed in tests.
+    score_basis is the terse literal basis for the awarded score: what
+    earned credit and what lost it. model_reasoning is the broader
+    interpretive reasoning around ambiguity, OCR, rescue logic, or human
+    review. raw_assistant and raw_reasoning preserve the unparsed grader
+    output so a downstream critic pass can read the verbatim <think>
+    trace where consistency-rule violations actually live (the curated
+    fields are intentionally shorter). Optional fields default to empty
+    string / None for backward compatibility with predictions
+    constructed in tests.
 
     **Truncation sentinel contract** (Operation Zilch Reaper, forward
     lane): when the grader did not commit to a score — either because
@@ -90,6 +94,7 @@ class Prediction:
     model_confidence: float | None  # 0-1, None on truncated rows
     model_reasoning: str
     model_read: str  # what model thinks student wrote
+    score_basis: str = ""
     raw_assistant: str = ""  # full assistant content string before JSON parse
     raw_reasoning: str = ""  # full reasoning_content stream (verbatim <think>)
     # Upstream-dependency forcing fields. The grader is required to fill

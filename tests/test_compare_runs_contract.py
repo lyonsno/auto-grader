@@ -75,6 +75,7 @@ class CompareRunsContract(unittest.TestCase):
             "model_score": score,
             "model_confidence": 0.5,
             "model_read": "foo",
+            "score_basis": "Correct setup, arithmetic slip.",
             "model_reasoning": "bar",
             "raw_assistant": "{}",
             "raw_reasoning": "abc",
@@ -140,6 +141,7 @@ class CompareRunsContract(unittest.TestCase):
                                 "model_score": 1,
                                 "model_confidence": 0.75,
                                 "model_read": "foo",
+                                "score_basis": "Correct setup, arithmetic slip.",
                                 "model_reasoning": "bar",
                                 "raw_assistant": "{}",
                                 "raw_reasoning": "abcdef",
@@ -193,6 +195,9 @@ class CompareRunsContract(unittest.TestCase):
             self.assertEqual(record.elapsed_s, 147)
             self.assertEqual(record.critic_score, 2.0)
             self.assertEqual(record.reasoning_chars, 6)
+            self.assertEqual(record.score_basis, "Correct setup, arithmetic slip.")
+            self.assertTrue(record.is_obviously_fully_correct)
+            self.assertFalse(record.is_obviously_wrong)
 
     def test_build_comparison_rows_emits_per_run_columns(self):
         module = _load_compare_runs()
@@ -225,6 +230,7 @@ class CompareRunsContract(unittest.TestCase):
                                     "model_score": score,
                                     "model_confidence": 0.5,
                                     "model_read": "foo",
+                                    "score_basis": "Correct setup, arithmetic slip.",
                                     "model_reasoning": "bar",
                                     "raw_assistant": "{}",
                                     "raw_reasoning": "abc",
@@ -247,6 +253,12 @@ class CompareRunsContract(unittest.TestCase):
             self.assertEqual(row["new__score"], 2.0)
             self.assertEqual(row["old__model"], "old-model")
             self.assertEqual(row["new__model"], "new-model")
+            self.assertEqual(
+                row["old__score_basis"],
+                "Correct setup, arithmetic slip.",
+            )
+            self.assertEqual(row["old__is_obviously_wrong"], True)
+            self.assertEqual(row["new__is_obviously_wrong"], True)
 
     def test_resolve_query_run_uses_discovered_manifest_parent_for_copied_runs(self):
         module = _load_compare_runs()

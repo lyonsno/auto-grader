@@ -42,6 +42,9 @@ class RunRecord:
     model_score: float | None
     critic_score: float | None
     model_confidence: float | None
+    score_basis: str
+    is_obviously_fully_correct: bool | None
+    is_obviously_wrong: bool | None
     upstream_dependency: str
     if_dependent_then_consistent: bool | None
     reasoning_chars: int
@@ -195,6 +198,11 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
                     if raw_model_confidence is not None
                     else None
                 ),
+                score_basis=str(obj.get("score_basis", "")),
+                is_obviously_fully_correct=obj.get(
+                    "is_obviously_fully_correct", None
+                ),
+                is_obviously_wrong=obj.get("is_obviously_wrong", None),
                 upstream_dependency=str(obj.get("upstream_dependency", "none")),
                 if_dependent_then_consistent=obj.get(
                     "if_dependent_then_consistent", None
@@ -248,6 +256,11 @@ def build_comparison_rows(
                 else record.model_score
             )
             row[prefix + "confidence"] = record.model_confidence
+            row[prefix + "score_basis"] = record.score_basis
+            row[prefix + "is_obviously_fully_correct"] = (
+                record.is_obviously_fully_correct
+            )
+            row[prefix + "is_obviously_wrong"] = record.is_obviously_wrong
             row[prefix + "upstream_dependency"] = record.upstream_dependency
             row[prefix + "if_dependent_then_consistent"] = (
                 record.if_dependent_then_consistent

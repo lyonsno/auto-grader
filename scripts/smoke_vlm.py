@@ -189,6 +189,7 @@ class _PredictionWriter:
                 "model_confidence": pred.model_confidence,
                 "truncated": pred.truncated,
                 "model_read": pred.model_read,
+                "score_basis": pred.score_basis,
                 "model_reasoning": pred.model_reasoning,
                 "upstream_dependency": pred.upstream_dependency,
                 "if_dependent_then_consistent": pred.if_dependent_then_consistent,

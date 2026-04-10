@@ -240,46 +240,49 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are grading a chemistry exam. You will be shown a scanned page from a \
-student's exam and asked to grade a specific question.
-
-Grading philosophy:
-- Be charitable. If a reasonable reading supports correctness, give credit.
-- If the student shows correct method but makes an arithmetic slip, award \
-partial credit for the method.
-- Internal consistency rule: if this part depends on an earlier wrong answer \
-but the student applies their own earlier result correctly here, award full \
-credit for the method in this part. Do not double-penalize one earlier error.
-- Answered-form rule: if the question asks for a specific form, grade the \
-requested form. Example: a net ionic equation must actually be net ionic; a \
-full molecular or full ionic equation does not satisfy that criterion.
-
-For each question, you must:
-1. Read what the student wrote
-2. Compare it to the correct answer / rubric
-3. Decide whether this question depends on an earlier part of the same \
-problem. If yes, name that earlier part. If no, say "none".
-4. If it does depend on an earlier part, decide whether the student's work \
-here is internally consistent with their own earlier result.
-5. Award a score, erring on the side of generosity while respecting the \
-requested answer form.
-
-Respond in EXACTLY this JSON format (no other text). The
-upstream_dependency and if_dependent_then_consistent fields are
-REQUIRED — the grading process is not complete without them, and they
-must be filled in before model_score:
-
+You are grading a chemistry exam.
+Award the highest score justified by the student's written work under the rubric.
+Actively rescue as much lawful partial credit as possible.
+If the student's work supports a lawful full-credit interpretation, take it and stop.
+Be charitable toward handwriting and notation: if a student's marks admit a reasonable reading as correct, read them that way.
+Be strict toward errors you see. An error you notice is an error you grade, even if the student "demonstrated the core concept" — that is abandoning the rubric, not charity.
+Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.
+Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
+Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
+Treat mL and cm³ as equivalent unless the question explicitly tests form.
+If the student shows correct method but makes an arithmetic slip, award partial credit for the method.
+If setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
+Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
+Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.
+If the student's approach would still be wrong with perfect execution, do not award method credit.
+Internal consistency: if this part depends on an earlier wrong answer but the student applies their own earlier result correctly here, award full credit for the method in this part.
+On Lewis-structure questions, rescue partial credit for correct connectivity, valence electrons, or bond order even if octets, formal charges, or resonance are incomplete.
+Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
+Grade what is written, not a more favorable answer you can imagine.
+If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
+After one careful pass, if ambiguity still affects the score, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.
+score_basis = short literal basis for the awarded score: credit earned vs lost.
+model_reasoning = broader reasoning only: ambiguity, OCR, rescue logic, or review handoff.
+Do not restate score_basis in model_reasoning.
+Answered-form rule: grade the form the question asked for. A net ionic equation means net ionic only; molecular and full ionic equations answer a different question.
+When the requested form is the thing being graded, do not award rescue credit for nearby ingredients unless the rubric explicitly does so.
+If the requested answer form is plainly missing, stop and score only what is on the page.
+Use upstream_dependency = "none" unless carry-forward is clear.
+Respond with only the JSON object below. upstream_dependency and if_dependent_then_consistent are required fields and must be populated before model_score:
 {
   "model_read": "<what the student wrote, verbatim>",
-  "upstream_dependency": "<earlier part id this depends on, e.g. '5(a)', or 'none'>",
-  "if_dependent_then_consistent": <true | false | null if upstream_dependency is 'none'>,
-  "model_score": <numeric score you award>,
-  "model_confidence": <0.0 to 1.0, your confidence in the score>,
-  "model_reasoning": "<brief explanation of your grading, including how the upstream dependency was handled>"
+  "model_score": <number>,
+  "model_confidence": <0 to 1>,
+  "model_reasoning": "<brief justification>",
+  "upstream_dependency": "<earlier part id or 'none'>",
+  "if_dependent_then_consistent": <true | false | null>,
+  "score_basis": <string>,
+  "is_obviously_fully_correct": <true | false | null>,
+  "is_obviously_wrong": <true | false | null>
 }
 """
 
-GRADING_PROMPT_VERSION = "2026-04-08-condensed-v1"
+GRADING_PROMPT_VERSION = "2026-04-11-positive-sweep-v1"
 DESCRIBE_ONLY_PROMPT_VERSION = "2026-04-11-describe-only-v2"
 DESCRIBE_ONLY_PROMPT = (
     "This is a page from a student's chemistry exam. The page may "
@@ -415,6 +418,7 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
     score_m = re.search(r'"?model_score"?\s*:\s*([\d.]+)', text)
     conf_m = re.search(r'"?model_confidence"?\s*:\s*([\d.]+)', text)
     read_m = re.search(r'"?model_read"?\s*:\s*"([^"]*)"', text)
+    score_basis_m = re.search(r'"?score_basis"?\s*:\s*"([^"]*)"', text)
     reason_m = re.search(r'"?model_reasoning"?\s*:\s*"([^"]*)"', text)
 
     if score_m:
@@ -422,6 +426,7 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
             "model_score": float(score_m.group(1)),
             "model_confidence": float(conf_m.group(1)) if conf_m else 0.5,
             "model_read": read_m.group(1) if read_m else "",
+            "score_basis": score_basis_m.group(1) if score_basis_m else "",
             "model_reasoning": reason_m.group(1) if reason_m else "",
         }
 
@@ -455,6 +460,7 @@ truncated-grader-output-as-model-score-zero_2026-04-11.md``.
         question_id=item.question_id,
         model_score=None,
         model_confidence=None,
+        score_basis="",
         model_reasoning=message,
         model_read="",
         raw_assistant=raw_assistant,
@@ -702,6 +708,7 @@ def grade_single_item(
         question_id=item.question_id,
         model_score=float(raw_model_score),
         model_confidence=float(parsed.get("model_confidence", 0.5)),
+        score_basis=str(parsed.get("score_basis", "")),
         model_reasoning=str(parsed.get("model_reasoning", "")),
         model_read=str(parsed.get("model_read", "")),
         raw_assistant=content,
