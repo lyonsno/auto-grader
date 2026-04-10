@@ -681,7 +681,11 @@ class NarratorReaderContract(unittest.TestCase):
     def test_scorebug_four_glyph_keeps_a_straight_right_stem(self):
         top, middle, bottom = _scorebug_big_value_rows("4.0")
 
-        self.assertIn("║ ║", top)
+        self.assertIn(
+            "╔ ╗",
+            top,
+            "the 4 glyph should carry a real top cap so it reads less like two bare fenceposts",
+        )
         self.assertIn("╚═╣", middle)
         self.assertIn(
             "  ║",
