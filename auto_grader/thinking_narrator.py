@@ -1249,9 +1249,19 @@ class ThinkingNarrator:
                 ]
                 checkpoint_text = self._chat_completion(checkpoint_messages).strip()
                 if checkpoint_text:
-                    self._sink.write_checkpoint(checkpoint_text)
-                    with self._lock:
-                        self._prior_checkpoints.append(checkpoint_text)
+                    if any(
+                        self._lines_too_similar(
+                            checkpoint_text,
+                            prev,
+                            threshold=_STATUS_SIMILARITY_THRESHOLD,
+                        )
+                        for prev in checkpoint_prior
+                    ):
+                        self._sink.write_drop("dedup-checkpoint", checkpoint_text)
+                    else:
+                        self._sink.write_checkpoint(checkpoint_text)
+                        with self._lock:
+                            self._prior_checkpoints.append(checkpoint_text)
             logger.info("Narrator summary: %s", full)
         except Exception:
             logger.exception("Narrator dispatch failed")
