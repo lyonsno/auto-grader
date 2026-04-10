@@ -112,6 +112,28 @@ class _EventuallyValidStatusRetryNarrator(ThinkingNarrator):
         return "I'm noticing the student used negative values for energy and frequency, which is inconsistent with standard photon energy calculations."
 
 
+class _GroundedStatusRetryNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        if "present-participle status line" in system:
+            if (
+                "Rejected first-person line to compress:\n"
+                "- I'm tracing the valence electron count and connectivity in the Lewis structure."
+            ) in user:
+                text = "Rechecking the valence electron count and connectivity in the Lewis structure."
+                for token in text.split():
+                    on_delta(token + " ")
+                return text
+            return "I'm checking the valence electron count and connectivity in the Lewis structure."
+        return "I'm tracing the valence electron count and connectivity in the Lewis structure."
+
+
 class _AfterActionNarrator(ThinkingNarrator):
     def __init__(self, sink: _DummySink, response: str) -> None:
         super().__init__(sink)
@@ -289,6 +311,28 @@ class ThinkingNarratorContract(unittest.TestCase):
             [
                 "Rechecking the student's answer for consistency with the given energy value and mole calculation.",
             ],
+        )
+
+    def test_status_retry_is_grounded_in_rejected_first_person_thought(self):
+        sink = _DummySink()
+        narrator = _GroundedStatusRetryNarrator(sink)
+        narrator.start(item_header="34-blue/fr-12a")
+        narrator._prior_statuses = ["Rechecking the Lewis structure for octet compliance."]
+        narrator._thoughts_since_status = [
+            "I'm tracing the valence electron count and connectivity in the Lewis structure."
+        ]
+
+        narrator._dispatch("broad reasoning chunk about the Lewis structure", narrator._dispatch_generation)
+
+        self.assertEqual(sink.commits, ["status"])
+        self.assertEqual(
+            "".join(sink.deltas),
+            "Rechecking the valence electron count and connectivity in the Lewis structure.",
+        )
+        self.assertEqual(sink.delta_modes, ["status"] * len(sink.deltas))
+        self.assertEqual(
+            narrator._prior_statuses[-1],
+            "Rechecking the valence electron count and connectivity in the Lewis structure.",
         )
 
     def test_thought_prompt_uses_current_status_and_last_four_thoughts_only(self):
