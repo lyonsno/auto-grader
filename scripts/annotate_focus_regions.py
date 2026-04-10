@@ -57,7 +57,6 @@ _GROUND_TRUTH_PATH = _REPO_ROOT / "eval" / "ground_truth.yaml"
 
 _MAX_DISPLAY_WIDTH = 1400
 _MAX_DISPLAY_HEIGHT = 1600
-_DPI = 160
 
 
 def _ditto_box_for(
@@ -146,9 +145,79 @@ def _parse_targets(raw: str) -> list[tuple[str, str]]:
     return out
 
 
-def _rasterize_page(pdf_path: Path, page_number: int) -> tuple[bytes, int, int]:
-    """Rasterize a PDF page (1-indexed) to PNG bytes and return
-    (png_bytes, width_px, height_px) at the configured DPI."""
+def _compute_display_dpi(
+    page_pt_width: float,
+    page_pt_height: float,
+    *,
+    max_width: int = _MAX_DISPLAY_WIDTH,
+    max_height: int = _MAX_DISPLAY_HEIGHT,
+) -> float:
+    """Return the DPI at which a PDF page of the given point dimensions
+    rasterizes to the largest pixel size that still fits inside the
+    max display bounds. Pure function of point dimensions and bounds.
+
+    The returned DPI, when passed to `page.get_pixmap(dpi=...)`,
+    produces a pixmap whose width and height are exactly the display
+    dimensions the caller will use to create the canvas. No re-scale
+    step is needed downstream.
+    """
+    # page_pt_* is in PDF points (72 per inch). pixel = point × dpi / 72.
+    dpi_w = max_width * 72.0 / page_pt_width
+    dpi_h = max_height * 72.0 / page_pt_height
+    return min(dpi_w, dpi_h)
+
+
+def _normalize_drag_box(
+    drag_start: tuple[int, int],
+    release: tuple[int, int],
+    *,
+    display_width: int,
+    display_height: int,
+    min_pixel_size: int = 3,
+):
+    """Pure click-to-normalized coordinate math.
+
+    Takes two display-space points (in pixels), clamps them to the
+    display bounds, normalizes their order, and returns a tuple
+    ``(x, y, width, height)`` in normalized ``[0, 1]`` coordinates —
+    *or* ``None`` if the drag is smaller than ``min_pixel_size`` in
+    either dimension (treated as a tap and ignored).
+
+    This function is the hard contract for what the annotator saves:
+    every stored focus region was produced by exactly this math,
+    against a ``(display_width, display_height)`` equal to the actual
+    pixel dimensions of the rendered page image. If that invariant
+    ever slips, the saved coordinates become garbage — which is why
+    we factor this out as a pure function and test it directly.
+    """
+    start_x, start_y = drag_start
+    release_x, release_y = release
+    start_x = max(0, min(display_width, start_x))
+    start_y = max(0, min(display_height, start_y))
+    release_x = max(0, min(display_width, release_x))
+    release_y = max(0, min(display_height, release_y))
+    left, right = min(start_x, release_x), max(start_x, release_x)
+    top, bottom = min(start_y, release_y), max(start_y, release_y)
+    if right - left < min_pixel_size or bottom - top < min_pixel_size:
+        return None
+    return (
+        left / display_width,
+        top / display_height,
+        (right - left) / display_width,
+        (bottom - top) / display_height,
+    )
+
+
+def _rasterize_page_for_display(
+    pdf_path: Path,
+    page_number: int,
+) -> tuple[bytes, int, int]:
+    """Rasterize a PDF page (1-indexed) at the display DPI computed
+    from the page's native point dimensions. Returns
+    (png_bytes, width_px, height_px). The width and height are the
+    *actual* pixel dimensions of the returned PNG — the canvas should
+    be sized to these values exactly, with no further scaling.
+    """
     with fitz.open(pdf_path) as document:
         if page_number < 1 or page_number > document.page_count:
             raise SystemExit(
@@ -156,14 +225,13 @@ def _rasterize_page(pdf_path: Path, page_number: int) -> tuple[bytes, int, int]:
                 f"(page count = {document.page_count})"
             )
         page = document[page_number - 1]
-        pix = page.get_pixmap(dpi=_DPI)
+        rect = page.rect
+        # fitz wants an integer DPI; floor instead of round to make
+        # sure we do not exceed the max display bounds on either axis
+        # due to rounding up.
+        dpi = int(_compute_display_dpi(rect.width, rect.height))
+        pix = page.get_pixmap(dpi=dpi)
         return pix.tobytes("png"), pix.width, pix.height
-
-
-def _compute_display_scale(page_width: int, page_height: int) -> float:
-    scale_w = _MAX_DISPLAY_WIDTH / page_width
-    scale_h = _MAX_DISPLAY_HEIGHT / page_height
-    return min(1.0, scale_w, scale_h)
 
 
 class AnnotationApp:
@@ -177,8 +245,6 @@ class AnnotationApp:
         targets: list[tuple[str, str]],
         existing: dict[tuple[str, str], FocusRegion],
     ) -> None:
-        self.page_width_px = page_width_px
-        self.page_height_px = page_height_px
         self.pdf_page_number = pdf_page_number
         self.targets = targets
         self.existing = dict(existing)  # copy; will be mutated on accept
@@ -190,9 +256,14 @@ class AnnotationApp:
         # so it cannot silently copy stale coordinates.
         self.session_accepted: dict[int, FocusRegion] = {}
         self.current_index = 0
-        self.scale = _compute_display_scale(page_width_px, page_height_px)
-        self.display_width = int(round(page_width_px * self.scale))
-        self.display_height = int(round(page_height_px * self.scale))
+        # The page image was already rasterized at the exact display
+        # dimensions by `_rasterize_page_for_display` — no scale step
+        # here, no re-rasterize. The canvas size IS the image size.
+        # This is the contract that makes click → normalized coord
+        # math correct: every stored coord is `click / display_dim`,
+        # and `display_dim` equals the actual PNG pixel dimensions.
+        self.display_width = page_width_px
+        self.display_height = page_height_px
 
         self.root = tk.Tk()
         self.root.title("focus region annotator")
@@ -225,10 +296,10 @@ class AnnotationApp:
         )
         self.canvas.pack(side=tk.TOP)
 
-        # tk.PhotoImage handles PNG natively in modern Tk; if the page
-        # is huge we scale it down to the display resolution via fitz
-        # before handing it off, since PhotoImage doesn't scale.
-        self.tk_image = self._build_display_image(page_png)
+        # The page_png was rasterized at the exact display dimensions
+        # upstream, so tk.PhotoImage takes it directly at native size.
+        # No scaling required and no reinterpret-PNG-as-document path.
+        self.tk_image = tk.PhotoImage(data=page_png)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
 
         # Rectangle state.
@@ -252,16 +323,6 @@ class AnnotationApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
 
         self._load_current_target()
-
-    def _build_display_image(self, page_png: bytes) -> tk.PhotoImage:
-        if self.scale >= 1.0:
-            return tk.PhotoImage(data=page_png)
-        # Re-rasterize at the display scale directly so we don't have to
-        # rely on PhotoImage's subsample (which only does integer ratios).
-        with fitz.open(stream=page_png, filetype="png") as doc:
-            matrix = fitz.Matrix(self.scale, self.scale)
-            pix = doc[0].get_pixmap(matrix=matrix)
-            return tk.PhotoImage(data=pix.tobytes("png"))
 
     def _clear_rects(self) -> None:
         if self.current_rect_id is not None:
@@ -332,28 +393,31 @@ class AnnotationApp:
     def _on_release(self, event: tk.Event) -> None:
         if self.drag_start is None:
             return
-        x0, y0 = self.drag_start
-        x1 = max(0, min(self.display_width, event.x))
-        y1 = max(0, min(self.display_height, event.y))
+        release = (event.x, event.y)
+        drag_start = self.drag_start
         self.drag_start = None
-        # Normalize order so x0<x1 and y0<y1.
-        left, right = min(x0, x1), max(x0, x1)
-        top, bottom = min(y0, y1), max(y0, y1)
-        if self.current_rect_id is not None:
-            self.canvas.coords(self.current_rect_id, left, top, right, bottom)
-        if right - left < 3 or bottom - top < 3:
-            # Treat a tap as "no box drawn" — ignore.
+        normalized = _normalize_drag_box(
+            drag_start,
+            release,
+            display_width=self.display_width,
+            display_height=self.display_height,
+        )
+        if normalized is None:
             if self.current_rect_id is not None:
                 self.canvas.delete(self.current_rect_id)
                 self.current_rect_id = None
             self.current_normalized = None
             return
-        self.current_normalized = (
-            left / self.display_width,
-            top / self.display_height,
-            (right - left) / self.display_width,
-            (bottom - top) / self.display_height,
-        )
+        # Reflect the clamped, normalized coords back to the canvas
+        # rectangle so the visible selection matches what was stored.
+        x_norm, y_norm, w_norm, h_norm = normalized
+        left = int(round(x_norm * self.display_width))
+        top = int(round(y_norm * self.display_height))
+        right = int(round((x_norm + w_norm) * self.display_width))
+        bottom = int(round((y_norm + h_norm) * self.display_height))
+        if self.current_rect_id is not None:
+            self.canvas.coords(self.current_rect_id, left, top, right, bottom)
+        self.current_normalized = normalized
 
     def _on_accept(self, _event=None) -> None:
         if self.current_normalized is None:
@@ -454,7 +518,7 @@ def main() -> None:
 
     config_path = args.config or DEFAULT_FOCUS_REGIONS_PATH
     targets = _parse_targets(args.targets)
-    page_png, width_px, height_px = _rasterize_page(args.pdf, args.page)
+    page_png, width_px, height_px = _rasterize_page_for_display(args.pdf, args.page)
     existing = load_focus_regions(config_path)
 
     print(
