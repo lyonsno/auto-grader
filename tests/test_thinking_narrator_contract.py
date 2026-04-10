@@ -138,6 +138,16 @@ class _StatusLikeCheckpointNarrator(_CheckpointNarrator):
         return "Rechecking ion balancing for net ionic equation."
 
 
+class _RunObservedUnitConversionCheckpointNarrator(_CheckpointNarrator):
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return "I'm tracing the student's unit conversions — they used 28.014 for N2 and 2.016 for H2, but the question asked for moles of NH3, not N2."
+
+
+class _RunObservedDashPrefixedCheckpointNarrator(_CheckpointNarrator):
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return "- I'm noticing the student used the initial energy instead of the energy change for the photon calculation."
+
+
 class ThinkingNarratorContract(unittest.TestCase):
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
@@ -399,6 +409,40 @@ class ThinkingNarratorContract(unittest.TestCase):
             (
                 "contract-checkpoint",
                 "Rechecking ion balancing for net ionic equation.",
+            ),
+            sink.drops,
+        )
+
+    def test_run_observed_first_person_checkpoint_shape_is_rejected(self):
+        sink = _DummySink()
+        narrator = _RunObservedUnitConversionCheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-3")
+
+        for idx in range(4):
+            narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(sink.checkpoints, [])
+        self.assertIn(
+            (
+                "contract-checkpoint",
+                "I'm tracing the student's unit conversions — they used 28.014 for N2 and 2.016 for H2, but the question asked for moles of NH3, not N2.",
+            ),
+            sink.drops,
+        )
+
+    def test_run_observed_dash_prefixed_checkpoint_shape_is_rejected(self):
+        sink = _DummySink()
+        narrator = _RunObservedDashPrefixedCheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-10a")
+
+        for idx in range(4):
+            narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(sink.checkpoints, [])
+        self.assertIn(
+            (
+                "contract-checkpoint",
+                "- I'm noticing the student used the initial energy instead of the energy change for the photon calculation.",
             ),
             sink.drops,
         )
