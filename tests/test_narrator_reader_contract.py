@@ -381,9 +381,19 @@ class NarratorReaderContract(unittest.TestCase):
             "cool live line should keep some moss/green body",
         )
         self.assertGreater(
+            cool_green,
+            0.75 * cool_blue,
+            "cool live line should lean a bit greener than the earlier pure steel-blue pass",
+        )
+        self.assertGreater(
             warm_red,
             warm_blue,
             "odd-parity live line should flip into a softened warm family",
+        )
+        self.assertGreater(
+            warm_red,
+            warm_green,
+            "soft-warm live line should still read red-led rather than beige/white-led",
         )
         self.assertGreater(
             warm_green,
@@ -406,6 +416,7 @@ class NarratorReaderContract(unittest.TestCase):
         if isinstance(scorebug_renderable, Align):
             scorebug_renderable = scorebug_renderable.renderable
         scorebug_text_obj = scorebug_renderable.renderables[0]
+        spacer_row = scorebug_renderable.renderables[1]
 
         self.assertIn("CURRENT MODEL", scorebug_text)
         self.assertIn("qwen3p5-35B-A3B", scorebug_text)
@@ -413,6 +424,11 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("3/6", scorebug_text)
         self.assertIn("PROJECT PAINT DRY", _extract_plain(header_panel.renderable))
         self.assertIn("status + live", live_panel.title)
+        self.assertEqual(
+            spacer_row.plain.strip(),
+            "",
+            "scorebug should separate model/set/item from the big tally row with a blank spacer line",
+        )
         self.assertIn(
             "on #",
             self._style_for_substring(scorebug_text_obj, "CURRENT MODEL"),
@@ -462,10 +478,11 @@ class NarratorReaderContract(unittest.TestCase):
         if isinstance(scorebug_renderable, Align):
             scorebug_renderable = scorebug_renderable.renderable
         scorebug_text_obj = scorebug_renderable.renderables[0]
-        tally_text_obj = scorebug_renderable.renderables[1]
-        tally_value_top = scorebug_renderable.renderables[2]
-        tally_value_mid = scorebug_renderable.renderables[3]
-        tally_value_bottom = scorebug_renderable.renderables[4]
+        spacer_row = scorebug_renderable.renderables[1]
+        tally_text_obj = scorebug_renderable.renderables[2]
+        tally_value_top = scorebug_renderable.renderables[3]
+        tally_value_mid = scorebug_renderable.renderables[4]
+        tally_value_bottom = scorebug_renderable.renderables[5]
         expected_on_target = _scorebug_big_value_rows("2.0/9.0")
         expected_left = _scorebug_big_value_rows("1.0/1.0")
         expected_bad = _scorebug_big_value_rows("1.5/1.5")
@@ -478,6 +495,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("ON TARGET", scorebug_text)
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
+        self.assertEqual(spacer_row.plain.strip(), "")
         self.assertIn(expected_on_target[0], tally_value_top.plain)
         self.assertIn(expected_on_target[1], tally_value_mid.plain)
         self.assertIn(expected_on_target[2], tally_value_bottom.plain)
@@ -526,9 +544,10 @@ class NarratorReaderContract(unittest.TestCase):
         scorebug_renderable = scorebug_panel.renderable
         if isinstance(scorebug_renderable, Align):
             scorebug_renderable = scorebug_renderable.renderable
-        tally_value_top = scorebug_renderable.renderables[2]
-        tally_value_mid = scorebug_renderable.renderables[3]
-        tally_value_bottom = scorebug_renderable.renderables[4]
+        spacer_row = scorebug_renderable.renderables[1]
+        tally_value_top = scorebug_renderable.renderables[3]
+        tally_value_mid = scorebug_renderable.renderables[4]
+        tally_value_bottom = scorebug_renderable.renderables[5]
         zero_rows = _scorebug_big_value_rows("0.0/0.0")
 
         self.assertIn("CURRENT MODEL", scorebug_text)
@@ -537,6 +556,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("ON TARGET", scorebug_text)
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
+        self.assertEqual(spacer_row.plain.strip(), "")
         self.assertIn(zero_rows[0], tally_value_top.plain)
         self.assertIn(zero_rows[1], tally_value_mid.plain)
         self.assertIn(zero_rows[2], tally_value_bottom.plain)
@@ -696,26 +716,37 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertEqual(_render_layer_index("header", 3), 0)
 
-    def test_history_groups_get_terraced_phase_offsets(self):
+    def test_history_groups_get_smaller_terrace_leads_and_stronger_within_group_rake(self):
         import scripts.narrator_reader as module
 
         self.assertTrue(
-            hasattr(module, "_history_group_phase"),
-            "history shimmer should expose a per-group terrace helper so item blocks can advance in phase together",
+            hasattr(module, "_history_entry_phase"),
+            "history shimmer should expose a helper that combines per-group terrace and within-group rake",
         )
-        phase0 = module._history_group_phase(0.25, 0)
-        phase1 = module._history_group_phase(0.25, 1)
-        phase2 = module._history_group_phase(0.25, 2)
+        phase0 = module._history_entry_phase(0.25, 0, 0)
+        phase0_deep = module._history_entry_phase(0.25, 0, 2)
+        phase1 = module._history_entry_phase(0.25, 1, 0)
+        phase2 = module._history_entry_phase(0.25, 2, 0)
 
         self.assertAlmostEqual(phase0, 0.25, places=9)
         self.assertGreater(
-            (phase1 - phase0) % 1.0,
-            0.05,
-            "adjacent item groups should not sit on the same phase plane",
+            phase1 - phase0,
+            0.0,
+            "adjacent item groups should still terrace forward a bit",
+        )
+        self.assertLess(
+            phase1 - phase0,
+            0.08,
+            "between-group terrace lead should be smaller than the earlier more aggressive jump",
+        )
+        self.assertGreater(
+            phase0 - phase0_deep,
+            phase1 - phase0,
+            "within-group rake should now be stronger than the between-group terrace lead",
         )
         self.assertAlmostEqual(
-            (phase2 - phase1) % 1.0,
-            (phase1 - phase0) % 1.0,
+            phase2 - phase1,
+            phase1 - phase0,
             places=9,
             msg="history terraces should advance by a consistent per-group lead",
         )
