@@ -224,6 +224,30 @@ class SmokeVlmContract(unittest.TestCase):
                 "Lewis mock boxes should exclude the next question block so the crop reads like the graded work, not a mini page",
             )
 
+    def test_run_dir_help_advertises_durable_root_outside_worktree(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+        run_dir_action = next(
+            action
+            for action in parser._actions
+            if "--run-dir" in action.option_strings
+        )
+
+        self.assertIn(
+            "~/dev/auto-grader-runs",
+            run_dir_action.help,
+        )
+
+    def test_default_run_dir_uses_durable_root_outside_repo(self) -> None:
+        run_dir = smoke_vlm._default_run_dir(
+            "qwen3p5-35B-A3B",
+            now=smoke_vlm.datetime(2026, 4, 10, 21, 30, 45),
+        )
+
+        self.assertEqual(
+            run_dir,
+            Path.home() / "dev" / "auto-grader-runs" / "20260410-213045-qwen3p5-35B-A3B",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
