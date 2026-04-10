@@ -192,6 +192,146 @@ class FocusRegionsRoundTripContract(unittest.TestCase):
         result = annotator._ditto_box_for(3, {0: box_a, 2: box_c})
         self.assertEqual(result, box_c)
 
+    def test_compute_display_dpi_fits_page_inside_max_bounds(self):
+        annotator = _load_annotator_module()
+        # US-letter-ish page in points.
+        dpi = annotator._compute_display_dpi(
+            610.0, 789.0, max_width=1400, max_height=1600
+        )
+        # The rasterized dimensions (point × dpi / 72) must not exceed
+        # max bounds on either axis.
+        width_px = 610.0 * dpi / 72.0
+        height_px = 789.0 * dpi / 72.0
+        self.assertLessEqual(
+            int(round(width_px)),
+            1400,
+            "display DPI must produce a pixmap that fits max width",
+        )
+        self.assertLessEqual(
+            int(round(height_px)),
+            1600,
+            "display DPI must produce a pixmap that fits max height",
+        )
+        # At least one axis should be at or near the max, otherwise we
+        # picked a DPI lower than necessary.
+        self.assertTrue(
+            int(round(width_px)) == 1400 or int(round(height_px)) == 1600,
+            "display DPI should saturate one of the max bounds",
+        )
+
+    def test_rasterize_page_for_display_returns_exact_pixel_dimensions(self):
+        # End-to-end contract: the PNG returned by
+        # _rasterize_page_for_display must have pixel dimensions equal
+        # to the (width_px, height_px) it reports. If the PNG is
+        # secretly smaller than the reported canvas size, the operator
+        # draws against a sub-region of the canvas and coordinates
+        # normalize against the wrong dimensions — that was the bug
+        # that corrupted every annotation on 2026-04-10.
+        annotator = _load_annotator_module()
+        pdf_path = Path(
+            "/Users/noahlyons/dev/auto-grader-assets/scans/15 blue.pdf"
+        )
+        if not pdf_path.exists():
+            self.skipTest(f"scan PDF not available at {pdf_path}")
+        png_bytes, width_px, height_px = annotator._rasterize_page_for_display(
+            pdf_path, 1
+        )
+        # Read back the actual pixel dimensions of the PNG by loading
+        # it through fitz (same library the tool uses).
+        import fitz
+        pix = fitz.Pixmap(png_bytes)
+        self.assertEqual(
+            pix.width,
+            width_px,
+            "reported width_px must equal actual PNG pixel width",
+        )
+        self.assertEqual(
+            pix.height,
+            height_px,
+            "reported height_px must equal actual PNG pixel height",
+        )
+        # And both must fit inside the max display bounds.
+        self.assertLessEqual(pix.width, annotator._MAX_DISPLAY_WIDTH)
+        self.assertLessEqual(pix.height, annotator._MAX_DISPLAY_HEIGHT)
+
+    def test_normalize_drag_box_basic_fully_inside(self):
+        annotator = _load_annotator_module()
+        # Drag from (100, 200) to (400, 600) inside a 1000x1500 canvas.
+        result = annotator._normalize_drag_box(
+            (100, 200), (400, 600), display_width=1000, display_height=1500
+        )
+        self.assertIsNotNone(result)
+        x, y, w, h = result
+        self.assertAlmostEqual(x, 0.1, places=6)
+        self.assertAlmostEqual(y, 200 / 1500, places=6)
+        self.assertAlmostEqual(w, 0.3, places=6)
+        self.assertAlmostEqual(h, 400 / 1500, places=6)
+
+    def test_normalize_drag_box_tap_returns_none(self):
+        annotator = _load_annotator_module()
+        # Click-release at almost the same point is a tap, not a drag.
+        result = annotator._normalize_drag_box(
+            (500, 500), (501, 501), display_width=1000, display_height=1000
+        )
+        self.assertIsNone(result)
+
+    def test_normalize_drag_box_reversed_drag_is_swapped(self):
+        annotator = _load_annotator_module()
+        # Drag from bottom-right to top-left — same geometric box.
+        forward = annotator._normalize_drag_box(
+            (100, 200), (400, 600), display_width=1000, display_height=1500
+        )
+        reversed_ = annotator._normalize_drag_box(
+            (400, 600), (100, 200), display_width=1000, display_height=1500
+        )
+        self.assertEqual(forward, reversed_)
+
+    def test_normalize_drag_box_clamps_overdraw_to_display_bounds(self):
+        annotator = _load_annotator_module()
+        # Release at (-50, 2000) on a 1000x1500 canvas: clamp to (0, 1500).
+        result = annotator._normalize_drag_box(
+            (100, 200), (-50, 2000), display_width=1000, display_height=1500
+        )
+        self.assertIsNotNone(result)
+        x, y, w, h = result
+        # After clamping, the box runs from (0, 200) to (100, 1500).
+        self.assertAlmostEqual(x, 0.0, places=6)
+        self.assertAlmostEqual(y, 200 / 1500, places=6)
+        self.assertAlmostEqual(w, 100 / 1000, places=6)
+        self.assertAlmostEqual(h, (1500 - 200) / 1500, places=6)
+
+    def test_normalize_drag_box_display_dims_equal_image_dims_invariant(self):
+        # Regression guard against the _build_display_image bug.
+        # The invariant is: whatever (display_width, display_height)
+        # the caller passes is the actual pixel dimensions of the
+        # image it will be drawing on. If someone ever re-introduces
+        # a scale step that produces a smaller-than-canvas image,
+        # this test does not catch that directly — but together with
+        # test_rasterize_page_for_display_returns_exact_pixel_dimensions
+        # above, the pair forms a pincer: rasterize reports exact
+        # dims, normalize uses those dims, therefore stored coords
+        # are against actual image pixels.
+        annotator = _load_annotator_module()
+        # Sanity: normalizing a known drag matches hand-computed values
+        # at small and large display sizes.
+        for dw, dh in ((100, 100), (611, 789), (1239, 1600), (6784, 8764)):
+            result = annotator._normalize_drag_box(
+                (dw // 4, dh // 4),
+                (3 * dw // 4, 3 * dh // 4),
+                display_width=dw,
+                display_height=dh,
+            )
+            self.assertIsNotNone(result)
+            x, y, w, h = result
+            # Expected: quarter-to-three-quarters on each axis, which
+            # is always (0.25, 0.25, 0.5, 0.5) for any display size
+            # where the integer division rounds cleanly. Allow a small
+            # tolerance for integer rounding.
+            self.assertAlmostEqual(x, 0.25, places=2)
+            self.assertAlmostEqual(y, 0.25, places=2)
+            self.assertAlmostEqual(w, 0.5, places=2)
+            self.assertAlmostEqual(h, 0.5, places=2)
+
     def test_migrated_default_file_loads(self):
         # The on-disk default file must parse cleanly and produce the
         # expected number of entries. This is a minimal reality check

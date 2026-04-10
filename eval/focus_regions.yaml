@@ -1,277 +1,269 @@
-# Canonical focus-region annotations for the eval harness.
-#
-# Read by scripts/smoke_vlm.py (default path; overridable with
-# --focus-regions PATH for concurrent sessions).
-# Written by scripts/annotate_focus_regions.py.
-#
-# Keys: 'exam_id/question_id' flat strings. Values mirror FocusRegion.
-
 regions:
   15-blue/fr-1:
     page: 1
-    x: 0.048426150121065374
-    y: 0.063125
-    width: 0.3502824858757062
-    height: 0.038125
+    x: 0.1075268817204301
+    y: 0.14027777777777778
+    width: 0.7777777777777777
+    height: 0.08472222222222225
     source: operator_annotated
   15-blue/fr-10a:
     page: 3
-    x: 0.04923325262308313
-    y: 0.190625
-    width: 0.34947538337368844
-    height: 0.085625
+    x: 0.1093189964157706
+    y: 0.4236111111111111
+    width: 0.7759856630824372
+    height: 0.19027777777777782
     source: operator_annotated
   15-blue/fr-10b:
     page: 3
-    x: 0.048426150121065374
-    y: 0.191875
-    width: 0.3502824858757062
-    height: 0.115
+    x: 0.1075268817204301
+    y: 0.4263888888888889
+    width: 0.7777777777777777
+    height: 0.2555555555555556
     source: operator_annotated
   15-blue/fr-11a:
     page: 3
-    x: 0.041969330104923326
-    y: 0.3025
-    width: 0.39709443099273606
-    height: 0.07
+    x: 0.09318996415770608
+    y: 0.6722222222222223
+    width: 0.8817204301075268
+    height: 0.15555555555555556
     source: operator_annotated
   15-blue/fr-11b:
     page: 3
-    x: 0.041969330104923326
-    y: 0.3025
-    width: 0.3987086359967716
-    height: 0.09125
+    x: 0.09318996415770608
+    y: 0.6722222222222223
+    width: 0.8853046594982078
+    height: 0.20277777777777772
     source: operator_annotated
   15-blue/fr-11c:
     page: 3
-    x: 0.046811945117029866
-    y: 0.30375
-    width: 0.3946731234866828
-    height: 0.111875
+    x: 0.1039426523297491
+    y: 0.675
+    width: 0.8763440860215053
+    height: 0.24861111111111112
     source: operator_annotated
   15-blue/fr-12a:
     page: 4
-    x: 0.04923325262308313
-    y: 0.036875
-    width: 0.23648103309120258
-    height: 0.04625
+    x: 0.1093189964157706
+    y: 0.08194444444444444
+    width: 0.5250896057347669
+    height: 0.10277777777777779
     source: operator_annotated
   15-blue/fr-12b:
     page: 4
-    x: 0.04923325262308313
-    y: 0.040625
-    width: 0.3470540758676352
-    height: 0.0875
+    x: 0.1093189964157706
+    y: 0.09027777777777779
+    width: 0.7706093189964158
+    height: 0.19444444444444442
     source: operator_annotated
   15-blue/fr-13a:
     page: 4
-    x: 0.0516545601291364
-    y: 0.12875
-    width: 0.3583535108958838
-    height: 0.101875
+    x: 0.1146953405017921
+    y: 0.28611111111111115
+    width: 0.7956989247311828
+    height: 0.22638888888888892
     source: operator_annotated
   15-blue/fr-13b:
     page: 4
-    x: 0.048426150121065374
-    y: 0.125
-    width: 0.3672316384180791
-    height: 0.134375
+    x: 0.1075268817204301
+    y: 0.2777777777777778
+    width: 0.8154121863799282
+    height: 0.29861111111111116
     source: operator_annotated
   15-blue/fr-13c:
     page: 4
-    x: 0.047619047619047616
-    y: 0.125
-    width: 0.3704600484261501
-    height: 0.160625
+    x: 0.10573476702508959
+    y: 0.2777777777777778
+    width: 0.8225806451612903
+    height: 0.3569444444444445
     source: operator_annotated
   15-blue/fr-14a:
     page: 4
-    x: 0.05084745762711865
-    y: 0.285
-    width: 0.4003228410008071
-    height: 0.04625
+    x: 0.11290322580645161
+    y: 0.6333333333333333
+    width: 0.8870967741935484
+    height: 0.10277777777777786
     source: operator_annotated
   15-blue/fr-14b:
     page: 4
-    x: 0.047619047619047616
-    y: 0.284375
-    width: 0.4043583535108959
-    height: 0.13625
+    x: 0.10573476702508959
+    y: 0.6319444444444444
+    width: 0.8942652329749105
+    height: 0.3027777777777779
     source: operator_annotated
   15-blue/fr-14c:
     page: 4
-    x: 0.047619047619047616
-    y: 0.284375
-    width: 0.40274414850686036
-    height: 0.150625
+    x: 0.10573476702508959
+    y: 0.6319444444444444
+    width: 0.8942652329749103
+    height: 0.33472222222222225
     source: operator_annotated
   15-blue/fr-15a:
     page: 5
-    x: 0.04361873990306947
-    y: 0.036875
-    width: 0.3578352180936995
-    height: 0.07625
+    x: 0.09685236333315962
+    y: 0.08194444444444444
+    width: 0.7945480917886983
+    height: 0.16944444444444445
     source: operator_annotated
   15-blue/fr-15b:
     page: 5
-    x: 0.04361873990306947
-    y: 0.036875
-    width: 0.3505654281098546
-    height: 0.101875
+    x: 0.09685236333315962
+    y: 0.08194444444444444
+    width: 0.7784060312331716
+    height: 0.22638888888888886
     source: operator_annotated
   15-blue/fr-15c:
     page: 5
-    x: 0.05088852988691438
-    y: 0.035
-    width: 0.34975767366720517
-    height: 0.13875
+    x: 0.11299442388868622
+    y: 0.07777777777777779
+    width: 0.7766124689492244
+    height: 0.3083333333333334
     source: operator_annotated
   15-blue/fr-15d:
     page: 5
-    x: 0.04765751211631664
-    y: 0.03875
-    width: 0.3982229402261712
-    height: 0.169375
+    x: 0.10582017475289662
+    y: 0.08611111111111111
+    width: 0.8842262059860683
+    height: 0.3763888888888889
     source: operator_annotated
   15-blue/fr-16a:
     page: 5
-    x: 0.050080775444264945
-    y: 0.199375
-    width: 0.15024232633279483
-    height: 0.066875
+    x: 0.11120086160473883
+    y: 0.4430555555555556
+    width: 0.33360258481421645
+    height: 0.14861111111111108
     source: operator_annotated
   15-blue/fr-16b:
     page: 5
-    x: 0.050080775444264945
-    y: 0.2
-    width: 0.1987075928917609
-    height: 0.086875
+    x: 0.11120086160473883
+    y: 0.4444444444444445
+    width: 0.4412163218510604
+    height: 0.19305555555555548
     source: operator_annotated
   15-blue/fr-16c:
     page: 5
-    x: 0.049273021001615507
-    y: 0.199375
-    width: 0.35379644588045234
-    height: 0.1475
+    x: 0.1094072993207914
+    y: 0.4430555555555556
+    width: 0.7855802803689613
+    height: 0.3277777777777778
     source: operator_annotated
   15-blue/fr-16d:
     page: 5
-    x: 0.050080775444264945
-    y: 0.199375
-    width: 0.3546042003231018
-    height: 0.235
+    x: 0.11120086160473883
+    y: 0.4430555555555556
+    width: 0.7873738426529087
+    height: 0.5222222222222221
     source: operator_annotated
   15-blue/fr-2:
     page: 1
-    x: 0.048426150121065374
-    y: 0.103125
-    width: 0.33171912832929784
-    height: 0.041875
+    x: 0.1075268817204301
+    y: 0.22916666666666666
+    width: 0.7365591397849462
+    height: 0.09305555555555553
     source: operator_annotated
   15-blue/fr-3:
     page: 1
-    x: 0.05004035512510089
-    y: 0.17
-    width: 0.3785310734463277
-    height: 0.055
+    x: 0.1111111111111111
+    y: 0.3777777777777778
+    width: 0.8405017921146953
+    height: 0.12222222222222218
     source: operator_annotated
   15-blue/fr-4:
     page: 1
-    x: 0.05084745762711865
-    y: 0.2275
-    width: 0.3099273607748184
-    height: 0.045625
+    x: 0.11290322580645161
+    y: 0.5055555555555556
+    width: 0.6881720430107526
+    height: 0.10138888888888886
     source: operator_annotated
   15-blue/fr-5a:
     page: 1
-    x: 0.004035512510088781
-    y: 0.271875
-    width: 0.44148506860371267
-    height: 0.1575
+    x: 0.008960573476702507
+    y: 0.6041666666666666
+    width: 0.9802867383512543
+    height: 0.35
     source: operator_annotated
   15-blue/fr-5b:
     page: 1
-    x: 0.005649717514124294
-    y: 0.27
-    width: 0.4406779661016949
-    height: 0.1575
+    x: 0.012544802867383511
+    y: 0.6000000000000001
+    width: 0.9784946236559139
+    height: 0.35
     source: operator_annotated
   15-blue/fr-5c:
     page: 1
-    x: 0.008071025020177562
-    y: 0.26875
-    width: 0.4390637610976594
-    height: 0.154375
+    x: 0.017921146953405014
+    y: 0.5972222222222222
+    width: 0.9749103942652328
+    height: 0.34305555555555556
     source: operator_annotated
   15-blue/fr-6:
     page: 2
-    x: 0.08555286521388217
-    y: 0.03375
-    width: 0.3139628732849072
-    height: 0.0675
+    x: 0.18996415770609318
+    y: 0.07500000000000001
+    width: 0.6971326164874552
+    height: 0.15000000000000002
     source: operator_annotated
   15-blue/fr-7a:
     page: 2
-    x: 0.041969330104923326
-    y: 0.103125
-    width: 0.3446327683615819
-    height: 0.091875
+    x: 0.09318996415770608
+    y: 0.22916666666666666
+    width: 0.7652329749103941
+    height: 0.2041666666666667
     source: operator_annotated
   15-blue/fr-7b:
     page: 2
-    x: 0.048426150121065374
-    y: 0.100625
-    width: 0.3309120258272801
-    height: 0.10625
+    x: 0.1075268817204301
+    y: 0.22361111111111112
+    width: 0.7347670250896057
+    height: 0.23611111111111113
     source: operator_annotated
   15-blue/fr-7c:
     page: 2
-    x: 0.04519774011299435
-    y: 0.1
-    width: 0.3357546408393866
-    height: 0.1225
+    x: 0.10035842293906809
+    y: 0.22222222222222224
+    width: 0.7455197132616487
+    height: 0.27222222222222225
     source: operator_annotated
   15-blue/fr-7d:
     page: 2
-    x: 0.04600484261501211
-    y: 0.098125
-    width: 0.33736884584342214
-    height: 0.1425
+    x: 0.1021505376344086
+    y: 0.21805555555555559
+    width: 0.7491039426523297
+    height: 0.31666666666666665
     source: operator_annotated
   15-blue/fr-7e:
     page: 2
-    x: 0.04439063761097659
-    y: 0.098125
-    width: 0.33494753833736884
-    height: 0.1575
+    x: 0.09856630824372759
+    y: 0.21805555555555559
+    width: 0.7437275985663082
+    height: 0.35
     source: operator_annotated
   15-blue/fr-8:
     page: 2
-    x: 0.05004035512510089
-    y: 0.2725
-    width: 0.31234866828087166
-    height: 0.116875
+    x: 0.1111111111111111
+    y: 0.6055555555555556
+    width: 0.6935483870967742
+    height: 0.2597222222222223
     source: operator_annotated
   15-blue/fr-9a:
     page: 3
-    x: 0.05084745762711865
-    y: 0.04
-    width: 0.3171912832929782
-    height: 0.08125
+    x: 0.11290322580645161
+    y: 0.08888888888888889
+    width: 0.704301075268817
+    height: 0.18055555555555552
     source: operator_annotated
   15-blue/fr-9b:
     page: 3
-    x: 0.04923325262308313
-    y: 0.036875
-    width: 0.3559322033898305
-    height: 0.125625
+    x: 0.1093189964157706
+    y: 0.08194444444444444
+    width: 0.7903225806451613
+    height: 0.2791666666666667
     source: operator_annotated
   15-blue/fr-9c:
     page: 3
-    x: 0.048426150121065374
-    y: 0.034375
-    width: 0.4011299435028249
-    height: 0.165625
+    x: 0.1075268817204301
+    y: 0.0763888888888889
+    width: 0.8906810035842293
+    height: 0.3680555555555556
     source: operator_annotated
   27-blue-2023/fr-12a:
     page: 4
