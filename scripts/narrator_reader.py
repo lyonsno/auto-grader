@@ -172,11 +172,16 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
-    "checkpoint": (172, 186, 198),        # anchored steel-bone note —
-                                          # cooler and calmer than verdict
-                                          # rows, but brighter than body
-                                          # reasoning so checkpoints read
-                                          # as durable synthesis anchors
+    "checkpoint": (138, 156, 142),        # anchored moss checkpoint —
+                                          # checkpoints should feel like
+                                          # compressed descendants of the
+                                          # live history rows, not a separate
+                                          # steel annotation layer
+    "checkpoint_alt": (178, 162, 132),    # anchored bone-earth checkpoint —
+                                          # alternating companion to the
+                                          # moss checkpoint tone so durable
+                                          # history keeps the familiar
+                                          # moss/bone cadence
     "checkpoint_mark": (162, 114, 82),    # embered rust notch — structural
                                           # mark for checkpoint rows so the
                                           # checkpoint doesn't begin with a
@@ -204,7 +209,8 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
-    "checkpoint": 0.86,
+    "checkpoint": 0.92,
+    "checkpoint_alt": 0.92,
     "checkpoint_mark": 0.96,
     "status": 1.15,
     "topic_overshoot": 1.00,
@@ -240,8 +246,11 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-fired earth
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "checkpoint": (220, 228, 236),      # pale anchored steel highlight for
-                                        # checkpoint synthesis lines
+    "checkpoint": (176, 204, 180),      # brighter celadon crest —
+                                        # still in the history family, just
+                                        # a touch more settled than live rows
+    "checkpoint_alt": (222, 198, 150),  # brighter bone-earth crest for the
+                                        # alternating checkpoint lane
     "checkpoint_mark": (226, 166, 114), # brighter ember crest for the
                                         # checkpoint mark, tied to the
                                         # header/status warm structure
@@ -269,6 +278,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "topic",
     "topic_match",
     "checkpoint",
+    "checkpoint_alt",
     "checkpoint_mark",
     "status",
     "topic_overshoot",
@@ -2223,8 +2233,9 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
+                checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 _apply_shimmer(
-                    history_text, text, "checkpoint",
+                    history_text, text, checkpoint_kind,
                     layer_index=render_layer,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
@@ -2514,7 +2525,15 @@ class PaintDryDisplay:
             self.score_bad_call_potential += max(0.0, max_points - truth_score)
 
     def on_checkpoint(self, text: str) -> None:
-        self.history.append(("checkpoint", text, None))
+        checkpoint_parity = next(
+            (
+                parity
+                for kind, _text, parity in reversed(self.history)
+                if kind == "line" and parity is not None
+            ),
+            self._line_parity,
+        )
+        self.history.append(("checkpoint", text, checkpoint_parity))
 
 
 def main() -> int:

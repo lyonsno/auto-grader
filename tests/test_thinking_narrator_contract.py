@@ -102,6 +102,32 @@ class _CheckpointNarrator(ThinkingNarrator):
         return "Core issue: stoichiometry path is broken."
 
 
+class _DuplicateCheckpointNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+        self._thoughts = [
+            "I'm tracing the limiting reagent path.",
+            "I'm checking the NH3 mole ratio.",
+            "I'm weighing the boxed answer against stoichiometry.",
+            "I'm catching the moles-versus-grams mixup.",
+            "I'm checking whether the boxed unit is missing.",
+            "I'm tracing the carry-forward from part 5a.",
+            "I'm eyeing the stoichiometric coefficient on NH3.",
+            "I'm wondering whether the reaction setup itself drifted.",
+        ]
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        text = self._thoughts.pop(0)
+        for token in text.split():
+            on_delta(token + " ")
+        return text
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        return "Core issue: stoichiometry path is broken."
+
+
 class ThinkingNarratorContract(unittest.TestCase):
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
@@ -284,6 +310,23 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(
             sink.checkpoints,
             ["Core issue: stoichiometry path is broken."],
+        )
+
+    def test_duplicate_checkpoint_is_dropped_instead_of_persisted_twice(self):
+        sink = _DummySink()
+        narrator = _DuplicateCheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-5b")
+
+        for idx in range(8):
+            narrator._dispatch(f"chunk {idx}", narrator._dispatch_generation)
+
+        self.assertEqual(
+            sink.checkpoints,
+            ["Core issue: stoichiometry path is broken."],
+        )
+        self.assertIn(
+            ("dedup-checkpoint", "Core issue: stoichiometry path is broken."),
+            sink.drops,
         )
 
     def test_after_action_prompt_avoids_indexable_stock_examples(self):

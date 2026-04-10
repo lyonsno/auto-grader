@@ -742,13 +742,16 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
-    def test_checkpoint_uses_structural_mark_and_cooler_anchor_ink(self):
+    def test_checkpoint_uses_structural_mark_and_history_family_ink(self):
+        import scripts.narrator_reader as module
+
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))
         display.history.append(
-            ("checkpoint", "Core issue: ozone drawing misses resonance.", None)
+            ("checkpoint", "Core issue: ozone drawing misses resonance.", 0)
         )
         display.history.append(("line", "I'm tracing the ozone structure.", 0))
+        display.history.append(("line", "I'm weighing the resonance form.", 1))
 
         group = display.render()
         history_panel = group.renderables[-1]
@@ -763,21 +766,39 @@ class NarratorReaderContract(unittest.TestCase):
             history_text,
             "I'm tracing the ozone structure.",
         )
+        line_alt_style = self._style_for_substring(
+            history_text,
+            "I'm weighing the resonance form.",
+        )
+        checkpoint_rgb = self._rgb_from_hex(checkpoint_text_style.split()[-1])
+        line_rgb = self._rgb_from_hex(line_style.split()[-1])
+        line_alt_rgb = self._rgb_from_hex(line_alt_style.split()[-1])
+        checkpoint_family_distance = min(
+            sum(abs(a - b) for a, b in zip(checkpoint_rgb, line_rgb)),
+            sum(abs(a - b) for a, b in zip(checkpoint_rgb, line_alt_rgb)),
+        )
+        legacy_steel_rgb = (172, 186, 198)
+        steel_distance = sum(
+            abs(a - b) for a, b in zip(checkpoint_rgb, legacy_steel_rgb)
+        )
 
         self.assertNotEqual(
             checkpoint_mark_style,
             "grey50",
             "checkpoint mark should carry its own structural ink instead of reading like a dead placeholder gutter",
         )
-        self.assertNotEqual(
-            checkpoint_text_style,
-            line_style,
-            "checkpoint text should not read like an ordinary thought line",
+        self.assertLess(
+            checkpoint_family_distance,
+            steel_distance,
+            "checkpoint text should stay in the muted history family instead of reading like a separate steel annotation layer",
         )
-        self.assertGreater(
+        self.assertLess(
             self._hex_luminance(checkpoint_text_style),
-            self._hex_luminance(line_style),
-            "checkpoint text should sit a little brighter and more anchored than an ordinary thought line",
+            max(
+                self._hex_luminance(line_style),
+                self._hex_luminance(line_alt_style),
+            ) + 50,
+            "checkpoint text should stay close to the history-row value range instead of jumping to a much brighter anchored-steel tier",
         )
 
     def test_wrapped_history_lines_consume_visual_row_budget(self):
