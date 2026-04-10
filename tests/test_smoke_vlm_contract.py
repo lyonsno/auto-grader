@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
+from auto_grader.eval_harness import EvalItem, Prediction
 from auto_grader.thinking_narrator import ThinkingNarrator
 from scripts import smoke_vlm
+
+
+def _load_smoke_vlm():
+    return smoke_vlm
 
 
 class _DummySink:

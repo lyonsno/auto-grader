@@ -60,6 +60,18 @@ class RunRecord:
         )
 
 
+@dataclass(frozen=True)
+class RunManifest:
+    run_dir: Path
+    run_id: str
+    status: str
+    started_at: str
+    model: str
+    prompt_version: str
+    test_set_id: str
+    raw: dict[str, object]
+
+
 def _resolve_predictions_path(run_dir: Path) -> Path:
     predictions_path = run_dir / "predictions.jsonl"
     if not predictions_path.is_file():
