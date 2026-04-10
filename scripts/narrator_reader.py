@@ -1415,48 +1415,24 @@ class PaintDryDisplay:
             else None
         )
 
-        # Scoreboard-dial treatment for the five run counters. Each
-        # quantity renders through `_append_scorebug_cell` so it reuses
-        # the same capsule-and-value language the Liquid Varnish
-        # Squadron scorebug panel below uses for CURRENT MODEL / ITEM /
-        # ON TARGET etc., instead of sitting in the top chrome as a
-        # flat telemetry tail. The time dials stay on cool structural
-        # capsules (TOTAL indigo, TURN ember to pair with the warm ITEM
-        # tag), and the event-count dials light up on green/amber/red
-        # capsules only when nonzero — at zero they fall back to a
-        # muted grey capsule so a quiet run doesn't scream color.
+        # Scoreboard-dial treatment for the three event-count counters.
+        # EMITTED / DEDUP / EMPTY each render through
+        # `_append_scorebug_cell` so they reuse the same capsule-and-
+        # value language the Liquid Varnish Squadron scorebug panel
+        # below uses for CURRENT MODEL / ITEM, instead of sitting in
+        # the top chrome as a flat telemetry tail. The event-count
+        # dials light up on green / amber / red capsules only when
+        # nonzero — at zero they fall back to a muted grey capsule so
+        # a quiet run doesn't scream color.
+        #
+        # The two timers (TOTAL and TURN) are NOT rendered here. They
+        # are promoted below into full tall-digit scorebug plates
+        # alongside ON TARGET / LEFT ON TABLE / BAD CALLS so the
+        # timer promotion is actually legible as dial-shape scoreboard
+        # instrumentation rather than being lost in the top header
+        # chrome.
         _dead_label = "bold #9aa0ac on #2a2d34"
         _dead_value = "bold #cdd1da on #1a1c22"
-        self._append_scorebug_cell(
-            header_text,
-            "TOTAL",
-            f"{total_elapsed_s}s",
-            label_style=(
-                "bold #e6ebff on #2e3a66"
-                if self._session_started_at is not None
-                else _dead_label
-            ),
-            value_style=(
-                "bold #d7dff5 on #1d2440"
-                if self._session_started_at is not None
-                else _dead_value
-            ),
-        )
-        self._append_scorebug_cell(
-            header_text,
-            "TURN",
-            f"{turn_elapsed_s}s" if turn_elapsed_s is not None else "--",
-            label_style=(
-                "bold #ffe9d6 on #5a3a1e"
-                if turn_elapsed_s is not None
-                else _dead_label
-            ),
-            value_style=(
-                f"bold #ffd9b8 on {_rgb_to_hex(_EMBER_ACCENT_RGB)}"
-                if turn_elapsed_s is not None
-                else _dead_value
-            ),
-        )
         self._append_scorebug_cell(
             header_text,
             "EMITTED",
@@ -1534,11 +1510,70 @@ class PaintDryDisplay:
 
             scorebug_gap = Text(" ", style="grey35")
             scorebug_rows: list[Text] = [scorebug_top, scorebug_gap]
+
+            # Timer plate styles (Gauge Saints II). These two plates
+            # sit leftmost in the big-value strip so the run chrome
+            # reads before the grading tally. TOTAL gets a quiet
+            # slate/graphite family so it anchors the strip without
+            # competing with ON TARGET's crisper blue. TURN gets a
+            # warm sand/umber family that reads distinct from both
+            # LEFT ON TABLE's yellow-bronze and BAD CALLS' red-brown,
+            # and carries the "currently on the clock" weight that
+            # matches the ember ITEM tag above.
+            _total_label_style = "bold #e8ecf5 on #3a4256"
+            _total_value_row_styles = (
+                "bold #dde2f0 on #272c39",
+                "bold #d3d8e6 on #1f2430",
+                "bold #c9cedb on #181c27",
+            )
+            _total_value_mid_row_styles = (
+                "bold #8e94a3 on #272c39",
+                "bold #868ca0 on #1f2430",
+                "bold #7d8398 on #181c27",
+            )
+            _turn_label_style = "bold #ffecd0 on #6b4a22"
+            _turn_value_row_styles = (
+                "bold #ffe2b8 on #4d361a",
+                "bold #f8d6a8 on #3f2b14",
+                "bold #eac598 on #33220f",
+            )
+            _turn_value_mid_row_styles = (
+                "bold #a78768 on #4d361a",
+                "bold #9e7e5f on #3f2b14",
+                "bold #8f7152 on #33220f",
+            )
+            _total_value_str = f"{total_elapsed_s}"
+            _turn_value_str = (
+                f"{turn_elapsed_s}" if turn_elapsed_s is not None else "--"
+            )
+
             if self.score_points_possible > 0:
                 scorebug_labels = Text()
                 scorebug_values_top = Text()
                 scorebug_values_middle = Text()
                 scorebug_values_bottom = Text()
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "TOTAL",
+                    _total_value_str,
+                    label_style=_total_label_style,
+                    value_row_styles=_total_value_row_styles,
+                    value_mid_row_styles=_total_value_mid_row_styles,
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "TURN",
+                    _turn_value_str,
+                    label_style=_turn_label_style,
+                    value_row_styles=_turn_value_row_styles,
+                    value_mid_row_styles=_turn_value_mid_row_styles,
+                )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
@@ -1619,6 +1654,28 @@ class PaintDryDisplay:
                 scorebug_values_top = Text()
                 scorebug_values_middle = Text()
                 scorebug_values_bottom = Text()
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "TOTAL",
+                    _total_value_str,
+                    label_style=_total_label_style,
+                    value_row_styles=_total_value_row_styles,
+                    value_mid_row_styles=_total_value_mid_row_styles,
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "TURN",
+                    _turn_value_str,
+                    label_style=_turn_label_style,
+                    value_row_styles=_turn_value_row_styles,
+                    value_mid_row_styles=_turn_value_mid_row_styles,
+                )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
                     scorebug_values_top,
