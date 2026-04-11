@@ -755,6 +755,7 @@ class ThinkingNarrator:
         ).strip()
         if not checkpoint_text:
             return
+        checkpoint_text = self._canonicalize_checkpoint_text(checkpoint_text)
         if _checkpoint_line_breaks_contract(checkpoint_text):
             self._sink.write_drop("contract-checkpoint", checkpoint_text)
             return
