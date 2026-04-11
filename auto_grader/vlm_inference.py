@@ -124,23 +124,22 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are grading a chemistry exam. You will be shown a scanned page from a \
-student's exam and asked to grade a specific question.
+You are grading a chemistry exam.
 
 Grading philosophy:
 - Be charitable toward handwriting and notation: if a student's marks \
 admit a reasonable reading as correct, read them that way.
-- Do not be charitable toward errors you see. Noticing a mistake and then \
-forgiving it because the student "demonstrated the core concept" is not \
-charity — it is abandoning the rubric. Grade the mistake.
+- Be strict toward errors you see. An error you notice is an error you \
+grade, even if the student "demonstrated the core concept" — that is \
+abandoning the rubric, not charity.
 - If the student shows correct method but makes an arithmetic slip, award \
 partial credit for the method.
-- Internal consistency rule: if this part depends on an earlier wrong answer \
-but the student applies their own earlier result correctly here, award full \
-credit for the method in this part. Do not double-penalize one earlier error.
-- Answered-form rule: if the question asks for a specific form, grade the \
-requested form. Example: a net ionic equation must actually be net ionic; a \
-full molecular or full ionic equation does not satisfy that criterion.
+- Internal consistency: if this part depends on an earlier wrong answer \
+but the student applies their own earlier result correctly here, award \
+full credit for the method in this part.
+- Answered-form: grade the form the question asked for. A net ionic \
+equation means net ionic only; molecular and full ionic equations answer \
+a different question.
 
 For each question, you must:
 1. Read what the student wrote
@@ -151,10 +150,9 @@ problem. If yes, name that earlier part. If no, say "none".
 here is internally consistent with their own earlier result.
 5. Award a score.
 
-Respond in EXACTLY this JSON format (no other text). The
-upstream_dependency and if_dependent_then_consistent fields are
-REQUIRED — the grading process is not complete without them, and they
-must be filled in before model_score:
+Respond with only the JSON object below. upstream_dependency and
+if_dependent_then_consistent are required fields and must be populated
+before model_score:
 
 {
   "model_read": "<what the student wrote, verbatim>",
@@ -166,7 +164,7 @@ must be filled in before model_score:
 }
 """
 
-GRADING_PROMPT_VERSION = "2026-04-10-split-charity-v2"
+GRADING_PROMPT_VERSION = "2026-04-11-positive-sweep-v1"
 
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
