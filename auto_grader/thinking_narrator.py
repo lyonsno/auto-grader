@@ -232,8 +232,7 @@ _CHECKPOINT_EVERY_ACCEPTED = 4
 _CHECKPOINT_TEMPERATURE = 0.5
 _CHECKPOINT_REPETITION_PENALTY = 1.0
 _CHECKPOINT_PRESENCE_PENALTY = 0.0
-_DEDUP_BACKOFF_INITIAL_S = 4.0
-_DEDUP_BACKOFF_MAX_S = 24.0
+_DEDUP_GROOMING_THRESHOLD = 2
 _PLAYBACK_CHUNK_DELAY_S = 0.03
 _IDLE_LEGIBILITY_DELAY_S = 1.0
 _MAX_LEGIBILITY_EXTRA_ROWS = 2
@@ -495,8 +494,6 @@ class ThinkingNarrator:
     callback on a background thread.
     """
 
-    _DEDUP_BACKOFF_INITIAL_S = _DEDUP_BACKOFF_INITIAL_S
-    _DEDUP_BACKOFF_MAX_S = _DEDUP_BACKOFF_MAX_S
     _PLAYBACK_CHUNK_DELAY_S = _PLAYBACK_CHUNK_DELAY_S
 
     def __init__(
@@ -557,8 +554,7 @@ class ThinkingNarrator:
         self._thoughts_since_status: list[str] = []
         self._prior_checkpoints: list[str] = []
         self._accepted_since_checkpoint = 0
-        self._dedupe_backoff_until = 0.0
-        self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
+        self._dedupe_streak = 0
         self._legibility_jobs: list[dict] = []
         self._idle_legibility_pending = False
         self._idle_legibility_generation = 0
@@ -614,8 +610,7 @@ class ThinkingNarrator:
             self._thoughts_since_status = []
             self._prior_checkpoints = []
             self._accepted_since_checkpoint = 0
-            self._dedupe_backoff_until = 0.0
-            self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
+            self._dedupe_streak = 0
             self._legibility_jobs = []
             self._idle_legibility_pending = False
             self._idle_legibility_generation += 1
@@ -732,6 +727,74 @@ class ThinkingNarrator:
             "If the issue matches a recent checkpoint, reuse its wording instead of paraphrasing it."
         )
         return "\n\n".join(blocks)
+
+    def _emit_checkpoint_from_context(
+        self,
+        chunk: str,
+        accepted_line: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+        prior_checkpoints: list[str],
+    ) -> None:
+        checkpoint_user_content = self._build_checkpoint_user_content(
+            chunk,
+            accepted_line,
+            prior_thoughts,
+            prior_statuses,
+            prior_checkpoints,
+        )
+        checkpoint_messages = [
+            {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
+            {"role": "user", "content": checkpoint_user_content},
+        ]
+        checkpoint_text = self._chat_completion(
+            checkpoint_messages,
+            temperature=_CHECKPOINT_TEMPERATURE,
+            repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
+            presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
+        ).strip()
+        if not checkpoint_text:
+            return
+        if _checkpoint_line_breaks_contract(checkpoint_text):
+            self._sink.write_drop("contract-checkpoint", checkpoint_text)
+            return
+        if any(
+            self._checkpoint_lines_share_basin(
+                checkpoint_text,
+                prev,
+            )
+            for prev in prior_checkpoints
+        ):
+            self._sink.write_drop("dedup-checkpoint", checkpoint_text)
+            return
+        self._sink.write_checkpoint(checkpoint_text)
+        with self._lock:
+            self._prior_checkpoints.append(checkpoint_text)
+
+    def _maybe_groom_after_repeated_dedup(
+        self,
+        chunk: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+    ) -> None:
+        with self._lock:
+            if self._dedupe_streak < _DEDUP_GROOMING_THRESHOLD:
+                return
+            accepted_line = (
+                self._current_status
+                or (prior_statuses[-1] if prior_statuses else "")
+                or (prior_thoughts[-1] if prior_thoughts else "")
+            )
+            prior_checkpoints = list(self._prior_checkpoints)
+        if not accepted_line:
+            return
+        self._emit_checkpoint_from_context(
+            chunk,
+            accepted_line,
+            prior_thoughts,
+            prior_statuses,
+            prior_checkpoints,
+        )
 
     def _retry_duplicate_as_status(
         self,
@@ -1399,9 +1462,6 @@ class ThinkingNarrator:
                 self._dispatch_started_at = None
                 self._dispatch_generation += 1
 
-            if now < self._dedupe_backoff_until:
-                return
-
             should_dispatch = (
                 (enough_tokens or time_ceiling)
                 and not self._pending_dispatch
@@ -1475,15 +1535,13 @@ class ThinkingNarrator:
                     if status_drop_reason and status_drop:
                         self._sink.write_drop(status_drop_reason, status_drop)
                     logger.info("Narrator: dropped repetitive summary: %s", full)
-                    if status_established:
-                        with self._lock:
-                            self._dedupe_backoff_until = (
-                                time.monotonic() + self._dedupe_backoff_s
-                            )
-                            self._dedupe_backoff_s = min(
-                                self._dedupe_backoff_s * 2,
-                                self._DEDUP_BACKOFF_MAX_S,
-                            )
+                    with self._lock:
+                        self._dedupe_streak += 1
+                    self._maybe_groom_after_repeated_dedup(
+                        chunk,
+                        prior_thoughts,
+                        prior_statuses,
+                    )
                     return
                 full = status_full
                 committed_mode = "status"
@@ -1497,8 +1555,7 @@ class ThinkingNarrator:
 
             checkpoint_context: tuple[str, str, list[str], list[str], list[str]] | None = None
             with self._lock:
-                self._dedupe_backoff_until = 0.0
-                self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
+                self._dedupe_streak = 0
                 if committed_mode == "status":
                     self._current_status = full
                     self._prior_statuses.append(full)
@@ -1525,41 +1582,13 @@ class ThinkingNarrator:
                     checkpoint_statuses,
                     checkpoint_prior,
                 ) = checkpoint_context
-                checkpoint_user_content = self._build_checkpoint_user_content(
+                self._emit_checkpoint_from_context(
                     checkpoint_chunk,
                     checkpoint_line,
                     checkpoint_thoughts,
                     checkpoint_statuses,
                     checkpoint_prior,
                 )
-                checkpoint_messages = [
-                    {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
-                    {"role": "user", "content": checkpoint_user_content},
-                ]
-                checkpoint_text = self._chat_completion(
-                    checkpoint_messages,
-                    temperature=_CHECKPOINT_TEMPERATURE,
-                    repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
-                    presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
-                ).strip()
-                if checkpoint_text:
-                    checkpoint_text = self._canonicalize_checkpoint_text(
-                        checkpoint_text
-                    )
-                    if _checkpoint_line_breaks_contract(checkpoint_text):
-                        self._sink.write_drop("contract-checkpoint", checkpoint_text)
-                    elif any(
-                        self._checkpoint_lines_share_basin(
-                            checkpoint_text,
-                            prev,
-                        )
-                        for prev in checkpoint_prior
-                    ):
-                        self._sink.write_drop("dedup-checkpoint", checkpoint_text)
-                    else:
-                        self._sink.write_checkpoint(checkpoint_text)
-                        with self._lock:
-                            self._prior_checkpoints.append(checkpoint_text)
             logger.info("Narrator summary: %s", full)
         except Exception:
             logger.exception("Narrator dispatch failed")
