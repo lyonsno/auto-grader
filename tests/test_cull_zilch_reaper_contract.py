@@ -207,6 +207,156 @@ def _already_rewritten_prediction_row() -> dict:
     return row
 
 
+# ---------------------------------------------------------------------------
+# Forward-lane row fixtures
+#
+# These shapes did not exist in the legacy archive. They are emitted by
+# ``Zilch Reaper Forward`` (landed 2026-04-11 at origin/cc/zilch-reaper-
+# forward-main tip ``3d03320``) and the historical rewriter must handle
+# them correctly when they appear alongside legacy rows in the same file.
+# ---------------------------------------------------------------------------
+
+
+# Message strings Forward sets on ``model_reasoning`` for its two failure
+# paths. These are the literal strings from
+# ``auto_grader/vlm_inference.py`` on ``cc/zilch-reaper-forward-main`` as
+# of ``3d03320``. They are **not** the legacy truncation sentinel — the
+# historical rewriter's detection predicate must not fire on them, and
+# the rewriter must instead rely on the ``truncated`` flag to leave these
+# rows alone via the already-migrated idempotency path.
+_FORWARD_SENTINEL_PARSE_FAIL = (
+    "Grader output could not be parsed as the required JSON "
+    "(truncated or malformed)."
+)
+_FORWARD_SENTINEL_MISSING_SCORE = (
+    "Grader emitted parseable JSON but did not include a model_score field."
+)
+
+
+def _forward_complete_prediction_row(
+    *,
+    question_id: str = "fr-7a",
+    model_score: float = 1.5,
+    model_confidence: float = 0.82,
+) -> dict:
+    """A prediction row written by Forward for a successfully graded item.
+
+    Forward always emits an explicit ``truncated: False`` on complete
+    rows. Every other field is real content; ``model_reasoning`` is the
+    model's actual reasoning, not a sentinel. The historical rewriter
+    must preserve this shape byte-exact — it is neither a truncation
+    corruption nor a pre-cull "already migrated" shape, it is the
+    Forward lane's steady-state write.
+    """
+
+    return {
+        "type": "prediction",
+        "exam_id": "15-blue",
+        "question_id": question_id,
+        "answer_type": "numeric",
+        "max_points": 2.0,
+        "professor_score": 2.0,
+        "corrected_score": None,
+        "correction_reason": "",
+        "professor_mark": "check",
+        "student_answer": "0.0423",
+        "model_score": model_score,
+        "model_confidence": model_confidence,
+        "is_obviously_fully_correct": True,
+        "is_obviously_wrong": False,
+        "model_read": "0.0423 mol",
+        "score_basis": (
+            "Student computed moles from the given mass and molar mass "
+            "correctly; answer matches the expected value within rounding."
+        ),
+        "model_reasoning": (
+            "The student used mass / molar mass to find moles. "
+            "Computation checks out: 1.234 / 29.2 ≈ 0.0423. "
+            "Full credit."
+        ),
+        "upstream_dependency": "none",
+        "if_dependent_then_consistent": None,
+        "raw_assistant": (
+            '{"model_score": 1.5, "model_confidence": 0.82, '
+            '"model_read": "0.0423 mol"}'
+        ),
+        "raw_reasoning": (
+            "The student's setup is correct and the arithmetic is clean. "
+            "I see 1.234 / 29.2 = 0.0423. This matches the expected "
+            "answer. Full credit."
+        ),
+        "truncated": False,
+    }
+
+
+def _forward_complete_zero_row() -> dict:
+    """A Forward-written row where the model legitimately scored zero.
+
+    ``model_score: 0.0`` with ``truncated: False`` must NOT be flagged —
+    this is a real-zero row from a Forward-emitted file, not a parser
+    default. The detection predicate must distinguish it from the
+    legacy truncation-as-zero shape by checking the truncated flag and
+    the model_reasoning field, not by the score value alone.
+    """
+
+    row = _forward_complete_prediction_row(
+        question_id="fr-11c",
+        model_score=0.0,
+        model_confidence=0.91,
+    )
+    row["is_obviously_fully_correct"] = False
+    row["is_obviously_wrong"] = True
+    row["model_read"] = "42"
+    row["score_basis"] = (
+        "Student wrote 42 but the correct answer is the rate constant "
+        "k = 2.3e-3; the value is off by orders of magnitude."
+    )
+    row["model_reasoning"] = (
+        "The student gave 42 with no units and no setup. "
+        "This is clearly wrong, so the score is 0."
+    )
+    return row
+
+
+def _forward_truncated_row_new_sentinel() -> dict:
+    """A Forward-written truncated row carrying the new sentinel text.
+
+    Forward sets ``model_reasoning`` to one of two human-readable
+    strings explaining the failure (``_FORWARD_SENTINEL_PARSE_FAIL`` or
+    ``_FORWARD_SENTINEL_MISSING_SCORE``) and flags the row with
+    ``truncated: True``. Neither of these strings matches the legacy
+    truncation sentinel, so the historical rewriter's detection
+    predicate does not fire on them. Instead, the idempotency check on
+    the ``truncated`` flag catches them on the already-migrated path
+    and the row is preserved untouched.
+    """
+
+    return {
+        "type": "prediction",
+        "exam_id": "15-blue",
+        "question_id": "fr-10b",
+        "answer_type": "numeric",
+        "max_points": 1.0,
+        "professor_score": 1.0,
+        "corrected_score": None,
+        "correction_reason": "",
+        "professor_mark": "check",
+        "student_answer": "-2.415",
+        "model_score": None,
+        "model_confidence": None,
+        "is_obviously_fully_correct": None,
+        "is_obviously_wrong": None,
+        "model_read": "",
+        "score_basis": "",
+        "model_reasoning": _FORWARD_SENTINEL_PARSE_FAIL,
+        "upstream_dependency": "none",
+        "if_dependent_then_consistent": None,
+        "raw_assistant": "<partial assistant content>",
+        "raw_reasoning": "<full reasoning trace the model produced>",
+        "truncated": True,
+    }
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
@@ -673,6 +823,108 @@ class CullZilchReaperContract(unittest.TestCase):
 
         self.assertEqual(report.rewritten, 1)
         self.assertEqual(report.skipped, 0)
+
+    # ------------------------------------------------------------------
+    # Forward-lane coordination (Zilch Reaper Forward landed 2026-04-11)
+    # ------------------------------------------------------------------
+
+    def test_forward_written_complete_row_is_not_flagged(self) -> None:
+        """Forward-lane complete rows carry ``truncated: False``.
+
+        These rows must not be flagged as truncated by the historical
+        rewriter. They have real ``model_score``, real
+        ``model_confidence``, real ``model_reasoning``, and an explicit
+        ``truncated: False`` flag. The detection predicate must
+        distinguish them from both the legacy truncation-as-zero shape
+        and the already-migrated shape.
+        """
+
+        row = _forward_complete_prediction_row()
+        self.assertFalse(self.module.is_truncated_row(row))
+
+    def test_forward_written_complete_zero_row_is_not_flagged(self) -> None:
+        """A Forward-written row that legitimately scored the item 0.
+
+        ``model_score: 0.0`` is not evidence of truncation when the row
+        carries ``truncated: False`` and has real reasoning. This pins
+        that the detection predicate does not confuse a real-zero
+        Forward row with a legacy truncation row.
+        """
+
+        row = _forward_complete_zero_row()
+        self.assertFalse(self.module.is_truncated_row(row))
+
+    def test_forward_written_truncated_row_new_sentinel_is_not_reflagged(
+        self,
+    ) -> None:
+        """Forward-lane truncated rows use a new sentinel string.
+
+        Forward sets ``model_reasoning`` to a different string than the
+        legacy truncation sentinel, but also flags the row with
+        ``truncated: True``. The idempotency check on the ``truncated``
+        flag must catch these rows and leave them alone, rather than
+        matching on the legacy sentinel string — because the legacy
+        sentinel string is not what Forward writes.
+        """
+
+        row = _forward_truncated_row_new_sentinel()
+        self.assertFalse(
+            self.module.is_truncated_row(row),
+            "Forward-written truncated rows must be caught by the "
+            "already-migrated idempotency path, not re-flagged",
+        )
+
+    def test_mixed_forward_and_legacy_file_is_culled_correctly(self) -> None:
+        """A file can contain both legacy and Forward-written rows.
+
+        During the overlap window, a single ``predictions.jsonl`` may
+        contain a mix of legacy truncation-as-zero rows (which must be
+        rewritten), Forward-written truncated rows (which must be
+        preserved as already-migrated), and Forward-written complete
+        rows (which must be preserved as real predictions). The
+        rewriter must handle the mixed case without touching any
+        non-legacy row.
+        """
+
+        path = self.root / "run-mixed-forward" / "predictions.jsonl"
+        legacy_truncated = _truncated_prediction_row(question_id="fr-10b")
+        forward_truncated = _forward_truncated_row_new_sentinel()
+        forward_complete = _forward_complete_prediction_row()
+        forward_complete_zero = _forward_complete_zero_row()
+        rows = [
+            _header_row(),
+            legacy_truncated,
+            forward_truncated,
+            forward_complete,
+            forward_complete_zero,
+            _footer_row(),
+        ]
+        _write_jsonl(path, rows)
+
+        report = self.module.cull_file(path, commit=True)
+
+        self.assertEqual(
+            report.rewritten,
+            1,
+            "only the legacy truncated row should be rewritten",
+        )
+        self.assertEqual(report.skipped, 0)
+
+        rewritten_rows = _read_jsonl(path)
+
+        # Legacy row is now in the new sentinel shape.
+        rewritten_legacy = rewritten_rows[1]
+        self.assertEqual(
+            rewritten_legacy["question_id"], legacy_truncated["question_id"]
+        )
+        self.assertIsNone(rewritten_legacy["model_score"])
+        self.assertIsNone(rewritten_legacy["model_confidence"])
+        self.assertIs(rewritten_legacy["truncated"], True)
+
+        # Forward-written rows are byte-exact preserved.
+        self.assertEqual(rewritten_rows[2], forward_truncated)
+        self.assertEqual(rewritten_rows[3], forward_complete)
+        self.assertEqual(rewritten_rows[4], forward_complete_zero)
 
 
 if __name__ == "__main__":
