@@ -695,15 +695,23 @@ _INLINE_IMAGE_CELL_HEIGHT = 18
 _INLINE_IMAGE_MAX_CELL_WIDTH = 140
 
 #: Terminal cell aspect ratio (height / width) for sizing math.
-#: Typical monospace fonts land in [2.0, 2.2]. The earlier attempts
-#: to bump this constant to "fix" the letterbox were chasing the
-#: wrong problem — the letterbox was actually caused by
-#: _PADDING_PX in focus_preview.py inflating the output canvas
-#: aspect away from the content aspect. With the padding removed
-#: (canvas == content), the real terminal cell aspect should be
-#: the only thing that matters here. 2.1 is a reasonable default
-#: for most modern monospace fonts at common sizes.
-_TERMINAL_CELL_ASPECT = 2.1
+#: Measured empirically on the operator's WezTerm by placing the
+#: fr-10b preview (image aspect 2.355) at several (c, r) cell sizes
+#: via a standalone Kitty probe; the (c=89, r=14) placement
+#: tight-fit the image, which implies:
+#:     screen_cell_aspect = (c / r) / image_aspect
+#:                        = (89 / 14) / 2.355
+#:                        = 2.705
+#: So 2.71 is the ground-truth value for this operator's font.
+#: Previous guesses of 2.0, 2.1, 2.15, 2.4 were all too low and
+#: produced visible vertical letterbox because the box was taller
+#: in screen pixels than the image aspect wanted.
+#:
+#: FOLLOWUP: query the terminal at init via CSI 16t to get the
+#: real cell dimensions instead of hardcoding a constant. Until
+#: then this constant is correct for WezTerm at the operator's
+#: font config; may need per-environment tuning on other setups.
+_TERMINAL_CELL_ASPECT = 2.71
 
 
 def _build_iterm2_inline_image_sequence(
