@@ -14,14 +14,19 @@ from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
     _build_focus_preview_pixels,
     _build_iterm2_inline_image_sequence,
+    _build_kitty_place_sequence,
+    _build_kitty_transmit_chunks,
     _compute_inline_image_cell_dimensions,
     _focus_preview_budget,
+    _KITTY_IMAGE_ID,
     _render_focus_preview_pixels,
     _scaled_preview_size,
     _supports_inline_images,
+    _supports_kitty_graphics,
     _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
     FocusPreviewInlineImage,
+    FocusPreviewKittyImage,
     PaintDryDisplay,
     _LIVE_FREEZE_FADE_S,
     _LIVE_PER_CHAR_PHASE_OFFSET,
@@ -50,23 +55,6 @@ def _extract_plain(renderable) -> str:
 
 
 class NarratorReaderContract(unittest.TestCase):
-    def setUp(self) -> None:
-        # Focus preview is gated off by default on the integration
-        # tip (temporary switch while the Kitty placement-ID fix
-        # is in flight — the iTerm2 per-frame re-emit path causes
-        # seizure-grade strobing). Enable it here so the test
-        # suite continues to exercise the rendering pipeline.
-        import os
-        self._prev_focus_preview_env = os.environ.get("AUTO_GRADER_FOCUS_PREVIEW")
-        os.environ["AUTO_GRADER_FOCUS_PREVIEW"] = "1"
-
-    def tearDown(self) -> None:
-        import os
-        if self._prev_focus_preview_env is None:
-            os.environ.pop("AUTO_GRADER_FOCUS_PREVIEW", None)
-        else:
-            os.environ["AUTO_GRADER_FOCUS_PREVIEW"] = self._prev_focus_preview_env
-
     @staticmethod
     def _hex_luminance(style: str) -> int:
         style = style.split()[-1].lstrip("#")
@@ -261,6 +249,7 @@ class NarratorReaderContract(unittest.TestCase):
         # Half-block fallback path — test the panel-title ordering.
         display = self._make_display()
         display._inline_images_supported = False
+        display._kitty_graphics_supported = False
         display.on_focus_preview(
             self._make_png(),
             label="15-blue/fr-12a",
@@ -286,6 +275,47 @@ class NarratorReaderContract(unittest.TestCase):
             titled_panels.index("[grey50]history[/grey50]"),
         )
 
+    def test_kitty_focus_preview_renders_between_live_and_history(self):
+        # Kitty image path — verify the FocusPreviewKittyImage
+        # renderable lands in the render group between the
+        # status+live panel and the history panel, and that
+        # on_focus_preview built it (not the inline fallback or
+        # the half-block fallback).
+        display = self._make_display()
+        display._kitty_graphics_supported = True
+        display._inline_images_supported = False
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-12a",
+            source="mock_tricky",
+        )
+        # Kitty renderable must have been built.
+        self.assertIsNotNone(display.focus_preview_kitty_renderable)
+        self.assertIsNone(display.focus_preview_inline_renderable)
+        self.assertIsNone(display.focus_preview_renderable)
+
+        group = display.render()
+        renderables = list(group.renderables)
+        status_live_idx = None
+        history_idx = None
+        kitty_idx = None
+        for i, r in enumerate(renderables):
+            title = getattr(r, "title", None)
+            if title == "[grey50]status + live[/grey50]":
+                status_live_idx = i
+            elif title == "[grey50]history[/grey50]":
+                history_idx = i
+            elif isinstance(r, FocusPreviewKittyImage):
+                kitty_idx = i
+        self.assertIsNotNone(status_live_idx, "status+live panel must be present")
+        self.assertIsNotNone(history_idx, "history panel must be present")
+        self.assertIsNotNone(
+            kitty_idx,
+            "kitty focus preview renderable must be present in render group",
+        )
+        self.assertLess(status_live_idx, kitty_idx)
+        self.assertLess(kitty_idx, history_idx)
+
     def test_inline_focus_preview_renders_between_live_and_history(self):
         # Inline image path — same ordering invariant as above but
         # the renderable is a FocusPreviewInlineImage rather than a
@@ -293,6 +323,9 @@ class NarratorReaderContract(unittest.TestCase):
         # within the Group.
         display = self._make_display()
         display._inline_images_supported = True
+        # Disable kitty so this test exclusively exercises the
+        # iTerm2 fallback path regardless of the test environment.
+        display._kitty_graphics_supported = False
         display.on_focus_preview(
             self._make_png(),
             label="15-blue/fr-12a",
@@ -380,6 +413,7 @@ class NarratorReaderContract(unittest.TestCase):
         # pipeline it's designed to cover regardless of what terminal
         # the test runner's environment looks like to be.
         display._inline_images_supported = False
+        display._kitty_graphics_supported = False
         sentinel_pixels = [[(10, 20, 30)]]
 
         with mock.patch(
@@ -399,6 +433,7 @@ class NarratorReaderContract(unittest.TestCase):
     def test_focus_preview_samples_at_double_vertical_density_for_half_blocks(self):
         display = self._make_display()
         display._inline_images_supported = False
+        display._kitty_graphics_supported = False
 
         with mock.patch(
             "scripts.narrator_reader._build_focus_preview_pixels",
@@ -927,6 +962,191 @@ class NarratorReaderContract(unittest.TestCase):
             "repaint on each refresh",
         )
 
+    # ------------------------------------------------------------------
+    # Kitty graphics protocol path. This is the durable fix for the
+    # flicker problem: transmit the PNG once to the terminal with a
+    # numeric image ID, then reference it by ID on every subsequent
+    # frame via tiny `a=p` place commands. WezTerm and Kitty both
+    # support this protocol. Unlike the iTerm2 path, place-by-ID
+    # does not re-parse the PNG payload, so emitting it every frame
+    # at 24 FPS costs nothing.
+    # ------------------------------------------------------------------
+
+    def test_supports_kitty_graphics_recognizes_wezterm(self):
+        self.assertTrue(_supports_kitty_graphics("WezTerm"))
+
+    def test_supports_kitty_graphics_recognizes_kitty(self):
+        self.assertTrue(_supports_kitty_graphics("kitty"))
+
+    def test_supports_kitty_graphics_rejects_plain_terminals(self):
+        self.assertFalse(_supports_kitty_graphics("xterm"))
+        self.assertFalse(_supports_kitty_graphics("Apple_Terminal"))
+        self.assertFalse(_supports_kitty_graphics(None))
+        self.assertFalse(_supports_kitty_graphics(""))
+
+    def test_build_kitty_transmit_chunks_wraps_in_apc_envelope(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 32
+        chunks = _build_kitty_transmit_chunks(png, image_id=1)
+        self.assertGreaterEqual(len(chunks), 1)
+        # Every chunk is wrapped in ESC_G ... ESC\
+        for chunk in chunks:
+            self.assertTrue(
+                chunk.startswith("\x1b_G"),
+                f"chunk must start with APC introducer (ESC_G), got {chunk[:10]!r}",
+            )
+            self.assertTrue(
+                chunk.endswith("\x1b\\"),
+                f"chunk must end with string terminator (ESC\\), got {chunk[-5:]!r}",
+            )
+
+    def test_build_kitty_transmit_chunks_first_has_control_keys_no_action(self):
+        # First chunk carries the full control string: f=100 (PNG),
+        # i=<id>, t=d (direct transmission), m=<flag>. No `a=` key
+        # so the image is transmitted without immediate display —
+        # the caller will use `a=p` later to place by ID.
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 32
+        chunks = _build_kitty_transmit_chunks(png, image_id=7)
+        first = chunks[0]
+        # Control string sits between ESC_G and the semicolon that
+        # precedes the payload.
+        self.assertIn(";", first)
+        header = first.split(";", 1)[0]
+        self.assertTrue(header.startswith("\x1b_G"))
+        control = header[3:]
+        self.assertIn("f=100", control)
+        self.assertIn("i=7", control)
+        self.assertIn("t=d", control)
+        # Must NOT contain an action key — transmit-only (cache but
+        # do not display). If this test fails because a future edit
+        # adds `a=T` or `a=t`, that's a behavior change that would
+        # cause the image to paint at the wrong cursor position
+        # (wherever on_focus_preview happens to fire relative to
+        # Rich's current cursor).
+        self.assertNotIn("a=", control)
+
+    def test_build_kitty_transmit_chunks_m_flag_transitions_from_1_to_0(self):
+        # Multi-chunk payload: all chunks except the last must have
+        # m=1 (more data coming), last chunk must have m=0. Required
+        # by the Kitty protocol for the terminal to know when the
+        # upload is complete.
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * (4096 * 3)  # big enough to need multiple chunks
+        chunks = _build_kitty_transmit_chunks(png, image_id=1)
+        self.assertGreater(len(chunks), 1, "test payload should produce multiple chunks")
+        for chunk in chunks[:-1]:
+            # Each non-last chunk has m=1 in its control string.
+            header = chunk.split(";", 1)[0]
+            self.assertIn("m=1", header)
+        last_header = chunks[-1].split(";", 1)[0]
+        self.assertIn("m=0", last_header)
+
+    def test_build_kitty_transmit_chunks_payload_sizes_are_multiples_of_four(self):
+        # The Kitty protocol requires all chunks except the last to
+        # have payload size that is a multiple of 4 (base64 alignment).
+        # The last chunk may be any size.
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * (4096 * 3)
+        chunks = _build_kitty_transmit_chunks(png, image_id=1)
+        for chunk in chunks[:-1]:
+            _header, payload_plus_terminator = chunk.split(";", 1)
+            # Strip the trailing ESC\
+            payload = payload_plus_terminator[: -len("\x1b\\")]
+            self.assertEqual(
+                len(payload) % 4,
+                0,
+                f"non-last chunk payload length {len(payload)} must be divisible by 4",
+            )
+
+    def test_build_kitty_transmit_chunks_concatenated_payload_is_full_base64(self):
+        import base64 as _b64
+        png = b"\x89PNG\r\n\x1a\n" + b"arbitrary bytes here for test"
+        expected_b64 = _b64.b64encode(png).decode("ascii")
+        chunks = _build_kitty_transmit_chunks(png, image_id=1)
+        concat = ""
+        for chunk in chunks:
+            _header, payload_plus_terminator = chunk.split(";", 1)
+            concat += payload_plus_terminator[: -len("\x1b\\")]
+        self.assertEqual(
+            concat,
+            expected_b64,
+            "concatenated chunk payloads must equal the full base64 encoding of the PNG",
+        )
+
+    def test_build_kitty_place_sequence_format(self):
+        seq = _build_kitty_place_sequence(image_id=1, cell_width=80, cell_height=20)
+        # APC envelope
+        self.assertTrue(seq.startswith("\x1b_G"))
+        self.assertTrue(seq.endswith("\x1b\\"))
+        # Must contain action=place, the ID, and both cell dimensions
+        self.assertIn("a=p", seq)
+        self.assertIn("i=1", seq)
+        self.assertIn("c=80", seq)
+        self.assertIn("r=20", seq)
+        # Place sequences have no payload — the semicolon and
+        # everything after it is just the terminator. So the
+        # sequence body (between ESC_G and ESC\) should contain
+        # only control keys, no ';' introducing a payload.
+        body = seq[len("\x1b_G") : -len("\x1b\\")]
+        self.assertNotIn(
+            ";",
+            body,
+            f"place sequence must not have a payload section, got body={body!r}",
+        )
+
+    def test_focus_preview_kitty_image_renderable_yields_only_place(self):
+        # FocusPreviewKittyImage does NOT carry the PNG data. The
+        # transmit is done by the caller (on_focus_preview) directly
+        # to stdout before the next Rich frame. The renderable's
+        # job is only to emit the tiny place-by-ID command at the
+        # correct cursor position inside its own border frame, on
+        # every single Rich refresh, at essentially zero cost
+        # (~30 bytes per frame).
+        from rich.console import Console
+
+        renderable = FocusPreviewKittyImage(
+            image_id=1, cell_width=60, cell_height=18, title="test"
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        with console.capture() as capture:
+            console.print(renderable)
+        output = capture.get()
+
+        # The output must contain the APC place sequence.
+        self.assertIn("\x1b_Ga=p", output)
+        # It must NOT contain any transmit sequence (no f=100, no
+        # payload data). If this test fails it means the renderable
+        # is re-emitting the PNG on every frame which is the
+        # flicker bug we're trying to avoid.
+        self.assertNotIn("f=100", output)
+
+    def test_focus_preview_kitty_image_emits_place_every_render(self):
+        # Rich Live clears the image region between frames, so we
+        # must re-emit the place command on every render. The place
+        # command is tiny and WezTerm doesn't re-parse anything, so
+        # this is cheap and flicker-free.
+        from rich.console import Console
+
+        renderable = FocusPreviewKittyImage(
+            image_id=1, cell_width=60, cell_height=18, title="test"
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        with console.capture() as capture:
+            console.print(renderable)
+        first = capture.get()
+        with console.capture() as capture:
+            console.print(renderable)
+        second = capture.get()
+        self.assertEqual(first.count("\x1b_Ga=p"), 1)
+        self.assertEqual(second.count("\x1b_Ga=p"), 1)
+
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies
@@ -1076,6 +1296,7 @@ class NarratorReaderContract(unittest.TestCase):
     def test_pending_focus_preview_rerender_is_quantized_instead_of_rebuilding_every_tick(self):
         display = self._make_display()
         display._inline_images_supported = False
+        display._kitty_graphics_supported = False
         display.on_focus_preview(
             self._make_png(width=64, height=36),
             label="15-blue/fr-12a",
