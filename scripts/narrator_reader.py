@@ -763,6 +763,131 @@ def _compute_inline_image_cell_dimensions(
     return (cell_width, cell_height)
 
 
+# ---------------------------------------------------------------------
+# Kitty graphics protocol path (the durable fix for the flicker).
+#
+# The iTerm2 OSC 1337 path above has a fundamental problem: Rich's
+# Live display clears the image region between frames (via CSI 2K),
+# so we have to re-emit the full base64 PNG on every frame to keep
+# the image visible. WezTerm then re-parses the PNG 24 times per
+# second and the operator sees seizure-grade strobing.
+#
+# The Kitty graphics protocol has a native solution: upload the PNG
+# once with a numeric image ID (via APC ESC_G with no action key and
+# chunked base64 payload), then reference it on subsequent frames
+# with tiny `a=p,i=<id>,c=W,r=H` place commands. Place-by-ID doesn't
+# re-parse the PNG — the terminal just blits the cached bitmap at
+# the requested cell footprint. ~30 bytes per frame instead of
+# ~200 KB, no re-parse, no flicker.
+#
+# WezTerm supports the Kitty protocol alongside iTerm2's OSC 1337.
+# We pick Kitty when available and fall back to OSC 1337 only for
+# terminals that don't speak Kitty.
+#
+# The transmit step is done OUTSIDE Rich's render cycle — we write
+# the chunks directly to stdout from PaintDryDisplay.on_focus_preview,
+# which runs on the narrator reader's event thread. By the time
+# Rich's next frame emits the `a=p` place command via the
+# FocusPreviewKittyImage renderable, WezTerm has decoded the PNG in
+# the background and the cache is ready. The place command renders
+# the image at the correct cursor position inside the renderable's
+# own border frame.
+# ---------------------------------------------------------------------
+
+#: Numeric Kitty image ID used for the focus preview cache. We use a
+#: single fixed ID because we only ever care about the current item's
+#: preview — each new focus_preview event re-transmits with the same
+#: ID, which overwrites the previous image in WezTerm's cache rather
+#: than accumulating. Bounded memory footprint on the terminal side.
+_KITTY_IMAGE_ID = 1
+
+#: Base64 chunks must be at most this many characters. Kitty protocol
+#: spec: "chunk size of 4096 for the base64-encoded data".
+_KITTY_CHUNK_SIZE = 4096
+
+
+def _build_kitty_transmit_chunks(
+    png_bytes: bytes,
+    image_id: int,
+) -> list[str]:
+    """Return a list of Kitty APC escape sequences that transmit the
+    given PNG to the terminal under the specified numeric image ID.
+
+    Format per chunk::
+
+        ESC _G <control>;<base64 chunk> ESC \\
+
+    First chunk carries the full control string
+    ``f=100,i=<id>,t=d,m=<flag>``. Subsequent chunks carry only
+    ``m=<flag>``. All chunks except the last have ``m=1`` (more data
+    coming); the last has ``m=0``. All chunks except the last have
+    payload size that is a multiple of 4 (base64 alignment).
+
+    No action key (``a=``) is set — this is a transmit-only operation
+    that caches the image under ``image_id`` without displaying it.
+    Displaying happens later via :func:`_build_kitty_place_sequence`.
+    """
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    # Chunk size must be a multiple of 4 for all but the last chunk
+    # to maintain base64 alignment. _KITTY_CHUNK_SIZE is already a
+    # multiple of 4, so naive slicing works.
+    raw_chunks = [
+        b64[i : i + _KITTY_CHUNK_SIZE] for i in range(0, len(b64), _KITTY_CHUNK_SIZE)
+    ]
+    if not raw_chunks:
+        # Degenerate: zero-byte input. Emit a single empty last chunk
+        # so the caller gets a well-formed envelope to send.
+        raw_chunks = [""]
+    envelopes: list[str] = []
+    for idx, chunk in enumerate(raw_chunks):
+        is_last = idx == len(raw_chunks) - 1
+        m_flag = "0" if is_last else "1"
+        if idx == 0:
+            control = f"f=100,i={image_id},t=d,m={m_flag}"
+        else:
+            control = f"m={m_flag}"
+        envelopes.append(f"\x1b_G{control};{chunk}\x1b\\")
+    return envelopes
+
+
+def _build_kitty_place_sequence(
+    image_id: int,
+    *,
+    cell_width: int,
+    cell_height: int,
+) -> str:
+    """Return a Kitty APC escape sequence that places a previously-
+    transmitted image by ID at the current cursor position, occupying
+    ``cell_width × cell_height`` terminal cells.
+
+    Format::
+
+        ESC _G a=p,i=<id>,c=<W>,r=<H> ESC \\
+
+    No payload — this is a control-only sequence, so the body after
+    ``ESC_G`` is just the comma-separated control keys followed
+    directly by the terminator. The terminal renders the cached
+    image (uploaded earlier via :func:`_build_kitty_transmit_chunks`)
+    into the cell region starting at the current cursor position.
+    """
+    return f"\x1b_Ga=p,i={image_id},c={cell_width},r={cell_height}\x1b\\"
+
+
+def _supports_kitty_graphics(term_program: str | None) -> bool:
+    """Return True if the terminal supports the Kitty graphics
+    protocol.
+
+    Known-good: WezTerm (since ~2022), kitty itself. iTerm2 supports
+    Kitty graphics in recent builds too, but we keep it on the OSC
+    1337 path for now since that's the path we have more empirical
+    coverage on. Everything else falls through to whatever other
+    paths are available.
+    """
+    if not term_program:
+        return False
+    return term_program in {"WezTerm", "kitty"}
+
+
 def _supports_inline_images(term_program: str | None) -> bool:
     """Return True if the terminal identified by ``$TERM_PROGRAM``
     supports the iTerm2 inline image protocol.
@@ -891,6 +1016,108 @@ class FocusPreviewInlineImage:
         # the terminal has image pixels painted into the cells from
         # the first row's escape sequence. Cursor-forward preserves
         # those pixels; writing spaces here would overwrite them.
+        for _ in range(self._cell_height - 1):
+            yield Segment("│", border)
+            yield Segment(forward_escape, None, [(ControlType.BELL,)])
+            yield Segment("│", border)
+            yield Segment.line()
+
+        # Bottom border.
+        bottom_border = "╰" + ("─" * (total_width - 2)) + "╯"
+        yield Segment(bottom_border, border)
+        yield Segment.line()
+
+
+class FocusPreviewKittyImage:
+    """Rich Renderable that places a previously-transmitted Kitty
+    graphics image inside a self-drawn border frame.
+
+    Unlike :class:`FocusPreviewInlineImage`, this class does NOT
+    carry the PNG data. The transmit (`_build_kitty_transmit_chunks`)
+    must be done out-of-band by the caller — typically directly to
+    stdout from ``PaintDryDisplay.on_focus_preview`` on the narrator
+    event thread, so WezTerm starts decoding in the background before
+    Rich's next refresh fires. By the time Rich calls this
+    renderable's ``__rich_console__``, the image is cached under
+    ``image_id`` and the place-by-ID command is all that's needed.
+
+    This is the key to flicker-free rendering: the place command is
+    ~30 bytes and does not cause the terminal to re-parse any PNG
+    data, so emitting it 24 times per second costs essentially
+    nothing. Compare with :class:`FocusPreviewInlineImage` which
+    re-emits the full base64 PNG on every frame and causes visible
+    strobing as WezTerm re-decodes the image.
+
+    Each new focus_preview event constructs a fresh
+    :class:`FocusPreviewKittyImage` with a fresh transmit. The
+    image_id is reused across events (see ``_KITTY_IMAGE_ID``), so
+    each transmit overwrites the previous cached image rather than
+    accumulating — bounded memory footprint on the terminal side.
+    """
+
+    def __init__(
+        self,
+        *,
+        image_id: int,
+        cell_width: int,
+        cell_height: int,
+        title: str = "",
+    ) -> None:
+        self._image_id = image_id
+        self._cell_width = cell_width
+        self._cell_height = cell_height
+        self._title = title
+        self._place_sequence = _build_kitty_place_sequence(
+            image_id,
+            cell_width=cell_width,
+            cell_height=cell_height,
+        )
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        border = Style.parse("#3d4458")
+        inner_width = self._cell_width
+        total_width = inner_width + 2
+
+        # Top border with embedded title.
+        title_text = self._title
+        max_title = max(0, inner_width - 4)
+        if len(title_text) > max_title:
+            title_text = title_text[: max(0, max_title - 1)] + "…"
+        if title_text:
+            prefix = f"╭─ {title_text} "
+            filler_len = total_width - len(prefix) - 1
+            if filler_len < 0:
+                filler_len = 0
+            top_border = prefix + ("─" * filler_len) + "╮"
+        else:
+            top_border = "╭" + ("─" * (total_width - 2)) + "╮"
+        yield Segment(top_border, border)
+        yield Segment.line()
+
+        # Cursor-forward escape advances past the image cells on
+        # non-image rows so Rich doesn't write spaces over the
+        # terminal-painted image pixels (same pattern as
+        # FocusPreviewInlineImage).
+        forward_escape = f"\x1b[{inner_width}C"
+
+        # First interior row: emit the Kitty place-by-ID command.
+        # This is tiny — ~30 bytes — and references the cached
+        # image without re-uploading. Rich Live clears the cells
+        # between frames via ERASE_IN_LINE, so we re-place on
+        # every render. The place command does NOT cause the
+        # terminal to re-parse the PNG, so this is cheap and
+        # flicker-free.
+        yield Segment("│", border)
+        yield Segment(self._place_sequence, None, [(ControlType.BELL,)])
+        yield Segment(forward_escape, None, [(ControlType.BELL,)])
+        yield Segment("│", border)
+        yield Segment.line()
+
+        # Remaining interior rows: border + cursor-forward + border.
         for _ in range(self._cell_height - 1):
             yield Segment("│", border)
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
@@ -1800,6 +2027,18 @@ class PaintDryDisplay:
         self._inline_images_supported: bool = _supports_inline_images(
             os.environ.get("TERM_PROGRAM")
         )
+        # Kitty graphics protocol state. Preferred over the iTerm2
+        # OSC 1337 path when available because it supports
+        # upload-once + reference-by-ID, which eliminates the
+        # per-frame PNG re-parse that causes flicker on the iTerm2
+        # path. The transmit happens outside Rich's render cycle
+        # (directly to stdout from on_focus_preview on the narrator
+        # event thread), then the renderable below yields only the
+        # tiny place command on each frame.
+        self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
+        self._kitty_graphics_supported: bool = _supports_kitty_graphics(
+            os.environ.get("TERM_PROGRAM")
+        )
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
@@ -2359,9 +2598,19 @@ class PaintDryDisplay:
         )
 
         focus_preview_panel = None
+        have_kitty = self.focus_preview_kitty_renderable is not None
         have_inline = self.focus_preview_inline_renderable is not None
         have_fallback = self.focus_preview_renderable is not None
-        if have_inline and not self.focus_preview_pending:
+        if have_kitty and not self.focus_preview_pending:
+            # Kitty graphics, steady state: use the place-by-ID
+            # renderable DIRECTLY (not wrapped in a Panel, same
+            # reasoning as FocusPreviewInlineImage). The PNG was
+            # transmitted to the terminal on the event thread
+            # inside on_focus_preview, so by the time this render
+            # fires the cache is typically ready. The place
+            # command is tiny and flicker-free.
+            focus_preview_panel = self.focus_preview_kitty_renderable
+        elif have_inline and not self.focus_preview_pending:
             # Inline image, steady state: use the custom renderable
             # DIRECTLY, not wrapped in a Panel. Panel's Padding layer
             # writes literal spaces to the cells on either side of
@@ -2371,7 +2620,7 @@ class PaintDryDisplay:
             # cursor-forward escapes (not spaces) to advance past
             # the image cells without touching them.
             focus_preview_panel = self.focus_preview_inline_renderable
-        elif have_inline or have_fallback:
+        elif have_kitty or have_inline or have_fallback:
             preview_title = "[grey50]focus preview"
             if self.focus_preview_pending:
                 preview_title += " · pending"
@@ -2708,6 +2957,7 @@ class PaintDryDisplay:
         if (
             self.focus_preview_renderable is not None
             or self.focus_preview_inline_renderable is not None
+            or self.focus_preview_kitty_renderable is not None
         ):
             self.focus_preview_pending = True
             self.focus_preview_pending_started = header_now
@@ -2718,6 +2968,7 @@ class PaintDryDisplay:
             self.focus_preview_pixels = None
             self.focus_preview_renderable = None
             self.focus_preview_inline_renderable = None
+            self.focus_preview_kitty_renderable = None
             self.focus_preview_label = ""
             self.focus_preview_source = ""
             self.focus_preview_pending = False
@@ -2820,9 +3071,64 @@ class PaintDryDisplay:
         self._focus_preview_pending_bucket = None
         self._focus_preview_pending_renderable = None
 
-        # Inline image path: primary on WezTerm/iTerm2. Bypasses the
-        # half-block renderer entirely and hands the full-resolution
-        # crop PNG to the terminal for pixel-for-pixel rasterization.
+        # Kitty graphics protocol path: preferred on WezTerm/kitty.
+        # Upload the PNG chunks directly to stdout NOW, on the
+        # narrator event thread, so WezTerm starts decoding the
+        # image in the background before Rich's next refresh fires.
+        # Then build a FocusPreviewKittyImage renderable that
+        # yields only the tiny place-by-ID command on each render.
+        # The place command is ~30 bytes and does not cause the
+        # terminal to re-parse any PNG data, so it's cheap and
+        # flicker-free.
+        if self._kitty_graphics_supported:
+            try:
+                pix = fitz.Pixmap(png_bytes)
+                cell_width, cell_height = _compute_inline_image_cell_dimensions(
+                    pix.width,
+                    pix.height,
+                    max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                    max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
+                )
+                title = f"focus preview · {label}" if label else "focus preview"
+                # Transmit the PNG chunks directly to the console
+                # output stream. This bypasses Rich entirely and
+                # runs on the event thread, so the decode has a
+                # head start on the next Rich refresh. The
+                # transmit uses no action key (so the image is
+                # cached without being displayed), which means
+                # the cursor is not moved and Rich's cursor
+                # tracking stays correct.
+                transmit_stream = (
+                    self._console.file if self._console is not None else sys.stdout
+                )
+                chunks = _build_kitty_transmit_chunks(png_bytes, _KITTY_IMAGE_ID)
+                for chunk in chunks:
+                    transmit_stream.write(chunk)
+                transmit_stream.flush()
+                self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
+                    image_id=_KITTY_IMAGE_ID,
+                    cell_width=cell_width,
+                    cell_height=cell_height,
+                    title=title,
+                )
+                # No need to build the iTerm2 or half-block paths —
+                # the Kitty path owns the panel when it's available.
+                self.focus_preview_inline_renderable = None
+                self.focus_preview_pixels = None
+                self.focus_preview_renderable = None
+                return
+            except Exception:
+                # If anything in the Kitty path fails (fitz quirk,
+                # stdout write error, etc.), fall through to the
+                # iTerm2 OSC 1337 path so the operator still sees
+                # something. Caller can still see flicker in that
+                # case but at least the image is visible.
+                self.focus_preview_kitty_renderable = None
+
+        # iTerm2 OSC 1337 path: fallback for terminals that don't
+        # support Kitty graphics, or when the Kitty path failed to
+        # build. Known flicker issue (see FocusPreviewInlineImage
+        # docstring) but better than nothing.
         if self._inline_images_supported:
             try:
                 pix = fitz.Pixmap(png_bytes)
@@ -2839,23 +3145,17 @@ class PaintDryDisplay:
                     cell_height=cell_height,
                     title=title,
                 )
-                # No need to build the half-block fallback too — the
-                # inline path owns the panel when it's available.
+                self.focus_preview_kitty_renderable = None
                 self.focus_preview_pixels = None
                 self.focus_preview_renderable = None
                 return
             except Exception:
-                # If building the inline renderable fails for any
-                # reason (corrupt PNG, fitz quirk), fall through to
-                # the half-block fallback so the operator still
-                # gets *something* in the panel.
                 self.focus_preview_inline_renderable = None
 
         # Half-block fallback path: for terminals that don't support
-        # inline images, or when the inline path fails to build.
-        # Sample at 2× vertical density so the steady-state renderer
-        # can pack a top/bottom half-pixel pair into each terminal
-        # row via half-block (▀) cells.
+        # inline images at all. Sample at 2× vertical density so the
+        # steady-state renderer can pack a top/bottom half-pixel
+        # pair into each terminal row via half-block (▀) cells.
         budget_width, budget_height = _focus_preview_budget(term_width)
         self.focus_preview_pixels = _build_focus_preview_pixels(
             png_bytes,
@@ -2866,6 +3166,7 @@ class PaintDryDisplay:
             self.focus_preview_pixels
         )
         self.focus_preview_inline_renderable = None
+        self.focus_preview_kitty_renderable = None
 
     def on_topic(
         self,
