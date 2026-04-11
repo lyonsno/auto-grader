@@ -36,6 +36,7 @@ from scripts.narrator_reader import (
     _apply_shimmer,
     _render_status_undulating,
     _scorebug_big_value_rows,
+    _TERMINAL_CELL_ASPECT,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
     _otsu_threshold,
@@ -809,6 +810,18 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(ch, 18)
         self.assertGreaterEqual(cw, 90)
         self.assertLessEqual(cw, 120)
+
+    def test_compute_inline_image_cell_dimensions_uses_tighter_terminal_cell_aspect(self):
+        self.assertAlmostEqual(
+            _TERMINAL_CELL_ASPECT,
+            2.15,
+            places=2,
+            msg="focus preview sizing should use the tighter 2.15 cell aspect to avoid Kitty letterboxing",
+        )
+        cw, ch = _compute_inline_image_cell_dimensions(
+            900, 300, max_cell_height=18, max_cell_width=200
+        )
+        self.assertEqual((cw, ch), (116, 18))
 
     def test_compute_inline_image_cell_dimensions_clamps_to_max_width(self):
         # A very wide crop would want more cells than max allows.

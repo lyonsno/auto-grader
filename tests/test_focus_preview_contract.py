@@ -27,7 +27,11 @@ def _pixel_at(png_bytes: bytes, x: int, y: int) -> tuple[int, int, int]:
 
 class FocusPreviewContract(unittest.TestCase):
     def setUp(self) -> None:
-        self.page_png = _solid_png(80, 60, (220, 220, 220))
+        # Use a larger test page so the proportional vignette/padding
+        # produces meaningfully measurable effects. At 1600x1200 the
+        # crop is 800x600, small-dim 600, vignette ~30 px, corner
+        # radius ~15 px — visible in the output.
+        self.page_png = _solid_png(1600, 1200, (220, 220, 220))
         self.focus = FocusRegion(
             page=1,
             x=0.25,
@@ -37,33 +41,47 @@ class FocusPreviewContract(unittest.TestCase):
             source="template",
         )
 
-    def test_preview_returns_png_with_padding_and_box_outline(self):
+    def test_preview_returns_png_with_proportional_padding(self):
         from auto_grader.focus_preview import render_focus_preview
+        from auto_grader.focus_preview import _PADDING_PX
 
         preview = render_focus_preview(self.page_png, self.focus)
         self.assertIsInstance(preview, bytes)
-        self.assertEqual(_png_dimensions(preview), (56, 46))
-        self.assertEqual(_pixel_at(preview, 0, 10), (64, 84, 120))
+        width, height = _png_dimensions(preview)
+        # Crop is 800x600 (50% of 1600x1200), plus padding on each side.
+        self.assertEqual(width, 800 + 2 * _PADDING_PX)
+        self.assertEqual(height, 600 + 2 * _PADDING_PX)
 
     def test_preview_keeps_center_bright_but_vignettes_edges(self):
         from auto_grader.focus_preview import render_focus_preview
+        from auto_grader.focus_preview import _PADDING_PX
 
         preview = render_focus_preview(self.page_png, self.focus)
-        center = _pixel_at(preview, 28, 23)
-        left_edge = _pixel_at(preview, 9, 23)
+        width, height = _png_dimensions(preview)
+        # Center of the image should be the original page color.
+        center = _pixel_at(preview, width // 2, height // 2)
+        # A pixel near the edge of the crop content (just inside
+        # the padding) should be darker than the center because
+        # the vignette has pulled it toward the background.
+        edge_inside = _pixel_at(preview, _PADDING_PX + 2, height // 2)
 
-        self.assertGreater(sum(center), sum(left_edge))
+        self.assertGreater(sum(center), sum(edge_inside))
+        # Center should still be close to the original page color.
         self.assertGreater(min(center), 180)
 
     def test_preview_softens_corners_into_terminal_background(self):
         from auto_grader.focus_preview import render_focus_preview
+        from auto_grader.focus_preview import _PADDING_PX
 
         preview = render_focus_preview(self.page_png, self.focus)
-        near_corner = _pixel_at(preview, 9, 9)
-        center = _pixel_at(preview, 28, 23)
+        width, height = _png_dimensions(preview)
+        # A pixel just inside the padded corner region.
+        near_corner = _pixel_at(preview, _PADDING_PX + 2, _PADDING_PX + 2)
+        center = _pixel_at(preview, width // 2, height // 2)
 
         self.assertLess(sum(near_corner), sum(center))
-        self.assertLess(sum(near_corner), 3 * 120)
+        # Corner should be substantially darker than a bright page.
+        self.assertLess(sum(near_corner), 3 * 180)
 
 
 if __name__ == "__main__":
