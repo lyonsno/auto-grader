@@ -1422,6 +1422,35 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_scrollback_snapshot_captures_completed_item_with_structured_rows(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "topic line", "match"))
+        display.history.append(("basis", "Correct setup, lost octet credit.", None))
+        display.history.append(("review_marker", "Human review warranted.", None))
+        display.history.append(("checkpoint", "Core issue: ozone drawing misses resonance.", None))
+
+        snapshot = display.take_scrollback_snapshot()
+
+        self.assertIsNotNone(snapshot)
+        plain = _extract_plain(snapshot)
+        self.assertIn("[item 1/6] first", plain)
+        self.assertIn("topic line", plain)
+        self.assertIn("Basis: Correct setup, lost octet credit.", plain)
+        self.assertIn("Review needed: Human review warranted.", plain)
+        self.assertIn("Core issue: ozone drawing misses resonance.", plain)
+
+    def test_scrollback_snapshot_only_emits_each_item_once(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "topic line", "match"))
+
+        first = display.take_scrollback_snapshot()
+        second = display.take_scrollback_snapshot()
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+
     def test_checkpoint_uses_structural_mark_and_history_family_ink(self):
         import scripts.narrator_reader as module
 
