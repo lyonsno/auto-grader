@@ -152,7 +152,10 @@ Current implementation status on the MC/OpenCV prerequisite lane:
 - `auto_grader.bubble_interpretation` now performs the first bubble-readback
   slice by reading filled bubble labels from the normalized page image while
   keeping blanks explicit and preserving multiple marks as visible ambiguity
-  instead of collapsing them into fake single answers
+  instead of collapsing them into fake single answers; that layer has also now
+  survived a first real-paper calibration pass, and its `marked` versus
+  `illegible` boundary has been retuned against actual scanned pencil fills
+  rather than only procedural probes
 
 ### 4. Ingestion (Scans -> Identified pages)
 
@@ -222,6 +225,12 @@ Current implementation status on this grading surface:
   no longer feels safe ignoring; today that line sits between a short interior
   slash that is still ignored and a compact dark interior scribble that is
   treated as a real fill attempt
+- a dedicated printable paper-calibration packet is implemented via
+  `auto_grader.paper_calibration_packet`; the first real pencil-and-scanner
+  pass on that packet exposed an over-aggressive `illegible` heuristic, and the
+  follow-on retune brought the same two scanned pages from 3/12 page-local
+  matches to 12/12 without weakening the existing scratchout-to-`illegible`
+  contract
 - richer review workflow, persistence, and operator-facing resolution state are still
   the next slice beyond that scoring surface
 

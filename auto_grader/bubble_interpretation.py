@@ -1,4 +1,11 @@
-"""Interpret marked MC bubble labels from normalized page images."""
+"""Interpret MC bubble observations from normalized page images.
+
+This layer classifies each bubble as a substantive mark, ambiguity, illegible
+scratchout-style mess, or blank, and exposes both the flattened marked labels
+and the per-bubble evidence needed by higher scoring/extraction layers. The
+current marked-versus-illegible boundary is tuned against both synthetic probes
+and a first real-paper calibration pass with scanned pencil marks.
+"""
 
 from __future__ import annotations
 
