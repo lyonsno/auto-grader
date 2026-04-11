@@ -492,6 +492,188 @@ class CullZilchReaperContract(unittest.TestCase):
             "unknown-shape rows must pass through unchanged",
         )
 
+    # ------------------------------------------------------------------
+    # Review-hardening (regression lens, findings 1 / 2 / 3)
+    # ------------------------------------------------------------------
+
+    def test_detection_does_not_fire_on_quoted_sentinel_in_longer_reasoning(
+        self,
+    ) -> None:
+        """Finding 1: false-positive on substring-contains detection.
+
+        A legitimate prediction row whose ``model_reasoning`` merely
+        *quotes* the truncation sentinel inside a longer paragraph must
+        not be flagged. Real truncation rows are *exactly* the sentinel
+        and nothing else — that's the parser default shape. A row whose
+        reasoning is longer than the sentinel is not a parser default
+        and must be preserved.
+        """
+
+        quoted_row = _complete_zero_prediction_row()
+        quoted_row["model_reasoning"] = (
+            "The grader previously emitted "
+            f'"{_SENTINEL_MODEL_REASONING}" on this item, but the '
+            "student answer is in fact present and clearly wrong."
+        )
+        self.assertFalse(
+            self.module.is_truncated_row(quoted_row),
+            "a row that merely quotes the sentinel inside longer prose "
+            "must not be classified as truncated",
+        )
+
+    def test_detection_accepts_exact_sentinel_with_no_other_text(self) -> None:
+        """Companion to the false-positive test.
+
+        The canonical shape every real truncation row carries is
+        ``model_reasoning`` equal to exactly the sentinel string. The
+        detection predicate must still fire on this shape.
+        """
+
+        row = _truncated_prediction_row(
+            model_reasoning=_SENTINEL_MODEL_REASONING
+        )
+        self.assertTrue(self.module.is_truncated_row(row))
+
+    def test_commit_is_atomic_via_tmp_plus_rename(self) -> None:
+        """Finding 2: non-atomic file overwrite.
+
+        The file-level commit path must not expose a mid-write window
+        in which ``predictions.jsonl`` is partially written. The
+        operation is specified as:
+
+        1. Write ``<path>.bak`` (original bytes)
+        2. Write the new content to a temporary sibling
+        3. Atomically rename the temporary sibling onto ``<path>``
+
+        We verify the contract by mocking ``os.replace`` to observe
+        that the rename happens and that the source path for the
+        rename is a sibling of ``<path>``, not ``<path>`` itself.
+        """
+
+        import os as _os
+        from unittest import mock
+
+        path = self.root / "run-atomic" / "predictions.jsonl"
+        _write_jsonl(
+            path,
+            [_header_row(), _truncated_prediction_row(), _footer_row()],
+        )
+
+        real_replace = _os.replace
+        observed: list[tuple[str, str]] = []
+
+        def spy_replace(src, dst, *a, **kw):
+            observed.append((str(src), str(dst)))
+            return real_replace(src, dst, *a, **kw)
+
+        with mock.patch.object(self.module.os, "replace", side_effect=spy_replace):
+            self.module.cull_file(path, commit=True)
+
+        self.assertEqual(
+            len(observed),
+            1,
+            "commit must call os.replace exactly once to land the rewrite",
+        )
+        src, dst = observed[0]
+        self.assertEqual(dst, str(path), "rename target must be the final path")
+        self.assertNotEqual(
+            src,
+            str(path),
+            "rename source must be a temporary sibling, not the final path",
+        )
+        self.assertEqual(
+            Path(src).parent,
+            path.parent,
+            "temporary file must live in the same directory as the final "
+            "path so the rename is a same-filesystem atomic operation",
+        )
+
+    def test_commit_leaves_no_tmp_file_behind_on_success(self) -> None:
+        """After a successful commit, only the rewritten file and its
+        ``.bak`` sibling should exist in the run directory. The
+        temporary file used for the atomic rename must have been
+        consumed by the rename."""
+
+        path = self.root / "run-no-tmp" / "predictions.jsonl"
+        _write_jsonl(
+            path,
+            [_header_row(), _truncated_prediction_row(), _footer_row()],
+        )
+
+        self.module.cull_file(path, commit=True)
+
+        siblings = sorted(p.name for p in path.parent.iterdir())
+        self.assertEqual(
+            siblings,
+            ["predictions.jsonl", "predictions.jsonl.bak"],
+            "no leftover .tmp or partial files should remain after commit",
+        )
+
+    def test_file_without_footer_is_skipped_as_in_flight(self) -> None:
+        """Finding 3: concurrent-write guard against mid-flight runs.
+
+        A ``predictions.jsonl`` that does not contain a ``type:
+        "footer"`` row is either mid-flight (``smoke_vlm.py`` is still
+        writing to it) or crashed before it could close cleanly. In
+        either case, the rewriter must refuse to touch it, report the
+        file as skipped with a reason, and leave both the file on
+        disk and the ``.bak`` sibling absent.
+        """
+
+        path = self.root / "run-inflight" / "predictions.jsonl"
+        _write_jsonl(
+            path,
+            [_header_row(), _truncated_prediction_row()],  # no footer
+        )
+        original = path.read_bytes()
+
+        report = self.module.cull_file(path, commit=True)
+
+        self.assertEqual(
+            report.rewritten,
+            0,
+            "a footerless file must not have any rows rewritten",
+        )
+        self.assertGreaterEqual(
+            report.skipped,
+            1,
+            "the footerless file itself must be reported as skipped",
+        )
+        self.assertTrue(
+            any("footer" in r.lower() for r in report.skip_reasons),
+            "skip reason must name the footer as the trigger; "
+            f"got {report.skip_reasons}",
+        )
+        self.assertEqual(
+            path.read_bytes(),
+            original,
+            "the file on disk must be unchanged after a footerless "
+            "skip",
+        )
+        self.assertFalse(
+            path.with_name(path.name + ".bak").exists(),
+            "no .bak should be written when the file was skipped",
+        )
+
+    def test_file_with_footer_is_culled_normally(self) -> None:
+        """Companion to the footer-skip test.
+
+        A file carrying a proper footer row is a completed run and
+        must be culled normally — this pins that the footer check
+        does not accidentally block healthy files.
+        """
+
+        path = self.root / "run-complete" / "predictions.jsonl"
+        _write_jsonl(
+            path,
+            [_header_row(), _truncated_prediction_row(), _footer_row()],
+        )
+
+        report = self.module.cull_file(path, commit=True)
+
+        self.assertEqual(report.rewritten, 1)
+        self.assertEqual(report.skipped, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

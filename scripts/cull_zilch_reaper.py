@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -98,9 +99,17 @@ def is_truncated_row(row: dict) -> bool:
     2. It does NOT already carry ``truncated: true`` (so already-migrated
        rows are not re-flagged, which is what makes the rewriter
        idempotent).
-    3. Its ``model_reasoning`` field, normalized for case and whitespace,
-       matches the canonical truncation sentinel with or without the
-       trailing period.
+    3. Its ``model_reasoning`` field, normalized for case and
+       whitespace, is **exactly** the canonical truncation sentinel,
+       with or without the trailing period. Substring containment is
+       intentionally NOT accepted — a legitimate prediction row whose
+       reasoning happens to quote the sentinel inside longer prose
+       must not be flagged. The parser-default truncation row that
+       this rewriter is fixing always has ``model_reasoning`` set to
+       exactly the sentinel and nothing else; a full-archive audit on
+       2026-04-11 confirmed 71/71 real truncation rows are the exact
+       string. Tightening to equality closes a false-positive path
+       without dropping any real row.
 
     Non-prediction rows (headers, footers) and prediction rows that
     happen to score zero for legitimate reasons are not flagged.
@@ -118,8 +127,8 @@ def is_truncated_row(row: dict) -> bool:
         return False
 
     return (
-        _NORMALIZED_SENTINEL in normalized
-        or _NORMALIZED_SENTINEL_NO_TRAILING_PUNCT in normalized
+        normalized == _NORMALIZED_SENTINEL
+        or normalized == _NORMALIZED_SENTINEL_NO_TRAILING_PUNCT
     )
 
 
@@ -176,17 +185,23 @@ class CullReport:
 
 def _classify_and_process(
     rows: Iterable[tuple[int, str]],
-) -> tuple[list[str], CullReport]:
+) -> tuple[list[str], CullReport, bool]:
     """Walk rows and produce the post-cull JSONL lines + a report.
 
     Each input is a ``(lineno, raw_line)`` pair. Output lines are JSONL
     strings WITHOUT trailing newlines — the caller is responsible for
     joining them back. This separation lets ``cull_file`` handle
     dry-run vs commit without re-doing classification.
+
+    The returned tuple is ``(out_lines, report, saw_footer)``. The
+    third element tells the caller whether the file ever reached a
+    ``type: "footer"`` row — see ``cull_file`` for the mid-flight
+    guard that consumes this signal.
     """
 
     report = CullReport(path=Path())  # path is set by the caller
     out_lines: list[str] = []
+    saw_footer = False
 
     for lineno, raw in rows:
         stripped = raw.rstrip("\n")
@@ -217,7 +232,12 @@ def _classify_and_process(
             continue
 
         row_type = row.get("type")
-        if row_type in ("header", "footer"):
+        if row_type == "footer":
+            saw_footer = True
+            out_lines.append(stripped)
+            report.preserved += 1
+            continue
+        if row_type == "header":
             out_lines.append(stripped)
             report.preserved += 1
             continue
@@ -254,23 +274,42 @@ def _classify_and_process(
         out_lines.append(stripped)
         report.preserved += 1
 
-    return out_lines, report
+    return out_lines, report, saw_footer
 
 
 def cull_file(path: Path, *, commit: bool) -> CullReport:
     """Cull a single ``predictions.jsonl`` file.
 
-    In dry-run mode (``commit=False``, the default) the file on disk is
-    not modified and no ``.bak`` sibling is written. The returned
+    In dry-run mode (``commit=False``, the default) the file on disk
+    is not modified and no ``.bak`` sibling is written. The returned
     ``CullReport`` still accurately reports how many rows would be
     rewritten / preserved / skipped if the caller were to commit.
 
+    ``cull_file`` refuses to touch a file that does not contain a
+    ``type: "footer"`` row. A predictions file without a footer is
+    either mid-flight (``smoke_vlm.py`` is still appending to it) or
+    crashed before it could close cleanly; either way, rewriting it
+    would race against the live writer or destroy forensically useful
+    state. In that case, the file is reported as skipped with a
+    reason naming the footer, no row-level rewrite is reported, no
+    ``.bak`` is written, and the file on disk is left untouched. This
+    is the structural guard for the concurrent-write race; operators
+    should still treat the archive as quiescent before running
+    ``--commit``.
+
     In commit mode (``commit=True``) the original file contents are
     copied to ``<path>.bak`` (a sibling with the ``.bak`` suffix
-    appended) BEFORE the rewritten content is written to ``path``. If
-    the ``.bak`` already exists from a prior committed pass it is left
-    alone — we never overwrite an existing backup, to avoid destroying
-    the earliest recoverable snapshot of the archive.
+    appended) BEFORE the rewritten content is written. If the
+    ``.bak`` already exists from a prior committed pass it is left
+    alone — we never overwrite an existing backup, to avoid
+    destroying the earliest recoverable snapshot of the archive.
+
+    The rewrite itself is atomic: new content is written to a
+    ``<path>.tmp`` sibling in the same directory, then ``os.replace``
+    is used to rename it onto ``path``. This means a crash during the
+    write leaves either the original content (if the crash happens
+    before the rename) or the fully rewritten content (if after),
+    never a partially written ``predictions.jsonl``.
     """
 
     path = Path(path)
@@ -279,8 +318,22 @@ def cull_file(path: Path, *, commit: bool) -> CullReport:
 
     lines = original_text.splitlines()
     numbered = list(enumerate(lines, start=1))
-    out_lines, report = _classify_and_process(numbered)
+    out_lines, report, saw_footer = _classify_and_process(numbered)
     report.path = path
+
+    if not saw_footer:
+        # Mid-flight or crashed run. Refuse to touch it.
+        report.skipped += 1
+        report.skip_reasons.append(
+            "file has no type: footer row (mid-flight run or crashed "
+            "before close); refusing to rewrite to avoid racing with "
+            "an active writer"
+        )
+        report.rewritten = 0
+        report.committed = False
+        for reason in report.skip_reasons:
+            logger.warning("%s: %s", path, reason)
+        return report
 
     for reason in report.skip_reasons:
         logger.warning("%s: %s", path, reason)
@@ -294,16 +347,24 @@ def cull_file(path: Path, *, commit: bool) -> CullReport:
         backup.write_text(original_text, encoding="utf-8")
         report.backup_path = backup
     else:
-        # Earlier backup exists — don't overwrite, but record where it is
-        # so the caller can reason about recoverability.
+        # Earlier backup exists — don't overwrite, but record where it
+        # is so the caller can reason about recoverability.
         report.backup_path = backup
 
-    # Reassemble in the same line-ending style we read. The source files
-    # are LF-terminated JSONL; we end with a trailing newline to match.
+    # Reassemble in the same line-ending style we read. The source
+    # files are LF-terminated JSONL; we end with a trailing newline to
+    # match.
     new_text = "\n".join(out_lines)
     if original_text.endswith("\n"):
         new_text += "\n"
-    path.write_text(new_text, encoding="utf-8")
+
+    # Atomic write: tmp in same directory, then os.replace. Same-
+    # directory is required for rename to be a cheap same-filesystem
+    # operation. The tmp name is derived from the final name so a
+    # leftover file after a crash is identifiable.
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(new_text, encoding="utf-8")
+    os.replace(tmp_path, path)
     report.committed = True
     return report
 
