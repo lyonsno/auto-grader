@@ -68,13 +68,15 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_contract_test_runner",
                 "tests.test_template_schema_contract",
                 "tests.test_eval_harness_contract",
+                "tests.test_cull_zilch_reaper_contract",
                 "tests.test_shimmer_phases",
                 "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
             "metadata, bootstrap-script, connection, Postgres harness, runner, "
-            "template schema, eval harness, shimmer phases, and discovery "
-            "guardrail suites in a fixed, repo-local order.",
+            "template schema, eval harness, zilch-reaper cull, shimmer "
+            "phases, and discovery guardrail suites in a fixed, repo-local "
+            "order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -123,6 +125,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_contract_test_runner",
                 "tests.test_template_schema_contract",
                 "tests.test_eval_harness_contract",
+                "tests.test_cull_zilch_reaper_contract",
                 "tests.test_shimmer_phases",
                 "test_unittest_discovery_contract",
                 "tests.test_db_postgres_smoke_contract",
