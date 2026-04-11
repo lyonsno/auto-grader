@@ -826,23 +826,21 @@ class FocusPreviewInlineImage:
         self._sequence = _build_iterm2_inline_image_sequence(
             png_bytes, cell_width=cell_width, cell_height=cell_height
         )
-        # Rich's Live display redraws at ~24 FPS because other panels
-        # (scorebug animation, live timer, narrator status) change
-        # every frame. Each redraw walks our renderable's
-        # __rich_console__ again. If we emit the full image escape
-        # sequence on every redraw, WezTerm re-rasterizes the PNG
-        # from base64 24 times per second and the operator sees
-        # seizure-grade flicker. The pixels from a previous paint
-        # stay in the terminal's cell buffer until something writes
-        # over them, and our cursor-forward escapes don't write —
-        # they just reposition the cursor. So we paint the image on
-        # the FIRST __rich_console__ call and then skip the image
-        # escape on subsequent calls, yielding only the border and
-        # cursor-forwards that redraw the frame without touching
-        # the image cells. Each new focus_preview event constructs
-        # a fresh FocusPreviewInlineImage with this flag reset, so
-        # every new item gets exactly one image paint.
-        self._image_emitted = False
+        # NOTE: Rich's Live.LiveRender.position_cursor() emits
+        # ERASE_IN_LINE (CSI 2K) on every row of the previous frame
+        # before each refresh. That explicitly clears every cell in
+        # the region we drew into, including image pixels. So we
+        # MUST re-emit the iTerm2 escape sequence on every render
+        # call — any "emit once" optimization produces an empty
+        # container frame because the image gets cleared between
+        # frames and never repainted. The visible cost is a ~24 Hz
+        # strobing re-rasterization as WezTerm re-parses the
+        # base64 PNG on every tick. The durable fix is the Kitty
+        # graphics protocol with placement IDs (upload image once
+        # with a=t, reference with a=p on subsequent frames), which
+        # avoids re-sending the PNG data. Tracked as a follow-up
+        # attractor; until then, we eat the flicker because at
+        # least the image is visible.
 
     def __rich_console__(
         self,
@@ -878,16 +876,12 @@ class FocusPreviewInlineImage:
         # to line-fit, truncate, or pad around it.
         forward_escape = f"\x1b[{inner_width}C"
 
-        # First interior row: emit the iTerm2 image escape sequence
-        # on the VERY FIRST render, then skip it on subsequent
-        # renders of this same instance to avoid 24-FPS re-rasterize
-        # flicker. The image pixels persist on the terminal's cell
-        # buffer between frames because our cursor-forward escapes
-        # below don't write to them.
+        # First interior row carries the iTerm2 image escape sequence.
+        # Must re-emit on every render because Rich Live's
+        # position_cursor() erases every row of the previous frame
+        # before each refresh (see note in __init__).
         yield Segment("│", border)
-        if not self._image_emitted:
-            yield Segment(self._sequence, None, [(ControlType.BELL,)])
-            self._image_emitted = True
+        yield Segment(self._sequence, None, [(ControlType.BELL,)])
         yield Segment(forward_escape, None, [(ControlType.BELL,)])
         yield Segment("│", border)
         yield Segment.line()

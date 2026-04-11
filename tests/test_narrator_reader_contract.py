@@ -829,15 +829,16 @@ class NarratorReaderContract(unittest.TestCase):
             "doesn't truncate it to fit the panel's visible width",
         )
 
-    def test_focus_preview_inline_image_emits_escape_sequence_only_on_first_render(self):
-        # Regression guard against the "Rich redraws at 24 FPS and
-        # re-emits the full base64 PNG on every tick, causing
-        # seizure-grade flicker" bug. After the first call to
-        # __rich_console__, subsequent calls must yield cursor-
-        # forwards and borders but NOT the iTerm2 image escape
-        # sequence. The terminal's cell buffer retains the image
-        # pixels from the first paint because cursor-forward
-        # doesn't write to cells.
+    def test_focus_preview_inline_image_emits_escape_sequence_every_render(self):
+        # Rich's Live.LiveRender.position_cursor() emits
+        # ERASE_IN_LINE (CSI 2K) on every row of the previous
+        # frame before each refresh, which clears every cell we
+        # drew the image into. So we MUST re-emit the iTerm2
+        # escape sequence on every __rich_console__ call or the
+        # image disappears after the first frame. This test pins
+        # that requirement as an invariant so we don't
+        # accidentally optimize it away again (I already did once
+        # and shipped an empty container to the operator).
         from rich.console import Console
 
         png = b"\x89PNG\r\n\x1a\nfake png for test"
@@ -867,9 +868,10 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertEqual(
             second.count(osc),
-            0,
-            "subsequent renders must NOT re-emit the escape sequence "
-            "(it causes re-rasterization flicker at narrator refresh rate)",
+            1,
+            "every subsequent render must also emit the escape sequence; "
+            "Rich Live clears the image cells between frames so we need to "
+            "repaint on each refresh",
         )
 
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
