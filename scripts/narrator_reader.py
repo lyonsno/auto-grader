@@ -3312,6 +3312,19 @@ def main() -> int:
                             set_label=msg.get("set_label"),
                             subset_count=msg.get("subset_count"),
                         )
+                    elif msg_type == "focus_preview":
+                        try:
+                            png_bytes = base64.b64decode(
+                                msg.get("png_base64", ""),
+                            )
+                        except Exception:
+                            png_bytes = b""
+                        if png_bytes:
+                            display.on_focus_preview(
+                                png_bytes,
+                                label=msg.get("label", ""),
+                                source=msg.get("source", ""),
+                            )
                     elif msg_type == "delta":
                         display.on_delta(
                             msg.get("text", ""),
