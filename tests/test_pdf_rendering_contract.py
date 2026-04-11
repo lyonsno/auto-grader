@@ -178,6 +178,13 @@ def _build_wrapped_choice_artifact() -> dict:
     )
 
 
+def _build_instruction_only_artifact() -> dict:
+    artifact = _build_artifact()
+    artifact["mc_questions"][0]["prompt"] = "Fill B dark and solid."
+    artifact["mc_questions"][0]["show_choice_legend"] = False
+    return artifact
+
+
 def _load_pdf_renderer(test_case: unittest.TestCase):
     try:
         from auto_grader.pdf_rendering import render_mc_answer_sheet_pdf
@@ -566,6 +573,23 @@ class PdfRenderingContractTests(unittest.TestCase):
             b"(A. More exposed particles create more collision opportunities)",
             pdf_bytes,
             "Long choice text should not remain one unbounded line once choice wrapping is supported.",
+        )
+
+    def test_renderer_can_hide_choice_legend_for_instruction_only_questions(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_instruction_only_artifact()
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        self.assertIn(
+            b"Fill B dark and solid.",
+            pdf_bytes,
+            "Instruction-only calibration questions should still render the direct marking instruction.",
+        )
+        self.assertNotIn(
+            b"A. CO2",
+            pdf_bytes,
+            "When a question hides the choice legend, the renderer should not emit the stacked answer-text legend.",
         )
 
 

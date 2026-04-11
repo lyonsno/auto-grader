@@ -211,28 +211,30 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
             _require_number(region["x"], "bubble_region.x") for region in question_regions
         )
         choice_legend_left = prompt_left + _CHOICE_LEGEND_LEFT_OFFSET
+        show_choice_legend = bool(question.get("show_choice_legend", True))
 
-        choice_line_cursor = 0
-        for choice in choices:
-            wrapped_choice_lines = _wrap_choice_text(
-                choice["bubble_label"],
-                str(choice.get("text", "")),
-            )
-            for wrapped_line in wrapped_choice_lines:
-                content_lines.extend(
-                    _text_block(
-                        choice_legend_left,
-                        _pdf_text_y(
-                            height,
-                            prompt_y_top
-                            + _CHOICE_LEGEND_TOP_OFFSET
-                            + (choice_line_cursor * _CHOICE_LEGEND_LINE_SPACING),
-                        ),
-                        _CHOICE_LEGEND_FONT_SIZE,
-                        wrapped_line,
-                    )
+        if show_choice_legend:
+            choice_line_cursor = 0
+            for choice in choices:
+                wrapped_choice_lines = _wrap_choice_text(
+                    choice["bubble_label"],
+                    str(choice.get("text", "")),
                 )
-                choice_line_cursor += 1
+                for wrapped_line in wrapped_choice_lines:
+                    content_lines.extend(
+                        _text_block(
+                            choice_legend_left,
+                            _pdf_text_y(
+                                height,
+                                prompt_y_top
+                                + _CHOICE_LEGEND_TOP_OFFSET
+                                + (choice_line_cursor * _CHOICE_LEGEND_LINE_SPACING),
+                            ),
+                            _CHOICE_LEGEND_FONT_SIZE,
+                            wrapped_line,
+                        )
+                    )
+                    choice_line_cursor += 1
 
         for choice in choices:
             bubble_label = str(choice["bubble_label"])
