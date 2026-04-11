@@ -18,7 +18,10 @@ class _DummySink:
         self.topics: list[tuple[str, str | None]] = []
         self.checkpoints: list[str] = []
         self.basis_rows: list[str] = []
+        self.credit_preserved_rows: list[str] = []
+        self.deduction_rows: list[str] = []
         self.review_markers: list[str] = []
+        self.professor_mismatches: list[str] = []
 
     def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
@@ -42,8 +45,17 @@ class _DummySink:
     def write_basis(self, text: str) -> None:
         self.basis_rows.append(text)
 
+    def write_credit_preserved(self, text: str) -> None:
+        self.credit_preserved_rows.append(text)
+
+    def write_deduction(self, text: str) -> None:
+        self.deduction_rows.append(text)
+
     def write_review_marker(self, text: str) -> None:
         self.review_markers.append(text)
+
+    def write_professor_mismatch(self, text: str) -> None:
+        self.professor_mismatches.append(text)
 
 
 class _RetryNarrator(ThinkingNarrator):
@@ -141,6 +153,17 @@ class _AfterActionNarrator(ThinkingNarrator):
 
     def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
         return self._response
+
+
+class _QueuedLegibilityNarrator(ThinkingNarrator):
+    def __init__(self, sink: _DummySink, responses: list[str]) -> None:
+        super().__init__(sink)
+        self._responses = responses
+        self.prompts: list[str] = []
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        self.prompts.append(messages[-1]["content"])
+        return self._responses.pop(0)
 
 
 class _CheckpointNarrator(ThinkingNarrator):
@@ -885,7 +908,12 @@ class ThinkingNarratorContract(unittest.TestCase):
 
         narrator._produce_after_action(88.0, prediction, item, template_question=None)
 
-        self.assertEqual(sink.review_markers, ["Human review warranted."])
+        self.assertEqual(
+            sink.review_markers,
+            [
+                "Human review warranted because the cancellation handwriting remains ambiguity-sensitive after a bounded pass.",
+            ],
+        )
 
     def test_after_action_prompt_mentions_corrected_truth_when_present(self):
         sink = _DummySink()
@@ -925,6 +953,269 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertIn("Correction reason:", user_prompt)
         self.assertIn("Truth: <score>", user_prompt)
 
+    def test_idle_legibility_queue_emits_generated_partial_credit_rows_after_basis(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 1/2 (correct setup, wrong final species). Prof: 1/2 (same).",
+                "Correct stoichiometric setup and mole relationship.",
+                "Final answer awards NH3 credit to reactant-mole addition.",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=2.0,
+            professor_mark="1/2",
+            student_answer="14.2031 moles",
+            notes="partial",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=1.0,
+            model_confidence=0.8,
+            model_reasoning="Correct setup, wrong final target species.",
+            model_read="14.2031 moles",
+            score_basis="Correct setup, lost final credit for target-species drift.",
+        )
+
+        narrator._produce_after_action(20.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.basis_rows,
+            ["Correct setup, lost final credit for target-species drift."],
+        )
+
+        self.assertTrue(narrator._flush_idle_legibility_once())
+        self.assertTrue(narrator._flush_idle_legibility_once())
+        self.assertFalse(narrator._flush_idle_legibility_once())
+
+        self.assertEqual(
+            sink.credit_preserved_rows,
+            ["Correct stoichiometric setup and mole relationship."],
+        )
+        self.assertEqual(
+            sink.deduction_rows,
+            ["Final answer awards NH3 credit to reactant-mole addition."],
+        )
+
+    def test_after_action_collapses_clean_full_credit_match_without_basis_row(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 3/3 (correct ground-state configuration). Prof: 3/3 (same).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-11a",
+            answer_type="electron_config",
+            page=1,
+            professor_score=3.0,
+            max_points=3.0,
+            professor_mark="3/3",
+            student_answer="[Ne] 3s^2 3p^5 with correct orbital boxes",
+            notes="full credit",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-11a",
+            model_score=3.0,
+            model_confidence=0.98,
+            model_reasoning="Correct noble gas core and valence orbital box notation.",
+            model_read="[Ne] 3s^2 3p^5",
+            score_basis="Correct noble gas core and valence orbital box notation (3s^2 3p^5).",
+        )
+
+        narrator._produce_after_action(55.0, prediction, item, template_question=None)
+
+        self.assertEqual(sink.basis_rows, [])
+        self.assertEqual(sink.review_markers, [])
+        self.assertEqual(sink.professor_mismatches, [])
+        self.assertEqual(sink.credit_preserved_rows, [])
+        self.assertEqual(sink.deduction_rows, [])
+        self.assertEqual(narrator._legibility_jobs, [])
+
+    def test_after_action_emits_professor_mismatch_immediately_without_idle_queue(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 4/4 (correct Hess's Law combination). Truth: 4/4 (corrected after review). · Historical prof: 2/4 (batch-mark partial).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="34-blue",
+            question_id="fr-8",
+            answer_type="numeric",
+            page=2,
+            professor_score=2.0,
+            max_points=4.0,
+            professor_mark="partial",
+            student_answer="-186.2 kJ",
+            notes="Partial. Correct answer but confused intermediate work.",
+            corrected_score=4.0,
+            correction_reason="Reviewed from page image: Hess's Law reversal and cancellation are coherent.",
+        )
+        prediction = Prediction(
+            exam_id="34-blue",
+            question_id="fr-8",
+            model_score=4.0,
+            model_confidence=0.45,
+            model_reasoning="After one careful pass, human review is warranted because the cancellation handwriting is ambiguous.",
+            model_read="-186.2 kJ",
+            score_basis="Correct Hess's Law manipulation and final enthalpy.",
+        )
+
+        narrator._produce_after_action(50.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.basis_rows,
+            ["Correct Hess's Law manipulation and final enthalpy."],
+        )
+        self.assertEqual(
+            sink.review_markers,
+            ["Human review warranted because the cancellation handwriting remains ambiguity-sensitive after a bounded pass."],
+        )
+        self.assertEqual(
+            sink.professor_mismatches,
+            ["Historical professor awarded 2/4; corrected truth is 4/4."],
+        )
+        self.assertEqual(narrator._legibility_jobs, [])
+
+    def test_after_action_queues_only_generated_partial_credit_rows(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 1/2 (correct setup, wrong final species). Prof: 1/2 (same).",
+                "Correct stoichiometric setup and mole relationship.",
+                "Final answer awards NH3 credit to reactant-mole addition.",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=2.0,
+            professor_mark="1/2",
+            student_answer="14.2031 moles",
+            notes="partial",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=1.0,
+            model_confidence=0.8,
+            model_reasoning="Correct setup, wrong final target species.",
+            model_read="14.2031 moles",
+            score_basis="Correct setup, lost final credit for target-species drift.",
+        )
+
+        narrator._produce_after_action(20.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.basis_rows,
+            ["Correct setup, lost final credit for target-species drift."],
+        )
+        self.assertEqual(sink.review_markers, [])
+        self.assertEqual(sink.professor_mismatches, [])
+        self.assertEqual(len(narrator._legibility_jobs), 2)
+        self.assertEqual(
+            [job["row_type"] for job in narrator._legibility_jobs],
+            ["credit_preserved", "deduction"],
+        )
+
+    def test_after_action_emits_review_needed_and_professor_mismatch_immediately(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 4/4 (correct Hess's Law combination). Truth: 4/4 (corrected after review). · Historical prof: 2/4 (batch-mark partial).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="34-blue",
+            question_id="fr-8",
+            answer_type="numeric",
+            page=2,
+            professor_score=2.0,
+            max_points=4.0,
+            professor_mark="partial",
+            student_answer="-186.2 kJ",
+            notes="Partial. Correct answer but confused intermediate work.",
+            corrected_score=4.0,
+            correction_reason="Reviewed from page image: Hess's Law reversal and cancellation are coherent.",
+        )
+        prediction = Prediction(
+            exam_id="34-blue",
+            question_id="fr-8",
+            model_score=4.0,
+            model_confidence=0.45,
+            model_reasoning="After one careful pass, human review is warranted because the cancellation handwriting is ambiguous.",
+            model_read="-186.2 kJ",
+            score_basis="Correct Hess's Law manipulation and final enthalpy.",
+        )
+
+        narrator._produce_after_action(50.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.basis_rows,
+            ["Correct Hess's Law manipulation and final enthalpy."],
+        )
+        self.assertEqual(
+            sink.review_markers,
+            ["Human review warranted because the cancellation handwriting remains ambiguity-sensitive after a bounded pass."],
+        )
+        self.assertEqual(
+            sink.professor_mismatches,
+            ["Historical professor awarded 2/4; corrected truth is 4/4."],
+        )
+        self.assertFalse(narrator._flush_idle_legibility_once())
+
+    def test_idle_legibility_queue_starts_background_scheduler_when_rows_are_pending(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 1/2 (setup right, finish wrong). Prof: 1/2 (same).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=2.0,
+            professor_mark="1/2",
+            student_answer="14.2031 moles",
+            notes="partial",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=1.0,
+            model_confidence=0.8,
+            model_reasoning="Correct setup, wrong final target species.",
+            model_read="14.2031 moles",
+            score_basis="Correct setup, lost final credit for target-species drift.",
+        )
+
+        with mock.patch("auto_grader.thinking_narrator.threading.Thread") as thread_mock:
+            thread = thread_mock.return_value
+            narrator._produce_after_action(20.0, prediction, item, template_question=None)
+
+        thread_mock.assert_called_once()
+        thread.start.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
