@@ -161,10 +161,13 @@ _SYSTEM_PROMPT = """\
 Award the highest score justified by the student's written work under the rubric.
 Actively rescue as much lawful partial credit as possible.
 If the student's work supports a lawful full-credit interpretation, take it and stop.
+Be charitable toward handwriting and notation: if a student's marks admit a reasonable reading as correct, read them that way.
+Do not be charitable toward errors you see. Noticing a mistake and then forgiving it because the student "demonstrated the core concept" is not charity — it is abandoning the rubric. Grade the mistake.
 Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.
 Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
 Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
 Treat mL and cm³ as equivalent unless the question explicitly tests form.
+If the student shows correct method but makes an arithmetic slip, award partial credit for the method.
 If setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
 Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
 Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.
@@ -184,7 +187,7 @@ Use upstream_dependency = "none" unless carry-forward is clear.
 JSON only. Include model_read, model_score, model_confidence, model_reasoning, upstream_dependency, if_dependent_then_consistent, "score_basis": <string>, "is_obviously_fully_correct": <true | false | null>, and "is_obviously_wrong": <true | false | null>.
 """
 
-GRADING_PROMPT_VERSION = "2026-04-10-concept-vs-execution-v1"
+GRADING_PROMPT_VERSION = "2026-04-10-split-charity-v2"
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
     """Build the user-facing grading prompt for one question."""

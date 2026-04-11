@@ -15,8 +15,8 @@ class GradingPromptContract(unittest.TestCase):
         )
         self.assertLess(
             len(prompt),
-            2700,
-            "system prompt should stay compact even after the score-basis split and concept-vs-execution rule",
+            3200,
+            "system prompt should stay reasonably compact even after the split-charity v2 graft on top of the integration surface's stable grading contracts",
         )
 
     def test_system_prompt_states_each_major_rule_once(self):
@@ -57,6 +57,11 @@ class GradingPromptContract(unittest.TestCase):
         metadata = metadata_fn()
         self.assertEqual(metadata["version"], version)
         self.assertRegex(metadata["content_hash"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            version,
+            "2026-04-10-split-charity-v2",
+            "integration tip should expose the tighter split-charity v2 prompt identity",
+        )
 
     def test_system_prompt_uses_explicit_rescue_credit_language(self):
         from auto_grader import vlm_inference
@@ -81,6 +86,26 @@ class GradingPromptContract(unittest.TestCase):
             "Actively rescue as much lawful partial credit as possible",
             prompt,
             "prompt should explicitly say to rescue rubric-grounded partial credit",
+        )
+
+    def test_system_prompt_splits_notation_charity_from_scoring_charity(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn(
+            "Be charitable toward handwriting and notation: if a student's marks admit a reasonable reading as correct, read them that way.",
+            prompt,
+            "prompt should separate perception charity from score charity",
+        )
+        self.assertIn(
+            'Do not be charitable toward errors you see. Noticing a mistake and then forgiving it because the student "demonstrated the core concept" is not charity',
+            prompt,
+            "prompt should explicitly block the fr-12b-style charity rationalization",
+        )
+        self.assertIn(
+            "Grade the mistake.",
+            prompt,
+            "prompt should resolve visible errors at scoring time instead of re-forgiving them",
         )
 
     def test_system_prompt_prefers_lawful_full_credit_and_equivalent_units(self):
