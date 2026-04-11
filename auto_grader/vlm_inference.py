@@ -95,6 +95,65 @@ class ServerConfig:
 
 
 # ---------------------------------------------------------------------------
+# Per-model sampling presets
+# ---------------------------------------------------------------------------
+
+# Model-specific sampling param overrides applied on top of ServerConfig
+# defaults via apply_model_sampling_preset(). The keys are model names
+# as registered on the OMLX server (and accepted in --model). Each value
+# is a partial dict — only the fields a vendor explicitly recommends are
+# specified, the rest fall back to ServerConfig defaults (which are
+# Qwen-coding-mode-tuned and conservative for everything else).
+#
+# Sources for each preset are linked in inline comments. When adding a
+# new model, link to the canonical vendor recommendation rather than
+# eyeballing values from forum posts.
+_MODEL_SAMPLING_PRESETS: dict[str, dict[str, float | int]] = {
+    # Qwen3.5 thinking-mode coding (Alibaba official, "precise coding
+    # tasks e.g. WebDev" row of the model card sampling table). This
+    # mirrors the ServerConfig defaults — having it here explicitly
+    # makes the preset table the source of truth for "what we run Qwen
+    # at" rather than relying on the dataclass defaults.
+    "qwen3p5-35B-A3B": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0,
+    },
+    # Gemma-4 (Google official). Google only specifies three sampling
+    # params for gemma-4; the others fall through to ServerConfig
+    # defaults (which are neutral for min_p / presence_penalty /
+    # repetition_penalty). The user's local server enforces these
+    # values regardless of what the client sends, but we mirror them
+    # here so our recorded params match what's actually being used.
+    "gemma-4-26b-a4b-it-bf16": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+    },
+}
+
+
+def apply_model_sampling_preset(
+    config: ServerConfig, model: str | None = None
+) -> ServerConfig:
+    """Return a new ServerConfig with the per-model sampling preset
+    applied. Falls back to the input config if no preset is registered
+    for the model. Useful right after argparse to flip sampling regimes
+    based on --model without each call site having to know the preset
+    table.
+    """
+    import dataclasses
+    name = model or config.model
+    preset = _MODEL_SAMPLING_PRESETS.get(name)
+    if not preset:
+        return config
+    return dataclasses.replace(config, **preset)
+
+
+# ---------------------------------------------------------------------------
 # PDF page extraction
 # ---------------------------------------------------------------------------
 

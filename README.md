@@ -312,6 +312,25 @@ For each question:
 - The real value is reducing professor friction and avoiding the fill 60 configs by hand
   failure mode.
 
+## Eval harness model servers (dev only)
+
+The eval harness (`scripts/smoke_vlm.py`) talks to two OpenAI-compatible
+local servers — one for the actual grader model (typically Qwen3.5 or
+Gemma-4 on the big-box machine, mDNS-resolved at
+`http://macbook-pro-2.local:8001`), and one for the "Project Paint Dry"
+narrator (Bonsai-8B-mlx-1bit on the local machine, served via a
+PRISM-patched `mlx-openai-server` at `http://localhost:8001`). They
+share a port number but live on different hosts.
+
+Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't
+support `bits=1` quantization. Setup, launch command, verification,
+and troubleshooting are documented in
+[`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md). Read
+that file before trying to start the narrator from scratch.
+
+The grader server on the big box uses standard OMLX with non-1-bit
+models and isn't covered by the bonsai doc.
+
 ## Project workflow
 
 ### Professor flow (happy path)
