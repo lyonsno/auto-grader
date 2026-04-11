@@ -66,6 +66,29 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 # cool note that's structural metadata, not status.
 _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
+# Project Legibility Redux vocabulary, recovered from the 2026-04-10
+# metadosis packet. Keep the full structured-row family recorded locally
+# near the narrator surface even while implementation is still partial, so
+# we do not accidentally shrink the design back down to just the two rows
+# that happen to be wired today.
+_LEGIBILITY_STRUCTURED_ROW_LABELS = {
+    "basis": "Basis",
+    "ambiguity": "Ambiguity",
+    "credit_preserved": "Credit preserved for",
+    "deduction": "Deduction",
+    "review_marker": "Review needed",
+    "professor_mismatch": "Professor mismatch",
+}
+_LEGIBILITY_STRUCTURED_ROW_ORDER = {
+    "basis": 1,
+    "ambiguity": 2,
+    "credit_preserved": 3,
+    "deduction": 4,
+    "review_marker": 5,
+    "professor_mismatch": 6,
+}
+_LEGIBILITY_STRUCTURED_ROW_KINDS = frozenset(_LEGIBILITY_STRUCTURED_ROW_LABELS)
+
 
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
 _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
@@ -625,7 +648,7 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     idle and active motion feel consistent. Only boundary moments that would
     feel laggy at 12 FPS get an immediate forced refresh.
     """
-    return msg_type in {"session_meta", "wrap_up", "basis", "review_marker", "end"}
+    return msg_type in {"session_meta", "wrap_up", "end"} | _LEGIBILITY_STRUCTURED_ROW_KINDS
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -1126,7 +1149,7 @@ class PaintDryDisplay:
         self._freeze_started_at: float | None = None
 
         # History entries are 3-tuples (kind, text, parity):
-        #   kind in {"line", "header", "topic", "basis", "review_marker", "checkpoint"}
+        #   kind in {"line", "header", "topic", structured-row kinds, "checkpoint"}
         #   parity is 0 or 1 for "line" entries (alternation), None for others
         # Drops live in their own deque, rendered in a separate panel
         # below post-game so they don't clutter the narrative thread.
@@ -1280,10 +1303,9 @@ class PaintDryDisplay:
             prefix_width = len("─ ")
         elif kind == "topic":
             prefix_width = len("  · ")
-        elif kind == "basis":
-            prefix_width = len("  ≡ Basis: ")
-        elif kind == "review_marker":
-            prefix_width = len("  ! Review needed: ")
+        elif kind in _LEGIBILITY_STRUCTURED_ROW_LABELS:
+            mark = "  ! " if kind == "review_marker" else "  ≡ "
+            prefix_width = len(mark + _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": ")
         else:
             prefix_width = len("    ")
 
@@ -1351,9 +1373,8 @@ class PaintDryDisplay:
             rest.sort(
                 key=lambda pair: {
                     "topic": 0,
-                    "basis": 1,
-                    "review_marker": 2,
-                    "checkpoint": 3,
+                    **_LEGIBILITY_STRUCTURED_ROW_ORDER,
+                    "checkpoint": 7,
                 }.get(pair[0][0], 2)
             )
             flat.extend(header)
@@ -1372,7 +1393,7 @@ class PaintDryDisplay:
         # essentials drop first — but the deque cap should make this
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic", "basis", "review_marker", "checkpoint"):
+            if entry[0] in ("header", "topic", "checkpoint") or entry[0] in _LEGIBILITY_STRUCTURED_ROW_KINDS:
                 row_cost = self._entry_visual_rows(entry, wrap_width)
                 if used_rows >= budget:
                     break
@@ -1388,7 +1409,7 @@ class PaintDryDisplay:
         optionals = [
             (pos, entry, idx)
             for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic", "basis", "review_marker", "checkpoint")
+            if entry[0] not in ("header", "topic", "checkpoint") and entry[0] not in _LEGIBILITY_STRUCTURED_ROW_KINDS
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
 
@@ -1954,32 +1975,23 @@ class PaintDryDisplay:
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                     )
-            elif kind == "basis":
-                indent = "  ≡ "
+            elif kind in _LEGIBILITY_STRUCTURED_ROW_LABELS:
+                indent = "  ! " if kind == "review_marker" else "  ≡ "
+                content_kind = (
+                    "checkpoint"
+                    if kind in {"review_marker", "deduction", "professor_mismatch"}
+                    else "checkpoint_alt"
+                )
+                label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
                 history_text.append(indent, style="grey50")
                 history_text.append(
-                    "Basis: ",
+                    label,
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                 )
                 _apply_shimmer(
-                    history_text, text, "checkpoint_alt",
+                    history_text, text, content_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent) + len("Basis: "),
-                    wrap_width=wrap_width,
-                    cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                )
-            elif kind == "review_marker":
-                indent = "  ! "
-                history_text.append(indent, style="grey50")
-                history_text.append(
-                    "Review needed: ",
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
-                )
-                _apply_shimmer(
-                    history_text, text, "checkpoint",
-                    layer_index=render_layer,
-                    indent_width=len(indent) + len("Review needed: "),
+                    indent_width=len(indent) + len(label),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -2249,8 +2261,20 @@ class PaintDryDisplay:
     def on_basis(self, text: str) -> None:
         self.history.append(("basis", text, None))
 
+    def on_ambiguity(self, text: str) -> None:
+        self.history.append(("ambiguity", text, None))
+
+    def on_credit_preserved(self, text: str) -> None:
+        self.history.append(("credit_preserved", text, None))
+
+    def on_deduction(self, text: str) -> None:
+        self.history.append(("deduction", text, None))
+
     def on_review_marker(self, text: str) -> None:
         self.history.append(("review_marker", text, None))
+
+    def on_professor_mismatch(self, text: str) -> None:
+        self.history.append(("professor_mismatch", text, None))
 
 
 def main() -> int:
@@ -2384,8 +2408,16 @@ def main() -> int:
                         )
                     elif msg_type == "basis":
                         display.on_basis(msg.get("text", ""))
+                    elif msg_type == "ambiguity":
+                        display.on_ambiguity(msg.get("text", ""))
+                    elif msg_type == "credit_preserved":
+                        display.on_credit_preserved(msg.get("text", ""))
+                    elif msg_type == "deduction":
+                        display.on_deduction(msg.get("text", ""))
                     elif msg_type == "review_marker":
                         display.on_review_marker(msg.get("text", ""))
+                    elif msg_type == "professor_mismatch":
+                        display.on_professor_mismatch(msg.get("text", ""))
                     elif msg_type == "checkpoint":
                         display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":

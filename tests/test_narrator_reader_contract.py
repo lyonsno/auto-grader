@@ -11,6 +11,7 @@ from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _LEGIBILITY_STRUCTURED_ROW_LABELS,
     _SESSION_END_ANIMATION_LINGER_S,
     _VISIBLE_HISTORY_ROWS,
     PaintDryDisplay,
@@ -212,6 +213,20 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(
             panel_text.index("TRACING THE STOICHIOMETRY SETUP."),
             panel_text.index("I'm tracing the stoichiometry."),
+        )
+
+    def test_legibility_redux_structured_row_vocabulary_is_recorded_locally(self):
+        self.assertEqual(
+            _LEGIBILITY_STRUCTURED_ROW_LABELS,
+            {
+                "basis": "Basis",
+                "ambiguity": "Ambiguity",
+                "credit_preserved": "Credit preserved for",
+                "deduction": "Deduction",
+                "review_marker": "Review needed",
+                "professor_mismatch": "Professor mismatch",
+            },
+            "the narrator surface should record the full Project Legibility Redux structured-row vocabulary locally, even before every row kind is implemented",
         )
 
     def test_new_header_clears_stale_frozen_line_and_shows_placeholders(self):

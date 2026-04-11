@@ -226,6 +226,8 @@ _CHECKPOINT_PRESENCE_PENALTY = 0.0
 _DEDUP_BACKOFF_INITIAL_S = 4.0
 _DEDUP_BACKOFF_MAX_S = 24.0
 _PLAYBACK_CHUNK_DELAY_S = 0.03
+_IDLE_LEGIBILITY_DELAY_S = 1.0
+_MAX_LEGIBILITY_EXTRA_ROWS = 2
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -247,6 +249,11 @@ _SIMILARITY_STOP_WORDS = frozenset({
     "catching", "spotting", "reading", "noting", "checking", "calling",
     "eyeing", "weighing", "considering", "leaning", "hesitating",
 })
+
+_REVIEW_NEEDED_HINT_RE = re.compile(
+    r"\b(review (?:is )?(?:needed|warranted)|human review|ambigu(?:ity|ous)|uncertain)\b",
+    re.IGNORECASE,
+)
 
 _GRADER_SCORE_RE = re.compile(r"(Grader:\s*)([^ ]+)")
 _PROF_SCORE_RE = re.compile(r"(Prof:\s*)([^ ]+)")
@@ -532,6 +539,9 @@ class ThinkingNarrator:
         self._accepted_since_checkpoint = 0
         self._dedupe_backoff_until = 0.0
         self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
+        self._legibility_jobs: list[dict] = []
+        self._idle_legibility_pending = False
+        self._idle_legibility_generation = 0
 
         # Lifetime stats (across all items)
         self._stats_lock = threading.Lock()
@@ -586,6 +596,9 @@ class ThinkingNarrator:
             self._accepted_since_checkpoint = 0
             self._dedupe_backoff_until = 0.0
             self._dedupe_backoff_s = self._DEDUP_BACKOFF_INITIAL_S
+            self._legibility_jobs = []
+            self._idle_legibility_pending = False
+            self._idle_legibility_generation += 1
         with self._stats_lock:
             # Roll the previous item's dispatch count into the lifetime
             # max-seen stat, then reset for the new item.
@@ -873,6 +886,168 @@ class ThinkingNarrator:
         except Exception:
             logger.exception("Wrap-up failed")
 
+    def _schedule_idle_legibility_if_needed(self) -> None:
+        with self._lock:
+            if self._idle_legibility_pending or not self._legibility_jobs:
+                return
+            generation = self._idle_legibility_generation
+            self._idle_legibility_pending = True
+
+        t = threading.Thread(
+            target=self._run_idle_legibility_after_delay,
+            args=(generation,),
+            daemon=True,
+        )
+        t.start()
+
+    def _run_idle_legibility_after_delay(self, generation: int) -> None:
+        try:
+            time.sleep(_IDLE_LEGIBILITY_DELAY_S)
+            emitted = self._flush_idle_legibility_once(generation)
+        finally:
+            with self._lock:
+                if self._idle_legibility_generation == generation:
+                    self._idle_legibility_pending = False
+                    should_reschedule = bool(self._legibility_jobs)
+                else:
+                    should_reschedule = False
+            if emitted and should_reschedule:
+                self._schedule_idle_legibility_if_needed()
+
+    def _flush_idle_legibility_once(
+        self,
+        generation: int | None = None,
+    ) -> bool:
+        with self._lock:
+            if generation is not None and generation != self._idle_legibility_generation:
+                return False
+            if self._pending_dispatch or self._buffer or not self._legibility_jobs:
+                return False
+            job = self._legibility_jobs.pop(0)
+            current_generation = self._idle_legibility_generation
+
+        if job["kind"] == "generated":
+            text = self._chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You write one compact structured history row for a chemistry-grading narrator. "
+                            "Return ONLY the row body, not the label."
+                        ),
+                    },
+                    {"role": "user", "content": job["prompt"]},
+                ],
+                max_tokens=80,
+                temperature=0.6,
+                repetition_penalty=1.0,
+                presence_penalty=0.0,
+                timeout=30,
+            ).strip()
+        else:
+            text = str(job["text"]).strip()
+
+        if not text:
+            return False
+
+        with self._lock:
+            if current_generation != self._idle_legibility_generation:
+                return False
+
+        writer = getattr(self._sink, f"write_{job['row_type']}")
+        writer(text)
+        return True
+
+    def _enqueue_legibility_job(
+        self,
+        row_type: str,
+        *,
+        text: str | None = None,
+        prompt: str | None = None,
+    ) -> None:
+        if text is None and prompt is None:
+            return
+        kind = "generated" if prompt is not None else "literal"
+        payload = {"kind": kind, "row_type": row_type}
+        if text is not None:
+            payload["text"] = text.strip()
+        if prompt is not None:
+            payload["prompt"] = prompt
+        with self._lock:
+            self._legibility_jobs.append(payload)
+
+    @staticmethod
+    def _review_needed_text(prediction: Any) -> str | None:
+        reasoning = str(getattr(prediction, "model_reasoning", "")).strip()
+        confidence = float(getattr(prediction, "model_confidence", 1.0))
+        if not reasoning:
+            return None
+        if not _REVIEW_NEEDED_HINT_RE.search(reasoning) and confidence >= 0.6:
+            return None
+        return (
+            "Human review warranted because the cancellation handwriting "
+            "remains ambiguity-sensitive after a bounded pass."
+            if "ambigu" in reasoning.lower()
+            else "Human review warranted after a bounded ambiguity pass."
+        )
+
+    @staticmethod
+    def _professor_mismatch_text(item: Any) -> str | None:
+        corrected = getattr(item, "corrected_score", None)
+        if corrected is None or abs(corrected - item.professor_score) < 1e-9:
+            return None
+        return (
+            f"Historical professor awarded "
+            f"{_format_score_with_denominator(item.professor_score, item.max_points)}; "
+            f"corrected truth is "
+            f"{_format_score_with_denominator(corrected, item.max_points)}."
+        )
+
+    def _enqueue_legibility_rows(self, prediction: Any, item: Any) -> None:
+        score_basis = str(getattr(prediction, "score_basis", "")).strip()
+        if score_basis:
+            self._enqueue_legibility_job("basis", text=score_basis)
+
+        extras = 0
+
+        review_needed = self._review_needed_text(prediction)
+        if review_needed and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+            self._enqueue_legibility_job("review_marker", text=review_needed)
+            extras += 1
+
+        professor_mismatch = self._professor_mismatch_text(item)
+        if professor_mismatch and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+            self._enqueue_legibility_job(
+                "professor_mismatch", text=professor_mismatch
+            )
+            extras += 1
+
+        if prediction.model_score < item.max_points and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+            if 0.0 < prediction.model_score < item.max_points:
+                self._enqueue_legibility_job(
+                    "credit_preserved",
+                    prompt=(
+                        "Write one short row body for 'Credit preserved for:'. "
+                        "Use the direct earned-credit basis only, not the deduction. "
+                        f"Question: {item.question_id}. "
+                        f"Score basis: {getattr(prediction, 'score_basis', '')} "
+                        f"Reasoning: {getattr(prediction, 'model_reasoning', '')}"
+                    ),
+                )
+                extras += 1
+            if extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+                self._enqueue_legibility_job(
+                    "deduction",
+                    prompt=(
+                        "Write one short row body for 'Deduction:'. "
+                        "Name the concrete thing that cost credit. "
+                        f"Question: {item.question_id}. "
+                        f"Score basis: {getattr(prediction, 'score_basis', '')} "
+                        f"Reasoning: {getattr(prediction, 'model_reasoning', '')}"
+                    ),
+                )
+                extras += 1
+
     def _produce_after_action(
         self,
         elapsed: float,
@@ -1067,6 +1242,8 @@ class ThinkingNarrator:
                     truth_score=truth_score,
                     max_points=item.max_points,
                 )
+                self._enqueue_legibility_rows(prediction, item)
+                self._schedule_idle_legibility_if_needed()
             else:
                 # Fallback: bonsai returned empty or raised. Always
                 # emit SOMETHING so the user can see the item finished
@@ -1086,6 +1263,8 @@ class ThinkingNarrator:
                     truth_score=truth_score,
                     max_points=item.max_points,
                 )
+                self._enqueue_legibility_rows(prediction, item)
+                self._schedule_idle_legibility_if_needed()
         except Exception:
             logger.exception("Failed to produce after-action summary")
 

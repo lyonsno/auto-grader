@@ -155,6 +155,46 @@ class TestWezTermResolution(unittest.TestCase):
             "Core issue: ozone drawing misses resonance and central octet.",
         )
 
+    def test_structured_rows_emit_named_events(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_basis("Correct setup, lost credit for octet violation.")
+            sink.write_credit_preserved("Correct stoichiometric setup and unit basis.")
+            sink.write_deduction("Boxed answer adds reactant moles instead of NH3.")
+            sink.write_review_marker("Human review warranted after bounded ambiguity pass.")
+            sink.write_professor_mismatch("Historical professor awarded 2/2; corrected truth is 0/2.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        self.assertEqual(
+            [
+                event["type"]
+                for event in events
+                if event["type"]
+                in {
+                    "basis",
+                    "credit_preserved",
+                    "deduction",
+                    "review_marker",
+                    "professor_mismatch",
+                }
+            ],
+            [
+                "basis",
+                "credit_preserved",
+                "deduction",
+                "review_marker",
+                "professor_mismatch",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
