@@ -58,6 +58,20 @@ class _DummySink:
         self.professor_mismatches.append(text)
 
 
+class _LegacyStructuredRowSink:
+    def __init__(self) -> None:
+        self.drops: list[tuple[str, str]] = []
+
+    def write_drop(self, reason: str, text: str) -> None:
+        self.drops.append((reason, text))
+
+    def write_basis(self, text: str) -> None:
+        pass
+
+    def write_review_marker(self, text: str) -> None:
+        pass
+
+
 class _RetryNarrator(ThinkingNarrator):
     _PLAYBACK_CHUNK_DELAY_S = 0.0
 
@@ -476,6 +490,44 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator._dispatch("fresh reasoning chunk", narrator._dispatch_generation)
 
         self.assertEqual(narrator._dedupe_streak, 0)
+
+    def test_idle_legibility_missing_sink_writer_drops_row_instead_of_crashing(self):
+        sink = _LegacyStructuredRowSink()
+        narrator = ThinkingNarrator(sink)  # type: ignore[arg-type]
+        narrator._legibility_jobs = [
+            {
+                "kind": "generated",
+                "row_type": "deduction",
+                "prompt": "Write one short row body for 'Deduction:'.",
+            }
+        ]
+        narrator._chat_completion = mock.Mock(return_value="Wrong final target species.")  # type: ignore[method-assign]
+
+        emitted = narrator._flush_idle_legibility_once()
+
+        self.assertFalse(emitted)
+        self.assertEqual(
+            sink.drops,
+            [("missing-sink-row", "deduction: Wrong final target species.")],
+        )
+
+    def test_idle_legibility_thread_logs_flush_exception_without_unboundlocal(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink)
+        narrator._idle_legibility_pending = True
+        narrator._legibility_jobs = [{"kind": "literal", "row_type": "basis", "text": "x"}]
+
+        with mock.patch("auto_grader.thinking_narrator.time.sleep"):
+            with mock.patch.object(
+                narrator,
+                "_flush_idle_legibility_once",
+                side_effect=RuntimeError("boom"),
+            ):
+                with mock.patch("auto_grader.thinking_narrator.logger.exception") as exc_mock:
+                    narrator._run_idle_legibility_after_delay(narrator._idle_legibility_generation)
+
+        exc_mock.assert_called_once()
+        self.assertFalse(narrator._idle_legibility_pending)
 
     def test_streaming_bonsai_default_sampler_splits_the_difference(self):
         sink = _DummySink()

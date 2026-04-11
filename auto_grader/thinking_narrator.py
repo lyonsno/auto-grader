@@ -1002,9 +1002,12 @@ class ThinkingNarrator:
         t.start()
 
     def _run_idle_legibility_after_delay(self, generation: int) -> None:
+        emitted = False
         try:
             time.sleep(_IDLE_LEGIBILITY_DELAY_S)
             emitted = self._flush_idle_legibility_once(generation)
+        except Exception:
+            logger.exception("Idle legibility flush failed")
         finally:
             with self._lock:
                 if self._idle_legibility_generation == generation:
@@ -1055,7 +1058,16 @@ class ThinkingNarrator:
             if current_generation != self._idle_legibility_generation:
                 return False
 
-        writer = getattr(self._sink, f"write_{job['row_type']}")
+        writer = getattr(self._sink, f"write_{job['row_type']}", None)
+        if writer is None:
+            drop_writer = getattr(self._sink, "write_drop", None)
+            if drop_writer is not None:
+                drop_writer("missing-sink-row", f"{job['row_type']}: {text}")
+            logger.warning(
+                "Narrator sink missing writer for structured row type %s; dropping row",
+                job["row_type"],
+            )
+            return False
         writer(text)
         return True
 
