@@ -1003,23 +1003,55 @@ class ThinkingNarrator:
             f"{_format_score_with_denominator(corrected, item.max_points)}."
         )
 
-    def _enqueue_legibility_rows(self, prediction: Any, item: Any) -> None:
+    @staticmethod
+    def _should_emit_basis_row(
+        prediction: Any,
+        item: Any,
+        *,
+        review_needed: str | None,
+        professor_mismatch: str | None,
+    ) -> bool:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
-        if score_basis:
-            self._enqueue_legibility_job("basis", text=score_basis)
+        if not score_basis:
+            return False
+        if review_needed or professor_mismatch:
+            return True
+        if prediction.model_score < item.max_points:
+            return True
+        truth_score = getattr(item, "corrected_score", None)
+        if truth_score is None:
+            truth_score = getattr(item, "truth_score", item.professor_score)
+        return abs(prediction.model_score - truth_score) > 1e-9
+
+    def _write_legibility_row_now(self, row_type: str, text: str | None) -> bool:
+        body = str(text or "").strip()
+        if not body:
+            return False
+        writer = getattr(self._sink, f"write_{row_type}")
+        writer(body)
+        return True
+
+    def _handle_legibility_rows(self, prediction: Any, item: Any) -> None:
+        score_basis = str(getattr(prediction, "score_basis", "")).strip()
+        review_needed = self._review_needed_text(prediction)
+        professor_mismatch = self._professor_mismatch_text(item)
+
+        if self._should_emit_basis_row(
+            prediction,
+            item,
+            review_needed=review_needed,
+            professor_mismatch=professor_mismatch,
+        ):
+            self._write_legibility_row_now("basis", score_basis)
 
         extras = 0
 
-        review_needed = self._review_needed_text(prediction)
         if review_needed and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
-            self._enqueue_legibility_job("review_marker", text=review_needed)
+            self._write_legibility_row_now("review_marker", review_needed)
             extras += 1
 
-        professor_mismatch = self._professor_mismatch_text(item)
         if professor_mismatch and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
-            self._enqueue_legibility_job(
-                "professor_mismatch", text=professor_mismatch
-            )
+            self._write_legibility_row_now("professor_mismatch", professor_mismatch)
             extras += 1
 
         if prediction.model_score < item.max_points and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
@@ -1242,7 +1274,7 @@ class ThinkingNarrator:
                     truth_score=truth_score,
                     max_points=item.max_points,
                 )
-                self._enqueue_legibility_rows(prediction, item)
+                self._handle_legibility_rows(prediction, item)
                 self._schedule_idle_legibility_if_needed()
             else:
                 # Fallback: bonsai returned empty or raised. Always
@@ -1263,7 +1295,7 @@ class ThinkingNarrator:
                     truth_score=truth_score,
                     max_points=item.max_points,
                 )
-                self._enqueue_legibility_rows(prediction, item)
+                self._handle_legibility_rows(prediction, item)
                 self._schedule_idle_legibility_if_needed()
         except Exception:
             logger.exception("Failed to produce after-action summary")
