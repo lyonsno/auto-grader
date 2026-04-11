@@ -67,7 +67,7 @@ _DEFAULT_RUNS_ROOT = Path.home() / "dev" / "auto-grader-runs"
 # Probe prompt v0 — describe-only, no chemistry reasoning, no grading.
 # Deliberately asks for ambiguous-reading enumeration so downstream
 # analysis can see where perception is uncertain vs where it commits.
-PROBE_PROMPT_VERSION = "2026-04-11-describe-only-v1"
+PROBE_PROMPT_VERSION = "2026-04-11-describe-only-v2"
 PROBE_PROMPT = (
     "This is a page from a student's chemistry exam. The page may "
     "contain multiple questions; describe everything visually "
@@ -79,10 +79,7 @@ PROBE_PROMPT = (
     "any handwriting or drawing is ambiguous and admits more than "
     "one reasonable reading, list the alternatives.\n\n"
     "Do not grade. Do not apply chemistry knowledge to judge "
-    "correctness. Describe what is visually present, nothing more.\n\n"
-    "After any thinking you do, write your full description as your "
-    "response. The description must appear in your response body — "
-    "not only in your thinking — so it can be read directly."
+    "correctness. Describe what is visually present, nothing more."
 )
 
 
