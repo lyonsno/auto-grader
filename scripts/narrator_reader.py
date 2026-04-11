@@ -33,8 +33,10 @@ import random
 import re
 import select
 import sys
+import termios
 import threading
 import time
+import tty
 from collections import deque
 from pathlib import Path
 from typing import Deque
@@ -2689,6 +2691,53 @@ class HistoryViewport:
         return selected
 
 
+_SCROLL_PAGE_ROWS = 10
+
+
+class HistoryScrollController:
+    """Maps single keystrokes to PaintDryDisplay scroll actions.
+
+    Pure logic: the live reader installs one of these and feeds it a
+    character at a time from a cbreak-mode stdin reader thread. Key
+    bindings are intentionally single-byte so the controller does not
+    have to parse escape sequences for arrow keys — that's a future
+    slice if vim-style `hjkl` + `0` proves insufficient.
+    """
+
+    def __init__(self, display: "PaintDryDisplay"):
+        self._display = display
+
+    def bindings(self) -> dict[str, str]:
+        return {
+            "k": "scroll history up one row",
+            "j": "scroll history down one row",
+            "u": f"scroll history up {_SCROLL_PAGE_ROWS} rows (page up)",
+            "d": f"scroll history down {_SCROLL_PAGE_ROWS} rows (page down)",
+            "0": "return to live edge (newest history)",
+        }
+
+    def handle_key(self, key: str) -> bool:
+        """Route `key` to a scroll action. Returns True if the key
+        was bound and an action was taken, False if the key is
+        unbound (caller may swallow or forward it)."""
+        if key == "k":
+            self._display.scroll_history_up(1)
+            return True
+        if key == "j":
+            self._display.scroll_history_down(1)
+            return True
+        if key == "u":
+            self._display.scroll_history_up(_SCROLL_PAGE_ROWS)
+            return True
+        if key == "d":
+            self._display.scroll_history_down(_SCROLL_PAGE_ROWS)
+            return True
+        if key == "0":
+            self._display.scroll_history_to_live_edge()
+            return True
+        return False
+
+
 class PaintDryDisplay:
     """Maintains the live + history state and renders via rich."""
 
@@ -2810,9 +2859,9 @@ class PaintDryDisplay:
             else _DEFAULT_TERMINAL_CELL_ASPECT
         )
         # When True, render() shows the post-session footer and the
-        # final frame stays static while waiting for Enter. This keeps
-        # the non-Crispy end-of-session close affordance intact on the
-        # current union surface.
+        # scroll keys remain live via HistoryScrollController. The
+        # animation thread keeps running while the operator inspects
+        # the final state, and any non-scroll key closes the reader.
         self.session_ended: bool = False
         self._session_ended_at: float | None = None
         self._session_started_at: float | None = None
@@ -4151,7 +4200,7 @@ class PaintDryDisplay:
             panels.append(drops_panel)
         if self.session_ended:
             footer = Text(
-                "  ▌ session ended — press Enter to close ▐",
+                "  ▌ session ended — k/j scroll, u/d page, 0 live edge, any other key closes ▐",
                 style="grey50 italic",
             )
             panels.append(footer)
@@ -4455,6 +4504,22 @@ def main() -> int:
     fd = os.open(str(fifo_path), os.O_RDONLY)
     fifo = os.fdopen(fd, "r", buffering=1)
 
+    # Install cbreak mode on stdin so the interactive scroll loop can
+    # read one byte at a time without waiting for Enter. Best-effort:
+    # if stdin is not a TTY (e.g. the reader is smoke-tested from a
+    # pipe), skip the terminal plumbing and the scroll thread below.
+    # Raw-mode state is restored in the `finally` block so the user's
+    # shell is never left in a broken state on exit.
+    stdin_fd: int | None = None
+    saved_termios = None
+    try:
+        stdin_fd = sys.stdin.fileno()
+        saved_termios = termios.tcgetattr(stdin_fd)
+        tty.setcbreak(stdin_fd)
+    except (termios.error, OSError, ValueError):
+        stdin_fd = None
+        saved_termios = None
+
     try:
         # auto_refresh=False — we drive the render manually from a
         # background timer thread. Tried auto_refresh=True with
@@ -4464,6 +4529,8 @@ def main() -> int:
         # per-character styles changed). Manual update + force
         # refresh works reliably.
         animation_stop = threading.Event()
+        session_exit = threading.Event()
+        scroll_controller = HistoryScrollController(display)
 
         with Live(
             display.render(),
@@ -4514,6 +4581,36 @@ def main() -> int:
                 daemon=True,
             )
             anim_thread.start()
+
+            # Interactive scroll input. Runs only when stdin is a
+            # real TTY in cbreak mode. Reads one byte at a time and
+            # forwards it to the scroll controller. Before session
+            # end, unbound keys are swallowed (to avoid accidental
+            # exits). After session end, unbound keys trigger the
+            # session exit signal — any keystroke closes the reader.
+            scroll_stop = threading.Event()
+
+            def _scroll_tick():
+                while not scroll_stop.is_set():
+                    try:
+                        ch = sys.stdin.read(1)
+                    except Exception:
+                        return
+                    if not ch:
+                        return
+                    handled = scroll_controller.handle_key(ch)
+                    if not handled and display.session_ended:
+                        session_exit.set()
+                        return
+
+            scroll_thread: threading.Thread | None = None
+            if stdin_fd is not None:
+                scroll_thread = threading.Thread(
+                    target=_scroll_tick,
+                    name="paint-dry-scroll",
+                    daemon=True,
+                )
+                scroll_thread.start()
 
             buffer = ""
             while True:
@@ -4587,10 +4684,25 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
+                        # Flag the display so render() shows a
+                        # "press any key to close" footer. Keep
+                        # the animation thread running so the
+                        # shimmer continues to play while the
+                        # user reads the final state. The scroll
+                        # thread stays alive so the operator can
+                        # still scroll the history pane after
+                        # session end — any non-scroll key will
+                        # fire `session_exit` and close the reader.
                         display.session_ended = True
-                        display._session_ended_at = time.monotonic()
-                        live.update(display.render(), refresh=True)
-                        return _wait_for_manual_close()
+                        if stdin_fd is None:
+                            # No interactive input available
+                            # (non-TTY stdin); exit immediately.
+                            session_exit.set()
+                        session_exit.wait()
+                        animation_stop.set()
+                        scroll_stop.set()
+                        anim_thread.join(timeout=0.5)
+                        return 0
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:
@@ -4600,9 +4712,18 @@ def main() -> int:
     finally:
         animation_stop.set()
         try:
+            scroll_stop.set()  # type: ignore[name-defined]
+        except NameError:
+            pass
+        try:
             fifo.close()
         except Exception:
             pass
+        if stdin_fd is not None and saved_termios is not None:
+            try:
+                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_termios)
+            except Exception:
+                pass
 
     return 0
 
