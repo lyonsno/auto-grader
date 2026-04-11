@@ -765,14 +765,15 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_compute_inline_image_cell_dimensions_preserves_aspect(self):
         # Wide crop: 900x300 px → 3:1 aspect. At cell_height=18 and
-        # terminal cell aspect ~2:1 (tall), the cell_width should be
-        # roughly 18 * 3 * 2 = 108 cells.
+        # terminal cell aspect ~2.2-2.5 (tall cells), the cell_width
+        # should be roughly 18 * 3 * 2.4 ≈ 130 cells. Exact value
+        # tracks _TERMINAL_CELL_ASPECT which is tuned per deployment.
         cw, ch = _compute_inline_image_cell_dimensions(
             900, 300, max_cell_height=18, max_cell_width=200
         )
         self.assertEqual(ch, 18)
         self.assertGreaterEqual(cw, 90)
-        self.assertLessEqual(cw, 120)
+        self.assertLessEqual(cw, 140)
 
     def test_compute_inline_image_cell_dimensions_clamps_to_max_width(self):
         # A very wide crop would want more cells than max allows.
