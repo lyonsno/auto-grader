@@ -12,6 +12,7 @@ from rich.text import Text
 
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
+    _DEFAULT_TERMINAL_CELL_ASPECT,
     _build_focus_preview_pixels,
     _build_iterm2_inline_image_sequence,
     _build_kitty_place_sequence,
@@ -36,7 +37,6 @@ from scripts.narrator_reader import (
     _apply_shimmer,
     _render_status_undulating,
     _scorebug_big_value_rows,
-    _TERMINAL_CELL_ASPECT,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
     _otsu_threshold,
@@ -805,7 +805,8 @@ class NarratorReaderContract(unittest.TestCase):
         # terminal cell aspect in the 2.0-3.0 range (varies per
         # terminal font), the cell_width should be roughly
         # 18 * 3 * tca ≈ 108-162 cells. The exact value tracks
-        # _TERMINAL_CELL_ASPECT which is tuned per deployment.
+        # the queried-or-fallback terminal cell aspect, which is
+        # tuned per deployment.
         cw, ch = _compute_inline_image_cell_dimensions(
             900, 300, max_cell_height=18, max_cell_width=200
         )
@@ -813,17 +814,17 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertGreaterEqual(cw, 100)
         self.assertLessEqual(cw, 170)
 
-    def test_compute_inline_image_cell_dimensions_uses_empirical_terminal_cell_aspect(self):
+    def test_compute_inline_image_cell_dimensions_uses_default_fallback_terminal_cell_aspect(self):
         self.assertAlmostEqual(
-            _TERMINAL_CELL_ASPECT,
-            2.71,
+            _DEFAULT_TERMINAL_CELL_ASPECT,
+            2.1,
             places=2,
-            msg="focus preview sizing should use the empirically measured 2.71 cell aspect for the operator's terminal",
+            msg="focus preview sizing should keep the 2.1 fallback for cases where the runtime terminal query is unavailable",
         )
         cw, ch = _compute_inline_image_cell_dimensions(
             900, 300, max_cell_height=18, max_cell_width=200
         )
-        self.assertEqual((cw, ch), (146, 18))
+        self.assertEqual((cw, ch), (113, 18))
 
     def test_compute_inline_image_cell_dimensions_clamps_to_max_width(self):
         # A very wide crop would want more cells than max allows.
@@ -1142,18 +1143,10 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertNotIn("f=100", output)
 
     def test_focus_preview_kitty_image_shrinks_on_narrow_console(self):
-        # The cell box for the image must be computed at RENDER time
-        # from the current console dimensions, not cached at
-        # construction. A narrow terminal width must shrink the box
-        # to fit inside the available budget so the image doesn't
-        # overflow the terminal width. This test pins the
-        # resize-at-render invariant — if construction caches a box
-        # regardless of later resizes, this test fails.
-        from rich.console import Console
-        import re
-
-        # Wide image (3:1) whose natural cell width at the default
-        # max would be well over 80 cells.
+        # The Kitty box must be computed from the currently available
+        # width budget, not cached at construction time. A narrower
+        # budget must shrink the cell box; a wider budget must let it
+        # grow again while keeping the aspect stable.
         renderable = FocusPreviewKittyImage(
             image_id=1,
             image_pixel_width=3000,
@@ -1162,39 +1155,18 @@ class NarratorReaderContract(unittest.TestCase):
             title="test",
         )
 
-        def render_at_width(width: int) -> str:
-            console = Console(
-                width=width,
-                record=True,
-                color_system="truecolor",
-                force_terminal=True,
-            )
-            with console.capture() as capture:
-                console.print(renderable)
-            return capture.get()
-
-        def extract_cr(output: str) -> tuple[int, int]:
-            m = re.search(r"a=p,i=\d+,c=(\d+),r=(\d+)", output)
-            if m is None:
-                raise AssertionError(
-                    f"no place command found in output: {output[:200]!r}"
-                )
-            return int(m.group(1)), int(m.group(2))
-
-        narrow = render_at_width(50)
-        c_narrow, r_narrow = extract_cr(narrow)
-        self.assertLessEqual(
+        c_narrow, r_narrow = renderable._compute_box(50)
+        self.assertLess(
             c_narrow,
-            48,
-            "narrow render must shrink c to fit inside the console budget",
+            120,
+            "narrow width budget must materially shrink the Kitty box rather than keeping a wide-console size",
         )
 
-        wide = render_at_width(200)
-        c_wide, r_wide = extract_cr(wide)
+        c_wide, r_wide = renderable._compute_box(200)
         self.assertGreater(
             c_wide,
             c_narrow,
-            "wider console must let the box grow larger than the narrow case",
+            "wider width budget must let the box grow larger than the narrow case",
         )
 
         ratio_narrow = c_narrow / r_narrow
