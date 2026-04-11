@@ -1099,6 +1099,32 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_basis_and_review_render_directly_under_topic_before_checkpoints(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(
+            ("checkpoint", "Core issue: ozone drawing misses resonance.", None)
+        )
+        display.history.append(("topic", "topic line", "match"))
+        display.history.append(
+            ("basis", "Correct setup, lost credit for octet violation.", None)
+        )
+        display.history.append(("review_marker", "Human review warranted.", None))
+
+        entries = display._build_display_entries()
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("topic", "topic line"),
+                ("basis", "Correct setup, lost credit for octet violation."),
+                ("review_marker", "Human review warranted."),
+                ("checkpoint", "Core issue: ozone drawing misses resonance."),
+            ],
+        )
+
     def test_checkpoint_uses_structural_mark_and_history_family_ink(self):
         import scripts.narrator_reader as module
 
@@ -2338,7 +2364,7 @@ class NarratorReaderContract(unittest.TestCase):
         ):
             self.assertFalse(_message_requires_immediate_refresh(msg_type))
 
-        for msg_type in ("wrap_up", "end"):
+        for msg_type in ("wrap_up", "basis", "review_marker", "end"):
             self.assertTrue(_message_requires_immediate_refresh(msg_type))
 
     def test_lower_history_tiers_render_dimmer_than_top_tier(self) -> None:
