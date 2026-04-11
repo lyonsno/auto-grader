@@ -1,4 +1,9 @@
-"""Build small printable MC/OpenCV packets for real paper threshold testing."""
+"""Build small printable MC/OpenCV packets for real paper threshold testing.
+
+These packets now ride the same page-substrate builder as the canonical
+answer-sheet path; only the compact layout choice and scenario manifests live
+here.
+"""
 
 from __future__ import annotations
 
@@ -8,24 +13,22 @@ from typing import Any
 import json
 
 from auto_grader.generation import (
-    _BUBBLE_GAP,
-    _BUBBLE_LABELS,
-    _BUBBLE_SIZE,
-    _LETTER_HEIGHT,
-    _LETTER_WIDTH,
-    _build_identity_qr_codes,
-    _build_registration_markers,
+    MC_BUBBLE_LABELS,
+    McAnswerSheetLayout,
     build_mc_answer_sheet,
+    build_mc_answer_sheet_pages,
 )
 from auto_grader.pdf_rendering import render_mc_answer_sheet_pdf
 
 
 _CALIBRATION_PACKET_TEMPLATE_SLUG = "mc-paper-calibration"
 _THRESHOLD_PACKET_TEMPLATE_SLUG = "mc-threshold-stress"
-_PACKET_ROWS_PER_PAGE = 6
-_PACKET_LAYOUT_TOP = 150
-_PACKET_ROW_HEIGHT = 94
-_PACKET_BUBBLE_ROW_LEFT = 372
+_PACKET_COMPACT_LAYOUT = McAnswerSheetLayout(
+    rows_per_page=6,
+    layout_top=150,
+    row_height=94,
+    bubble_row_left=372,
+)
 
 
 def build_mc_paper_calibration_packet(*, seed: int | str = 17) -> dict[str, Any]:
@@ -101,8 +104,15 @@ def _build_instruction_packet(
     for question in artifact["mc_questions"]:
         question["show_choice_legend"] = False
 
-    page_numbers_by_question = _page_numbers_for_questions(artifact["mc_questions"])
-    artifact["pages"] = _build_compact_pages(artifact["opaque_instance_code"], artifact["mc_questions"])
+    page_numbers_by_question = _page_numbers_for_questions(
+        artifact["mc_questions"],
+        rows_per_page=_PACKET_COMPACT_LAYOUT.rows_per_page,
+    )
+    artifact["pages"] = build_mc_answer_sheet_pages(
+        artifact["opaque_instance_code"],
+        artifact["mc_questions"],
+        layout=_PACKET_COMPACT_LAYOUT,
+    )
 
     enriched_manifest: list[dict[str, Any]] = []
     for scenario in scenarios:
@@ -194,7 +204,7 @@ def _packet_template(
                 "points": 1,
                 "answer_type": "multiple_choice",
                 "prompt": str(scenario["instruction"]),
-                "choices": {label: label for label in _BUBBLE_LABELS[:4]},
+                "choices": {label: label for label in MC_BUBBLE_LABELS[:4]},
                 "correct": str(scenario["correct_choice_key"]),
                 "shuffle": False,
             }
@@ -206,54 +216,12 @@ def _packet_template(
     }
 
 
-def _page_numbers_for_questions(rendered_questions: list[Mapping[str, Any]]) -> dict[str, int]:
+def _page_numbers_for_questions(
+    rendered_questions: list[Mapping[str, Any]],
+    *,
+    rows_per_page: int,
+) -> dict[str, int]:
     mapping: dict[str, int] = {}
     for index, question in enumerate(rendered_questions):
-        mapping[str(question["question_id"])] = (index // _PACKET_ROWS_PER_PAGE) + 1
+        mapping[str(question["question_id"])] = (index // rows_per_page) + 1
     return mapping
-
-
-def _build_compact_pages(
-    opaque_instance_code: str,
-    rendered_questions: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    registration_markers = _build_registration_markers()
-    pages: list[dict[str, Any]] = []
-
-    for page_index, start in enumerate(range(0, len(rendered_questions), _PACKET_ROWS_PER_PAGE), start=1):
-        page_questions = rendered_questions[start : start + _PACKET_ROWS_PER_PAGE]
-        bubble_regions: list[dict[str, Any]] = []
-
-        for row, question in enumerate(page_questions):
-            row_y = _PACKET_LAYOUT_TOP + (row * _PACKET_ROW_HEIGHT)
-            for choice_index, choice in enumerate(question["choices"]):
-                bubble_regions.append(
-                    {
-                        "question_id": question["question_id"],
-                        "bubble_label": choice["bubble_label"],
-                        "shape": "circle",
-                        "x": _PACKET_BUBBLE_ROW_LEFT + choice_index * (_BUBBLE_SIZE + _BUBBLE_GAP),
-                        "y": row_y,
-                        "width": _BUBBLE_SIZE,
-                        "height": _BUBBLE_SIZE,
-                    }
-                )
-
-        fallback_page_code = f"{opaque_instance_code}-p{page_index}"
-        pages.append(
-            {
-                "page_number": page_index,
-                "fallback_page_code": fallback_page_code,
-                "layout_version": "mc_answer_sheet_v1",
-                "units": "pt",
-                "origin": "top_left",
-                "y_axis": "down",
-                "width": _LETTER_WIDTH,
-                "height": _LETTER_HEIGHT,
-                "identity_qr_codes": _build_identity_qr_codes(fallback_page_code),
-                "registration_markers": registration_markers,
-                "bubble_regions": bubble_regions,
-            }
-        )
-
-    return pages

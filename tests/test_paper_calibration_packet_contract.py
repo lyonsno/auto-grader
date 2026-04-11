@@ -67,3 +67,30 @@ class PaperCalibrationPacketContractTests(unittest.TestCase):
             for scenario in packet["scenario_manifest"]
         }
         self.assertEqual(observed, expected)
+
+    def test_packet_pages_match_public_compact_generation_layout(self) -> None:
+        build_mc_paper_calibration_packet = _load_builder(self)
+        try:
+            from auto_grader.generation import McAnswerSheetLayout, build_mc_answer_sheet_pages
+        except ImportError:
+            self.fail(
+                "Route paper-calibration packet pages through a public generation layout seam "
+                "instead of a packet-local page builder."
+            )
+
+        packet = build_mc_paper_calibration_packet(seed=17)
+        artifact = packet["artifact"]
+        compact_layout = McAnswerSheetLayout(
+            rows_per_page=6,
+            layout_top=150,
+            row_height=94,
+            bubble_row_left=372,
+        )
+
+        expected_pages = build_mc_answer_sheet_pages(
+            artifact["opaque_instance_code"],
+            artifact["mc_questions"],
+            layout=compact_layout,
+        )
+
+        self.assertEqual(artifact["pages"], expected_pages)

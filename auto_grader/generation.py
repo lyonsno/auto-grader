@@ -12,6 +12,7 @@ lane:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Iterable, Mapping
 import hashlib
 import random
@@ -21,7 +22,8 @@ from typing import Any
 from auto_grader.template_schema import validate_template
 
 
-_BUBBLE_LABELS = tuple("ABCDE")
+MC_BUBBLE_LABELS = tuple("ABCDE")
+_BUBBLE_LABELS = MC_BUBBLE_LABELS
 _LETTER_WIDTH = 612
 _LETTER_HEIGHT = 792
 _LAYOUT_LEFT = 72
@@ -40,6 +42,29 @@ _IDENTITY_QR_LEFT = 420
 _IDENTITY_QR_GAP = 10
 
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+
+
+@dataclass(frozen=True)
+class McAnswerSheetLayout:
+    """Public page-layout surface for MC answer-sheet artifacts."""
+
+    rows_per_page: int = _MAX_ROWS_PER_PAGE
+    layout_top: int = _LAYOUT_TOP
+    row_height: int = _ROW_HEIGHT
+    bubble_row_left: int = _BUBBLE_ROW_LEFT
+
+    def __post_init__(self) -> None:
+        if self.rows_per_page <= 0:
+            raise ValueError("rows_per_page must be positive")
+        if self.row_height <= 0:
+            raise ValueError("row_height must be positive")
+        if self.bubble_row_left <= 0:
+            raise ValueError("bubble_row_left must be positive")
+        if self.layout_top < 0:
+            raise ValueError("layout_top must be non-negative")
+
+
+DEFAULT_MC_ANSWER_SHEET_LAYOUT = McAnswerSheetLayout()
 
 
 def build_mc_answer_sheet(
@@ -91,7 +116,11 @@ def build_mc_answer_sheet(
             ],
         }
 
-    pages = _build_page_layouts(opaque_instance_code, rendered_questions)
+    pages = build_mc_answer_sheet_pages(
+        opaque_instance_code,
+        rendered_questions,
+        layout=DEFAULT_MC_ANSWER_SHEET_LAYOUT,
+    )
 
     return {
         "template_slug": str(template_dict["slug"]),
@@ -257,21 +286,29 @@ def _stringify_value(value: Any) -> str:
     return str(value)
 
 
-def _build_page_layouts(
+def build_mc_answer_sheet_pages(
     opaque_instance_code: str,
     rendered_questions: list[dict[str, Any]],
+    *,
+    layout: McAnswerSheetLayout = DEFAULT_MC_ANSWER_SHEET_LAYOUT,
 ) -> list[dict[str, Any]]:
+    """Build page-space MC answer-sheet layouts on the canonical paper substrate."""
+    if not isinstance(opaque_instance_code, str) or not opaque_instance_code:
+        raise ValueError("opaque_instance_code must be a non-blank string")
+    if not isinstance(layout, McAnswerSheetLayout):
+        raise TypeError("layout must be a McAnswerSheetLayout")
+
     pages: list[dict[str, Any]] = []
     registration_markers = _build_registration_markers()
 
-    for page_index, start in enumerate(range(0, len(rendered_questions), _MAX_ROWS_PER_PAGE), start=1):
+    for page_index, start in enumerate(range(0, len(rendered_questions), layout.rows_per_page), start=1):
         bubble_regions: list[dict[str, Any]] = []
-        page_questions = rendered_questions[start : start + _MAX_ROWS_PER_PAGE]
+        page_questions = rendered_questions[start : start + layout.rows_per_page]
         fallback_page_code = f"{opaque_instance_code}-p{page_index}"
 
         for row, question in enumerate(page_questions):
-            row_y = _LAYOUT_TOP + (row * _ROW_HEIGHT)
-            bubbles_x = _BUBBLE_ROW_LEFT
+            row_y = layout.layout_top + (row * layout.row_height)
+            bubbles_x = layout.bubble_row_left
 
             for choice_index, choice in enumerate(question["choices"]):
                 bubble_regions.append(

@@ -252,6 +252,52 @@ class TestMcAnswerSheetGeneration(unittest.TestCase):
             self.assertLessEqual(qr_code["x"] + qr_code["width"], page["width"])
             self.assertLessEqual(qr_code["y"] + qr_code["height"], page["height"])
 
+    def test_public_page_builder_supports_compact_layout_without_forking_page_substrate(self):
+        try:
+            from auto_grader.generation import (
+                McAnswerSheetLayout,
+                build_mc_answer_sheet_pages,
+            )
+        except ImportError:
+            self.fail(
+                "Export a public `McAnswerSheetLayout` plus "
+                "`build_mc_answer_sheet_pages(...)` so alternate printable packet "
+                "layouts can reuse the same QR, marker, and page-geometry substrate "
+                "instead of rebuilding pages through private generation internals."
+            )
+
+        artifact = self._build_one()
+        compact_layout = McAnswerSheetLayout(
+            rows_per_page=6,
+            layout_top=150,
+            row_height=94,
+            bubble_row_left=372,
+        )
+
+        pages = build_mc_answer_sheet_pages(
+            artifact["opaque_instance_code"],
+            artifact["mc_questions"],
+            layout=compact_layout,
+        )
+
+        self.assertEqual(len(pages), 1)
+        first_page = pages[0]
+        self.assertEqual(first_page["fallback_page_code"], f"{artifact['opaque_instance_code']}-p1")
+        self.assertEqual(
+            [marker["marker_id"] for marker in first_page["registration_markers"]],
+            ["top_left", "top_right", "bottom_left", "bottom_right"],
+        )
+        self.assertEqual(
+            [qr_code["payload"] for qr_code in first_page["identity_qr_codes"]],
+            [first_page["fallback_page_code"], first_page["fallback_page_code"]],
+        )
+
+        first_row_regions = [
+            region for region in first_page["bubble_regions"] if region["question_id"] == "mc-1"
+        ]
+        self.assertEqual(min(region["x"] for region in first_row_regions), 372)
+        self.assertEqual(min(region["y"] for region in first_row_regions), 150)
+
     def test_bubble_regions_leave_readable_horizontal_gaps_between_choices(self):
         artifact = self._build_one()
 
