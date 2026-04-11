@@ -70,6 +70,27 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 # cool note that's structural metadata, not status.
 _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
+# Keep the full structured-row family recorded locally near the reader
+# surface, even while implementation is still partial, so scrollback
+# archiving and in-pane rendering share one stable vocabulary.
+_LEGIBILITY_STRUCTURED_ROW_LABELS = {
+    "basis": "Basis",
+    "ambiguity": "Ambiguity",
+    "credit_preserved": "Credit preserved for",
+    "deduction": "Deduction",
+    "review_marker": "Review needed",
+    "professor_mismatch": "Professor mismatch",
+}
+_LEGIBILITY_STRUCTURED_ROW_ORDER = {
+    "basis": 1,
+    "ambiguity": 2,
+    "credit_preserved": 3,
+    "deduction": 4,
+    "review_marker": 5,
+    "professor_mismatch": 6,
+}
+_LEGIBILITY_STRUCTURED_ROW_KINDS = frozenset(_LEGIBILITY_STRUCTURED_ROW_LABELS)
+
 
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
 _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
