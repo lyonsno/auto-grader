@@ -879,6 +879,23 @@ class FocusPreviewInlineImage:
         self._sequence = _build_iterm2_inline_image_sequence(
             png_bytes, cell_width=cell_width, cell_height=cell_height
         )
+        # Rich's Live display redraws at ~24 FPS because other panels
+        # (scorebug animation, live timer, narrator status) change
+        # every frame. Each redraw walks our renderable's
+        # __rich_console__ again. If we emit the full image escape
+        # sequence on every redraw, WezTerm re-rasterizes the PNG
+        # from base64 24 times per second and the operator sees
+        # seizure-grade flicker. The pixels from a previous paint
+        # stay in the terminal's cell buffer until something writes
+        # over them, and our cursor-forward escapes don't write —
+        # they just reposition the cursor. So we paint the image on
+        # the FIRST __rich_console__ call and then skip the image
+        # escape on subsequent calls, yielding only the border and
+        # cursor-forwards that redraw the frame without touching
+        # the image cells. Each new focus_preview event constructs
+        # a fresh FocusPreviewInlineImage with this flag reset, so
+        # every new item gets exactly one image paint.
+        self._image_emitted = False
 
     def __rich_console__(
         self,
@@ -914,16 +931,16 @@ class FocusPreviewInlineImage:
         # to line-fit, truncate, or pad around it.
         forward_escape = f"\x1b[{inner_width}C"
 
-        # First interior row carries the iTerm2 image escape sequence.
-        # The cursor is at column 1 (after the left border). The image
-        # sequence paints inner_width cells wide starting here, and
-        # the cursor-forward advances us past those cells to where
-        # the right border goes. None of those cells get written to
-        # by Rich's own padding logic because this renderable is NOT
-        # wrapped in a Panel — Rich treats its output at the Group
-        # level and emits our segments verbatim.
+        # First interior row: emit the iTerm2 image escape sequence
+        # on the VERY FIRST render, then skip it on subsequent
+        # renders of this same instance to avoid 24-FPS re-rasterize
+        # flicker. The image pixels persist on the terminal's cell
+        # buffer between frames because our cursor-forward escapes
+        # below don't write to them.
         yield Segment("│", border)
-        yield Segment(self._sequence, None, [(ControlType.BELL,)])
+        if not self._image_emitted:
+            yield Segment(self._sequence, None, [(ControlType.BELL,)])
+            self._image_emitted = True
         yield Segment(forward_escape, None, [(ControlType.BELL,)])
         yield Segment("│", border)
         yield Segment.line()
