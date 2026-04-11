@@ -2080,9 +2080,6 @@ class HistoryViewport:
     def at_live_edge(self) -> bool:
         return self._scroll_offset == 0
 
-    def entries_snapshot(self) -> list[tuple[str, str, int | None]]:
-        return list(self._entries)
-
     # -- Mutation ----------------------------------------------------
 
     def append(self, entry: tuple[str, str, int | None]) -> None:
@@ -2340,16 +2337,6 @@ class PaintDryDisplay:
         self._session_ended_at: float | None = None
         self._session_started_at: float | None = None
         self._turn_started_at: float | None = None
-
-        # In-pane history scroll viewport. Persistent across frames so
-        # scroll state survives redraws and new commits while the
-        # operator is scrolled up.
-        self._viewport: HistoryViewport | None = None
-        self._viewport_wrap_width: int | None = None
-        self._viewport_synced_len: int = 0
-        # Optional explicit wrap-width override for tests and for the
-        # public viewport accessor when no console is attached.
-        self._wrap_width_override: int | None = None
 
     def __rich__(self) -> Group:
         return self.render()
@@ -2616,7 +2603,7 @@ class PaintDryDisplay:
         surface, rather than downgrading back to a simpler header/topic-only
         filter just to gain scrolling.
         """
-        display_entries = self._build_display_entries(wrap_width=wrap_width)
+        display_entries = self._viewport_display_entries()
         if not display_entries:
             return []
 
