@@ -650,6 +650,13 @@ class HistoryViewport:
     def at_live_edge(self) -> bool:
         return self._scroll_offset == 0
 
+    def entries_snapshot(self) -> list[tuple[str, str, int | None]]:
+        """Return a shallow copy of the entries currently held by the
+        viewport in natural (oldest -> newest) order. Used by the
+        sync layer to detect prefix divergence without touching
+        private state."""
+        return list(self._entries)
+
     # -- Mutation ----------------------------------------------------
 
     def append(self, entry: tuple[str, str, int | None]) -> None:
@@ -814,37 +821,58 @@ class PaintDryDisplay:
         # while the user reads.
         self.session_ended: bool = False
 
+        # In-pane history scroll viewport. Persistent across frames so
+        # that `HistoryViewport.append()`'s re-anchoring logic carries
+        # scroll state correctly when new history arrives while the
+        # operator is scrolled up. Rebuilt only when the wrap width
+        # changes (terminal resize) — scroll offset is preserved
+        # across rebuilds. The viewport consumes a separately computed
+        # flat list with essentials-first priority applied, so current
+        # live-edge semantics are preserved (see
+        # `_flat_display_entries`).
+        self._viewport: HistoryViewport | None = None
+        self._viewport_wrap_width: int | None = None
+        # Number of flat entries already appended into `_viewport`, so
+        # lazy sync can feed only the delta on each access.
+        self._viewport_synced_len: int = 0
+        # Optional explicit wrap width override for tests and for the
+        # public viewport accessor when no console is attached. The
+        # renderer still prefers `_compute_wrap_width()` from the live
+        # console when present.
+        self._wrap_width_override: int | None = None
+
     def __rich__(self) -> Group:
         return self.render()
 
-    def _build_display_entries(self) -> list[tuple[tuple, bool]]:
-        """Group history into items, reverse so newest item is first,
-        and within each group keep entries in chronological order so
-        the header sits ABOVE its narrator lines and topic.
+    # -- History viewport (Crispy Drips) --------------------------------
 
-        Then fill the visible budget by priority:
-          1. All headers and topics (ESSENTIAL — structural anchors).
-             These never get dropped while the deque has them.
-          2. Narrator lines, newest first (OPTIONAL — disposable middle).
-             Filled into whatever budget is left after essentials.
+    def _flat_display_entries(
+        self,
+    ) -> list[tuple[tuple[str, str, int | None], bool]]:
+        """Return the priority-filtered flat list of history entries in
+        natural chronological (oldest -> newest) order, with a boolean
+        marking the most-recently-committed entry.
 
-        This means a long-thinking item with 30+ narrator lines doesn't
-        push older items' headers and topics off the display — only
-        narrator lines drop. The user can always see "this is the item,
-        here's the verdict" for every visible item; the play-by-play
-        between them is the part that compresses.
+        Applies the essentials-first priority rule: headers and topics
+        for every item always survive, and optional narrator lines
+        are kept newest-first only until the visible-row budget
+        (`_VISIBLE_HISTORY_LINES`) is exhausted. This preserves the
+        legacy live-edge trim semantics — a long
+        chatty item cannot push older items' headers/topics off the
+        pane.
 
-        Returns a list of (entry, is_most_recent) tuples in display
-        order. is_most_recent is True for exactly the entry at the
-        back of the deque (the most-recently-committed thing).
+        Trade-off: narrator lines dropped here are also not available
+        to scroll back to. That is the slice-2 compromise: the
+        viewport wiring lands without changing live-edge behavior,
+        and a follow-on can promote priority awareness INTO the
+        viewport so scrolling up reveals hidden narrator lines too.
         """
         history_list = list(self.history)
         if not history_list:
             return []
         most_recent_idx = len(history_list) - 1
 
-        # Forward-iterate, grouping at header boundaries, tracking
-        # original deque indices.
+        # Group into items so priority fill can reason in item order.
         groups: list[list[tuple[tuple, int]]] = []
         current_group: list[tuple[tuple, int]] = []
         for idx, entry in enumerate(history_list):
@@ -857,53 +885,167 @@ class PaintDryDisplay:
         if current_group:
             groups.append(current_group)
 
-        # Newest item on top, but entries within each group stay in
-        # their natural (commit) order so header > lines > topic
-        groups.reverse()
+        # Walk groups newest-first so "keep essentials newest-first
+        # under budget" is deterministic, then restore natural order
+        # before returning.
+        groups_newest_first = list(reversed(groups))
+        flat_newest_first: list[tuple[tuple, int]] = []
+        for g in groups_newest_first:
+            flat_newest_first.extend(g)
 
-        # Flat list of (entry, deque_idx) in display order (top-down)
-        flat: list[tuple[tuple, int]] = []
-        for group in groups:
-            flat.extend(group)
-
-        # Two-pass priority fill:
-        #   1. Essentials (headers + topics) — keep newest-first up to budget
-        #   2. Narrator lines — keep newest-first to fill what's left
         budget = _VISIBLE_HISTORY_LINES
         keep_positions: set[int] = set()
 
-        # Pass 1: essentials in display order (newest items first since
-        # we already reversed groups). If we'd overflow, oldest items'
-        # essentials drop first — but the deque cap should make this
-        # rare in practice.
-        for pos, (entry, _idx) in enumerate(flat):
+        # Pass 1: essentials (headers + topics) in newest-first order.
+        for pos, (entry, _idx) in enumerate(flat_newest_first):
             if entry[0] in ("header", "topic"):
                 if len(keep_positions) >= budget:
                     break
                 keep_positions.add(pos)
 
-        # Pass 2: narrator lines, sorted by RECENCY (highest deque idx
-        # first), to fill the remaining budget. This drops oldest
-        # narrator lines first when an item produces more lines than
-        # the budget can hold.
+        # Pass 2: narrator lines, sorted by recency, filling what's
+        # left of the budget.
         optionals = [
             (pos, entry, idx)
-            for pos, (entry, idx) in enumerate(flat)
+            for pos, (entry, idx) in enumerate(flat_newest_first)
             if entry[0] not in ("header", "topic")
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
-
         for pos, _entry, _idx in optionals:
             if len(keep_positions) >= budget:
                 break
             keep_positions.add(pos)
 
-        # Build the final list in original (top-to-bottom) display order
-        display: list[tuple[tuple, bool]] = []
-        for pos, (entry, idx) in enumerate(flat):
-            if pos in keep_positions:
-                display.append((entry, idx == most_recent_idx))
-        return display
+        # Rebuild in natural (chronological) deque order so the
+        # viewport sees entries oldest -> newest and can anchor its
+        # "newest visual row" correctly.
+        kept_by_idx = {
+            flat_newest_first[pos][1]: flat_newest_first[pos][0]
+            for pos in keep_positions
+        }
+        out: list[tuple[tuple[str, str, int | None], bool]] = []
+        for idx in sorted(kept_by_idx):
+            out.append((kept_by_idx[idx], idx == most_recent_idx))
+        return out
+
+    def _resolve_wrap_width(self) -> int:
+        wrap = self._compute_wrap_width()
+        if wrap is None:
+            wrap = self._wrap_width_override or 80
+        return wrap
+
+    def _sync_viewport(self) -> HistoryViewport:
+        """Ensure `self._viewport` reflects current history + wrap width.
+
+        * Rebuild from scratch on first call, when the wrap width
+          changes (terminal resize), or when the priority-filtered
+          flat list diverges from what the viewport already contains.
+        * Otherwise append only the delta so
+          `HistoryViewport.append()`'s re-anchoring logic carries
+          scroll state across new commits.
+        """
+        wrap_width = self._resolve_wrap_width()
+        flat = self._flat_display_entries()
+        flat_entries = [entry for entry, _ in flat]
+
+        rebuild = (
+            self._viewport is None
+            or self._viewport_wrap_width != wrap_width
+        )
+
+        if not rebuild and self._viewport is not None:
+            # Verify the prefix the viewport already holds still
+            # matches the current priority-filtered flat list. If an
+            # entry was filtered out (e.g. a narrator line dropped by
+            # priority because newer lines took its budget slot), the
+            # prefix diverges and we have to rebuild.
+            current = self._viewport.entries_snapshot()
+            prefix_len = min(len(current), len(flat_entries))
+            if current[:prefix_len] != flat_entries[:prefix_len]:
+                rebuild = True
+            elif len(current) > len(flat_entries):
+                rebuild = True
+
+        if rebuild:
+            held_offset = (
+                self._viewport.scroll_offset if self._viewport is not None else 0
+            )
+            self._viewport = HistoryViewport(
+                visible_rows=_VISIBLE_HISTORY_LINES,
+                wrap_width=wrap_width,
+            )
+            self._viewport_wrap_width = wrap_width
+            for entry in flat_entries:
+                self._viewport.append(entry)
+            self._viewport_synced_len = len(flat_entries)
+            if held_offset > 0:
+                self._viewport.scroll_up(held_offset)
+        else:
+            assert self._viewport is not None
+            # Feed only the new entries so append()'s re-anchoring
+            # logic carries scroll state forward.
+            new_entries = flat_entries[self._viewport_synced_len :]
+            for entry in new_entries:
+                self._viewport.append(entry)
+            self._viewport_synced_len = len(flat_entries)
+        return self._viewport
+
+    def history_viewport(self) -> HistoryViewport:
+        """Public accessor: returns the synced viewport. Used by the
+        render path and by the interactive input loop (slice 3)."""
+        return self._sync_viewport()
+
+    def _viewport_display_entries(
+        self,
+    ) -> list[tuple[tuple[str, str, int | None], bool]]:
+        """Return the render-facing display entries for the history
+        pane: the viewport's currently visible slice, reverse-grouped
+        so the newest item's group sits at the top (natural Paint Dry
+        layout), with entries within each group kept in chronological
+        order so a header sits above its own narrator lines.
+        """
+        vp = self._sync_viewport()
+        visible = vp.visible_entries()
+        if not visible:
+            return []
+
+        # Identify the most-recently-committed entry by matching
+        # against the last element of `self.history` (if any). This
+        # preserves the fast-cycle shimmer for the newest entry even
+        # when we're scrolled up and it's not in the visible slice.
+        history_list = list(self.history)
+        most_recent_entry = history_list[-1] if history_list else None
+
+        # Group the visible entries at header boundaries.
+        groups: list[list[tuple[str, str, int | None]]] = []
+        current_group: list[tuple[str, str, int | None]] = []
+        for entry in visible:
+            if entry[0] == "header":
+                if current_group:
+                    groups.append(current_group)
+                current_group = [entry]
+            else:
+                current_group.append(entry)
+        if current_group:
+            groups.append(current_group)
+
+        # Newest group on top.
+        groups.reverse()
+        out: list[tuple[tuple[str, str, int | None], bool]] = []
+        for group in groups:
+            for entry in group:
+                is_recent = entry is most_recent_entry
+                out.append((entry, is_recent))
+        return out
+
+    def scroll_history_up(self, rows: int = 1) -> None:
+        self._sync_viewport().scroll_up(rows)
+
+    def scroll_history_down(self, rows: int = 1) -> None:
+        self._sync_viewport().scroll_down(rows)
+
+    def scroll_history_to_live_edge(self) -> None:
+        self._sync_viewport().scroll_to_live_edge()
 
     def _compute_wrap_width(self) -> int | None:
         """Approximate visual width at which the history panel wraps.
@@ -1062,7 +1204,7 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._build_display_entries()
+        display_entries = self._viewport_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
         for i, (entry, is_most_recent) in enumerate(display_entries):
             kind = entry[0]
