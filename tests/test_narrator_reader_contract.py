@@ -802,27 +802,28 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_compute_inline_image_cell_dimensions_preserves_aspect(self):
         # Wide crop: 900x300 px → 3:1 aspect. At cell_height=18 and
-        # terminal cell aspect ~2.2-2.5 (tall cells), the cell_width
-        # should be roughly 18 * 3 * 2.1 ≈ 113 cells. Exact value
-        # tracks _TERMINAL_CELL_ASPECT which is tuned per deployment.
+        # terminal cell aspect in the 2.0-3.0 range (varies per
+        # terminal font), the cell_width should be roughly
+        # 18 * 3 * tca ≈ 108-162 cells. The exact value tracks
+        # _TERMINAL_CELL_ASPECT which is tuned per deployment.
         cw, ch = _compute_inline_image_cell_dimensions(
             900, 300, max_cell_height=18, max_cell_width=200
         )
         self.assertEqual(ch, 18)
-        self.assertGreaterEqual(cw, 90)
-        self.assertLessEqual(cw, 140)
+        self.assertGreaterEqual(cw, 100)
+        self.assertLessEqual(cw, 170)
 
-    def test_compute_inline_image_cell_dimensions_uses_reverted_terminal_cell_aspect(self):
+    def test_compute_inline_image_cell_dimensions_uses_empirical_terminal_cell_aspect(self):
         self.assertAlmostEqual(
             _TERMINAL_CELL_ASPECT,
-            2.1,
+            2.71,
             places=2,
-            msg="focus preview sizing should use the reverted 2.1 cell aspect once padding-distorted canvas math is gone",
+            msg="focus preview sizing should use the empirically measured 2.71 cell aspect for the operator's terminal",
         )
         cw, ch = _compute_inline_image_cell_dimensions(
             900, 300, max_cell_height=18, max_cell_width=200
         )
-        self.assertEqual((cw, ch), (113, 18))
+        self.assertEqual((cw, ch), (146, 18))
 
     def test_compute_inline_image_cell_dimensions_clamps_to_max_width(self):
         # A very wide crop would want more cells than max allows.
