@@ -1194,7 +1194,6 @@ class PaintDryDisplay:
         self._session_ended_at: float | None = None
         self._session_started_at: float | None = None
         self._turn_started_at: float | None = None
-        self._scrollback_archived_headers: set[str] = set()
 
     def __rich__(self) -> Group:
         return self.render()
@@ -1445,43 +1444,6 @@ class PaintDryDisplay:
             }.get(pair[0][0], 2)
         )
         return [*header, *rest, *reversed(lines)]
-
-    def take_scrollback_snapshot(self) -> Text | None:
-        history_list = list(self.history)
-        if not history_list:
-            return None
-        groups = self._history_groups_with_indices(history_list)
-        if not groups:
-            return None
-        latest_group = groups[-1]
-        header_entry = next((entry for entry, _idx in latest_group if entry[0] == "header"), None)
-        if header_entry is None:
-            return None
-        header_text = header_entry[1]
-        if header_text in self._scrollback_archived_headers:
-            return None
-
-        ordered = self._ordered_group_pairs(latest_group)
-        snapshot = Text()
-        for idx, (entry, _deque_idx) in enumerate(ordered):
-            kind, text, _parity = entry
-            if kind == "header":
-                line = text
-            elif kind == "topic":
-                line = f"  · {text}"
-            elif kind in _LEGIBILITY_STRUCTURED_ROW_LABELS:
-                mark = "  ! " if kind == "review_marker" else "  ≡ "
-                line = f"{mark}{_LEGIBILITY_STRUCTURED_ROW_LABELS[kind]}: {text}"
-            elif kind == "checkpoint":
-                line = f"  ≈ {text}"
-            else:
-                line = f"  {text}"
-            snapshot.append(line)
-            if idx < len(ordered) - 1:
-                snapshot.append("\n")
-
-        self._scrollback_archived_headers.add(header_text)
-        return snapshot
 
     def _compute_wrap_width(self) -> int | None:
         """Approximate visual width at which the history panel wraps.
@@ -2431,10 +2393,6 @@ def main() -> int:
 
                     msg_type = msg.get("type")
                     if msg_type == "header":
-                        snapshot = display.take_scrollback_snapshot()
-                        if snapshot is not None:
-                            live.console.print(snapshot)
-                            live.console.print()
                         display.on_header(msg.get("text", ""))
                     elif msg_type == "session_meta":
                         display.on_session_meta(
@@ -2483,10 +2441,6 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
-                        snapshot = display.take_scrollback_snapshot()
-                        if snapshot is not None:
-                            live.console.print(snapshot)
-                            live.console.print()
                         display.session_ended = True
                         display._session_ended_at = time.monotonic()
                         live.update(display.render(), refresh=True)
