@@ -102,6 +102,25 @@ def apply_consistency_rule(record: dict) -> CriticDelta:
     """
     exam_id = record.get("exam_id", "")
     question_id = record.get("question_id", "")
+
+    # Truncation sentinel: the grader did not commit to a score on this
+    # row. There is nothing to critique and no numeric original_score to
+    # carry. Operation Zilch Reaper (forward lane) — the critic's
+    # contract is "apply the consistency rule to a grader judgment,"
+    # and a non-prediction is not a judgment. Emit an explicit
+    # "unchanged" delta so the aggregate counts stay honest.
+    if record.get("truncated") or record.get("model_score") is None:
+        return CriticDelta(
+            exam_id=exam_id,
+            question_id=question_id,
+            action="unchanged",
+            original_score=0.0,
+            new_score=0.0,
+            rule_invoked="none",
+            reason="Grader did not commit to a score (truncated); critic abstains.",
+            critic_confidence=1.0,
+        )
+
     original_score = float(record.get("model_score", 0.0))
     max_points = float(record.get("max_points", 0.0))
     upstream_dep = (record.get("upstream_dependency") or "none").strip()

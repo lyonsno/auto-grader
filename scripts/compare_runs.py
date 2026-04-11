@@ -32,9 +32,13 @@ class RunRecord:
     corrected_score: float | None
     max_points: float
     answer_type: str
-    model_score: float
+    # None on truncated / unparseable rows — see Operation Zilch Reaper
+    # (forward lane). Legacy predictions.jsonl files written before the
+    # sentinel contract still emit 0.0 here; the loader preserves that
+    # historical shape as-is and does not fabricate nulls.
+    model_score: float | None
     critic_score: float | None
-    model_confidence: float
+    model_confidence: float | None
     score_basis: str
     is_obviously_fully_correct: bool | None
     is_obviously_wrong: bool | None
@@ -42,6 +46,13 @@ class RunRecord:
     if_dependent_then_consistent: bool | None
     reasoning_chars: int
     elapsed_s: int | None
+    # Truncation flag. False for complete rows AND for legacy rows
+    # written before the sentinel contract existed — legacy files
+    # simply did not carry this information, and forcibly back-filling
+    # them as "truncated" would be a second kind of lie. The historical
+    # rewriter (Operation Zilch Reaper, historical lane) is the place
+    # where legacy rows get their real truncation status restored.
+    truncated: bool = False
 
     @property
     def truth_score(self) -> float:
@@ -159,6 +170,14 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
             corrected_score = (
                 float(corrected_raw) if corrected_raw is not None else None
             )
+            # Truncation sentinel fields. model_score and model_confidence
+            # may be JSON null on predictions.jsonl files written by the
+            # post-Zilch-Reaper grader. Legacy files from before the
+            # sentinel contract still emit numeric 0.0 and lack the
+            # truncated key entirely — those simply round-trip as
+            # truncated=False (see RunRecord docstring).
+            raw_model_score = obj.get("model_score")
+            raw_model_confidence = obj.get("model_confidence")
             records[key] = RunRecord(
                 model=model,
                 exam_id=obj["exam_id"],
@@ -167,9 +186,17 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
                 corrected_score=corrected_score,
                 max_points=float(obj["max_points"]),
                 answer_type=str(obj["answer_type"]),
-                model_score=float(obj["model_score"]),
+                model_score=(
+                    float(raw_model_score)
+                    if raw_model_score is not None
+                    else None
+                ),
                 critic_score=critic_scores.get(key),
-                model_confidence=float(obj.get("model_confidence", 0.0)),
+                model_confidence=(
+                    float(raw_model_confidence)
+                    if raw_model_confidence is not None
+                    else None
+                ),
                 score_basis=str(obj.get("score_basis", "")),
                 is_obviously_fully_correct=obj.get(
                     "is_obviously_fully_correct", None
@@ -181,6 +208,7 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
                 ),
                 reasoning_chars=len(raw_reasoning),
                 elapsed_s=elapsed_times.get(key),
+                truncated=bool(obj.get("truncated", False)),
             )
     return records
 
@@ -220,6 +248,7 @@ def build_comparison_rows(
             row[prefix + "present"] = True
             row[prefix + "model"] = record.model
             row[prefix + "score"] = record.model_score
+            row[prefix + "truncated"] = record.truncated
             row[prefix + "critic_score"] = (
                 record.critic_score
                 if record.critic_score is not None

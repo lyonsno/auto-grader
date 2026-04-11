@@ -96,12 +96,27 @@ class Prediction:
     fields are intentionally shorter). Optional fields default to empty
     string / None for backward compatibility with predictions
     constructed in tests.
+
+    **Truncation sentinel contract** (Operation Zilch Reaper, forward
+    lane): when the grader did not commit to a score — either because
+    the VLM ran out of its token budget before finishing the JSON, or
+    because the emitted output was otherwise unparseable — the resulting
+    Prediction must carry ``model_score=None``, ``model_confidence=None``,
+    and ``truncated=True``. Complete rows carry numeric score /
+    confidence and ``truncated=False``. Downstream consumers that want
+    to tell "model said 0" apart from "model said nothing" check
+    ``truncated`` (or equivalently ``model_score is None``) rather than
+    string-matching on ``model_reasoning``. See
+    ``attractors/auto-grader_zilch-reaper-forward_stop-recording-truncated-
+    grader-output-as-model-score-zero_2026-04-11.md``.
     """
 
     exam_id: str
     question_id: str
-    model_score: float
-    model_confidence: float  # 0-1
+    # None on truncated / unparseable rows — see truncation sentinel
+    # contract in the class docstring.
+    model_score: float | None
+    model_confidence: float | None  # 0-1, None on truncated rows
     model_reasoning: str
     model_read: str  # what model thinks student wrote
     score_basis: str = ""
@@ -115,6 +130,10 @@ class Prediction:
     # prompt-only nudges did not move on Qwen3p5-35B-A3B.
     upstream_dependency: str = "none"  # e.g. "5(a)" or "none"
     if_dependent_then_consistent: bool | None = None  # null when no dependency
+    # Truncation sentinel flag. True when the grader did not commit to
+    # a score (length-truncated output, unparseable content, etc.).
+    # Complete rows carry False.
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,6 +159,13 @@ class EvalReport:
     per_answer_type_tolerance: dict[str, float] = field(default_factory=dict)
     total_scored: int = 0
     unclear_excluded: int = 0
+    # Truncation sentinel: rows where the grader did not commit to a
+    # score (VLM ran out of token budget, output was unparseable, etc.).
+    # Mirrors unclear_excluded — items the scorer deliberately kept out
+    # of the accuracy denominator. Surfaced so operators can see
+    # completion rate as a first-class number instead of having to grep
+    # predictions.jsonl for a magic substring.
+    truncated_excluded: int = 0
     total_points_possible: float = 0.0
     obvious_full_credit_calls: int = 0
     obvious_full_credit_precision: float | None = None
@@ -318,6 +344,21 @@ def score_predictions(
             f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
         )
 
+    # Truncation sentinel: drop rows where the grader did not commit
+    # to a score. These are non-predictions and must not contaminate
+    # the accuracy numerator/denominator or calibration — see Operation
+    # Zilch Reaper (forward lane) attractor for the full framing.
+    truncated_count = sum(
+        1
+        for item in scored_items
+        if pred_map[(item.exam_id, item.question_id)].truncated
+    )
+    scored_items = [
+        item
+        for item in scored_items
+        if not pred_map[(item.exam_id, item.question_id)].truncated
+    ]
+
     # Compute per-item results
     exact_matches = 0
     tolerance_matches = 0
@@ -416,6 +457,7 @@ def score_predictions(
         per_answer_type_tolerance=per_type_tolerance,
         total_scored=n,
         unclear_excluded=unclear_count,
+        truncated_excluded=truncated_count,
         total_points_possible=total_points_possible,
         obvious_full_credit_calls=obvious_full_credit_calls,
         obvious_full_credit_precision=obvious_full_credit_precision,
