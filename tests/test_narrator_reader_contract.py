@@ -865,6 +865,40 @@ class NarratorReaderContract(unittest.TestCase):
             "doesn't truncate it to fit the panel's visible width",
         )
 
+    def test_focus_preview_inline_image_emits_escape_sequence_only_on_first_render(self):
+        from rich.console import Console
+
+        png = b"\x89PNG\r\n\x1a\nfake png for test"
+        renderable = FocusPreviewInlineImage(
+            png_bytes=png, cell_width=60, cell_height=18, title="test"
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+
+        with console.capture() as capture:
+            console.print(renderable)
+        first = capture.get()
+
+        with console.capture() as capture:
+            console.print(renderable)
+        second = capture.get()
+
+        osc = "\x1b]1337;File="
+        self.assertEqual(
+            first.count(osc),
+            1,
+            "first render must emit the iTerm2 escape sequence exactly once",
+        )
+        self.assertEqual(
+            second.count(osc),
+            0,
+            "subsequent renders must not re-emit the escape sequence and cause flicker",
+        )
+
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies

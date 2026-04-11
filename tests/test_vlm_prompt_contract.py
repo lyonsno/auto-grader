@@ -15,8 +15,8 @@ class GradingPromptContract(unittest.TestCase):
         )
         self.assertLess(
             len(prompt),
-            3200,
-            "system prompt should stay reasonably compact even after the split-charity v2 graft on top of the integration surface's stable grading contracts",
+            3900,
+            "system prompt should stay reasonably compact even after the positive-sweep graft on top of the integration surface's stable grading contracts",
         )
 
     def test_system_prompt_states_each_major_rule_once(self):
@@ -59,8 +59,8 @@ class GradingPromptContract(unittest.TestCase):
         self.assertRegex(metadata["content_hash"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             version,
-            "2026-04-10-split-charity-v2",
-            "integration tip should expose the tighter split-charity v2 prompt identity",
+            "2026-04-11-positive-sweep-v1",
+            "integration tip should expose the positive-sweep prompt identity",
         )
 
     def test_system_prompt_uses_explicit_rescue_credit_language(self):
@@ -98,14 +98,14 @@ class GradingPromptContract(unittest.TestCase):
             "prompt should separate perception charity from score charity",
         )
         self.assertIn(
-            'Do not be charitable toward errors you see. Noticing a mistake and then forgiving it because the student "demonstrated the core concept" is not charity',
+            'Be strict toward errors you see. An error you notice is an error you grade, even if the student "demonstrated the core concept"',
             prompt,
             "prompt should explicitly block the fr-12b-style charity rationalization",
         )
         self.assertIn(
-            "Grade the mistake.",
+            "abandoning the rubric, not charity.",
             prompt,
-            "prompt should resolve visible errors at scoring time instead of re-forgiving them",
+            "prompt should keep the named anti-charity failure mode in positive framing",
         )
 
     def test_system_prompt_prefers_lawful_full_credit_and_equivalent_units(self):

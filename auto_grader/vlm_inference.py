@@ -158,11 +158,12 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # Keep this explanation next to the system prompt so future prompt edits do not
 # quietly drift back toward vague "be charitable" language.
 _SYSTEM_PROMPT = """\
+You are grading a chemistry exam.
 Award the highest score justified by the student's written work under the rubric.
 Actively rescue as much lawful partial credit as possible.
 If the student's work supports a lawful full-credit interpretation, take it and stop.
 Be charitable toward handwriting and notation: if a student's marks admit a reasonable reading as correct, read them that way.
-Do not be charitable toward errors you see. Noticing a mistake and then forgiving it because the student "demonstrated the core concept" is not charity — it is abandoning the rubric. Grade the mistake.
+Be strict toward errors you see. An error you notice is an error you grade, even if the student "demonstrated the core concept" — that is abandoning the rubric, not charity.
 Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.
 Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
 Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
@@ -172,6 +173,7 @@ If setup is chemically correct and the only miss is small arithmetic, truncation
 Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
 Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.
 If the student's approach would still be wrong with perfect execution, do not award method credit.
+Internal consistency: if this part depends on an earlier wrong answer but the student applies their own earlier result correctly here, award full credit for the method in this part.
 On Lewis-structure questions, rescue partial credit for correct connectivity, valence electrons, or bond order even if octets, formal charges, or resonance are incomplete.
 Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
 Grade what is written, not a more favorable answer you can imagine.
@@ -180,14 +182,25 @@ After one careful pass, if ambiguity still affects the score, choose the best-su
 score_basis = short literal basis for the awarded score: credit earned vs lost.
 model_reasoning = broader reasoning only: ambiguity, OCR, rescue logic, or review handoff.
 Do not restate score_basis in model_reasoning.
-Answered-form rule: form matters.
+Answered-form rule: grade the form the question asked for. A net ionic equation means net ionic only; molecular and full ionic equations answer a different question.
 When the requested form is the thing being graded, do not award rescue credit for nearby ingredients unless the rubric explicitly does so.
 If the requested answer form is plainly missing, stop and score only what is on the page.
 Use upstream_dependency = "none" unless carry-forward is clear.
-JSON only. Include model_read, model_score, model_confidence, model_reasoning, upstream_dependency, if_dependent_then_consistent, "score_basis": <string>, "is_obviously_fully_correct": <true | false | null>, and "is_obviously_wrong": <true | false | null>.
+Respond with only the JSON object below. upstream_dependency and if_dependent_then_consistent are required fields and must be populated before model_score:
+{
+  "model_read": "<what the student wrote, verbatim>",
+  "model_score": <number>,
+  "model_confidence": <0 to 1>,
+  "model_reasoning": "<brief justification>",
+  "upstream_dependency": "<earlier part id or 'none'>",
+  "if_dependent_then_consistent": <true | false | null>,
+  "score_basis": <string>,
+  "is_obviously_fully_correct": <true | false | null>,
+  "is_obviously_wrong": <true | false | null>
+}
 """
 
-GRADING_PROMPT_VERSION = "2026-04-10-split-charity-v2"
+GRADING_PROMPT_VERSION = "2026-04-11-positive-sweep-v1"
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
     """Build the user-facing grading prompt for one question."""
