@@ -252,12 +252,18 @@ class ThinkingNarratorContract(unittest.TestCase):
         for idx in range(2, 7):
             self.assertIn(f"Tracing status {idx}.", user_content)
 
-    def test_double_dedup_sets_exponential_backoff(self):
+    def test_double_dedup_triggers_checkpoint_grooming_without_backoff(self):
         sink = _DummySink()
         narrator = _RetryNarrator(sink)
         narrator.start(item_header="15-blue/fr-1")
+        narrator._current_status = "Rechecking the same unit conversion."
         narrator._prior_statuses = ["Rechecking the same unit conversion."]
         narrator._thoughts_since_status = ["I'm tracing the same unit conversion mistake."]
+        narrator._dedupe_streak = 1
+        narrator._chat_completion = mock.Mock(  # type: ignore[method-assign]
+            return_value="Core issue: unit conversion path is looping on the same mismatch."
+        )
+
         narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
 
         self.assertEqual(sink.commits, [])
@@ -269,29 +275,38 @@ class ThinkingNarratorContract(unittest.TestCase):
             ],
         )
         self.assertEqual(sink.deltas, [])
-        self.assertEqual(narrator._dedupe_backoff_s, narrator._DEDUP_BACKOFF_INITIAL_S * 2)
-        self.assertGreater(narrator._dedupe_backoff_until, 0.0)
+        self.assertEqual(
+            sink.checkpoints,
+            ["Core issue: unit conversion path is looping on the same mismatch."],
+        )
+        self.assertEqual(narrator._dedupe_streak, 2)
 
-    def test_feed_respects_dedupe_backoff_until_it_expires(self):
+    def test_feed_keeps_dispatching_during_dedupe_streak(self):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink)
         narrator.start(item_header="15-blue/fr-1")
         narrator._buffer = "existing " * 250
         narrator._last_dispatch = 0.0
-        narrator._dedupe_backoff_until = 15.0
-
-        with mock.patch("auto_grader.thinking_narrator.time.monotonic", return_value=10.0):
-            narrator.feed("token ")
-        self.assertFalse(narrator._pending_dispatch)
-        self.assertGreater(len(narrator._buffer), 0)
+        narrator._dedupe_streak = 2
 
         with mock.patch("auto_grader.thinking_narrator.threading.Thread") as thread_mock:
             thread = thread_mock.return_value
-            with mock.patch("auto_grader.thinking_narrator.time.monotonic", return_value=16.0):
+            with mock.patch("auto_grader.thinking_narrator.time.monotonic", return_value=10.0):
                 narrator.feed("token ")
 
         thread_mock.assert_called_once()
         thread.start.assert_called_once()
+
+    def test_accepted_line_resets_dedupe_streak(self):
+        sink = _DummySink()
+        narrator = _CheckpointNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._dedupe_streak = 2
+        narrator._prior_statuses = ["Tracing the setup."]
+
+        narrator._dispatch("fresh reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(narrator._dedupe_streak, 0)
 
     def test_streaming_bonsai_default_sampler_splits_the_difference(self):
         sink = _DummySink()
