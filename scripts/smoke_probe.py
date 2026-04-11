@@ -210,7 +210,14 @@ def _consume_stream(resp, raw_dump_path: Path | None = None) -> tuple[str, str]:
                 chunk = json.loads(data)
             except json.JSONDecodeError:
                 continue
-            delta = chunk.get("choices", [{}])[0].get("delta", {}) or {}
+            # Some providers (notably OpenRouter) send non-choice events
+            # mid-stream — usage summaries, keep-alives, provider metadata
+            # — with an empty or absent `choices` array. Naive
+            # chunk["choices"][0] crashes on those. Guard explicitly.
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            delta = (choices[0] or {}).get("delta", {}) or {}
             if dump_fh is not None:
                 dump_fh.write(json.dumps(delta, ensure_ascii=False) + "\n")
             for tok in _extract_reasoning_tokens(delta):
