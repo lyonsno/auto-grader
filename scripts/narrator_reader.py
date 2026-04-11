@@ -695,10 +695,15 @@ _INLINE_IMAGE_CELL_HEIGHT = 18
 _INLINE_IMAGE_MAX_CELL_WIDTH = 140
 
 #: Terminal cell aspect ratio (height / width) for sizing math. Most
-#: fixed-width terminal fonts render cells roughly twice as tall as
-#: wide, so a 1:1 source image wants roughly half as many cells in
-#: height as in width.
-_TERMINAL_CELL_ASPECT = 2.0
+#: fixed-width terminal fonts render cells a bit over twice as tall
+#: as wide — e.g., JetBrains Mono at common sizes is around 2.1-2.2,
+#: Menlo is similar, SF Mono is closer to 2.15. We were previously
+#: using 2.0, which undersized cell_height relative to the actual
+#: screen pixels per cell; Kitty's aspect-preserving place command
+#: then letterboxed the image vertically inside the overly-tall box.
+#: 2.15 is a better default; if your font is a notable outlier you
+#: can tune this constant until the letterbox disappears.
+_TERMINAL_CELL_ASPECT = 2.15
 
 
 def _build_iterm2_inline_image_sequence(
