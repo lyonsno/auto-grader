@@ -140,63 +140,90 @@ def _build_backend(args: argparse.Namespace) -> ProbeBackend:
 def _extract_reasoning_tokens(delta: dict[str, Any]) -> list[str]:
     """Flatten provider-specific reasoning delta shapes into plain text.
 
-    Mirrors spoke/command.py:_extract_reasoning_tokens. Handles:
-      - OpenAI-compatible `reasoning_content` (plain string)
-      - OpenAI-compatible `reasoning` (plain string, some servers)
-      - OpenRouter `reasoning_details` (structured list with
-        per-item `summary` / `text` fields)
+    Providers emit reasoning in one of three shapes, sometimes more
+    than one simultaneously on the same delta:
+      - `reasoning_content` (plain string) — OMLX / some OpenAI-compat
+        servers
+      - `reasoning` (plain string) — OpenRouter legacy compat field
+      - `reasoning_details` (structured list with per-item `text` /
+        `summary` fields) — OpenRouter canonical shape
 
-    Returns a list of text chunks to accumulate. Caller joins them.
+    OpenRouter emits the SAME token in both `reasoning` and
+    `reasoning_details[].text` on every chunk. Naively reading both
+    doubles every token and produces 'IIII nneeeedd' output.
+    Diagnosed 2026-04-11 on google/gemma-4-26b-a4b-it, 4069/4071
+    deltas had the dual shape.
+
+    Fix: treat the three shapes as a priority chain, not an
+    accumulation. Prefer reasoning_details (most typed, canonical on
+    OR), fall back to reasoning_content, fall back to reasoning.
+    Stop at the first non-empty source. This is safe because all
+    three express the same underlying reasoning stream — no provider
+    is known to split reasoning ACROSS shapes on a single delta.
     """
-    tokens: list[str] = []
+    details = delta.get("reasoning_details")
+    if isinstance(details, list) and details:
+        tokens: list[str] = []
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            text = detail.get("text")
+            if isinstance(text, str) and text:
+                tokens.append(text)
+            else:
+                summary = detail.get("summary")
+                if isinstance(summary, str) and summary:
+                    tokens.append(summary)
+        if tokens:
+            return tokens
 
     for field_name in ("reasoning_content", "reasoning"):
         value = delta.get(field_name)
         if isinstance(value, str) and value:
-            tokens.append(value)
+            return [value]
 
-    details = delta.get("reasoning_details")
-    if isinstance(details, list):
-        for detail in details:
-            if not isinstance(detail, dict):
-                continue
-            summary = detail.get("summary")
-            if isinstance(summary, str) and summary:
-                tokens.append(summary)
-            text = detail.get("text")
-            if isinstance(text, str) and text:
-                tokens.append(text)
-
-    return tokens
+    return []
 
 
-def _consume_stream(resp) -> tuple[str, str]:
+def _consume_stream(resp, raw_dump_path: Path | None = None) -> tuple[str, str]:
     """Read an SSE stream from an OpenAI-compatible chat completion.
 
     Returns (content_text, reasoning_text). Both are plain strings
     accumulated from deltas. Mirrors the shape of
     auto_grader.vlm_inference._consume_streaming_response but without
     the narrator hooks — the probe has no narrator.
+
+    If raw_dump_path is given, every delta dict is appended to that
+    file as a JSONL row before flattening. This is a diagnostic
+    affordance used to inspect provider-specific reasoning shapes;
+    remove or leave unused in normal runs.
     """
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
-    for raw_line in resp:
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].strip()
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        delta = chunk.get("choices", [{}])[0].get("delta", {}) or {}
-        for tok in _extract_reasoning_tokens(delta):
-            reasoning_parts.append(tok)
-        c = delta.get("content", "")
-        if isinstance(c, str) and c:
-            content_parts.append(c)
+    dump_fh = open(raw_dump_path, "a") if raw_dump_path else None
+    try:
+        for raw_line in resp:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            delta = chunk.get("choices", [{}])[0].get("delta", {}) or {}
+            if dump_fh is not None:
+                dump_fh.write(json.dumps(delta, ensure_ascii=False) + "\n")
+            for tok in _extract_reasoning_tokens(delta):
+                reasoning_parts.append(tok)
+            c = delta.get("content", "")
+            if isinstance(c, str) and c:
+                content_parts.append(c)
+    finally:
+        if dump_fh is not None:
+            dump_fh.close()
     return "".join(content_parts), "".join(reasoning_parts)
 
 
@@ -208,6 +235,7 @@ def _call(
     max_tokens: int = 4096,
     temperature: float = 0.3,
     timeout: float = 600,
+    raw_dump_path: Path | None = None,
 ) -> tuple[str, str, float]:
     """Single chat-completion call, streaming.
 
@@ -262,7 +290,7 @@ def _call(
     t0 = time.time()
     resp = urllib.request.urlopen(req, timeout=timeout)
     try:
-        content, reasoning = _consume_stream(resp)
+        content, reasoning = _consume_stream(resp, raw_dump_path=raw_dump_path)
     finally:
         try:
             resp.close()
@@ -391,6 +419,13 @@ def main() -> int:
         action="store_true",
         help="Print the planned calls without sending them.",
     )
+    parser.add_argument(
+        "--raw-dump",
+        default=None,
+        help="Diagnostic: path to write raw SSE delta dicts as JSONL. "
+        "Used for inspecting provider-specific reasoning shapes when "
+        "the flattener produces unexpected output.",
+    )
     args = parser.parse_args()
 
     backend = _build_backend(args)
@@ -484,6 +519,7 @@ def main() -> int:
                 image_url,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
+                raw_dump_path=Path(args.raw_dump) if args.raw_dump else None,
             )
             row["description"] = content
             row["reasoning"] = reasoning
