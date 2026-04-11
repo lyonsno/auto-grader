@@ -358,14 +358,27 @@ def _failure_prediction(
     """Return a structured grader failure as a Prediction.
 
     Runs should degrade on one bad item rather than crashing the whole
-    batch. We encode the failure as a zero-confidence, zero-score
-    prediction and preserve the raw payloads for later inspection.
+    batch. The grader did not commit to a score — either because the
+    VLM ran out of its token budget before finishing the JSON, or
+    because the emitted output was otherwise unparseable — so we record
+    ``model_score=None`` / ``model_confidence=None`` / ``truncated=True``
+    per the Operation Zilch Reaper (forward lane) contract. Previously
+    this wrote ``model_score=0.0`` + ``model_confidence=0.0``, which
+    read downstream as "the model confidently scored zero" and
+    silently contaminated every aggregate metric on items whose ground
+    truth happened (or did not happen) to be zero. See
+    ``attractors/auto-grader_zilch-reaper-forward_stop-recording-\
+truncated-grader-output-as-model-score-zero_2026-04-11.md``.
+
+    The raw payloads are still preserved verbatim so the post-hoc
+    critic and human forensics can inspect what the model was chewing
+    on when it ran out of tokens.
     """
     return Prediction(
         exam_id=item.exam_id,
         question_id=item.question_id,
-        model_score=0.0,
-        model_confidence=0.0,
+        model_score=None,
+        model_confidence=None,
         score_basis="",
         model_reasoning=message,
         model_read="",
@@ -375,6 +388,7 @@ def _failure_prediction(
         is_obviously_wrong=None,
         upstream_dependency="none",
         if_dependent_then_consistent=None,
+        truncated=True,
     )
 
 
@@ -537,10 +551,28 @@ def grade_single_item(
         is_obviously_fully_correct = None
         is_obviously_wrong = None
 
+    # Operation Zilch Reaper (forward lane): if the parsed JSON has no
+    # model_score at all, the grader did not commit to a score — same
+    # category as the length-truncation / unparseable cases above. Fall
+    # through to the truncation sentinel instead of silently defaulting
+    # to 0.0. The pre-fix `float(parsed.get("model_score", 0))` was a
+    # third source of "zero by default" flagged in the attractor.
+    raw_model_score = parsed.get("model_score")
+    if raw_model_score is None:
+        return _failure_prediction(
+            item,
+            message=(
+                "Grader emitted parseable JSON but did not include a "
+                "model_score field."
+            ),
+            raw_assistant=content,
+            raw_reasoning=reasoning,
+        )
+
     return Prediction(
         exam_id=item.exam_id,
         question_id=item.question_id,
-        model_score=float(parsed.get("model_score", 0)),
+        model_score=float(raw_model_score),
         model_confidence=float(parsed.get("model_confidence", 0.5)),
         score_basis=str(parsed.get("score_basis", "")),
         model_reasoning=str(parsed.get("model_reasoning", "")),

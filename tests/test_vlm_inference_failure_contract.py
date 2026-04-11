@@ -59,6 +59,12 @@ class VlmInferenceFailureContract(unittest.TestCase):
         )
 
     def test_length_truncation_returns_failure_prediction_instead_of_raising(self):
+        # Contract updated by Operation Zilch Reaper (forward lane):
+        # truncated rows carry null sentinels and truncated=True, not
+        # a lying model_score=0.0. See
+        # test_vlm_inference_truncation_contract.py for the primary
+        # fail-first tests. This test preserves the degrade-instead-of-
+        # crash invariant and the human-readable reasoning message.
         with mock.patch(
             "urllib.request.urlopen",
             return_value=_DummyResponse(),
@@ -74,8 +80,9 @@ class VlmInferenceFailureContract(unittest.TestCase):
 
         self.assertEqual(pred.exam_id, "15-blue")
         self.assertEqual(pred.question_id, "fr-11a")
-        self.assertEqual(pred.model_score, 0.0)
-        self.assertEqual(pred.model_confidence, 0.0)
+        self.assertIsNone(pred.model_score)
+        self.assertIsNone(pred.model_confidence)
+        self.assertTrue(pred.truncated)
         self.assertIsNone(pred.is_obviously_fully_correct)
         self.assertIsNone(pred.is_obviously_wrong)
         self.assertEqual(pred.raw_reasoning, "very long reasoning")
@@ -83,6 +90,8 @@ class VlmInferenceFailureContract(unittest.TestCase):
         self.assertIn("max", pred.model_reasoning.lower())
 
     def test_unparseable_output_returns_failure_prediction_instead_of_raising(self):
+        # Contract updated by Operation Zilch Reaper (forward lane):
+        # unparseable rows are non-predictions, not confident zeros.
         with mock.patch(
             "urllib.request.urlopen",
             return_value=_DummyResponse(),
@@ -96,8 +105,9 @@ class VlmInferenceFailureContract(unittest.TestCase):
                 config=self._config(),
             )
 
-        self.assertEqual(pred.model_score, 0.0)
-        self.assertEqual(pred.model_confidence, 0.0)
+        self.assertIsNone(pred.model_score)
+        self.assertIsNone(pred.model_confidence)
+        self.assertTrue(pred.truncated)
         self.assertIsNone(pred.is_obviously_fully_correct)
         self.assertIsNone(pred.is_obviously_wrong)
         self.assertEqual(pred.raw_assistant, "definitely not json")

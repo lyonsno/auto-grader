@@ -85,7 +85,14 @@ def _progress(i: int, total: int, item, pred):
     # the eval report for items where a human-investigated correction has
     # been recorded.
     truth = item.truth_score
-    mark = "=" if pred.model_score == truth else "X"
+    # Truncated / unparseable rows are non-predictions — the mark is
+    # neither "=" (match) nor "X" (miss); use "—" so the live display
+    # stops lying about the model having scored zero. See Operation
+    # Zilch Reaper (forward lane).
+    if pred.truncated:
+        mark = "—"
+    else:
+        mark = "=" if pred.model_score == truth else "X"
     # Display the truth baseline; when a correction is present, also show
     # the historical professor_score in parens so operators can see both
     # the original prof mark and the corrected value at a glance.
@@ -93,11 +100,17 @@ def _progress(i: int, total: int, item, pred):
         baseline = f"truth={truth}/{item.max_points} (prof={item.professor_score})"
     else:
         baseline = f"prof={item.professor_score}/{item.max_points}"
+    if pred.truncated:
+        model_str = "model=— conf=— (truncated)"
+    else:
+        model_str = (
+            f"model={pred.model_score} conf={pred.model_confidence:.2f}"
+        )
     print(
         f"  [{i}/{total}] {item.exam_id}/{item.question_id} "
         f"({item.answer_type}) "
         f"{baseline} "
-        f"model={pred.model_score} conf={pred.model_confidence:.2f} [{mark}]"
+        f"{model_str} [{mark}]"
     )
 
 
@@ -238,8 +251,16 @@ class _PredictionWriter:
                 "correction_reason": item.correction_reason,
                 "professor_mark": item.professor_mark,
                 "student_answer": item.student_answer,
+                # model_score and model_confidence serialize to JSON null
+                # on truncated / unparseable rows (pred.model_score is
+                # None). Operation Zilch Reaper (forward lane) — the old
+                # "0.0 + magic substring in model_reasoning" shape is
+                # retired. Consumers should check `truncated` (or
+                # equivalently `model_score is None`) to distinguish
+                # non-predictions from confident zeros.
                 "model_score": pred.model_score,
                 "model_confidence": pred.model_confidence,
+                "truncated": pred.truncated,
                 "is_obviously_fully_correct": pred.is_obviously_fully_correct,
                 "is_obviously_wrong": pred.is_obviously_wrong,
                 "model_read": pred.model_read,
