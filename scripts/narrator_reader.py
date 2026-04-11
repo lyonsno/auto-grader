@@ -3114,6 +3114,34 @@ class PaintDryDisplay:
         self._focus_preview_pending_bucket = None
         self._focus_preview_pending_renderable = None
 
+        # TEMPORARY OFF SWITCH — integration tip only.
+        #
+        # The current inline-image path on WezTerm re-emits the full
+        # base64 PNG on every Rich Live refresh (~24 Hz) because
+        # Rich erases the image region between frames and there is
+        # no way to preserve pixels across that clear with the
+        # iTerm2 protocol alone. The visible effect is aggressive
+        # strobing that makes it unsafe to look at the narrator
+        # window while smoking anything else. The half-block
+        # fallback renderer is also not something we want to see
+        # right now (it was the thing we spent a day trying to
+        # move past). So on the integration tip we suppress the
+        # focus preview entirely by default until the Kitty-
+        # protocol placement-ID fix lands.
+        #
+        # Tests and anyone who wants the preview back can set
+        # AUTO_GRADER_FOCUS_PREVIEW=1 in the environment.
+        #
+        # The message loop stays functional and state is still
+        # updated (so provenance and label are recorded), we just
+        # skip building the renderable so nothing appears in the
+        # focus_preview_panel slot.
+        if os.environ.get("AUTO_GRADER_FOCUS_PREVIEW") != "1":
+            self.focus_preview_inline_renderable = None
+            self.focus_preview_renderable = None
+            self.focus_preview_pixels = None
+            return
+
         # Inline image path: primary on WezTerm/iTerm2. Bypasses the
         # half-block renderer entirely and hands the full-resolution
         # crop PNG to the terminal for pixel-for-pixel rasterization.

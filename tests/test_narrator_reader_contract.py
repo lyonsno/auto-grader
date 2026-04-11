@@ -50,6 +50,23 @@ def _extract_plain(renderable) -> str:
 
 
 class NarratorReaderContract(unittest.TestCase):
+    def setUp(self) -> None:
+        # Focus preview is gated off by default on the integration
+        # tip (temporary switch while the Kitty placement-ID fix
+        # is in flight — the iTerm2 per-frame re-emit path causes
+        # seizure-grade strobing). Enable it here so the test
+        # suite continues to exercise the rendering pipeline.
+        import os
+        self._prev_focus_preview_env = os.environ.get("AUTO_GRADER_FOCUS_PREVIEW")
+        os.environ["AUTO_GRADER_FOCUS_PREVIEW"] = "1"
+
+    def tearDown(self) -> None:
+        import os
+        if self._prev_focus_preview_env is None:
+            os.environ.pop("AUTO_GRADER_FOCUS_PREVIEW", None)
+        else:
+            os.environ["AUTO_GRADER_FOCUS_PREVIEW"] = self._prev_focus_preview_env
+
     @staticmethod
     def _hex_luminance(style: str) -> int:
         style = style.split()[-1].lstrip("#")
