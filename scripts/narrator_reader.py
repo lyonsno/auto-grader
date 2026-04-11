@@ -3949,30 +3949,11 @@ def main() -> int:
         session_exit = threading.Event()
         scroll_controller = HistoryScrollController(display)
 
-        # screen=True — run the reader in the terminal's alternate
-        # screen buffer (like vim / less / htop). Two reasons, both
-        # load-bearing for Crispy Drips:
-        #
-        #   1. Without alt-screen, Rich's in-place redraw leaves prior
-        #      frames in the terminal's native scrollback. Scrolling
-        #      the terminal up then shows the live surface scroll out
-        #      of view with a ghost trail of accumulated header/score
-        #      rows trailing off into infinity. That directly defeats
-        #      the lane's whole point — in-pane history scrolling is
-        #      supposed to be the canonical affordance for inspecting
-        #      earlier content.
-        #
-        #   2. Alt-screen also gives a clean exit: on session-end or
-        #      Ctrl-C the terminal returns to whatever was on screen
-        #      before the reader started, with no leftover narrator
-        #      frames in scrollback. Post-hoc inspection of past runs
-        #      lives in runs/<ts>-<model>/narrator.txt, which is the
-        #      durable artifact for that job anyway.
         with Live(
             display.render(),
             console=console,
             refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
-            screen=True,
+            screen=False,
             auto_refresh=False,
         ) as live:
             def _wait_for_manual_close() -> int:
