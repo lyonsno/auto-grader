@@ -17,7 +17,9 @@ A partial redelivery zip then supplied two real full-resolution edited pages:
 
 Those lived in:
 
-- `/Users/noahlyons/dev/auto-grader-assets/edits_from_chatgpt/model_edit_pathology_packet_outputs_redelivery.zip`
+- a local redelivery archive under the operator's `auto-grader-assets/edits_from_chatgpt/`
+  drop, specifically `model_edit_pathology_packet_outputs_redelivery.zip` on the
+  machine where this evaluation was run
 
 ## Contact Sheets Were Not Evaluable
 
@@ -96,4 +98,5 @@ Those are the best remaining probes for:
 
 The machine-readable evaluation used for this note is local at:
 
-- `/tmp/chatgpt-pathology-redelivery-eval.json`
+- `/tmp/chatgpt-pathology-redelivery-eval.json` on the machine where this
+  evaluation was run

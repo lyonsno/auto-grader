@@ -12,10 +12,14 @@ simulate plausible student behavior.
 
 Use these exact images when submitting prompts.
 
-Note: the PNG assets are intentionally local working files under
-`docs/model_edit_pathology_packet/assets/`. The repo's ignore rules currently
-exclude `assets/`, so the prompt packet is versioned but the binary images are a
-local packet on this machine unless we later choose to force-add them.
+Important: this packet is not self-contained from a fresh repo clone. The PNG
+assets are intentionally local working files under
+`docs/model_edit_pathology_packet/assets/`, and the repo's ignore rules
+currently exclude `assets/`. That means the prompt packet text is versioned, but
+the binary images are still a local handoff packet on the working machine unless
+we later choose to force-add them. If you are missing those images, do not
+pretend this packet is runnable as-is; either regenerate the local assets or
+obtain the packet from the machine that prepared it.
 
 ### Set A: Single-question morphology probes
 
@@ -262,7 +266,7 @@ boundary we care about:
 
 The first partial redelivery evaluation is recorded here:
 
-- [first_redelivery_evaluation_2026-04-10.md](/private/tmp/auto-grader-mc-opencv-prereq-0409/docs/model_edit_pathology_packet/first_redelivery_evaluation_2026-04-10.md)
+- [first_redelivery_evaluation_2026-04-10.md](first_redelivery_evaluation_2026-04-10.md)
 
 The short version is:
 
