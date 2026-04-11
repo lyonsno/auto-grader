@@ -24,6 +24,7 @@ _ILLEGIBLE_CENTER_DARK_FRACTION_THRESHOLD = 0.20
 _ILLEGIBLE_RING_DARK_FRACTION_THRESHOLD = 0.18
 _ILLEGIBLE_MIN_CENTER_MEAN_THRESHOLD = 120.0
 _ILLEGIBLE_MAX_RING_MEAN_THRESHOLD = 215.0
+_ILLEGIBLE_MAX_COMPACT_FILL_BBOX_FILL_RATIO_THRESHOLD = 0.60
 
 
 def read_marked_bubble_labels(
@@ -232,6 +233,8 @@ def _looks_illegible(metrics: Mapping[str, float | int]) -> bool:
         and float(metrics["center_dark_fraction"]) >= _ILLEGIBLE_CENTER_DARK_FRACTION_THRESHOLD
         and float(metrics["ring_dark_fraction"]) >= _ILLEGIBLE_RING_DARK_FRACTION_THRESHOLD
         and float(metrics["ring_mean"]) <= _ILLEGIBLE_MAX_RING_MEAN_THRESHOLD
+        and float(metrics["center_dark_bbox_fill_ratio"])
+        <= _ILLEGIBLE_MAX_COMPACT_FILL_BBOX_FILL_RATIO_THRESHOLD
     )
 
 

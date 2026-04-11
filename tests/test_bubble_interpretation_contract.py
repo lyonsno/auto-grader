@@ -68,6 +68,17 @@ def _load_modules(test_case: unittest.TestCase):
     return read_marked_bubble_labels, read_bubble_observations, normalize_page_image
 
 
+def _load_metric_classifier(test_case: unittest.TestCase):
+    try:
+        from auto_grader.bubble_interpretation import _classify_bubble_from_metrics
+    except ImportError:
+        test_case.fail(
+            "Keep `auto_grader.bubble_interpretation._classify_bubble_from_metrics(...)` "
+            "available for narrow contract checks against the real-paper calibration boundary."
+        )
+    return _classify_bubble_from_metrics
+
+
 def _render_marked_page(
     page: dict,
     *,
@@ -539,6 +550,45 @@ class BubbleInterpretationContractTests(unittest.TestCase):
             },
             "A patchy center fill near the current boundary should surface as explicit "
             "ambiguity instead of quietly disappearing into blank.",
+        )
+
+    def test_classify_real_paper_dark_fill_metrics_as_marked(self) -> None:
+        classify_bubble_from_metrics = _load_metric_classifier(self)
+
+        observed_metrics = {
+            "center_mean": 139.61075949367088,
+            "ring_mean": 141.06162790697675,
+            "center_dark_fraction": 0.9841772151898734,
+            "ring_dark_fraction": 0.38372093023255816,
+            "center_dark_bbox_fill_ratio": 0.7775,
+            "border_touch_sides": 0,
+        }
+
+        self.assertEqual(
+            classify_bubble_from_metrics(observed_metrics),
+            "marked",
+            "A real-paper dark solid fill should stay a real mark even when the "
+            "surrounding ring is not clean white.",
+        )
+
+    def test_classify_real_paper_double_mark_constituent_as_marked(self) -> None:
+        classify_bubble_from_metrics = _load_metric_classifier(self)
+
+        observed_metrics = {
+            "center_mean": 185.91139240506328,
+            "ring_mean": 171.26627906976745,
+            "center_dark_fraction": 0.879746835443038,
+            "ring_dark_fraction": 0.33372093023255817,
+            "center_dark_bbox_fill_ratio": 0.695,
+            "border_touch_sides": 0,
+        }
+
+        self.assertEqual(
+            classify_bubble_from_metrics(observed_metrics),
+            "marked",
+            "A real-paper double-mark constituent should remain a substantive mark, "
+            "so the question can escalate as multiple_marked instead of being "
+            "collapsed into illegible noise.",
         )
 
     def test_read_bubble_observations_surfaces_scratchout_as_illegible(self) -> None:
