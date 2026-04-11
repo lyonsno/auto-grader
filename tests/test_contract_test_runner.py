@@ -76,6 +76,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_mc_page_extraction_contract",
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
+                "tests.test_paper_threshold_packet_contract",
                 "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
@@ -140,6 +141,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_mc_page_extraction_contract",
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
+                "tests.test_paper_threshold_packet_contract",
                 "test_unittest_discovery_contract",
                 "tests.test_db_postgres_smoke_contract",
                 "tests.postgres_contract_bootstrap_script_smoke_contract",

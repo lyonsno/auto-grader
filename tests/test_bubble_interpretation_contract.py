@@ -591,6 +591,44 @@ class BubbleInterpretationContractTests(unittest.TestCase):
             "collapsed into illegible noise.",
         )
 
+    def test_classify_boundary_metrics_below_compactness_cutoff_as_illegible(self) -> None:
+        classify_bubble_from_metrics = _load_metric_classifier(self)
+
+        boundary_metrics = {
+            "center_mean": 150.0,
+            "ring_mean": 180.0,
+            "center_dark_fraction": 0.74,
+            "ring_dark_fraction": 0.28,
+            "center_dark_bbox_fill_ratio": 0.59,
+            "border_touch_sides": 4,
+        }
+
+        self.assertEqual(
+            classify_bubble_from_metrics(boundary_metrics),
+            "illegible",
+            "A messy dark mark below the compactness cutoff should still surface "
+            "as illegible review work.",
+        )
+
+    def test_classify_boundary_metrics_above_compactness_cutoff_as_marked(self) -> None:
+        classify_bubble_from_metrics = _load_metric_classifier(self)
+
+        boundary_metrics = {
+            "center_mean": 150.0,
+            "ring_mean": 180.0,
+            "center_dark_fraction": 0.74,
+            "ring_dark_fraction": 0.28,
+            "center_dark_bbox_fill_ratio": 0.61,
+            "border_touch_sides": 4,
+        }
+
+        self.assertEqual(
+            classify_bubble_from_metrics(boundary_metrics),
+            "marked",
+            "A similarly dark mark just above the compactness cutoff should stop "
+            "being stolen by the illegible classifier.",
+        )
+
     def test_read_bubble_observations_surfaces_scratchout_as_illegible(self) -> None:
         _, read_bubble_observations, normalize_page_image = _load_modules(self)
         artifact = _build_artifact()

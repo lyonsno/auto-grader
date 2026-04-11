@@ -1,4 +1,4 @@
-"""Build a tiny printable MC/OpenCV calibration packet for real paper testing."""
+"""Build small printable MC/OpenCV packets for real paper threshold testing."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from auto_grader.generation import (
 from auto_grader.pdf_rendering import render_mc_answer_sheet_pdf
 
 
-_PACKET_TEMPLATE_SLUG = "mc-paper-calibration"
+_CALIBRATION_PACKET_TEMPLATE_SLUG = "mc-paper-calibration"
+_THRESHOLD_PACKET_TEMPLATE_SLUG = "mc-threshold-stress"
 _PACKET_ROWS_PER_PAGE = 6
 _PACKET_LAYOUT_TOP = 150
 _PACKET_ROW_HEIGHT = 94
@@ -29,11 +30,70 @@ _PACKET_BUBBLE_ROW_LEFT = 372
 
 def build_mc_paper_calibration_packet(*, seed: int | str = 17) -> dict[str, Any]:
     """Return a printable two-page calibration packet plus scenario manifest."""
-    scenarios = _scenario_manifest()
-    template = _packet_template(scenarios)
+    return _build_instruction_packet(
+        packet_name=_CALIBRATION_PACKET_TEMPLATE_SLUG,
+        packet_title="MC Paper Calibration Packet",
+        scenarios=_scenario_manifest(),
+        student_id="paper-calibration",
+        student_name="Paper Calibration",
+        seed=seed,
+    )
+
+def write_mc_paper_calibration_packet(
+    *,
+    output_dir: str | Path,
+    seed: int | str = 17,
+) -> dict[str, Any]:
+    """Render the packet and write the PDF plus JSON artifacts to disk."""
+    return _write_instruction_packet(
+        output_dir=output_dir,
+        packet=build_mc_paper_calibration_packet(seed=seed),
+        packet_stem="mc-paper-calibration-packet",
+        artifact_stem="mc-paper-calibration-artifact",
+        scenario_stem="mc-paper-calibration-scenarios",
+    )
+
+
+def build_mc_threshold_stress_packet(*, seed: int | str = 17) -> dict[str, Any]:
+    """Return a printable two-page packet aimed at the practical threshold boundary."""
+    return _build_instruction_packet(
+        packet_name=_THRESHOLD_PACKET_TEMPLATE_SLUG,
+        packet_title="MC Threshold Stress Packet",
+        scenarios=_threshold_scenario_manifest(),
+        student_id="paper-threshold",
+        student_name="Paper Threshold",
+        seed=seed,
+    )
+
+
+def write_mc_threshold_stress_packet(
+    *,
+    output_dir: str | Path,
+    seed: int | str = 17,
+) -> dict[str, Any]:
+    """Render the threshold packet and write the PDF plus JSON artifacts to disk."""
+    return _write_instruction_packet(
+        output_dir=output_dir,
+        packet=build_mc_threshold_stress_packet(seed=seed),
+        packet_stem="mc-threshold-stress-packet",
+        artifact_stem="mc-threshold-stress-artifact",
+        scenario_stem="mc-threshold-stress-scenarios",
+    )
+
+
+def _build_instruction_packet(
+    *,
+    packet_name: str,
+    packet_title: str,
+    scenarios: list[Mapping[str, Any]],
+    student_id: str,
+    student_name: str,
+    seed: int | str,
+) -> dict[str, Any]:
+    template = _packet_template(packet_name, packet_title, scenarios)
     artifact = build_mc_answer_sheet(
         template,
-        {"student_id": "paper-calibration", "student_name": "Paper Calibration"},
+        {"student_id": student_id, "student_name": student_name},
         attempt_number=1,
         seed=seed,
     )
@@ -51,27 +111,28 @@ def build_mc_paper_calibration_packet(*, seed: int | str = 17) -> dict[str, Any]
         enriched_manifest.append(manifest_entry)
 
     return {
-        "packet_name": _PACKET_TEMPLATE_SLUG,
+        "packet_name": packet_name,
         "artifact": artifact,
         "scenario_manifest": enriched_manifest,
     }
 
 
-def write_mc_paper_calibration_packet(
+def _write_instruction_packet(
     *,
     output_dir: str | Path,
-    seed: int | str = 17,
+    packet: Mapping[str, Any],
+    packet_stem: str,
+    artifact_stem: str,
+    scenario_stem: str,
 ) -> dict[str, Any]:
-    """Render the packet and write the PDF plus JSON artifacts to disk."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    packet = build_mc_paper_calibration_packet(seed=seed)
     pdf_bytes = render_mc_answer_sheet_pdf(packet["artifact"])
 
-    pdf_path = output_path / "mc-paper-calibration-packet.pdf"
-    artifact_path = output_path / "mc-paper-calibration-artifact.json"
-    scenario_path = output_path / "mc-paper-calibration-scenarios.json"
+    pdf_path = output_path / f"{packet_stem}.pdf"
+    artifact_path = output_path / f"{artifact_stem}.json"
+    scenario_path = output_path / f"{scenario_stem}.json"
 
     pdf_path.write_bytes(pdf_bytes)
     artifact_path.write_text(json.dumps(packet["artifact"], indent=2), encoding="utf-8")
@@ -103,7 +164,28 @@ def _scenario_manifest() -> list[dict[str, Any]]:
     ]
 
 
-def _packet_template(scenarios: list[Mapping[str, Any]]) -> dict[str, Any]:
+def _threshold_scenario_manifest() -> list[dict[str, Any]]:
+    return [
+        {"question_id": "thr-01", "instruction": "Fill B dark and solid.", "probe_type": "clear_fill", "expected_status": "correct", "correct_choice_key": "B"},
+        {"question_id": "thr-02", "instruction": "Put a tiny accidental-looking dot inside C only. Do not fill any bubble.", "probe_type": "incidental_stray_only", "expected_status": "blank", "correct_choice_key": "A"},
+        {"question_id": "thr-03", "instruction": "Draw a short diagonal slash inside D only. Do not fill any bubble.", "probe_type": "incidental_stray_only", "expected_status": "blank", "correct_choice_key": "A"},
+        {"question_id": "thr-04", "instruction": "Draw a heavy check-like tick inside B only. Do not fill any bubble.", "probe_type": "incidental_stray_only", "expected_status": "blank", "correct_choice_key": "A"},
+        {"question_id": "thr-05", "instruction": "Make a compact dark scribble fill in C.", "probe_type": "compact_fill_attempt", "expected_status": "correct", "correct_choice_key": "C"},
+        {"question_id": "thr-06", "instruction": "Make an ugly but clearly intended compact fill in A.", "probe_type": "ugly_but_intended", "expected_status": "correct", "correct_choice_key": "A"},
+        {"question_id": "thr-07", "instruction": "Fill D dark and solid. Also add a tiny accidental speck inside B.", "probe_type": "main_fill_plus_tiny_stray", "expected_status": "correct", "correct_choice_key": "D"},
+        {"question_id": "thr-08", "instruction": "Fill B dark and solid. Also add a lighter weak trace inside D.", "probe_type": "main_fill_plus_weak_secondary", "expected_status": "correct", "correct_choice_key": "B"},
+        {"question_id": "thr-09", "instruction": "Fill A, erase it imperfectly, then fill C dark and solid.", "probe_type": "changed_answer_erasure", "expected_status": "correct", "correct_choice_key": "C"},
+        {"question_id": "thr-10", "instruction": "Fill B and D as two real answers.", "probe_type": "genuine_double_mark", "expected_status": "multiple_marked", "correct_choice_key": "B"},
+        {"question_id": "thr-11", "instruction": "Make a faint patchy center fill in B only. Do not fill any other bubble.", "probe_type": "ambiguous_patchy_fill", "expected_status": "ambiguous_mark", "correct_choice_key": "A"},
+        {"question_id": "thr-12", "instruction": "Scratch out C messily until it looks unreadable. Do not fill any other bubble.", "probe_type": "illegible_scratchout", "expected_status": "illegible_mark", "correct_choice_key": "A"},
+    ]
+
+
+def _packet_template(
+    packet_name: str,
+    packet_title: str,
+    scenarios: list[Mapping[str, Any]],
+) -> dict[str, Any]:
     questions: list[dict[str, Any]] = []
     for scenario in scenarios:
         questions.append(
@@ -118,8 +200,8 @@ def _packet_template(scenarios: list[Mapping[str, Any]]) -> dict[str, Any]:
             }
         )
     return {
-        "slug": _PACKET_TEMPLATE_SLUG,
-        "title": "MC Paper Calibration Packet",
+        "slug": packet_name,
+        "title": packet_title,
         "sections": [{"id": "mc", "title": "Calibration", "questions": questions}],
     }
 
