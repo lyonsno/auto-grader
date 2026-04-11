@@ -694,24 +694,14 @@ _INLINE_IMAGE_CELL_HEIGHT = 18
 #: real images tolerate larger panels aesthetically.
 _INLINE_IMAGE_MAX_CELL_WIDTH = 140
 
-#: Terminal cell aspect ratio (height / width) for sizing math.
-#: Measured empirically on the operator's WezTerm by placing the
-#: fr-10b preview (image aspect 2.355) at several (c, r) cell sizes
-#: via a standalone Kitty probe; the (c=89, r=14) placement
-#: tight-fit the image, which implies:
-#:     screen_cell_aspect = (c / r) / image_aspect
-#:                        = (89 / 14) / 2.355
-#:                        = 2.705
-#: So 2.71 is the ground-truth value for this operator's font.
-#: Previous guesses of 2.0, 2.1, 2.15, 2.4 were all too low and
-#: produced visible vertical letterbox because the box was taller
-#: in screen pixels than the image aspect wanted.
-#:
-#: FOLLOWUP: query the terminal at init via CSI 16t to get the
-#: real cell dimensions instead of hardcoding a constant. Until
-#: then this constant is correct for WezTerm at the operator's
-#: font config; may need per-environment tuning on other setups.
-_TERMINAL_CELL_ASPECT = 2.71
+#: Fallback terminal cell aspect ratio (height / width) used when
+#: the terminal's real cell dimensions can't be queried via CSI
+#: 16t. Most monospace fonts at common sizes fall in [2.0, 2.3].
+#: The Kitty place command is aspect-preserving, so if this
+#: fallback is wrong the image will letterbox inside the box —
+#: tune at the deployment level or (better) ensure the terminal
+#: supports CSI 16t query so we get the real value at startup.
+_DEFAULT_TERMINAL_CELL_ASPECT = 2.1
 
 
 def _build_iterm2_inline_image_sequence(
@@ -746,29 +736,34 @@ def _compute_inline_image_cell_dimensions(
     *,
     max_cell_height: int = _INLINE_IMAGE_CELL_HEIGHT,
     max_cell_width: int = _INLINE_IMAGE_MAX_CELL_WIDTH,
+    terminal_cell_aspect: float = _DEFAULT_TERMINAL_CELL_ASPECT,
 ) -> tuple[int, int]:
     """Compute the (cell_width, cell_height) footprint for an inline
-    image given its source pixel dimensions.
+    image given its source pixel dimensions and the terminal's
+    real cell-pixel aspect ratio.
 
-    Strategy: pin the cell height to ``max_cell_height`` (so the
-    preview occupies a consistent vertical slot regardless of crop
-    aspect ratio — history below never jumps around) and compute
-    cell width from the crop's aspect ratio, accounting for terminal
-    cells being roughly ``_TERMINAL_CELL_ASPECT`` times taller than
-    wide. If the resulting cell width exceeds ``max_cell_width``,
-    clamp it and shrink cell height proportionally to preserve
-    aspect. Returns positive integers.
+    Strategy: start from max_cell_height, derive cell_width from
+    the image aspect and cell aspect. If cell_width exceeds
+    max_cell_width, clamp it and shrink cell_height proportionally
+    so the image tight-fits the clamped width.
+
+    ``terminal_cell_aspect`` is ``cell_height_px / cell_width_px``
+    of the terminal's font as rendered on screen. For typical
+    monospace fonts this is around 2.0-2.3. Pass the queried
+    value from ``_query_terminal_cell_aspect`` for accuracy, or
+    the default constant as a fallback.
     """
     if crop_width_px <= 0 or crop_height_px <= 0:
         return (max(1, max_cell_width), max(1, max_cell_height))
     crop_aspect = crop_width_px / crop_height_px
     cell_height = max(1, max_cell_height)
-    # cell_width such that visual aspect matches:
-    #   (cell_width * 1) / (cell_height * _TERMINAL_CELL_ASPECT) == crop_aspect
-    cell_width = int(round(cell_height * crop_aspect * _TERMINAL_CELL_ASPECT))
+    # cell_width / cell_height = image_aspect × terminal_cell_aspect
+    # derivation: for the box to tight-fit the image in screen pixels,
+    #   (cell_width × cell_px_w) / (cell_height × cell_px_h) == image_aspect
+    #   (cell_width / cell_height) × (1 / terminal_cell_aspect) == image_aspect
+    #   cell_width / cell_height == image_aspect × terminal_cell_aspect
+    cell_width = int(round(cell_height * crop_aspect * terminal_cell_aspect))
     if cell_width > max_cell_width:
-        # Preserve aspect by shrinking both dimensions so cell_width
-        # lands exactly at max_cell_width.
         shrink = max_cell_width / cell_width
         cell_width = max_cell_width
         cell_height = max(1, int(round(cell_height * shrink)))
@@ -884,6 +879,113 @@ def _build_kitty_place_sequence(
     into the cell region starting at the current cursor position.
     """
     return f"\x1b_Ga=p,i={image_id},c={cell_width},r={cell_height}\x1b\\"
+
+
+def _query_terminal_cell_aspect(
+    *,
+    timeout_s: float = 0.15,
+    stream=None,
+) -> float | None:
+    """Query the terminal for its cell pixel dimensions via CSI 16t.
+
+    Returns the cell aspect ratio (height / width, in screen pixels)
+    if the terminal responds with a well-formed answer. Returns
+    ``None`` on any failure — no tty, unsupported sequence, timeout,
+    parse error, etc. Callers should fall back to
+    ``_DEFAULT_TERMINAL_CELL_ASPECT``.
+
+    Protocol: send ``ESC [ 1 6 t`` to stdout and read the response
+    ``ESC [ 6 ; <height_px> ; <width_px> t`` from stdin. Heights and
+    widths are integers in pixels.
+
+    Implementation notes:
+    - Puts stdin into cbreak mode temporarily so we can read the
+      response without waiting for a newline.
+    - Uses a short timeout (``timeout_s``) so that non-cooperating
+      terminals don't hang startup.
+    - Reads via ``select.select`` in a loop, accumulating bytes
+      until the response terminator ``t`` arrives or we time out.
+    - Restores termios state in a finally block even if the read
+      or parse raises.
+    - Safe to call with stdout as a non-tty (returns None early).
+
+    The ``stream`` argument is for testing: lets a test swap in a
+    fake stream. Normal callers should leave it as None and the
+    function will use ``sys.stdout`` for the query and ``sys.stdin``
+    for the response.
+    """
+    import select
+    import termios
+    import tty
+
+    out = stream if stream is not None else sys.stdout
+    inp = sys.stdin
+    try:
+        if not (out.isatty() and inp.isatty()):
+            return None
+    except (AttributeError, ValueError):
+        return None
+
+    try:
+        fd = inp.fileno()
+        original = termios.tcgetattr(fd)
+    except (termios.error, AttributeError, ValueError, OSError):
+        return None
+
+    try:
+        tty.setcbreak(fd)
+        out.write("\x1b[16t")
+        out.flush()
+
+        # Read the response with a timeout. Expected format:
+        #   ESC [ 6 ; <h> ; <w> t
+        # where h and w are cell pixel dimensions.
+        deadline = time.monotonic() + timeout_s
+        buffer = b""
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(fd, 64)
+            except OSError:
+                return None
+            if not chunk:
+                continue
+            buffer += chunk
+            if b"t" in buffer:
+                break
+        else:
+            return None
+
+        # Find the response signature: b'\x1b[6;<h>;<w>t'
+        start = buffer.find(b"\x1b[6;")
+        if start < 0:
+            return None
+        end = buffer.find(b"t", start)
+        if end < 0:
+            return None
+        payload = buffer[start + len("\x1b[6;") : end].decode(
+            "ascii", errors="ignore"
+        )
+        parts = payload.split(";")
+        if len(parts) != 2:
+            return None
+        cell_height_px = int(parts[0])
+        cell_width_px = int(parts[1])
+        if cell_width_px <= 0:
+            return None
+        return cell_height_px / cell_width_px
+    except (ValueError, OSError, termios.error):
+        return None
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, original)
+        except (termios.error, OSError):
+            pass
 
 
 def _supports_kitty_graphics(term_program: str | None) -> bool:
@@ -1049,42 +1151,54 @@ class FocusPreviewKittyImage:
     carry the PNG data. The transmit (`_build_kitty_transmit_chunks`)
     must be done out-of-band by the caller — typically directly to
     stdout from ``PaintDryDisplay.on_focus_preview`` on the narrator
-    event thread, so WezTerm starts decoding in the background before
-    Rich's next refresh fires. By the time Rich calls this
-    renderable's ``__rich_console__``, the image is cached under
-    ``image_id`` and the place-by-ID command is all that's needed.
+    event thread, so WezTerm starts decoding in the background
+    before Rich's next refresh fires.
 
-    This is the key to flicker-free rendering: the place command is
-    ~30 bytes and does not cause the terminal to re-parse any PNG
-    data, so emitting it 24 times per second costs essentially
-    nothing. Compare with :class:`FocusPreviewInlineImage` which
-    re-emits the full base64 PNG on every frame and causes visible
-    strobing as WezTerm re-decodes the image.
+    Cell-box sizing is done at RENDER TIME, not at construction.
+    The renderable stores the image's pixel dimensions and the
+    terminal's cell aspect ratio; on every ``__rich_console__``
+    call, it reads the current ``ConsoleOptions.max_width`` and
+    recomputes the cell box to fit. This makes the preview
+    resize-safe — narrowing or widening the terminal window
+    causes the next render to produce a box that fits the new
+    width automatically, because Rich passes the updated
+    console options through on every refresh.
 
-    Each new focus_preview event constructs a fresh
-    :class:`FocusPreviewKittyImage` with a fresh transmit. The
-    image_id is reused across events (see ``_KITTY_IMAGE_ID``), so
-    each transmit overwrites the previous cached image rather than
-    accumulating — bounded memory footprint on the terminal side.
+    The image_id is reused across focus_preview events (see
+    ``_KITTY_IMAGE_ID``), so each transmit overwrites the
+    previous cached image rather than accumulating — bounded
+    memory footprint on the terminal side.
     """
 
     def __init__(
         self,
         *,
         image_id: int,
-        cell_width: int,
-        cell_height: int,
+        image_pixel_width: int,
+        image_pixel_height: int,
+        terminal_cell_aspect: float,
         title: str = "",
     ) -> None:
         self._image_id = image_id
-        self._cell_width = cell_width
-        self._cell_height = cell_height
+        self._image_pixel_width = image_pixel_width
+        self._image_pixel_height = image_pixel_height
+        self._terminal_cell_aspect = terminal_cell_aspect
         self._title = title
-        self._place_sequence = _build_kitty_place_sequence(
-            image_id,
-            cell_width=cell_width,
-            cell_height=cell_height,
+
+    def _compute_box(self, available_width: int) -> tuple[int, int]:
+        """Compute (cell_width, cell_height) for the image at the
+        given available width budget. Leaves 2 cells for the
+        border so the usable interior is ``available_width - 2``.
+        """
+        inner_budget = max(1, available_width - 2)
+        cw, ch = _compute_inline_image_cell_dimensions(
+            self._image_pixel_width,
+            self._image_pixel_height,
+            max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+            max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
+            terminal_cell_aspect=self._terminal_cell_aspect,
         )
+        return cw, ch
 
     def __rich_console__(
         self,
@@ -1092,8 +1206,15 @@ class FocusPreviewKittyImage:
         options: ConsoleOptions,
     ) -> RenderResult:
         border = Style.parse("#3d4458")
-        inner_width = self._cell_width
+        cell_width, cell_height = self._compute_box(options.max_width)
+        inner_width = cell_width
         total_width = inner_width + 2
+
+        place_sequence = _build_kitty_place_sequence(
+            self._image_id,
+            cell_width=cell_width,
+            cell_height=cell_height,
+        )
 
         # Top border with embedded title.
         title_text = self._title
@@ -1111,27 +1232,17 @@ class FocusPreviewKittyImage:
         yield Segment(top_border, border)
         yield Segment.line()
 
-        # Cursor-forward escape advances past the image cells on
-        # non-image rows so Rich doesn't write spaces over the
-        # terminal-painted image pixels (same pattern as
-        # FocusPreviewInlineImage).
         forward_escape = f"\x1b[{inner_width}C"
 
         # First interior row: emit the Kitty place-by-ID command.
-        # This is tiny — ~30 bytes — and references the cached
-        # image without re-uploading. Rich Live clears the cells
-        # between frames via ERASE_IN_LINE, so we re-place on
-        # every render. The place command does NOT cause the
-        # terminal to re-parse the PNG, so this is cheap and
-        # flicker-free.
         yield Segment("│", border)
-        yield Segment(self._place_sequence, None, [(ControlType.BELL,)])
+        yield Segment(place_sequence, None, [(ControlType.BELL,)])
         yield Segment(forward_escape, None, [(ControlType.BELL,)])
         yield Segment("│", border)
         yield Segment.line()
 
         # Remaining interior rows: border + cursor-forward + border.
-        for _ in range(self._cell_height - 1):
+        for _ in range(cell_height - 1):
             yield Segment("│", border)
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
             yield Segment("│", border)
@@ -2051,6 +2162,19 @@ class PaintDryDisplay:
         self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
         self._kitty_graphics_supported: bool = _supports_kitty_graphics(
             os.environ.get("TERM_PROGRAM")
+        )
+        # Query the terminal for its real cell pixel dimensions once
+        # at init. Used by the Kitty renderer to compute correct
+        # cell boxes for images — hardcoding this is brittle across
+        # different fonts, terminal window sizes, and HiDPI settings,
+        # and a bad value produces visible letterbox. If the query
+        # fails (not a tty, terminal doesn't support CSI 16t,
+        # timeout), fall back to a sane default constant.
+        queried_aspect = _query_terminal_cell_aspect()
+        self._terminal_cell_aspect: float = (
+            queried_aspect
+            if queried_aspect is not None
+            else _DEFAULT_TERMINAL_CELL_ASPECT
         )
         # When True, render() shows a "press Enter to close" footer and
         # the final frame stays static while waiting for Enter.
@@ -3089,28 +3213,18 @@ class PaintDryDisplay:
         # narrator event thread, so WezTerm starts decoding the
         # image in the background before Rich's next refresh fires.
         # Then build a FocusPreviewKittyImage renderable that
-        # yields only the tiny place-by-ID command on each render.
-        # The place command is ~30 bytes and does not cause the
-        # terminal to re-parse any PNG data, so it's cheap and
-        # flicker-free.
+        # computes its cell box at RENDER time from the current
+        # console dimensions — so the image resizes correctly
+        # across terminal window resizes without requiring a
+        # fresh focus_preview event.
         if self._kitty_graphics_supported:
             try:
                 pix = fitz.Pixmap(png_bytes)
-                cell_width, cell_height = _compute_inline_image_cell_dimensions(
-                    pix.width,
-                    pix.height,
-                    max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
-                    max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
-                )
                 title = f"focus preview · {label}" if label else "focus preview"
                 # Transmit the PNG chunks directly to the console
-                # output stream. This bypasses Rich entirely and
-                # runs on the event thread, so the decode has a
-                # head start on the next Rich refresh. The
-                # transmit uses no action key (so the image is
-                # cached without being displayed), which means
-                # the cursor is not moved and Rich's cursor
-                # tracking stays correct.
+                # output stream. Bypasses Rich entirely and runs
+                # on the event thread, so the decode has a head
+                # start on the next Rich refresh.
                 transmit_stream = (
                     self._console.file if self._console is not None else sys.stdout
                 )
@@ -3120,8 +3234,9 @@ class PaintDryDisplay:
                 transmit_stream.flush()
                 self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
                     image_id=_KITTY_IMAGE_ID,
-                    cell_width=cell_width,
-                    cell_height=cell_height,
+                    image_pixel_width=pix.width,
+                    image_pixel_height=pix.height,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
                     title=title,
                 )
                 # No need to build the iTerm2 or half-block paths —
@@ -3134,8 +3249,7 @@ class PaintDryDisplay:
                 # If anything in the Kitty path fails (fitz quirk,
                 # stdout write error, etc.), fall through to the
                 # iTerm2 OSC 1337 path so the operator still sees
-                # something. Caller can still see flicker in that
-                # case but at least the image is visible.
+                # something.
                 self.focus_preview_kitty_renderable = None
 
         # iTerm2 OSC 1337 path: fallback for terminals that don't
@@ -3150,6 +3264,7 @@ class PaintDryDisplay:
                     pix.height,
                     max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
                     max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
                 )
                 title = f"focus preview · {label}" if label else "focus preview"
                 self.focus_preview_inline_renderable = FocusPreviewInlineImage(

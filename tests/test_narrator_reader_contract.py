@@ -1068,7 +1068,11 @@ class NarratorReaderContract(unittest.TestCase):
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
-            image_id=1, cell_width=60, cell_height=18, title="test"
+            image_id=1,
+            image_pixel_width=1600,
+            image_pixel_height=900,
+            terminal_cell_aspect=2.1,
+            title="test",
         )
         console = Console(
             width=120,
@@ -1088,6 +1092,71 @@ class NarratorReaderContract(unittest.TestCase):
         # flicker bug we're trying to avoid.
         self.assertNotIn("f=100", output)
 
+    def test_focus_preview_kitty_image_shrinks_on_narrow_console(self):
+        # The cell box for the image must be computed at RENDER time
+        # from the current console dimensions, not cached at
+        # construction. A narrow terminal width must shrink the box
+        # to fit inside the available budget so the image doesn't
+        # overflow the terminal width. This test pins the
+        # resize-at-render invariant — if construction caches a box
+        # regardless of later resizes, this test fails.
+        from rich.console import Console
+        import re
+
+        # Wide image (3:1) whose natural cell width at the default
+        # max would be well over 80 cells.
+        renderable = FocusPreviewKittyImage(
+            image_id=1,
+            image_pixel_width=3000,
+            image_pixel_height=1000,
+            terminal_cell_aspect=2.1,
+            title="test",
+        )
+
+        def render_at_width(width: int) -> str:
+            console = Console(
+                width=width,
+                record=True,
+                color_system="truecolor",
+                force_terminal=True,
+            )
+            with console.capture() as capture:
+                console.print(renderable)
+            return capture.get()
+
+        def extract_cr(output: str) -> tuple[int, int]:
+            m = re.search(r"a=p,i=\d+,c=(\d+),r=(\d+)", output)
+            if m is None:
+                raise AssertionError(
+                    f"no place command found in output: {output[:200]!r}"
+                )
+            return int(m.group(1)), int(m.group(2))
+
+        narrow = render_at_width(50)
+        c_narrow, r_narrow = extract_cr(narrow)
+        self.assertLessEqual(
+            c_narrow,
+            48,
+            "narrow render must shrink c to fit inside the console budget",
+        )
+
+        wide = render_at_width(200)
+        c_wide, r_wide = extract_cr(wide)
+        self.assertGreater(
+            c_wide,
+            c_narrow,
+            "wider console must let the box grow larger than the narrow case",
+        )
+
+        ratio_narrow = c_narrow / r_narrow
+        ratio_wide = c_wide / r_wide
+        self.assertAlmostEqual(
+            ratio_narrow,
+            ratio_wide,
+            delta=1.0,
+            msg="resizing must preserve image aspect ratio",
+        )
+
     def test_focus_preview_kitty_image_emits_place_every_render(self):
         # Rich Live clears the image region between frames, so we
         # must re-emit the place command on every render. The place
@@ -1096,7 +1165,11 @@ class NarratorReaderContract(unittest.TestCase):
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
-            image_id=1, cell_width=60, cell_height=18, title="test"
+            image_id=1,
+            image_pixel_width=1600,
+            image_pixel_height=900,
+            terminal_cell_aspect=2.1,
+            title="test",
         )
         console = Console(
             width=120,
