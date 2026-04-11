@@ -1194,6 +1194,7 @@ class PaintDryDisplay:
         self._session_ended_at: float | None = None
         self._session_started_at: float | None = None
         self._turn_started_at: float | None = None
+        self._scrollback_archived_headers: set[str] = set()
 
     def __rich__(self) -> Group:
         return self.render()
@@ -1346,17 +1347,7 @@ class PaintDryDisplay:
 
         # Forward-iterate, grouping at header boundaries, tracking
         # original deque indices.
-        groups: list[list[tuple[tuple, int]]] = []
-        current_group: list[tuple[tuple, int]] = []
-        for idx, entry in enumerate(history_list):
-            if entry[0] == "header":
-                if current_group:
-                    groups.append(current_group)
-                current_group = [(entry, idx)]
-            else:
-                current_group.append((entry, idx))
-        if current_group:
-            groups.append(current_group)
+        groups = self._history_groups_with_indices(history_list)
 
         # Newest item on top. Within each group, keep the header first,
         # move the verdict/topic line directly underneath it for quick
@@ -1367,19 +1358,7 @@ class PaintDryDisplay:
         # Flat list of (entry, deque_idx) in display order (top-down)
         flat: list[tuple[tuple, int]] = []
         for group in groups:
-            header = [pair for pair in group if pair[0][0] == "header"]
-            lines = [pair for pair in group if pair[0][0] == "line"]
-            rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
-            rest.sort(
-                key=lambda pair: {
-                    "topic": 0,
-                    **_LEGIBILITY_STRUCTURED_ROW_ORDER,
-                    "checkpoint": 7,
-                }.get(pair[0][0], 2)
-            )
-            flat.extend(header)
-            flat.extend(rest)
-            flat.extend(reversed(lines))
+            flat.extend(self._ordered_group_pairs(group))
 
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget
@@ -1433,6 +1412,76 @@ class PaintDryDisplay:
                     group_depth = max(0, group_depth + 1)
                 display.append((entry, idx == most_recent_idx, group_depth))
         return display
+
+    @staticmethod
+    def _history_groups_with_indices(
+        history_list: list[tuple[str, str, int | None]],
+    ) -> list[list[tuple[tuple[str, str, int | None], int]]]:
+        groups: list[list[tuple[tuple[str, str, int | None], int]]] = []
+        current_group: list[tuple[tuple[str, str, int | None], int]] = []
+        for idx, entry in enumerate(history_list):
+            if entry[0] == "header":
+                if current_group:
+                    groups.append(current_group)
+                current_group = [(entry, idx)]
+            else:
+                current_group.append((entry, idx))
+        if current_group:
+            groups.append(current_group)
+        return groups
+
+    @staticmethod
+    def _ordered_group_pairs(
+        group: list[tuple[tuple[str, str, int | None], int]],
+    ) -> list[tuple[tuple[str, str, int | None], int]]:
+        header = [pair for pair in group if pair[0][0] == "header"]
+        lines = [pair for pair in group if pair[0][0] == "line"]
+        rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
+        rest.sort(
+            key=lambda pair: {
+                "topic": 0,
+                **_LEGIBILITY_STRUCTURED_ROW_ORDER,
+                "checkpoint": 7,
+            }.get(pair[0][0], 2)
+        )
+        return [*header, *rest, *reversed(lines)]
+
+    def take_scrollback_snapshot(self) -> Text | None:
+        history_list = list(self.history)
+        if not history_list:
+            return None
+        groups = self._history_groups_with_indices(history_list)
+        if not groups:
+            return None
+        latest_group = groups[-1]
+        header_entry = next((entry for entry, _idx in latest_group if entry[0] == "header"), None)
+        if header_entry is None:
+            return None
+        header_text = header_entry[1]
+        if header_text in self._scrollback_archived_headers:
+            return None
+
+        ordered = self._ordered_group_pairs(latest_group)
+        snapshot = Text()
+        for idx, (entry, _deque_idx) in enumerate(ordered):
+            kind, text, _parity = entry
+            if kind == "header":
+                line = text
+            elif kind == "topic":
+                line = f"  · {text}"
+            elif kind in _LEGIBILITY_STRUCTURED_ROW_LABELS:
+                mark = "  ! " if kind == "review_marker" else "  ≡ "
+                line = f"{mark}{_LEGIBILITY_STRUCTURED_ROW_LABELS[kind]}: {text}"
+            elif kind == "checkpoint":
+                line = f"  ≈ {text}"
+            else:
+                line = f"  {text}"
+            snapshot.append(line)
+            if idx < len(ordered) - 1:
+                snapshot.append("\n")
+
+        self._scrollback_archived_headers.add(header_text)
+        return snapshot
 
     def _compute_wrap_width(self) -> int | None:
         """Approximate visual width at which the history panel wraps.
@@ -2382,6 +2431,10 @@ def main() -> int:
 
                     msg_type = msg.get("type")
                     if msg_type == "header":
+                        snapshot = display.take_scrollback_snapshot()
+                        if snapshot is not None:
+                            live.console.print(snapshot)
+                            live.console.print()
                         display.on_header(msg.get("text", ""))
                     elif msg_type == "session_meta":
                         display.on_session_meta(
@@ -2430,6 +2483,10 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
+                        snapshot = display.take_scrollback_snapshot()
+                        if snapshot is not None:
+                            live.console.print(snapshot)
+                            live.console.print()
                         display.session_ended = True
                         display._session_ended_at = time.monotonic()
                         live.update(display.render(), refresh=True)
