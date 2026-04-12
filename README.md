@@ -196,6 +196,12 @@ Current implementation status on this ingest surface:
   instead of silently picking a canonical scan
 - unreadable scans remain tracked `unmatched` artifacts with explicit failure
   reasons
+- a thin prototype demo runner is implemented via `auto_grader.mc_opencv_demo`
+  plus `scripts/run_mc_opencv_demo.py`; it takes one known artifact JSON plus
+  one directory of scans, runs the landed ingest surface, writes a sanitized
+  `ingest_result.json`, writes per-scan normalized page images for matched
+  pages, and emits a small human-readable summary so the lane can be smoked end
+  to end without inventing a second persistence format
 
 ### 5. Grading (Bubbles -> Responses -> Score)
 
