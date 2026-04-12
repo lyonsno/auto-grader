@@ -3,9 +3,11 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from auto_grader.eval_harness import EvalItem, FocusRegion, Prediction
 from auto_grader.thinking_narrator import ThinkingNarrator
@@ -607,6 +609,66 @@ class SmokeVlmContract(unittest.TestCase):
             )
             self.assertIn("correction_reason", record)
             self.assertEqual(record["correction_reason"], "")
+
+    def test_main_persists_fatal_error_into_run_dir(self) -> None:
+        module = _load_smoke_vlm()
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-10b",
+            answer_type="numeric",
+            page=1,
+            professor_score=0.0,
+            max_points=1.0,
+            professor_mark="x",
+            student_answer="mock",
+            notes="mock",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "run"
+            argv = [
+                "smoke_vlm.py",
+                "--model",
+                "Harmonic-27B-MLX-16bit",
+                "--pick",
+                "15-blue:fr-10b",
+                "--run-dir",
+                str(run_dir),
+            ]
+            stderr = io.StringIO()
+            with mock.patch.object(module, "load_ground_truth", return_value=[item]), mock.patch.object(
+                module,
+                "_load_template_document",
+                return_value=None,
+            ), mock.patch.object(
+                module,
+                "load_focus_regions",
+                return_value={},
+            ), mock.patch.object(
+                module,
+                "grade_all_items",
+                side_effect=TimeoutError(
+                    "VLM request failed after 3 attempts for 15-blue/fr-10b: "
+                    "HTTP Error 500: Internal Server Error — server body: harmonic exploded"
+                ),
+            ), mock.patch.object(
+                module.sys,
+                "argv",
+                argv,
+            ), contextlib.redirect_stderr(stderr):
+                exit_code = module.main()
+
+            self.assertEqual(
+                exit_code,
+                1,
+                "fatal first-item smoke failures should return a non-zero code instead of vanishing into the narrator teardown path",
+            )
+            fatal_path = run_dir / "fatal_error.txt"
+            self.assertTrue(fatal_path.is_file())
+            fatal_text = fatal_path.read_text()
+            self.assertIn("harmonic exploded", fatal_text)
+            self.assertIn("grade_all_items", fatal_text)
+            self.assertIn("fatal_error.txt", stderr.getvalue())
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from contextlib import nullcontext
@@ -544,86 +545,96 @@ def main():
     narrator_stats = None
     predictions: list = []
     interrupted = False
-    with sink_cm as sink, pred_writer_cm as pred_writer:
-        # Wrap the progress callback so each completed prediction is
-        # written to predictions.jsonl as it lands. Crash-safe: an
-        # interrupt mid-loop still leaves the partial file usable.
-        # Per-item failures are tracked on the writer (not raised) so
-        # one bad item doesn't kill the whole grading run, but the
-        # final pred_writer.failures count is checked after the
-        # with-block and surfaced as a loud banner + non-zero exit.
-        def _on_item(i, total, item, pred):
-            pred_writer.write_one(item, pred)
-            _progress(i, total, item, pred)
+    try:
+        with sink_cm as sink, pred_writer_cm as pred_writer:
+            # Wrap the progress callback so each completed prediction is
+            # written to predictions.jsonl as it lands. Crash-safe: an
+            # interrupt mid-loop still leaves the partial file usable.
+            # Per-item failures are tracked on the writer (not raised) so
+            # one bad item doesn't kill the whole grading run, but the
+            # final pred_writer.failures count is checked after the
+            # with-block and surfaced as a loud banner + non-zero exit.
+            def _on_item(i, total, item, pred):
+                pred_writer.write_one(item, pred)
+                _progress(i, total, item, pred)
 
-        narrator = (
-            ThinkingNarrator(
-                sink,
-                base_url=args.narrator_url,
-                model=args.narrator_model,
-                wrap_up_base_url=args.wrap_up_url or args.base_url,
-                wrap_up_model=args.wrap_up_model or args.model,
-            )
-            if narrator_enabled
-            else None
-        )
-        focus_preview_callback = None
-        if narrator_enabled and sink is not None:
-            def focus_preview_callback(*, item, page_image, template_question=None):
-                _emit_focus_preview(
+            narrator = (
+                ThinkingNarrator(
                     sink,
-                    item=item,
-                    page_image=page_image,
-                    template_document=template_document,
-                    focus_region_overrides=focus_region_overrides,
+                    base_url=args.narrator_url,
+                    model=args.narrator_model,
+                    wrap_up_base_url=args.wrap_up_url or args.base_url,
+                    wrap_up_model=args.wrap_up_model or args.model,
                 )
-        try:
-            predictions = grade_all_items(
-                subset, _SCANS_DIR, config,
-                template_path=_TEMPLATE,
-                progress_callback=_on_item,
-                narrator=narrator,
-                sink=sink,
-                focus_preview_callback=focus_preview_callback,
+                if narrator_enabled
+                else None
             )
-        except KeyboardInterrupt:
-            interrupted = True
-            print(
-                f"\n\n[interrupted] Caught Ctrl-C — sent close to OMLX, "
-                f"completed {len(predictions)} of {len(subset)} items.",
-                file=sys.stderr,
-            )
-
-        # End-of-run wrap-up commentary from bonsai. Only fire if we have
-        # at least one prediction and we weren't interrupted during
-        # grading. Wrap-up itself is also interruptible via Ctrl-C —
-        # if the user bails out of the wrap-up call, we skip it and
-        # still print the eval report and tear down the sink cleanly.
-        elapsed_for_wrap = time.time() - t0
-        if (
-            narrator is not None
-            and predictions
-            and not interrupted
-        ):
+            focus_preview_callback = None
+            if narrator_enabled and sink is not None:
+                def focus_preview_callback(*, item, page_image, template_question=None):
+                    _emit_focus_preview(
+                        sink,
+                        item=item,
+                        page_image=page_image,
+                        template_document=template_document,
+                        focus_region_overrides=focus_region_overrides,
+                    )
             try:
-                wrap_subset = subset[: len(predictions)]
-                wrap_report = score_predictions(wrap_subset, predictions)
-                narrator.wrap_up(
-                    wrap_report,
-                    model_name=config.model,
-                    item_count=len(predictions),
-                    elapsed_seconds=elapsed_for_wrap,
+                predictions = grade_all_items(
+                    subset, _SCANS_DIR, config,
+                    template_path=_TEMPLATE,
+                    progress_callback=_on_item,
+                    narrator=narrator,
+                    sink=sink,
+                    focus_preview_callback=focus_preview_callback,
                 )
             except KeyboardInterrupt:
+                interrupted = True
                 print(
-                    "\n[wrap_up interrupted] skipped post-game commentary.",
+                    f"\n\n[interrupted] Caught Ctrl-C — sent close to OMLX, "
+                    f"completed {len(predictions)} of {len(subset)} items.",
                     file=sys.stderr,
                 )
-            except Exception as e:
-                print(f"[wrap_up failed] {e}", file=sys.stderr)
 
-        if narrator is not None:
-            narrator_stats = narrator.stats()
+            # End-of-run wrap-up commentary from bonsai. Only fire if we have
+            # at least one prediction and we weren't interrupted during
+            # grading. Wrap-up itself is also interruptible via Ctrl-C —
+            # if the user bails out of the wrap-up call, we skip it and
+            # still print the eval report and tear down the sink cleanly.
+            elapsed_for_wrap = time.time() - t0
+            if (
+                narrator is not None
+                and predictions
+                and not interrupted
+            ):
+                try:
+                    wrap_subset = subset[: len(predictions)]
+                    wrap_report = score_predictions(wrap_subset, predictions)
+                    narrator.wrap_up(
+                        wrap_report,
+                        model_name=config.model,
+                        item_count=len(predictions),
+                        elapsed_seconds=elapsed_for_wrap,
+                    )
+                except KeyboardInterrupt:
+                    print(
+                        "\n[wrap_up interrupted] skipped post-game commentary.",
+                        file=sys.stderr,
+                    )
+                except Exception as e:
+                    print(f"[wrap_up failed] {e}", file=sys.stderr)
+
+            if narrator is not None:
+                narrator_stats = narrator.stats()
+    except Exception:
+        fatal_path = run_dir / "fatal_error.txt"
+        fatal_path.write_text(traceback.format_exc())
+        print(
+            f"\n[fatal] Smoke run aborted before completion.\n"
+            f"  file: {fatal_path}\n",
+            file=sys.stderr,
+        )
+        return 1
     elapsed = time.time() - t0
 
     if interrupted and not predictions:
