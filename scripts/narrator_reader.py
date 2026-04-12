@@ -917,84 +917,24 @@ class PaintDryDisplay:
     def _flat_display_entries(
         self,
     ) -> list[tuple[tuple[str, str, int | None], bool]]:
-        """Return the priority-filtered flat list of history entries in
-        natural chronological (oldest -> newest) order, with a boolean
+        """Return the full history deque as a flat list in natural
+        chronological (oldest -> newest) order, with a boolean
         marking the most-recently-committed entry.
 
-        Applies the essentials-first priority rule: headers and topics
-        for every item always survive, and optional narrator lines
-        are kept newest-first only until the visible-row budget
-        (`_PRIORITY_FILL_ENTRY_BUDGET`) is exhausted. This preserves the
-        legacy live-edge trim semantics — a long
-        chatty item cannot push older items' headers/topics off the
-        pane.
-
-        Trade-off: narrator lines dropped here are also not available
-        to scroll back to. That is the slice-2 compromise: the
-        viewport wiring lands without changing live-edge behavior,
-        and a follow-on can promote priority awareness INTO the
-        viewport so scrolling up reveals hidden narrator lines too.
+        No priority filtering is applied here — the viewport sees
+        every entry the deque holds (capped at `_MAX_HISTORY_LINES`
+        by the deque's own maxlen). Windowing to the visible budget
+        is the viewport's responsibility, which means scrolling up
+        can reach the oldest surviving entry, not just the newest N.
         """
         history_list = list(self.history)
         if not history_list:
             return []
         most_recent_idx = len(history_list) - 1
-
-        # Group into items so priority fill can reason in item order.
-        groups: list[list[tuple[tuple, int]]] = []
-        current_group: list[tuple[tuple, int]] = []
-        for idx, entry in enumerate(history_list):
-            if entry[0] == "header":
-                if current_group:
-                    groups.append(current_group)
-                current_group = [(entry, idx)]
-            else:
-                current_group.append((entry, idx))
-        if current_group:
-            groups.append(current_group)
-
-        # Walk groups newest-first so "keep essentials newest-first
-        # under budget" is deterministic, then restore natural order
-        # before returning.
-        groups_newest_first = list(reversed(groups))
-        flat_newest_first: list[tuple[tuple, int]] = []
-        for g in groups_newest_first:
-            flat_newest_first.extend(g)
-
-        budget = _PRIORITY_FILL_ENTRY_BUDGET
-        keep_positions: set[int] = set()
-
-        # Pass 1: essentials (headers + topics) in newest-first order.
-        for pos, (entry, _idx) in enumerate(flat_newest_first):
-            if entry[0] in ("header", "topic"):
-                if len(keep_positions) >= budget:
-                    break
-                keep_positions.add(pos)
-
-        # Pass 2: narrator lines, sorted by recency, filling what's
-        # left of the budget.
-        optionals = [
-            (pos, entry, idx)
-            for pos, (entry, idx) in enumerate(flat_newest_first)
-            if entry[0] not in ("header", "topic")
+        return [
+            (entry, idx == most_recent_idx)
+            for idx, entry in enumerate(history_list)
         ]
-        optionals.sort(key=lambda t: -t[2])  # newest first
-        for pos, _entry, _idx in optionals:
-            if len(keep_positions) >= budget:
-                break
-            keep_positions.add(pos)
-
-        # Rebuild in natural (chronological) deque order so the
-        # viewport sees entries oldest -> newest and can anchor its
-        # "newest visual row" correctly.
-        kept_by_idx = {
-            flat_newest_first[pos][1]: flat_newest_first[pos][0]
-            for pos in keep_positions
-        }
-        out: list[tuple[tuple[str, str, int | None], bool]] = []
-        for idx in sorted(kept_by_idx):
-            out.append((kept_by_idx[idx], idx == most_recent_idx))
-        return out
 
     def _resolve_wrap_width(self) -> int:
         wrap = self._compute_wrap_width()
@@ -1075,9 +1015,18 @@ class PaintDryDisplay:
         """
         with self._viewport_lock:
             vp = self._sync_viewport()
+            at_live_edge = vp.at_live_edge
             visible = vp.visible_entries()
         if not visible:
             return []
+
+        # At the live edge, apply essentials-first priority so a
+        # chatty item's 40 narrator lines can't push older items'
+        # headers/topics off the pane. When scrolled up, skip the
+        # filter — the operator explicitly asked to see earlier
+        # content and all entries should be reachable.
+        if at_live_edge:
+            visible = self._priority_filter(visible)
 
         # Identify the most-recently-committed entry by matching
         # against the last element of `self.history` (if any). This
@@ -1107,6 +1056,32 @@ class PaintDryDisplay:
                 is_recent = entry is most_recent_entry
                 out.append((entry, is_recent))
         return out
+
+    @staticmethod
+    def _priority_filter(
+        entries: list[tuple[str, str, int | None]],
+    ) -> list[tuple[str, str, int | None]]:
+        """Essentials-first priority filter for the live-edge window.
+
+        Given a list of entries in chronological order, keep all
+        headers and topics first, then fill the remaining budget
+        with narrator lines newest-first. This prevents a chatty
+        item from pushing older items' structural anchors off screen.
+        Only applied at the live edge — scrolled-up views bypass this.
+        """
+        budget = _PRIORITY_FILL_ENTRY_BUDGET
+        essentials = [e for e in entries if e[0] in ("header", "topic")]
+        optionals = [e for e in entries if e[0] not in ("header", "topic")]
+        # If essentials alone exceed the budget, keep newest-first.
+        if len(essentials) > budget:
+            essentials = essentials[-budget:]
+        remaining = budget - len(essentials)
+        # Newest narrator lines first.
+        kept_optionals = optionals[-remaining:] if remaining > 0 else []
+        # Rebuild in original order.
+        essential_set = set(id(e) for e in essentials)
+        optional_set = set(id(e) for e in kept_optionals)
+        return [e for e in entries if id(e) in essential_set or id(e) in optional_set]
 
     def scroll_history_up(self, rows: int = 1) -> None:
         with self._viewport_lock:
