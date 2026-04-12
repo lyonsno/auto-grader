@@ -944,15 +944,33 @@ def _build_kitty_place_sequence(
 
     Format::
 
-        ESC _G a=p,i=<id>,c=<W>,r=<H> ESC \\
+        ESC _G a=p,i=<id>,c=<W>,r=<H>,C=1 ESC \\
+
+    The ``C=1`` parameter is LOAD-BEARING. Without it, Kitty's default
+    cursor-movement policy after `a=p` is "move the cursor right by
+    ``c`` cells AND down by ``r`` rows." Since Rich's layout engine
+    has no idea that our control-marked Segment containing the place
+    sequence causes cursor movement in the terminal, the rest of
+    Rich's frame output (right border, subsequent border rows, the
+    bottom border) lands at completely wrong physical coordinates:
+    Rich thinks it's writing "row 2" of the frame, but the cursor is
+    actually at physical row ``1 + r`` + column ``1 + c``, so row 2's
+    left border appears 18 rows below where we want it and the
+    "letterbox" you see below the image is actually Rich's row 2..18
+    border segments painted into the empty area below the image.
+
+    With ``C=1``, the place command paints the image but leaves the
+    cursor where it was before, so subsequent writes land at the
+    expected text-cell coordinates and Rich's frame lines up with
+    the image the way we expect.
 
     No payload — this is a control-only sequence, so the body after
     ``ESC_G`` is just the comma-separated control keys followed
-    directly by the terminator. The terminal renders the cached
-    image (uploaded earlier via :func:`_build_kitty_transmit_chunks`)
-    into the cell region starting at the current cursor position.
+    directly by the terminator.
     """
-    return f"\x1b_Ga=p,i={image_id},c={cell_width},r={cell_height}\x1b\\"
+    return (
+        f"\x1b_Ga=p,i={image_id},c={cell_width},r={cell_height},C=1\x1b\\"
+    )
 
 
 def _query_terminal_cell_aspect(
