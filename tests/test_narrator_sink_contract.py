@@ -93,6 +93,25 @@ class TestWezTermResolution(unittest.TestCase):
                 ):
                     sink._spawn_terminal_window(fifo)
 
+    def test_spawn_runner_captures_reader_stderr_for_crash_diagnosis(self):
+        sink = NarratorSink()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fifo = Path(tmpdir) / "narrator.fifo"
+            fifo.touch()
+
+            with mock.patch.object(
+                sink,
+                "_resolve_wezterm_executable",
+                return_value="/Applications/WezTerm.app/Contents/MacOS/wezterm",
+            ), mock.patch("subprocess.run"):
+                sink._spawn_terminal_window(fifo)
+
+            runner = fifo.parent / "run.sh"
+            script = runner.read_text()
+
+        self.assertIn("reader.stderr", script)
+        self.assertIn("Press Enter to close", script)
+
     def test_start_raises_if_reader_never_connects_to_fifo(self):
         sink = NarratorSink(SinkConfig(spawn_terminal=True))
         with tempfile.TemporaryDirectory() as tmpdir:

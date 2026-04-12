@@ -447,10 +447,27 @@ class NarratorSink:
             )
 
         runner = fifo.parent / "run.sh"
+        reader_stdout = fifo.parent / "reader.stdout"
+        reader_stderr = fifo.parent / "reader.stderr"
         runner.write_text(
             "#!/bin/bash\n"
+            "set -u\n"
             f"cd {project_root}\n"
-            f"exec {project_python} {reader_script} {fifo}\n"
+            f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
+            f">\"{reader_stdout}\" 2>\"{reader_stderr}\"\n"
+            "status=$?\n"
+            "if [ \"$status\" -ne 0 ]; then\n"
+            "  echo \"Project Paint Dry reader exited with status $status\"\n"
+            f"  echo \"stderr log: {reader_stderr}\"\n"
+            "  if [ -s "
+            f"\"{reader_stderr}\""
+            " ]; then\n"
+            f"    tail -n 80 \"{reader_stderr}\"\n"
+            "  fi\n"
+            "  echo \"Press Enter to close\"\n"
+            "  read -r _\n"
+            "fi\n"
+            "exit \"$status\"\n"
         )
         runner.chmod(0o755)
         self._owns_tmpdir = fifo.parent
