@@ -7,21 +7,22 @@ import fitz
 from auto_grader.eval_harness import FocusRegion
 
 
-#: Sepia tone-map target color. Source pixels are interpolated
-#: toward this warm parchment by _SEPIA_MIX, which softens the
-#: harsh paper-white contrast against the dark terminal background.
-_SEPIA_TARGET_RGB = (215, 180, 130)
+#: Warm-tone target color — bone from the narrator's moss/bone
+#: palette. Source pixels are interpolated toward this warm off-white
+#: by _WARM_MIX, which softens the harsh paper-white contrast
+#: against the dark terminal background.
+_WARM_TARGET_RGB = (220, 205, 180)
 
-#: How strongly the sepia tone-map pulls source pixels toward the
-#: warm target. 0.0 = no tint (raw scan), 1.0 = fully tinted.
-#: ~0.30 is visible on white paper without distorting ink contrast.
-_SEPIA_MIX = 0.30
+#: How strongly the warm tone-map pulls source pixels toward the
+#: target. 0.0 = no tint (raw scan), 1.0 = fully tinted.
+#: ~0.25 is visible on white paper without distorting ink contrast.
+_WARM_MIX = 0.25
 
 
 def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
     """Render a terminal-friendly preview crop for a focus region.
 
-    Applies a sepia warm-tone to every source pixel. No vignette,
+    Applies a bone warm-tone to every source pixel. No vignette,
     no corner rounding, no outline ring — edge treatment is handled
     entirely by the textured-band renderer in narrator_reader.
     """
@@ -33,10 +34,10 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
             offset = (y * crop_width + x) * 3
             for channel in range(3):
                 src_value = crop_rgb[offset + channel]
-                # Lerp source toward warm sepia target.
+                # Lerp source toward warm bone target.
                 value = (
-                    src_value * (1.0 - _SEPIA_MIX)
-                    + _SEPIA_TARGET_RGB[channel] * _SEPIA_MIX
+                    src_value * (1.0 - _WARM_MIX)
+                    + _WARM_TARGET_RGB[channel] * _WARM_MIX
                 )
                 out[offset + channel] = int(round(value))
 
