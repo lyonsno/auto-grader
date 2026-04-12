@@ -163,6 +163,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_db_postgres_smoke_contract",
                 "tests.postgres_contract_bootstrap_script_smoke_contract",
                 "tests.test_db_postgres_contract",
+                "tests.test_mc_scan_db_contract",
             ],
             "Setting TEST_DATABASE_URL should cause the repo-local runner to "
             "run the fail-fast schema smoke suite, the one-command bootstrap "

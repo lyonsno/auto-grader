@@ -283,9 +283,14 @@ Current implementation status on this grading surface:
   `multiple_marked`, `ambiguous_mark`, and `illegible_mark` cases to a final
   bubble choice or blank result while preserving the original machine status as
   provenance in the corrected scoring record
-- richer database-backed persistence and durable review-resolution storage are
-  still the next slices beyond the current disk artifact and in-memory override
-  surfaces
+- database-backed MC scan session persistence is implemented via
+  `auto_grader.mc_scan_db`; scan sessions, per-page match status, and
+  per-question scored outcomes are written atomically into the DB spine with
+  idempotent re-run semantics, append-only supersession for re-scans, and
+  divergence detection when overlapping scans carry different outcomes across
+  sessions
+- durable review-resolution storage in the database is still the next slice
+  beyond the current in-memory override surface
 
 ### 6. Review + Export
 
@@ -323,6 +328,9 @@ v0 names are:
 - `scan_artifacts`
 - `grade_records`
 - `audit_events`
+- `mc_scan_sessions`
+- `mc_scan_pages`
+- `mc_question_outcomes`
 
 Those names are not meant as an irreversible architectural claim, but they are the
 default names the first schema/tests will target.
@@ -377,6 +385,9 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   API and URL-handling contract for the Postgres hard cut.
 - `tests/test_db_postgres_contract.py` defines the enforceable Postgres schema
   contract when run against an explicit disposable `TEST_DATABASE_URL`.
+- `tests/test_mc_scan_db_contract.py` defines the enforceable MC scan session
+  DB persistence contract: idempotency, supersession, divergence detection,
+  atomicity, and review-required flag propagation.
 - `tests/test_template_schema_contract.py` defines the enforceable YAML template
   schema contract: structural validation, variable declarations, answer-type rules,
   expression evaluator safety, and integration tests against the real CHM 141 exam
@@ -388,7 +399,8 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   connection, Postgres harness, runner, template schema, eval harness, shimmer,
   generation, PDF rendering, scan readback, scan registration, bubble
   interpretation, scoring, matched-page extraction, paper-calibration, threshold,
-  and discovery guardrail contracts, and includes the Postgres schema contract
+  and discovery guardrail contracts, and includes the Postgres schema and MC
+  scan DB contracts
   when `TEST_DATABASE_URL` is set.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
