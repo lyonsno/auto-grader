@@ -260,6 +260,29 @@ class _MarkdownEmphasizedCheckpointNarrator(_CheckpointNarrator):
         return "**Core issue:** Student applied Hess's Law with sign changes and arithmetic, leading to correct final answer."
 
 
+class _CheckpointTimeoutDuringGroomingNarrator(_RetryNarrator):
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        raise TimeoutError("bonsai checkpoint call timed out")
+
+
+class _StatusRetryTimeoutNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        if "present-participle status line" in system:
+            raise TimeoutError("bonsai status call timed out")
+        return "I'm tracing the same unit conversion mistake."
+
+
+class _CheckpointTransportFailureDuringGroomingNarrator(_RetryNarrator):
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        raise RuntimeError("bonsai checkpoint transport failed")
+
+
 class ThinkingNarratorContract(unittest.TestCase):
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
@@ -473,6 +496,75 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(narrator._item_turbulence_dedup_count, 1)
         self.assertEqual(narrator._item_turbulence_status_dedup_count, 1)
         self.assertEqual(narrator._item_turbulence_grooming_count, 1)
+
+    def test_checkpoint_timeout_during_dedup_grooming_drops_cleanly_without_dispatch_exception(self):
+        sink = _DummySink()
+        narrator = _CheckpointTimeoutDuringGroomingNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._current_status = "Rechecking the same unit conversion."
+        narrator._prior_statuses = ["Rechecking the same unit conversion."]
+        narrator._thoughts_since_status = ["I'm tracing the same unit conversion mistake."]
+        narrator._dedupe_streak = 1
+
+        with mock.patch("auto_grader.thinking_narrator.logger.exception") as exc_mock:
+            narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(
+            sink.drops,
+            [
+                ("dedup", "I'm tracing the same unit conversion mistake."),
+                ("dedup-status", "Rechecking the same unit conversion."),
+                ("timeout-checkpoint", "same reasoning chunk"),
+            ],
+        )
+        self.assertEqual(sink.checkpoints, [])
+        exc_mock.assert_not_called()
+
+    def test_status_retry_timeout_drops_cleanly_without_dispatch_exception(self):
+        sink = _DummySink()
+        narrator = _StatusRetryTimeoutNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._prior_statuses = ["Tracing the unit conversion mistake."]
+        narrator._thoughts_since_status = [
+            "I'm tracing the unit conversion mistake."
+        ]
+
+        with mock.patch("auto_grader.thinking_narrator.logger.exception") as exc_mock:
+            narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(
+            sink.drops,
+            [
+                ("dedup", "I'm tracing the same unit conversion mistake."),
+                ("timeout-status", "I'm tracing the same unit conversion mistake."),
+            ],
+        )
+        self.assertEqual(sink.commits, [])
+        self.assertEqual(sink.deltas, [])
+        exc_mock.assert_not_called()
+
+    def test_checkpoint_transport_failure_during_dedup_grooming_drops_cleanly_without_dispatch_exception(self):
+        sink = _DummySink()
+        narrator = _CheckpointTransportFailureDuringGroomingNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._current_status = "Rechecking the same unit conversion."
+        narrator._prior_statuses = ["Rechecking the same unit conversion."]
+        narrator._thoughts_since_status = ["I'm tracing the same unit conversion mistake."]
+        narrator._dedupe_streak = 1
+
+        with mock.patch("auto_grader.thinking_narrator.logger.exception") as exc_mock:
+            narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(
+            sink.drops,
+            [
+                ("dedup", "I'm tracing the same unit conversion mistake."),
+                ("dedup-status", "Rechecking the same unit conversion."),
+                ("failed-checkpoint", "same reasoning chunk"),
+            ],
+        )
+        self.assertEqual(sink.checkpoints, [])
+        exc_mock.assert_not_called()
 
     def test_feed_keeps_dispatching_during_dedupe_streak(self):
         sink = _DummySink()

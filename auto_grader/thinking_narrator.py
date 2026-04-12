@@ -753,12 +753,26 @@ class ThinkingNarrator:
             {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
             {"role": "user", "content": checkpoint_user_content},
         ]
-        checkpoint_text = self._chat_completion(
-            checkpoint_messages,
-            temperature=_CHECKPOINT_TEMPERATURE,
-            repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
-            presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
-        ).strip()
+        try:
+            checkpoint_text = self._chat_completion(
+                checkpoint_messages,
+                temperature=_CHECKPOINT_TEMPERATURE,
+                repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
+                presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
+            ).strip()
+        except TimeoutError:
+            logger.warning(
+                "Narrator checkpoint grooming timed out; dropping checkpoint for chunk"
+            )
+            self._sink.write_drop("timeout-checkpoint", chunk)
+            return
+        except Exception:
+            logger.warning(
+                "Narrator checkpoint grooming failed; dropping checkpoint for chunk: %s",
+                chunk[:120],
+            )
+            self._sink.write_drop("failed-checkpoint", chunk)
+            return
         if not checkpoint_text:
             return
         checkpoint_text = self._canonicalize_checkpoint_text(checkpoint_text)
@@ -786,6 +800,8 @@ class ThinkingNarrator:
     ) -> None:
         with self._lock:
             if self._dedupe_streak < _DEDUP_GROOMING_THRESHOLD:
+                return
+            if not (self._current_status or prior_statuses):
                 return
             self._item_turbulence_grooming_count += 1
             accepted_line = (
@@ -824,7 +840,19 @@ class ThinkingNarrator:
             {"role": "user", "content": status_user_content},
         ]
 
-        full = self._chat_completion_stream(messages, on_delta=lambda _delta: None)
+        try:
+            full = self._chat_completion_stream(messages, on_delta=lambda _delta: None)
+        except TimeoutError:
+            logger.warning(
+                "Narrator status retry timed out; dropping duplicate thought instead"
+            )
+            return None, status_user_content, "timeout-status", rejected_thought
+        except Exception:
+            logger.warning(
+                "Narrator status retry failed; dropping duplicate thought instead: %s",
+                rejected_thought[:120],
+            )
+            return None, status_user_content, "failed-status", rejected_thought
         full = full.strip()
         if not full:
             return None, status_user_content, None, None
