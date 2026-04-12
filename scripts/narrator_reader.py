@@ -129,6 +129,15 @@ _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
 _HISTORY_TIER_DIM_EASE_POWER = 1.72  # fast initial drop, then a slower tail
                                      # instead of a purely linear ramp.
 
+# The priority-fill budget counts LOGICAL ENTRIES (headers, topics,
+# narrator lines). The viewport's visible-row budget counts VISUAL
+# ROWS (accounting for wrapped long entries). These are approximately
+# equal for short entries but diverge when entries wrap. The visual-
+# row budget should be at least as large as the entry budget so the
+# viewport can display all entries the priority filter retains.
+_PRIORITY_FILL_ENTRY_BUDGET = _VISIBLE_HISTORY_ROWS
+_VIEWPORT_VISIBLE_ROWS = _VISIBLE_HISTORY_ROWS * 2  # headroom for wrapping
+
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
 # they're in stable orbit, not drifting), and intensity decays with
@@ -2886,6 +2895,15 @@ class PaintDryDisplay:
         # renderer still prefers `_compute_wrap_width()` from the live
         # console when present.
         self._wrap_width_override: int | None = None
+        # Lock protecting viewport state. Three threads touch this:
+        # the animation thread (render → _viewport_display_entries →
+        # _sync_viewport), the scroll thread (scroll_history_* →
+        # _sync_viewport), and the main message-pump thread (mutates
+        # self.history which _flat_display_entries reads). Without
+        # this lock, concurrent rebuild/append/scroll operations on
+        # the viewport produce corrupted entry lists. (F1 fix from
+        # Crispy Drips anaphora 2026-04-12.)
+        self._viewport_lock = threading.Lock()
 
     def __rich__(self) -> Group:
         return self.render()
@@ -3098,7 +3116,7 @@ class PaintDryDisplay:
         Applies the essentials-first priority rule: headers and topics
         for every item always survive, and optional narrator lines
         are kept newest-first only until the visible-row budget
-        (`_VISIBLE_HISTORY_LINES`) is exhausted. This preserves the
+        (`_PRIORITY_FILL_ENTRY_BUDGET`) is exhausted. This preserves the
         legacy live-edge trim semantics — a long
         chatty item cannot push older items' headers/topics off the
         pane.
@@ -3234,7 +3252,7 @@ class PaintDryDisplay:
                 self._viewport.scroll_offset if self._viewport is not None else 0
             )
             self._viewport = HistoryViewport(
-                visible_rows=_VISIBLE_HISTORY_LINES,
+                visible_rows=_VIEWPORT_VISIBLE_ROWS,
                 wrap_width=wrap_width,
             )
             self._viewport_wrap_width = wrap_width
@@ -3256,7 +3274,8 @@ class PaintDryDisplay:
     def history_viewport(self) -> HistoryViewport:
         """Public accessor: returns the synced viewport. Used by the
         render path and by the interactive input loop (slice 3)."""
-        return self._sync_viewport()
+        with self._viewport_lock:
+            return self._sync_viewport()
 
     def _viewport_display_entries(
         self,
@@ -3269,8 +3288,9 @@ class PaintDryDisplay:
         resets per visible item so the fade stack still behaves like the
         non-viewport renderer.
         """
-        vp = self._sync_viewport()
-        visible = vp.visible_entries()
+        with self._viewport_lock:
+            vp = self._sync_viewport()
+            visible = vp.visible_entries()
         if not visible:
             return []
 
@@ -3303,13 +3323,16 @@ class PaintDryDisplay:
         return out
 
     def scroll_history_up(self, rows: int = 1) -> None:
-        self._sync_viewport().scroll_up(rows)
+        with self._viewport_lock:
+            self._sync_viewport().scroll_up(rows)
 
     def scroll_history_down(self, rows: int = 1) -> None:
-        self._sync_viewport().scroll_down(rows)
+        with self._viewport_lock:
+            self._sync_viewport().scroll_down(rows)
 
     def scroll_history_to_live_edge(self) -> None:
-        self._sync_viewport().scroll_to_live_edge()
+        with self._viewport_lock:
+            self._sync_viewport().scroll_to_live_edge()
 
     def _compute_wrap_width(self) -> int | None:
         """Approximate visual width at which the history panel wraps.
