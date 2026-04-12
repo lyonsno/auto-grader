@@ -908,19 +908,15 @@ _KITTY_CHUNK_SIZE = 4096
 #: means one row above the image and one row below.
 _BAND_EXTRA_ROWS = 2
 
-#: Solid-block weight falls off this many cells away from the image
-#: edge. Wider than before (was 5) so the solid substrate overlaps
-#: with braille across a generous crossfade zone and there's no
-#: visible "mange" gap where one substrate ends and the other hasn't
-#: fully committed.
-_SOLID_FALLOFF_CELLS = 8
+#: Number of solid-block columns hugging the image edge.
+#: Column 0 (touching image) = █, column 1 = ▓, then braille starts.
+#: No graduated ramp — the intermediate block shades (▒░) clash with
+#: braille dot patterns, so a hard cut reads cleaner.
+_SOLID_COLUMNS = 2
 
-#: Braille substrate starts ramping up this many cells from the
-#: image edge and reaches peak weight after `_BRAILLE_RAMP_CELLS`.
-#: Starts at 1 (was 2) so braille appears almost immediately and
-#: coexists with solid blocks across the 1-8 cell range.
-_BRAILLE_RAMP_START = 1
-_BRAILLE_RAMP_CELLS = 5
+#: Braille ramp length in cells after the solid columns. Braille
+#: density ramps from peak to the edge floor over this distance.
+_BRAILLE_RAMP_CELLS = 6
 
 #: Braille substrate falls off over this many cells after its peak,
 #: approaching (but not reaching) zero density at the far edge.
@@ -946,10 +942,6 @@ _TEXTURE_ACCENT_RGB = (220, 205, 180)
 #: panel background in focus_preview.py and the dark narrator UI.
 _TEXTURE_BG_RGB = (8, 10, 14)
 
-#: Solid-block glyph ramp by normalized density (1.0 = fully solid,
-#: 0.0 = empty). Indexes into this array based on the local density
-#: at a given cell position.
-_SOLID_BLOCK_RAMP = ("█", "▓", "▒", "░")
 
 #: Braille base codepoint — U+2800 is the empty braille pattern.
 #: Add a bitmask in [0, 255] to get a braille char with that dot
@@ -1051,117 +1043,75 @@ def _texture_cell(
     distance_from_image: int,
     seed_key: tuple,
 ) -> tuple[str, tuple[int, int, int]]:
-    """Pick a (glyph, rgb) pair for one texture cell given its distance
-    from the image edge (in cells) and a seed key for deterministic
-    pseudo-random substrate and density selection.
+    """Pick a (glyph, rgb) pair for one texture cell.
 
-    Returns a tuple of (unicode glyph, rgb color tuple). The glyph is
-    a single visible character (solid block, braille dot pattern, or
-    space). The color is the foreground color to render it in, with
-    alpha already baked into the color by lerping toward the edge
-    floor.
+    Three zones with hard cuts between them:
 
-    The three continuous parameters:
-      - solid_weight: probability the cell is a solid-block substrate
-        cell. Peaks at 1.0 right at the image edge (distance 0),
-        falls off linearly to 0 at _SOLID_FALLOFF_CELLS.
-      - braille_weight: probability the cell is a braille substrate
-        cell. Starts rising at _BRAILLE_RAMP_START, peaks after
-        _BRAILLE_RAMP_CELLS more, holds for a short plateau, then
-        falls off over _BRAILLE_FALLOFF_CELLS approaching (but not
-        reaching) the edge floor. The two weight curves overlap in
-        the 2-5 cell range, which is where the visual transition
-        between substrates happens via per-cell random choice.
-      - color_intensity: fraction of sepia-foreground to blend with
-        the background color. Starts at 1.0 near the image, falls
-        linearly to _TEXTURE_EDGE_FLOOR at the far edge.
+    1. **Solid columns** (d < _SOLID_COLUMNS): deterministic solid
+       blocks — █ at d=0, ▓ at d=1. No randomness, no braille.
+    2. **Braille ramp** (d in [_SOLID_COLUMNS, _SOLID_COLUMNS +
+       _BRAILLE_RAMP_CELLS)): braille dots at peak density ramping
+       down linearly.
+    3. **Braille tail** (beyond the ramp): braille density falls
+       toward the edge floor over _BRAILLE_FALLOFF_CELLS, then
+       holds at the floor.
 
-    The seed_key is hashed to pick the pseudo-random values for
-    substrate choice and density, which makes the result stable
-    across render ticks — the same (image_id, row, col) always
-    produces the same glyph and color. Resize-safe in the sense
-    that the texture is anchored to absolute cell positions so
-    the image appears to remain embedded in the same noise field
-    as the terminal resizes.
+    Color intensity fades independently from full accent at d=0 to
+    the edge floor at _TEXTURE_COLOR_FADE_CELLS.
+
+    The seed_key is hashed to produce deterministic per-cell
+    randomness so the pattern is stable across render ticks and
+    resize-safe.
     """
     d = max(0, distance_from_image)
 
-    # Substrate weight curves.
-    if d < _SOLID_FALLOFF_CELLS:
-        solid_weight = 1.0 - (d / _SOLID_FALLOFF_CELLS)
-    else:
-        solid_weight = 0.0
-
-    if d < _BRAILLE_RAMP_START:
-        braille_weight = 0.0
-    else:
-        ramp_d = d - _BRAILLE_RAMP_START
-        if ramp_d < _BRAILLE_RAMP_CELLS:
-            braille_weight = ramp_d / _BRAILLE_RAMP_CELLS
-        else:
-            fall_d = ramp_d - _BRAILLE_RAMP_CELLS
-            if fall_d < _BRAILLE_FALLOFF_CELLS:
-                # Falls linearly from 1.0 to the edge floor over
-                # _BRAILLE_FALLOFF_CELLS cells, so braille stays
-                # visible all the way to the far edge.
-                t = fall_d / _BRAILLE_FALLOFF_CELLS
-                braille_weight = 1.0 - (1.0 - _TEXTURE_EDGE_FLOOR) * t
-            else:
-                braille_weight = _TEXTURE_EDGE_FLOOR
-
-    # Color intensity curve: lerp from full sepia at d=0 toward
-    # the edge floor at _TEXTURE_COLOR_FADE_CELLS.
+    # Color intensity curve — independent of substrate.
     if d >= _TEXTURE_COLOR_FADE_CELLS:
         color_intensity = _TEXTURE_EDGE_FLOOR
     else:
         t = d / _TEXTURE_COLOR_FADE_CELLS
         color_intensity = 1.0 - (1.0 - _TEXTURE_EDGE_FLOOR) * t
 
+    rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, color_intensity)
+
+    # Zone 1: solid blocks — deterministic, no randomness needed.
+    if d < _SOLID_COLUMNS:
+        glyph = "█" if d == 0 else "▓"
+        return glyph, rgb
+
+    # Zone 2+3: braille. Density starts at 1.0 right after the
+    # solid columns, ramps down over _BRAILLE_RAMP_CELLS, then
+    # falls further over _BRAILLE_FALLOFF_CELLS to the floor.
+    braille_d = d - _SOLID_COLUMNS
+    if braille_d < _BRAILLE_RAMP_CELLS:
+        # Ramp from 1.0 down to a transition point.
+        density = 1.0 - (braille_d / _BRAILLE_RAMP_CELLS) * 0.5
+    else:
+        fall_d = braille_d - _BRAILLE_RAMP_CELLS
+        if fall_d < _BRAILLE_FALLOFF_CELLS:
+            t = fall_d / _BRAILLE_FALLOFF_CELLS
+            density = 0.5 - (0.5 - _TEXTURE_EDGE_FLOOR) * t
+        else:
+            density = _TEXTURE_EDGE_FLOOR
+
     # Deterministic randomness from the seed key.
     rand = random.Random(hash(seed_key))
-    roll = rand.random()
 
-    # Pick substrate. solid_weight and braille_weight are each in
-    # [0, 1]; they're not probabilities that sum to 1, they're
-    # independent weights. Normalize to get a probability split,
-    # with any remainder going to empty/space.
-    total_weight = solid_weight + braille_weight
-    if total_weight < 0.05:
-        # Very low total weight — mostly empty, with rare sparse
-        # dots. Let the floor value govern whether we emit anything
-        # at all.
-        if roll < _TEXTURE_EDGE_FLOOR:
-            # Emit a single-dot braille char at the floor color.
-            glyph = chr(_BRAILLE_BASE + (1 << (rand.randint(0, 7))))
-            rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, color_intensity)
+    # At the floor, most cells are empty with rare single dots.
+    if density <= _TEXTURE_EDGE_FLOOR + 0.01:
+        if rand.random() < _TEXTURE_EDGE_FLOOR:
+            glyph = chr(_BRAILLE_BASE + (1 << rand.randint(0, 7)))
             return glyph, rgb
         return " ", _TEXTURE_BG_RGB
 
-    p_solid = solid_weight / total_weight
-    if roll < p_solid:
-        # Solid-block substrate. Pick glyph by local density —
-        # near the image we want █, further out we want lighter
-        # shades. Density here is solid_weight itself (1.0 near
-        # image, falling to 0 at the falloff distance).
-        ramp_len = len(_SOLID_BLOCK_RAMP)
-        idx = min(ramp_len - 1, int((1.0 - solid_weight) * ramp_len))
-        glyph = _SOLID_BLOCK_RAMP[idx]
-    else:
-        # Braille substrate. Number of dots lit scales with
-        # braille_weight — 8 dots at peak, 1 at the floor.
-        max_dots = 8
-        min_dots = 1
-        n_dots = int(round(min_dots + braille_weight * (max_dots - min_dots)))
-        n_dots = max(1, min(max_dots, n_dots))
-        # Randomly pick which of the 8 dots are lit.
-        bits = 0
-        dot_order = list(range(8))
-        rand.shuffle(dot_order)
-        for bit_idx in dot_order[:n_dots]:
-            bits |= 1 << bit_idx
-        glyph = chr(_BRAILLE_BASE + bits)
-
-    rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, color_intensity)
+    # Number of dots lit scales with density (1-8).
+    n_dots = max(1, min(8, int(round(density * 8))))
+    bits = 0
+    dot_order = list(range(8))
+    rand.shuffle(dot_order)
+    for bit_idx in dot_order[:n_dots]:
+        bits |= 1 << bit_idx
+    glyph = chr(_BRAILLE_BASE + bits)
     return glyph, rgb
 
 
