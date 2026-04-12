@@ -58,44 +58,16 @@ class ContractTestRunnerTests(unittest.TestCase):
             exit_code = runner.main([])
 
         self.assertEqual(exit_code, 0)
+        expected_always_on = list(runner._always_on_suites())
         self.assertEqual(
             [command[-2] for command in commands],
-            [
-                "tests.test_project_metadata_contract",
-                "tests.test_postgres_contract_bootstrap_script",
-                "tests.test_db_connection_contract",
-                "tests.test_db_postgres_harness_contract",
-                "tests.test_contract_test_runner",
-                "tests.test_template_schema_contract",
-                "tests.test_eval_harness_contract",
-                "tests.test_cull_zilch_reaper_contract",
-                "tests.test_shimmer_phases",
-                "tests.test_generation_contract",
-                "tests.test_pdf_rendering_contract",
-                "tests.test_scan_readback_contract",
-                "tests.test_scan_registration_contract",
-                "tests.test_bubble_interpretation_contract",
-                "tests.test_mc_scoring_contract",
-                "tests.test_mc_page_extraction_contract",
-                "tests.test_mc_scan_ingest_contract",
-                "tests.test_mc_scan_session_persist_contract",
-                "tests.test_mc_opencv_demo_contract",
-                "tests.test_mc_review_override_contract",
-                "tests.test_mark_profile_smoke_contract",
-                "tests.test_paper_calibration_packet_contract",
-                "tests.test_paper_threshold_packet_contract",
-                "tests.test_generated_exam_demo_contract",
-                "test_unittest_discovery_contract",
-            ],
+            expected_always_on,
             "Default contract-runner invocation should execute the always-on "
             "metadata, bootstrap-script, connection, Postgres harness, runner, "
             "template schema, eval harness, zilch-reaper cull, shimmer phases, "
-            "generation, PDF rendering, scan readback, scan registration, "
-            "bubble interpretation, MC scoring, matched-page extraction, "
-            "scan-level ingest packaging, scan-session persistence, the "
-            "prototype demo runner, review override, the synthetic mark-profile "
-            "smoke contract, generated exam demo, and discovery guardrail "
-            "suites in a fixed, repo-local order.",
+            "the safe generation/MC contracts, and any OpenCV/PDF-backed demo "
+            "contracts whose optional dependencies are actually installed, all "
+            "in a fixed repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -134,39 +106,15 @@ class ContractTestRunnerTests(unittest.TestCase):
             exit_code = runner.main([])
 
         self.assertEqual(exit_code, 0)
+        expected = list(runner._always_on_suites()) + [
+            "tests.test_db_postgres_smoke_contract",
+            "tests.postgres_contract_bootstrap_script_smoke_contract",
+            "tests.test_db_postgres_contract",
+            "tests.test_mc_scan_db_contract",
+        ]
         self.assertEqual(
             [command[-2] for command in commands],
-            [
-                "tests.test_project_metadata_contract",
-                "tests.test_postgres_contract_bootstrap_script",
-                "tests.test_db_connection_contract",
-                "tests.test_db_postgres_harness_contract",
-                "tests.test_contract_test_runner",
-                "tests.test_template_schema_contract",
-                "tests.test_eval_harness_contract",
-                "tests.test_cull_zilch_reaper_contract",
-                "tests.test_shimmer_phases",
-                "tests.test_generation_contract",
-                "tests.test_pdf_rendering_contract",
-                "tests.test_scan_readback_contract",
-                "tests.test_scan_registration_contract",
-                "tests.test_bubble_interpretation_contract",
-                "tests.test_mc_scoring_contract",
-                "tests.test_mc_page_extraction_contract",
-                "tests.test_mc_scan_ingest_contract",
-                "tests.test_mc_scan_session_persist_contract",
-                "tests.test_mc_opencv_demo_contract",
-                "tests.test_mc_review_override_contract",
-                "tests.test_mark_profile_smoke_contract",
-                "tests.test_paper_calibration_packet_contract",
-                "tests.test_paper_threshold_packet_contract",
-                "tests.test_generated_exam_demo_contract",
-                "test_unittest_discovery_contract",
-                "tests.test_db_postgres_smoke_contract",
-                "tests.postgres_contract_bootstrap_script_smoke_contract",
-                "tests.test_db_postgres_contract",
-                "tests.test_mc_scan_db_contract",
-            ],
+            expected,
             "Setting TEST_DATABASE_URL should cause the repo-local runner to "
             "run the fail-fast schema smoke suite, the one-command bootstrap "
             "script smoke suite, and then the full authoritative schema "

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
 
 
-_ALWAYS_ON_SUITES = (
+_BASE_ALWAYS_ON_SUITES = (
     "tests.test_project_metadata_contract",
     "tests.test_postgres_contract_bootstrap_script",
     "tests.test_db_connection_contract",
@@ -17,21 +18,23 @@ _ALWAYS_ON_SUITES = (
     "tests.test_cull_zilch_reaper_contract",
     "tests.test_shimmer_phases",
     "tests.test_generation_contract",
+    "tests.test_mc_review_override_contract",
+    "tests.test_mc_scoring_contract",
+    "test_unittest_discovery_contract",
+)
+_OPENCV_STACK_SUITES = (
     "tests.test_pdf_rendering_contract",
     "tests.test_scan_readback_contract",
     "tests.test_scan_registration_contract",
     "tests.test_bubble_interpretation_contract",
-    "tests.test_mc_scoring_contract",
     "tests.test_mc_page_extraction_contract",
     "tests.test_mc_scan_ingest_contract",
     "tests.test_mc_scan_session_persist_contract",
     "tests.test_mc_opencv_demo_contract",
-    "tests.test_mc_review_override_contract",
     "tests.test_mark_profile_smoke_contract",
     "tests.test_paper_calibration_packet_contract",
     "tests.test_paper_threshold_packet_contract",
     "tests.test_generated_exam_demo_contract",
-    "test_unittest_discovery_contract",
 )
 _POSTGRES_SUITES = (
     "tests.test_db_postgres_smoke_contract",
@@ -61,6 +64,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def _get_test_database_url() -> str | None:
     return os.environ.get("TEST_DATABASE_URL")
+
+
+def _module_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _always_on_suites() -> tuple[str, ...]:
+    suites = list(_BASE_ALWAYS_ON_SUITES)
+    if _module_available("cv2") and _module_available("qrcode"):
+        suites.extend(_OPENCV_STACK_SUITES)
+    return tuple(suites)
 
 
 def _run_suite(module_name: str) -> int:
@@ -98,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    for suite in _ALWAYS_ON_SUITES:
+    for suite in _always_on_suites():
         exit_code = _run_suite(suite)
         if exit_code != 0:
             return exit_code
