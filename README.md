@@ -116,6 +116,22 @@ This narrow artifact is the handoff between generation and deterministic OpenCV 
 Later PDF rendering should consume the same contract rather than inventing a second layout
 truth.
 
+Current implementation status on the generated-exam demo surface:
+
+- `auto_grader.generated_exam_demo` and
+  `scripts/render_generated_mc_exam_demo.py` can now load a real exam template
+  such as `templates/chm141-final-fall2023.yaml`, build one printable MC-only
+  answer-sheet artifact for a named student through the canonical generation
+  path, and write the resulting PDF plus artifact/metadata JSON bundle to disk
+- this surface deliberately reuses `load_template(...)`,
+  `build_mc_answer_sheet(...)`, and `render_mc_answer_sheet_pdf(...)` instead
+  of inventing a packet-local generation fork, so the later paper demo can run
+  against a real generated exam rather than only the calibration packets
+- that generated artifact shape is also now pinned against the landed
+  `auto_grader.mc_opencv_demo` runner, so a real chemistry-template packet can
+  already flow through the same end-to-end ingest/scoring surface used by the
+  earlier calibration-packet demo
+
 ### 3. Paper artifacts (Identification + Layout)
 
 Printed artifacts include:
