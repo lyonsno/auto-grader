@@ -29,6 +29,7 @@ import base64
 import json
 import math
 import os
+import random
 import re
 import select
 import sys
@@ -813,6 +814,72 @@ _KITTY_IMAGE_ID = 1
 #: spec: "chunk size of 4096 for the base64-encoded data".
 _KITTY_CHUNK_SIZE = 4096
 
+# ---------------------------------------------------------------------
+# Band texture parameters for the focus-preview horizontal band.
+#
+# The focus preview renders as a horizontal strip that runs the full
+# terminal width. The image lives centered in the middle of the
+# strip; the cells to the left and right of the image are filled
+# with a character-texture gradient that fades from solid sepia
+# blocks near the image out to faint braille dots at the terminal
+# edges. The gradient is on three continuous dimensions — substrate
+# choice (solid block vs braille), density within each substrate,
+# and foreground color — so adjacent cells never show a hard seam.
+# ---------------------------------------------------------------------
+
+#: Extra rows above and below the image inside the band. These rows
+#: run full terminal width with texture but no image content. Two
+#: means one row above the image and one row below.
+_BAND_EXTRA_ROWS = 2
+
+#: Solid-block weight falls off this many cells away from the image
+#: edge. Outside this range the solid-block substrate has zero
+#: probability of being picked for a cell.
+_SOLID_FALLOFF_CELLS = 5
+
+#: Braille substrate starts ramping up this many cells from the
+#: image edge and reaches peak weight after `_BRAILLE_RAMP_CELLS`.
+_BRAILLE_RAMP_START = 2
+_BRAILLE_RAMP_CELLS = 4
+
+#: Braille substrate falls off over this many cells after its peak,
+#: approaching (but not reaching) zero density at the far edge.
+_BRAILLE_FALLOFF_CELLS = 24
+
+#: Color fade distance. Foreground color lerps from the sepia image
+#: tint near the image edge toward the faint floor (NOT the pure
+#: terminal background) over this many cells.
+_TEXTURE_COLOR_FADE_CELLS = 30
+
+#: Faint floor for the foreground color at the terminal edges.
+#: Fraction of the sepia tint that remains visible even at the far
+#: edges. 0.12 means the edge color is ~12% of the way from
+#: background toward sepia, so the outermost cells are faintly
+#: visible rather than invisible.
+_TEXTURE_EDGE_FLOOR = 0.12
+
+#: Texture foreground color near the image edge — warm sepia tone
+#: that matches the in-image sepia tint applied by focus_preview.py.
+_TEXTURE_SEPIA_RGB = (184, 158, 124)
+
+#: Terminal background color the texture fades toward. Matches the
+#: panel background in focus_preview.py and the dark narrator UI.
+_TEXTURE_BG_RGB = (8, 10, 14)
+
+#: Solid-block glyph ramp by normalized density (1.0 = fully solid,
+#: 0.0 = empty). Indexes into this array based on the local density
+#: at a given cell position.
+_SOLID_BLOCK_RAMP = ("█", "▓", "▒", "░", " ")
+
+#: Braille base codepoint — U+2800 is the empty braille pattern.
+#: Add a bitmask in [0, 255] to get a braille char with that dot
+#: combination lit. The bitmask follows the Unicode braille ordering:
+#:   bit 0 = dot 1 (top-left), bit 1 = dot 2 (middle-left),
+#:   bit 2 = dot 3 (bottom-left of main 3), bit 3 = dot 4 (top-right),
+#:   bit 4 = dot 5 (middle-right), bit 5 = dot 6 (bottom-right),
+#:   bit 6 = dot 7 (bottom-left extra), bit 7 = dot 8 (bottom-right extra).
+_BRAILLE_BASE = 0x2800
+
 
 def _build_kitty_transmit_chunks(
     png_bytes: bytes,
@@ -897,6 +964,207 @@ def _build_kitty_place_sequence(
     return (
         f"\x1b_Ga=p,i={image_id},c={cell_width},r={cell_height},C=1\x1b\\"
     )
+
+
+def _texture_cell(
+    *,
+    distance_from_image: int,
+    seed_key: tuple,
+) -> tuple[str, tuple[int, int, int]]:
+    """Pick a (glyph, rgb) pair for one texture cell given its distance
+    from the image edge (in cells) and a seed key for deterministic
+    pseudo-random substrate and density selection.
+
+    Returns a tuple of (unicode glyph, rgb color tuple). The glyph is
+    a single visible character (solid block, braille dot pattern, or
+    space). The color is the foreground color to render it in, with
+    alpha already baked into the color by lerping toward the edge
+    floor.
+
+    The three continuous parameters:
+      - solid_weight: probability the cell is a solid-block substrate
+        cell. Peaks at 1.0 right at the image edge (distance 0),
+        falls off linearly to 0 at _SOLID_FALLOFF_CELLS.
+      - braille_weight: probability the cell is a braille substrate
+        cell. Starts rising at _BRAILLE_RAMP_START, peaks after
+        _BRAILLE_RAMP_CELLS more, holds for a short plateau, then
+        falls off over _BRAILLE_FALLOFF_CELLS approaching (but not
+        reaching) the edge floor. The two weight curves overlap in
+        the 2-5 cell range, which is where the visual transition
+        between substrates happens via per-cell random choice.
+      - color_intensity: fraction of sepia-foreground to blend with
+        the background color. Starts at 1.0 near the image, falls
+        linearly to _TEXTURE_EDGE_FLOOR at the far edge.
+
+    The seed_key is hashed to pick the pseudo-random values for
+    substrate choice and density, which makes the result stable
+    across render ticks — the same (image_id, row, col) always
+    produces the same glyph and color. Resize-safe in the sense
+    that the texture is anchored to absolute cell positions so
+    the image appears to remain embedded in the same noise field
+    as the terminal resizes.
+    """
+    d = max(0, distance_from_image)
+
+    # Substrate weight curves.
+    if d < _SOLID_FALLOFF_CELLS:
+        solid_weight = 1.0 - (d / _SOLID_FALLOFF_CELLS)
+    else:
+        solid_weight = 0.0
+
+    if d < _BRAILLE_RAMP_START:
+        braille_weight = 0.0
+    else:
+        ramp_d = d - _BRAILLE_RAMP_START
+        if ramp_d < _BRAILLE_RAMP_CELLS:
+            braille_weight = ramp_d / _BRAILLE_RAMP_CELLS
+        else:
+            fall_d = ramp_d - _BRAILLE_RAMP_CELLS
+            if fall_d < _BRAILLE_FALLOFF_CELLS:
+                # Falls linearly from 1.0 to the edge floor over
+                # _BRAILLE_FALLOFF_CELLS cells, so braille stays
+                # visible all the way to the far edge.
+                t = fall_d / _BRAILLE_FALLOFF_CELLS
+                braille_weight = 1.0 - (1.0 - _TEXTURE_EDGE_FLOOR) * t
+            else:
+                braille_weight = _TEXTURE_EDGE_FLOOR
+
+    # Color intensity curve: lerp from full sepia at d=0 toward
+    # the edge floor at _TEXTURE_COLOR_FADE_CELLS.
+    if d >= _TEXTURE_COLOR_FADE_CELLS:
+        color_intensity = _TEXTURE_EDGE_FLOOR
+    else:
+        t = d / _TEXTURE_COLOR_FADE_CELLS
+        color_intensity = 1.0 - (1.0 - _TEXTURE_EDGE_FLOOR) * t
+
+    # Deterministic randomness from the seed key.
+    rand = random.Random(hash(seed_key))
+    roll = rand.random()
+
+    # Pick substrate. solid_weight and braille_weight are each in
+    # [0, 1]; they're not probabilities that sum to 1, they're
+    # independent weights. Normalize to get a probability split,
+    # with any remainder going to empty/space.
+    total_weight = solid_weight + braille_weight
+    if total_weight < 0.05:
+        # Very low total weight — mostly empty, with rare sparse
+        # dots. Let the floor value govern whether we emit anything
+        # at all.
+        if roll < _TEXTURE_EDGE_FLOOR:
+            # Emit a single-dot braille char at the floor color.
+            glyph = chr(_BRAILLE_BASE + (1 << (rand.randint(0, 7))))
+            rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_SEPIA_RGB, color_intensity)
+            return glyph, rgb
+        return " ", _TEXTURE_BG_RGB
+
+    p_solid = solid_weight / total_weight
+    if roll < p_solid:
+        # Solid-block substrate. Pick glyph by local density —
+        # near the image we want █, further out we want lighter
+        # shades. Density here is solid_weight itself (1.0 near
+        # image, falling to 0 at the falloff distance).
+        ramp_len = len(_SOLID_BLOCK_RAMP)
+        idx = min(ramp_len - 1, int((1.0 - solid_weight) * ramp_len))
+        glyph = _SOLID_BLOCK_RAMP[idx]
+    else:
+        # Braille substrate. Number of dots lit scales with
+        # braille_weight — 8 dots at peak, 1 at the floor.
+        max_dots = 8
+        min_dots = 1
+        n_dots = int(round(min_dots + braille_weight * (max_dots - min_dots)))
+        n_dots = max(1, min(max_dots, n_dots))
+        # Randomly pick which of the 8 dots are lit.
+        bits = 0
+        dot_order = list(range(8))
+        rand.shuffle(dot_order)
+        for bit_idx in dot_order[:n_dots]:
+            bits |= 1 << bit_idx
+        glyph = chr(_BRAILLE_BASE + bits)
+
+    rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_SEPIA_RGB, color_intensity)
+    return glyph, rgb
+
+
+def _lerp_rgb(
+    a: tuple[int, int, int],
+    b: tuple[int, int, int],
+    t: float,
+) -> tuple[int, int, int]:
+    """Linear interpolation between two RGB tuples."""
+    t = max(0.0, min(1.0, t))
+    return (
+        int(round(a[0] + (b[0] - a[0]) * t)),
+        int(round(a[1] + (b[1] - a[1]) * t)),
+        int(round(a[2] + (b[2] - a[2]) * t)),
+    )
+
+
+def _emit_band_border_row(term_width: int, *, title: str):
+    """Yield one full-width `─` border row, optionally with an
+    inlined left-aligned title.
+    """
+    border_style = Style.parse(_rgb_to_hex(_TEXTURE_SEPIA_RGB))
+    if title:
+        prefix_text = f"─ {title} "
+        remaining = term_width - len(prefix_text)
+        if remaining < 0:
+            prefix_text = prefix_text[:term_width]
+            remaining = 0
+        row = prefix_text + ("─" * remaining)
+    else:
+        row = "─" * term_width
+    yield Segment(row, border_style)
+    yield Segment.line()
+
+
+def _emit_band_texture_span(
+    *,
+    col_start: int,
+    col_end: int,
+    image_left: int,
+    image_right: int,
+    row_seed_id: int,
+    image_id: int,
+):
+    """Yield one Segment per cell in [col_start, col_end), each picked
+    by :func:`_texture_cell` based on distance from the nearest image
+    edge.
+    """
+    for col in range(col_start, col_end):
+        if col < image_left:
+            distance = image_left - col
+        elif col >= image_right:
+            distance = col - image_right + 1
+        else:
+            distance = 0
+        glyph, rgb = _texture_cell(
+            distance_from_image=distance,
+            seed_key=(image_id, row_seed_id, col),
+        )
+        yield Segment(glyph, Style.parse(_rgb_to_hex(rgb)))
+
+
+def _emit_band_texture_only_row(
+    term_width: int,
+    *,
+    image_left: int,
+    image_right: int,
+    row_seed_id: int,
+    image_id: int,
+):
+    """Yield a full-width row of texture cells, with no image
+    placement. Used for the extra rows above and below the image
+    inside the band.
+    """
+    yield from _emit_band_texture_span(
+        col_start=0,
+        col_end=term_width,
+        image_left=image_left,
+        image_right=image_right,
+        row_seed_id=row_seed_id,
+        image_id=image_id,
+    )
+    yield Segment.line()
 
 
 def _query_terminal_cell_aspect(
@@ -1223,10 +1491,44 @@ class FocusPreviewKittyImage:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        border = Style.parse("#3d4458")
-        cell_width, cell_height = self._compute_box(options.max_width)
-        inner_width = cell_width
-        total_width = inner_width + 2
+        """Render the focus preview as a full-terminal-width band.
+
+        Layout per row, from top to bottom:
+
+          1. Top border rule: ``─ focus preview · <label> ─…─`` spanning
+             the full terminal width, clean ─ horizontal rule with the
+             title inlined left-aligned. No corner chars, no side
+             verticals, no ╭╮.
+
+          2. Extra texture row: full-width texture, no image. Gives
+             the image one row of breathing space between the top
+             border and the image content itself.
+
+          3..3+cell_height-1. Image rows: each row is
+             ``<left texture cells> <cursor-forward image_width> <right texture cells>``.
+             The cursor-forward span is filled by the Kitty `a=p`
+             place command emitted on the first image row; on
+             subsequent image rows the cursor-forward skips past
+             the cells the image is painted into so we don't write
+             over them.
+
+          n. Extra texture row: symmetric to row 2.
+
+          n+1. Bottom border rule: ``───…───`` spanning full width,
+             no title.
+
+        The texture cells are picked by ``_texture_cell`` based on
+        their distance from the image edge and a seed key derived
+        from the image ID and the absolute (row, col) position, so
+        the noise is stable across render ticks and stays anchored
+        to absolute terminal positions during resize.
+        """
+        term_width = max(1, options.max_width)
+        cell_width, cell_height = self._compute_box(term_width)
+
+        # Center the image horizontally in the band.
+        image_left = max(0, (term_width - cell_width) // 2)
+        image_right = image_left + cell_width  # exclusive
 
         place_sequence = _build_kitty_place_sequence(
             self._image_id,
@@ -1234,42 +1536,161 @@ class FocusPreviewKittyImage:
             cell_height=cell_height,
         )
 
-        # Top border with embedded title.
-        title_text = self._title
-        max_title = max(0, inner_width - 4)
-        if len(title_text) > max_title:
-            title_text = title_text[: max(0, max_title - 1)] + "…"
-        if title_text:
-            prefix = f"╭─ {title_text} "
-            filler_len = total_width - len(prefix) - 1
-            if filler_len < 0:
-                filler_len = 0
-            top_border = prefix + ("─" * filler_len) + "╮"
-        else:
-            top_border = "╭" + ("─" * (total_width - 2)) + "╮"
-        yield Segment(top_border, border)
-        yield Segment.line()
+        # ─── Top border rule with inlined title ───
+        yield from _emit_band_border_row(term_width, title=self._title)
 
-        forward_escape = f"\x1b[{inner_width}C"
+        # ─── Extra texture row above the image ───
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=0,
+            image_id=self._image_id,
+        )
 
-        # First interior row: emit the Kitty place-by-ID command.
-        yield Segment("│", border)
-        yield Segment(place_sequence, None, [(ControlType.BELL,)])
-        yield Segment(forward_escape, None, [(ControlType.BELL,)])
-        yield Segment("│", border)
-        yield Segment.line()
-
-        # Remaining interior rows: border + cursor-forward + border.
-        for _ in range(cell_height - 1):
-            yield Segment("│", border)
+        # ─── Image rows ───
+        forward_escape = f"\x1b[{cell_width}C"
+        for image_row in range(cell_height):
+            # Left texture: columns 0 to image_left - 1.
+            yield from _emit_band_texture_span(
+                col_start=0,
+                col_end=image_left,
+                image_left=image_left,
+                image_right=image_right,
+                row_seed_id=1 + image_row,
+                image_id=self._image_id,
+            )
+            # Middle: image placement on row 0, cursor-forward only
+            # on rows 1+.
+            if image_row == 0:
+                yield Segment(
+                    place_sequence, None, [(ControlType.BELL,)]
+                )
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
-            yield Segment("│", border)
+            # Right texture: columns image_right to term_width - 1.
+            yield from _emit_band_texture_span(
+                col_start=image_right,
+                col_end=term_width,
+                image_left=image_left,
+                image_right=image_right,
+                row_seed_id=1 + image_row,
+                image_id=self._image_id,
+            )
             yield Segment.line()
 
+        # ─── Extra texture row below the image ───
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=1 + cell_height,
+            image_id=self._image_id,
+        )
+
+        # ─── Bottom border rule ───
+        yield from _emit_band_border_row(term_width, title="")
+
+
+
+class FocusPreviewLoadingBand:
+    """Placeholder renderable shown before any focus_preview event
+    fires, or between items while a new preview is loading. Same
+    band structure as :class:`FocusPreviewKittyImage` but with a
+    short ``(preview loading…)`` text string where the image
+    would be, so the layout slot looks continuous across the
+    transition into the first real preview.
+    """
+
+    def __init__(self, *, title: str = "focus preview") -> None:
+        self._title = title
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        term_width = max(1, options.max_width)
+
+        # Use the same band dimensions as the real renderer so the
+        # layout doesn't jump when the first preview lands. The
+        # "image" region is a placeholder cell_width × cell_height
+        # box; default to 80x18 which is a reasonable stand-in.
+        cell_width = min(80, max(1, term_width - 4))
+        cell_height = 18
+        image_left = max(0, (term_width - cell_width) // 2)
+        image_right = image_left + cell_width
+
+        placeholder_text = "(preview loading…)"
+        # Loading band has no image id — use a stable sentinel so the
+        # seeded per-cell texture noise is deterministic across frames
+        # without colliding with real image ids.
+        image_id = 0
+
+        # Top border
+        yield from _emit_band_border_row(term_width, title=self._title)
+
+        # Extra texture row above.
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=0,
+            image_id=image_id,
+        )
+
+        # Image rows — instead of a Kitty place, emit the
+        # placeholder text centered in the middle of the image
+        # region on the middle image row, empty on the others.
+        middle_row = cell_height // 2
+        text_col = image_left + max(
+            0, (cell_width - len(placeholder_text)) // 2
+        )
+        dim_style = Style.parse(_rgb_to_hex(_TEXTURE_SEPIA_RGB) + " dim")
+        bg_style = Style.parse("on " + _rgb_to_hex(_TEXTURE_BG_RGB))
+
+        for image_row in range(cell_height):
+            # Left texture
+            yield from _emit_band_texture_span(
+                col_start=0,
+                col_end=image_left,
+                image_left=image_left,
+                image_right=image_right,
+                row_seed_id=1 + image_row,
+                image_id=image_id,
+            )
+            # Middle: placeholder text on middle row, empty on others.
+            if image_row == middle_row:
+                pad_left = max(0, text_col - image_left)
+                pad_right = max(
+                    0, cell_width - pad_left - len(placeholder_text)
+                )
+                yield Segment(" " * pad_left, bg_style)
+                yield Segment(placeholder_text, dim_style)
+                yield Segment(" " * pad_right, bg_style)
+            else:
+                yield Segment(" " * cell_width, bg_style)
+            # Right texture
+            yield from _emit_band_texture_span(
+                col_start=image_right,
+                col_end=term_width,
+                image_left=image_left,
+                image_right=image_right,
+                row_seed_id=1 + image_row,
+                image_id=image_id,
+            )
+            yield Segment.line()
+
+        # Extra texture row below.
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=1 + cell_height,
+            image_id=image_id,
+        )
+
         # Bottom border.
-        bottom_border = "╰" + ("─" * (total_width - 2)) + "╯"
-        yield Segment(bottom_border, border)
-        yield Segment.line()
+        yield from _emit_band_border_row(term_width, title="")
 
 
 def _otsu_threshold(luminances) -> float:
@@ -2752,7 +3173,11 @@ class PaintDryDisplay:
             height=_TOP_PANEL_CONTENT_LINES + 2,
         )
 
-        focus_preview_panel = None
+        # Default: show the loading placeholder band so the focus
+        # preview slot is occupied even before any focus_preview
+        # event fires. This keeps the layout continuous through the
+        # transition into the first real preview.
+        focus_preview_panel = FocusPreviewLoadingBand(title="focus preview")
         have_kitty = self.focus_preview_kitty_renderable is not None
         have_inline = self.focus_preview_inline_renderable is not None
         have_fallback = self.focus_preview_renderable is not None
