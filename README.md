@@ -13,10 +13,10 @@ The point is exam integrity (each student gets their own numerical variant and a
 mapping) and operational sanity (grading becomes fast, auditable, and resilient to the
 ordinary weirdness of paper/scanner workflows without assuming chaotic inputs).
 
-This README is intentionally written as a scope/spec document for a project that has been
-scoped well enough to start building, but not yet implemented. It emphasizes problem
-space, invariants, workflow, and favorable constraints rather than premature
-implementation detail.
+This README started as a scope/spec document, but it now also needs to stay honest about
+the slices that already exist. It still emphasizes problem space, invariants, workflow,
+and favorable constraints, but the MC/OpenCV sections below describe real implemented
+surfaces rather than a purely aspirational plan.
 
 ## Non-goals
 
@@ -98,6 +98,24 @@ The system generates:
 A central requirement is reproducibility. It must always be possible to reconstruct what a
 given student received, even later.
 
+Initial contract slice for the deterministic MC lane:
+
+- generation must be able to emit a per-student MC answer-sheet artifact before the full
+  PDF pipeline exists
+- the artifact must include a stable, non-semantic `opaque_instance_code` that does not
+  expose student or template identifiers
+- it must include a per-page fallback code for paper recovery
+- it must include rendered MC questions with any shuffled choice order made explicit
+- variableized MC rendering must be stable across equivalent variable declaration order
+- it must include the answer-key mapping from logical choice key to physical bubble label
+- it must include canonical page-space bubble rectangles for each rendered bubble
+- it must declare the layout coordinate contract explicitly (`units`, `origin`, `y_axis`,
+  `layout_version`) so later PDF and OpenCV stages do not invent a second layout truth
+
+This narrow artifact is the handoff between generation and deterministic OpenCV grading.
+Later PDF rendering should consume the same contract rather than inventing a second layout
+truth.
+
 ### 3. Paper artifacts (Identification + Layout)
 
 Printed artifacts include:
@@ -107,6 +125,37 @@ Printed artifacts include:
 - alignment markers and registration aids for scan normalization
 
 The goal is not fancy. The goal is "works under copier reality."
+
+Current implementation status on the MC/OpenCV prerequisite lane:
+
+- `auto_grader.generation` produces the canonical answer-sheet artifact
+- `auto_grader.pdf_rendering` now renders a minimal answer-sheet PDF directly
+  from that artifact
+- each rendered page now carries two duplicated QR codes encoding the page
+  fallback code from the same artifact contract
+- the rendered PDF currently carries visible instance/page recovery codes,
+  rendered prompt text, filled registration markers for scan normalization,
+  duplicated QR identity markers, circular answer bubbles with direct `A/B/C/D`
+  labels, and a vertically stacked choice list placed underneath each prompt to
+  the left of the bubble row, with larger question typography and human-markable
+  bubble sizing, all still derived from the same page contract
+- dense MC sheets now paginate across multiple pages instead of forcing a fake
+  one-page contract, and long prompts wrap within the question block rather
+  than bleeding across the sheet
+- `auto_grader.scan_readback` now performs the first OpenCV-facing readback
+  slice by decoding duplicated page-identity QR payloads from scan images and
+  rejecting mismatched payload pairs as ambiguous
+- `auto_grader.scan_registration` now performs the first page-registration
+  slice by using the filled corner markers to normalize a skewed page back into
+  canonical page aspect and marker-aligned page space while preserving practical
+  scan resolution
+- `auto_grader.bubble_interpretation` now performs the first bubble-readback
+  slice by reading filled bubble labels from the normalized page image while
+  keeping blanks explicit and preserving multiple marks as visible ambiguity
+  instead of collapsing them into fake single answers; that layer has also now
+  survived a first real-paper calibration pass, and its `marked` versus
+  `illegible` boundary has been retuned against actual scanned pencil fills
+  rather than only procedural probes
 
 ### 4. Ingestion (Scans -> Identified pages)
 
@@ -134,6 +183,30 @@ states and must record an explicit, non-blank failure reason. Exact re-ingestion
 same file should be idempotent via a unique checksum key. Richer `duplicate` artifact
 linkage is deferred until there is canonical-artifact linkage to point at.
 
+Current implementation status on this ingest surface:
+
+- scan-level MC ingest packaging is implemented via `auto_grader.mc_scan_ingest`
+  so one batch of scanned page images plus a known exam artifact can now produce
+  explicit `matched`, `unmatched`, and `ambiguous` outcomes without forcing
+  downstream callers to hand-compose QR readback, page matching, and matched-page
+  extraction
+- unique matched scans carry the full normalized/scored page bundle from
+  `auto_grader.mc_page_extraction`
+- duplicate claims on the same page code stay explicit `ambiguous` outcomes
+  instead of silently picking a canonical scan
+- unreadable scans remain tracked `unmatched` artifacts with explicit failure
+  reasons
+- a thin prototype demo runner is implemented via `auto_grader.mc_opencv_demo`
+  plus `scripts/run_mc_opencv_demo.py`; it takes one known artifact JSON plus
+  one directory of scans, runs the landed ingest surface, writes a sanitized
+  `ingest_result.json`, writes per-scan normalized page images for matched
+  pages, and emits a small human-readable summary so the lane can be smoked end
+  to end without inventing a second persistence format; that runner has now
+  also survived a first real-paper smoke against the durable two-page
+  pencil-and-scanner calibration packet, and the only bug it exposed was a
+  page-local scoring-accounting issue that has since been fixed in
+  `auto_grader.mc_page_extraction`
+
 ### 5. Grading (Bubbles -> Responses -> Score)
 
 Once pages are identified and registered:
@@ -143,6 +216,47 @@ Once pages are identified and registered:
 - answer keys are applied per-student variant
 - scores are computed
 - ambiguous cases are flagged for review rather than guessed
+
+Current implementation status on this grading surface:
+
+- page-identity QR readback is implemented via `auto_grader.scan_readback`
+- page registration is implemented via `auto_grader.scan_registration`
+- first-pass bubble readback is implemented via `auto_grader.bubble_interpretation`
+- first-pass scoring decisions are implemented via `auto_grader.mc_scoring`
+  for the core MC statuses `correct`, `incorrect`, `blank`, `multiple_marked`,
+  `ambiguous_mark`, and `illegible_mark`; that scorer now also performs a
+  narrow question-level dominance arbitration pass so one clearly stronger
+  deliberate fill can beat much weaker secondary traces without forcing routine
+  manual review, while genuinely substantial co-equal fills still remain
+  explicit review work
+- matched-page extraction packaging is implemented via `auto_grader.mc_page_extraction`
+  so downstream callers can consume one bundle containing the normalized page,
+  marked bubble labels, per-bubble evidence, and scored MC outcomes for an
+  already-matched page
+- a synthetic student-mark smoke harness is implemented via
+  `auto_grader.mark_profile_smoke`; it renders plausible filled, scribbled,
+  off-center, smudged, faint, double-marked, hostile-glance, glancing-stray-only,
+  tiny-center-dot, correct-plus-wrong-dot, ambiguous-patchy, and
+  scratchout-illegible bubbles, runs them through a small ladder of
+  realistic scan variants (`clean_scan`, `office_scan`, `stressed_scan`) on the
+  real QR/readback/registration/scoring path, and records both the observed
+  behavior band (`grade`, `review`, `ignore`, or outright pipeline failure) and
+  the current strongest-handled boundary without requiring an immediate
+  pen-and-scanner loop
+- that same harness now also reports an explicit incidental-mark pathology line
+  on the ordinary `office_scan` tier: the strongest specimen still ignored as
+  non-attempt noise, and the first stronger specimen that the current pipeline
+  no longer feels safe ignoring; today that line sits between a short interior
+  slash that is still ignored and a compact dark interior scribble that is
+  treated as a real fill attempt
+- a dedicated printable paper-calibration packet is implemented via
+  `auto_grader.paper_calibration_packet`; the first real pencil-and-scanner
+  pass on that packet exposed an over-aggressive `illegible` heuristic, and the
+  follow-on retune brought the same two scanned pages from 3/12 page-local
+  matches to 12/12 without weakening the existing scratchout-to-`illegible`
+  contract
+- richer review workflow, persistence, and operator-facing resolution state are still
+  the next slice beyond that scoring surface
 
 ### 6. Review + Export
 
@@ -238,11 +352,15 @@ To keep behavior stable and auditable, we treat docs and tests as a paired contr
   expression evaluator safety, optional normalized `focus_region` metadata for
   display/cropping affordances, and integration tests against the real CHM 141 exam
   template.
+- `tests/test_generation_contract.py` defines the enforceable initial MC answer-sheet
+  generation contract for the deterministic OpenCV lane.
 - `python -m auto_grader.contract_test_runner` is the preferred low-friction local
   entrypoint for the authoritative contract suites. It always runs the metadata,
-  connection, Postgres harness, runner, template schema, and discovery guardrail
-  contracts, and includes the Postgres schema contract when `TEST_DATABASE_URL` is
-  set.
+  connection, Postgres harness, runner, template schema, eval harness, shimmer,
+  generation, PDF rendering, scan readback, scan registration, bubble
+  interpretation, scoring, matched-page extraction, paper-calibration, threshold,
+  and discovery guardrail contracts, and includes the Postgres schema contract
+  when `TEST_DATABASE_URL` is set.
 - Contract changes must update both this README and contract tests in the same change.
 - New schema behavior should follow fail-first discipline:
   add a non-vacuous failing contract test first, then implement.
@@ -324,6 +442,25 @@ For each question:
 - Portfolio relevance is a nice side benefit.
 - The real value is reducing professor friction and avoiding the fill 60 configs by hand
   failure mode.
+
+## Eval harness model servers (dev only)
+
+The eval harness (`scripts/smoke_vlm.py`) talks to two OpenAI-compatible
+local servers — one for the actual grader model (typically Qwen3.5 or
+Gemma-4 on the big-box machine, mDNS-resolved at
+`http://macbook-pro-2.local:8001`), and one for the "Project Paint Dry"
+narrator (Bonsai-8B-mlx-1bit on the local machine, served via a
+PRISM-patched `mlx-openai-server` at `http://localhost:8001`). They
+share a port number but live on different hosts.
+
+Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't
+support `bits=1` quantization. Setup, launch command, verification,
+and troubleshooting are documented in
+[`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md). Read
+that file before trying to start the narrator from scratch.
+
+The grader server on the big box uses standard OMLX with non-1-bit
+models and isn't covered by the bonsai doc.
 
 ## Project workflow
 
