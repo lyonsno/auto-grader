@@ -449,6 +449,46 @@ that file before trying to start the narrator from scratch.
 The grader server on the big box uses standard OMLX with non-1-bit
 models and isn't covered by the bonsai doc.
 
+## Project Paint Dry — live narrator (dev only)
+
+When the eval harness runs with `--narrate`, it opens a second terminal
+window showing a live play-by-play of the grading VLM's reasoning.
+A small local model (Bonsai 8B, 1-bit) watches the VLM's reasoning
+token stream and produces short running commentary as each item is
+graded — effectively narrating the grading process in real time.
+
+The narrator window (top to bottom):
+
+- **Title bar**: project name, narrator status, and running counters
+  for emitted / dedup-rejected / empty-rejected summaries.
+- **Scoreboard**: current model, exam set, item counter, and a row of
+  tall-digit scoring dials — total elapsed, turn elapsed, on-target
+  fraction, left-on-table, and bad calls.
+- **Status + live pane**: the current bonsai dispatch streaming
+  character-by-character as the VLM thinks, with a one-line status
+  label above it.
+- **Focus preview**: a cropped scan of the exam region currently being
+  graded, rendered inline via Kitty graphics protocol. Shows the
+  student's actual handwritten answer for the active item.
+- **History pane**: completed narrator summaries grouped by grading
+  item, newest at top. Each item shows a header (item ID, question
+  type, point value), any accepted narrator lines (core-issue flags,
+  basis summaries), and a verdict line with elapsed time, grader
+  score vs professor score, and a brief comparison.
+- **Rejected pane**: summaries dropped by the dedup or empty filters,
+  shown with strikethrough. Debug surface only.
+
+The history pane is scrollable. Key bindings are shown in the footer
+after the session ends, but they are active throughout the run:
+`k`/`j` scroll up/down one row, `u`/`d` page up/down, `0` returns to
+the live edge. While scrolled up, new history continues to accumulate
+without yanking the viewport back to newest. After the session ends,
+scroll keys remain active and any non-scroll key closes the window.
+
+Each run persists narrator output to `runs/<ts>-<model>/narrator.jsonl`
+(machine-replayable) and `runs/<ts>-<model>/narrator.txt` (human-readable
+transcript).
+
 ## Project workflow
 
 ### Professor flow (happy path)
