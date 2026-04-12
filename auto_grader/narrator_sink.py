@@ -80,6 +80,7 @@ class NarratorSink:
         self._live_buffer = ""  # accumulator for the txt transcript only
         self._lock = threading.Lock()
         self._started = False
+        self._fifo_failure_path: Path | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -108,6 +109,7 @@ class NarratorSink:
                 f"# Project Paint Dry transcript\n"
                 f"# Started: {datetime.now().isoformat(timespec='seconds')}\n\n"
             )
+            self._fifo_failure_path = self.config.log_dir / "fifo_writer_failure.txt"
 
         if self.config.spawn_terminal:
             self._fifo_path = self._make_fifo()
@@ -341,9 +343,28 @@ class NarratorSink:
             try:
                 self._fifo_writer.write(line)
                 self._fifo_writer.flush()
-            except (BrokenPipeError, OSError):
+            except (BrokenPipeError, OSError) as exc:
+                self._record_fifo_writer_failure(msg.get("type"), exc)
                 # Reader closed — we'll keep logging to disk only
                 self._fifo_writer = None
+
+    def _record_fifo_writer_failure(self, event_type: str | None, exc: BaseException) -> None:
+        detail = (
+            f"{datetime.now().isoformat(timespec='seconds')} "
+            f"event={event_type or 'unknown'} "
+            f"error={type(exc).__name__}: {exc}\n"
+        )
+        try:
+            self._fallback.write(f"[narrator fifo lost] {detail}")
+            self._fallback.flush()
+        except Exception:
+            pass
+        if self._fifo_failure_path is not None:
+            try:
+                with open(self._fifo_failure_path, "a", buffering=1) as fh:
+                    fh.write(detail)
+            except Exception:
+                pass
 
     def _write_structured_row(self, event_type: str, label: str, text: str) -> None:
         """Write one structured legibility row under the current item."""

@@ -243,6 +243,37 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertEqual(topic["truth_score"], 0.0)
         self.assertEqual(topic["max_points"], 4.0)
 
+    def test_fifo_writer_drop_persists_diagnostic_in_log_dir(self):
+        class _BrokenWriter:
+            def write(self, _line: str) -> None:
+                raise BrokenPipeError("reader vanished")
+
+            def flush(self) -> None:
+                raise AssertionError("flush should not run after write failure")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink._fifo_writer = _BrokenWriter()
+
+            sink.write_header("[item 1/15] 15-blue/fr-10b (numeric, 1.0 pts)")
+
+            diag_path = Path(tmpdir) / "fifo_writer_failure.txt"
+            self.assertTrue(
+                diag_path.exists(),
+                "writer-side FIFO loss should leave a durable breadcrumb in the run dir",
+            )
+            diag = diag_path.read_text()
+            self.assertIn("event=header", diag)
+            self.assertIn("BrokenPipeError", diag)
+            self.assertIsNone(
+                sink._fifo_writer,
+                "sink should stop using the dead FIFO writer after recording the failure",
+            )
+            sink.close()
+
     def test_write_focus_preview_emits_base64_preview_event(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sink = NarratorSink(
