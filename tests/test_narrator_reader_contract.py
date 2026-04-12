@@ -2755,8 +2755,8 @@ class NarratorReaderContract(unittest.TestCase):
         with mock.patch("scripts.narrator_reader.time.monotonic", return_value=3963.0):
             group = display.render()
 
-        scorebug_panel = group.renderables[0]
-        header_panel = group.renderables[1]
+        header_panel = group.renderables[0]
+        scorebug_panel = group.renderables[1]
 
         # Collect the scorebug panel plain text from every row so the
         # assertions don't depend on the exact row index of the new

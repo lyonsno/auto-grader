@@ -52,7 +52,7 @@ class FocusPreviewContract(unittest.TestCase):
         self.assertEqual(width, 800 + 2 * _PADDING_PX)
         self.assertEqual(height, 600 + 2 * _PADDING_PX)
 
-    def test_preview_keeps_center_bright_but_vignettes_edges(self):
+    def test_preview_keeps_center_bright_but_vignettes_top_and_bottom(self):
         from auto_grader.focus_preview import render_focus_preview
         from auto_grader.focus_preview import _PADDING_PX
 
@@ -60,13 +60,19 @@ class FocusPreviewContract(unittest.TestCase):
         width, height = _png_dimensions(preview)
         # Center of the image should be the original page color.
         center = _pixel_at(preview, width // 2, height // 2)
-        # A pixel near the edge of the crop content (just inside
-        # the padding) should be darker than the center because
-        # the vignette has pulled it toward the background.
-        edge_inside = _pixel_at(preview, _PADDING_PX + 2, height // 2)
+        # In the textured-band renderer, only the top and bottom edges
+        # vignette toward the background. The left/right edges remain
+        # sharp so the character-texture band can hug them directly.
+        top_edge_inside = _pixel_at(preview, width // 2, _PADDING_PX + 2)
+        side_edge_inside = _pixel_at(preview, _PADDING_PX + 2, height // 2)
 
-        self.assertGreater(sum(center), sum(edge_inside))
-        # Center should still be close to the original page color.
+        self.assertGreater(sum(center), sum(top_edge_inside))
+        self.assertEqual(
+            sum(center),
+            sum(side_edge_inside),
+            "side edges should stay sharp in the band-layout renderer",
+        )
+        # Center should still be warm and bright after the sepia pass.
         self.assertGreater(min(center), 180)
 
     def test_preview_softens_corners_into_terminal_background(self):
