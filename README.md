@@ -212,6 +212,13 @@ Current implementation status on this ingest surface:
   instead of silently picking a canonical scan
 - unreadable scans remain tracked `unmatched` artifacts with explicit failure
   reasons
+- durable on-disk scan-session persistence is implemented via
+  `auto_grader.mc_scan_session`; it writes one `session_manifest.json` plus
+  per-scan normalized page images for matched scans, keeps exact re-runs
+  idempotent at the artifact identity level, rejects unsafe `scan_id` values
+  before they become output paths, and now treats normalized-image write
+  failures as real errors instead of silently replacing output files with
+  corrupt temp data
 - a thin prototype demo runner is implemented via `auto_grader.mc_opencv_demo`
   plus `scripts/run_mc_opencv_demo.py`; it takes one known artifact JSON plus
   one directory of scans, runs the landed ingest surface, writes a sanitized
@@ -271,8 +278,14 @@ Current implementation status on this grading surface:
   follow-on retune brought the same two scanned pages from 3/12 page-local
   matches to 12/12 without weakening the existing scratchout-to-`illegible`
   contract
-- richer review workflow, persistence, and operator-facing resolution state are still
-  the next slice beyond that scoring surface
+- a human review-override surface is implemented via
+  `auto_grader.mc_review_override`; reviewers can now resolve flagged
+  `multiple_marked`, `ambiguous_mark`, and `illegible_mark` cases to a final
+  bubble choice or blank result while preserving the original machine status as
+  provenance in the corrected scoring record
+- richer database-backed persistence and durable review-resolution storage are
+  still the next slices beyond the current disk artifact and in-memory override
+  surfaces
 
 ### 6. Review + Export
 
@@ -285,6 +298,14 @@ The system needs a minimal workflow for:
 
 A rough, cheap GUI is acceptable. A local web UI served from the app is acceptable. The UI
 is a tool, not the product.
+
+Current implementation status on this review surface:
+
+- `auto_grader.mc_review_override` now provides the first explicit human
+  resolution seam for flagged MC questions
+- that surface is intentionally narrow and still in-memory: it corrects scored
+  question records with provenance, but it does not yet persist those review
+  resolutions into the database spine
 
 ## Data model
 
