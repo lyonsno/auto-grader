@@ -1703,12 +1703,14 @@ class FocusPreviewLoadingBand:
     ) -> RenderResult:
         term_width = max(1, options.max_width)
 
-        # Use the same band dimensions as the real renderer so the
-        # layout doesn't jump when the first preview lands. The
-        # "image" region is a placeholder cell_width × cell_height
-        # box; default to 80x18 which is a reasonable stand-in.
-        cell_width = min(80, max(1, term_width - 4))
-        cell_height = 18
+        # Scale with the terminal like the real Kitty renderer does.
+        # Use a ~4:3 exam crop aspect ratio as the stand-in so the
+        # placeholder box matches what the first real preview will
+        # look like. The real renderer leaves 2 cells for borders
+        # and caps at _INLINE_IMAGE_MAX_CELL_WIDTH.
+        inner_budget = max(1, term_width - 2)
+        cell_width = min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget)
+        cell_height = _INLINE_IMAGE_CELL_HEIGHT
         image_left = max(0, (term_width - cell_width) // 2)
         image_right = image_left + cell_width
 
