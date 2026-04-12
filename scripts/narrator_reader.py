@@ -898,6 +898,26 @@ def _focus_preview_max_cell_height(
     return max(1, min(default_cell_height, max_band_rows - 4))
 
 
+def _focus_preview_available_height_rows(
+    console: Console,
+    options: ConsoleOptions,
+) -> int | None:
+    """Best-effort terminal row budget for the focus-preview band.
+
+    Rich sometimes leaves ``options.max_height`` unset in the live
+    render path even though the backing console knows the real terminal
+    size. Fall back to ``console.size.height`` so the preview band
+    still respects short terminals instead of expanding back to the
+    legacy unconstrained height.
+    """
+    if options.max_height is not None:
+        return options.max_height
+    try:
+        return console.size.height
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------
 # Kitty graphics protocol path (the durable fix for the flicker).
 #
@@ -1624,7 +1644,9 @@ class FocusPreviewKittyImage:
         term_width = max(1, options.max_width)
         cell_width, cell_height = self._compute_box(
             term_width,
-            available_height_rows=options.max_height,
+            available_height_rows=_focus_preview_available_height_rows(
+                console, options
+            ),
         )
 
         # Center the image horizontally in the band.
@@ -1721,7 +1743,9 @@ class FocusPreviewLoadingBand:
         # and caps at _INLINE_IMAGE_MAX_CELL_WIDTH.
         inner_budget = max(1, term_width - 2)
         cell_width = min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget)
-        cell_height = _focus_preview_max_cell_height(options.max_height)
+        cell_height = _focus_preview_max_cell_height(
+            _focus_preview_available_height_rows(console, options)
+        )
         image_left = max(0, (term_width - cell_width) // 2)
         image_right = image_left + cell_width
 

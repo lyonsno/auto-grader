@@ -1225,6 +1225,39 @@ class NarratorReaderContract(unittest.TestCase):
             "short terminals need the Kitty preview band to leave space for the scorebug, live lane, and history",
         )
 
+    def test_focus_preview_kitty_image_uses_console_height_when_options_height_missing(self):
+        from types import SimpleNamespace
+        from rich.console import Console
+
+        renderable = FocusPreviewKittyImage(
+            image_id=1,
+            image_pixel_width=1600,
+            image_pixel_height=900,
+            terminal_cell_aspect=2.1,
+            title="test",
+        )
+        console = Console(
+            width=100,
+            height=24,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        segments = list(
+            renderable.__rich_console__(
+                console,
+                SimpleNamespace(max_width=100, max_height=None),
+            )
+        )
+        newline_count = sum(
+            1 for segment in segments if getattr(segment, "text", None) == "\n"
+        )
+        self.assertLessEqual(
+            newline_count,
+            14,
+            "if Rich omits max_height, the preview band must still respect the live terminal height",
+        )
+
     def test_focus_preview_kitty_image_emits_place_every_render(self):
         # Rich Live clears the image region between frames, so we
         # must re-emit the place command on every render. The place
