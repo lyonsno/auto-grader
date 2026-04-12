@@ -4610,6 +4610,7 @@ def main() -> int:
     # Open the fifo for reading. This blocks until the writer connects.
     fd = os.open(str(fifo_path), os.O_RDONLY)
     fifo = os.fdopen(fd, "r", buffering=1)
+    saw_end_event = False
 
     # Install cbreak mode on stdin so the interactive scroll loop can
     # read one byte at a time without waiting for Enter. Best-effort:
@@ -4733,7 +4734,15 @@ def main() -> int:
             while True:
                 chunk = fifo.read(1)
                 if not chunk:
-                    # Writer closed
+                    if not saw_end_event:
+                        print(
+                            "Project Paint Dry reader saw unexpected FIFO EOF before end event",
+                            file=sys.stderr,
+                        )
+                        animation_stop.set()
+                        scroll_stop.set()
+                        anim_thread.join(timeout=0.5)
+                        return 1
                     break
                 buffer += chunk
                 while "\n" in buffer:
@@ -4801,6 +4810,7 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
+                        saw_end_event = True
                         # Flag the display so render() shows a
                         # "press any key to close" footer. Keep
                         # the animation thread running so the

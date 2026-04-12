@@ -4,6 +4,7 @@ import math
 import time
 import unittest
 from unittest import mock
+from pathlib import Path
 
 import fitz
 from rich.align import Align
@@ -3146,6 +3147,66 @@ class NarratorReaderContract(unittest.TestCase):
             display.should_animate(
                 now=100.0 + _SESSION_END_ANIMATION_LINGER_S + 0.1
             )
+        )
+
+    def test_main_returns_error_on_fifo_eof_before_end_event(self) -> None:
+        import scripts.narrator_reader as module
+
+        class _FakeFifo:
+            def read(self, _size: int) -> str:
+                return ""
+
+            def close(self) -> None:
+                return None
+
+        class _FakeLive:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def update(self, *_args, **_kwargs) -> None:
+                return None
+
+        class _FakeDisplay:
+            def __init__(self, *args, **kwargs):
+                self.session_ended = False
+
+            def render(self):
+                return Text("frame")
+
+            def should_animate(self) -> bool:
+                return False
+
+        with mock.patch.object(module.sys, "argv", ["narrator_reader.py", "/tmp/mock.fifo"]):
+            with mock.patch.object(module.Path, "exists", return_value=True):
+                with mock.patch.object(module.os, "open", return_value=123):
+                    with mock.patch.object(module.os, "fdopen", return_value=_FakeFifo()):
+                        with mock.patch.object(module, "Live", _FakeLive):
+                            with mock.patch.object(module, "PaintDryDisplay", _FakeDisplay):
+                                with mock.patch.object(module.termios, "tcgetattr", side_effect=OSError):
+                                    stderr = mock.Mock()
+                                    with mock.patch.object(module.sys, "stderr", stderr):
+                                        result = module.main()
+
+        self.assertEqual(
+            result,
+            1,
+            "reader should fail loudly if the FIFO closes before an end event arrives",
+        )
+        printed = "".join(
+            call.args[0]
+            for call in stderr.write.call_args_list
+            if call.args
+        )
+        self.assertIn(
+            "unexpected FIFO EOF before end event",
+            printed,
+            "reader should explain why it exited instead of disappearing cleanly",
         )
 
 
