@@ -125,7 +125,14 @@ class SmokeVlmContract(unittest.TestCase):
 
             code = self._run_main(
                 module,
-                argv=["--items", "1", "--model", "gemma-test"],
+                argv=[
+                    "--items",
+                    "1",
+                    "--model",
+                    "gemma-test",
+                    "--model-family",
+                    "neutral",
+                ],
                 fake_home=fake_home,
                 fake_script_repo=fake_repo,
             )
@@ -157,6 +164,8 @@ class SmokeVlmContract(unittest.TestCase):
                     "--tricky",
                     "--model",
                     "gemma-test",
+                    "--model-family",
+                    "neutral",
                     "--run-dir",
                     str(run_dir),
                     "--narrate-stderr",
@@ -199,6 +208,8 @@ class SmokeVlmContract(unittest.TestCase):
                     "1",
                     "--model",
                     "qwen-test",
+                    "--model-family",
+                    "neutral",
                     "--run-dir",
                     str(run_dir),
                 ],
@@ -209,6 +220,67 @@ class SmokeVlmContract(unittest.TestCase):
                 (run_dir / "predictions.jsonl").is_file(),
                 "explicit --run-dir should remain a supported escape hatch",
             )
+
+    def test_describe_only_mode_bypasses_grading_pipeline(self):
+        module = _load_smoke_vlm()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "describe-only-run"
+            describe_result = {
+                "run_dir": run_dir,
+                "records_path": run_dir / "probe.jsonl",
+                "count_ok": 1,
+                "count_err": 0,
+            }
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            describe_mock = None
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(
+                        module, "load_ground_truth", return_value=[self.item]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        module,
+                        "grade_all_items",
+                        side_effect=AssertionError(
+                            "describe-only mode must not invoke the grading pipeline"
+                        ),
+                    )
+                )
+                describe_mock = stack.enter_context(
+                    mock.patch.object(
+                        module,
+                        "run_describe_only_mode",
+                        return_value=describe_result,
+                        create=True,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "smoke_vlm.py",
+                            "--describe-only",
+                            "--pick",
+                            "15-blue:fr-1",
+                            "--run-dir",
+                            str(run_dir),
+                        ],
+                    )
+                )
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                    stderr
+                ):
+                    code = module.main()
+
+            self.assertEqual(code, 0)
+            assert describe_mock is not None
+            describe_mock.assert_called_once()
+            self.assertIn("describe-only", stdout.getvalue().lower())
 
     def test_prediction_record_carries_corrected_score_and_reason(self):
         """predictions.jsonl must be self-contained for offline analysis.

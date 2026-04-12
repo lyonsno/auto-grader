@@ -51,6 +51,9 @@ class _StubServer:
     def __exit__(self, *_):
         if self._server:
             self._server.shutdown()
+            self._server.server_close()
+        if hasattr(self, "_thread"):
+            self._thread.join(timeout=1)
 
 
 # ---------------------------------------------------------------------------

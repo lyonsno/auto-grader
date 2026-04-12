@@ -41,10 +41,7 @@ import argparse
 import json
 import os
 import sys
-import time
-import urllib.error
-import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -55,33 +52,20 @@ import yaml
 # duplicating them. smoke_probe is a peer of smoke_vlm in scripts/;
 # both import from auto_grader.
 from auto_grader.vlm_inference import (
+    DESCRIBE_ONLY_PROMPT,
+    DESCRIBE_ONLY_PROMPT_VERSION,
     _EXAM_PDF_MAP,
-    _image_to_data_url,
+    ServerConfig,
+    apply_model_sampling_preset,
     extract_page_image,
+    known_model_families,
+    resolve_model_family,
+    stream_vision_completion,
 )
 
 _GROUND_TRUTH = Path(__file__).resolve().parent.parent / "eval" / "ground_truth.yaml"
 _SCANS_DIR = Path.home() / "dev" / "auto-grader-assets" / "scans"
 _DEFAULT_RUNS_ROOT = Path.home() / "dev" / "auto-grader-runs"
-
-# Probe prompt v0 — describe-only, no chemistry reasoning, no grading.
-# Deliberately asks for ambiguous-reading enumeration so downstream
-# analysis can see where perception is uncertain vs where it commits.
-PROBE_PROMPT_VERSION = "2026-04-11-describe-only-v2"
-PROBE_PROMPT = (
-    "This is a page from a student's chemistry exam. The page may "
-    "contain multiple questions; describe everything visually "
-    "present on it.\n\n"
-    "For each distinct piece of writing or drawing, transcribe what "
-    "the student wrote as literally as possible — numbers, "
-    "equations, diagrams, marginal notes — and note where it sits "
-    "on the page (near which question number, in which margin). If "
-    "any handwriting or drawing is ambiguous and admits more than "
-    "one reasonable reading, list the alternatives.\n\n"
-    "Do not grade. Do not apply chemistry knowledge to judge "
-    "correctness. Describe what is visually present, nothing more."
-)
-
 
 # ---------------------------------------------------------------------------
 # Backend config
@@ -130,178 +114,32 @@ def _build_backend(args: argparse.Namespace) -> ProbeBackend:
 
 
 # ---------------------------------------------------------------------------
-# HTTP + streaming
+# Shared request config
 # ---------------------------------------------------------------------------
 
 
-def _extract_reasoning_tokens(delta: dict[str, Any]) -> list[str]:
-    """Flatten provider-specific reasoning delta shapes into plain text.
-
-    Providers emit reasoning in one of three shapes, sometimes more
-    than one simultaneously on the same delta:
-      - `reasoning_content` (plain string) — OMLX / some OpenAI-compat
-        servers
-      - `reasoning` (plain string) — OpenRouter legacy compat field
-      - `reasoning_details` (structured list with per-item `text` /
-        `summary` fields) — OpenRouter canonical shape
-
-    OpenRouter emits the SAME token in both `reasoning` and
-    `reasoning_details[].text` on every chunk. Naively reading both
-    doubles every token and produces 'IIII nneeeedd' output.
-    Diagnosed 2026-04-11 on google/gemma-4-26b-a4b-it, 4069/4071
-    deltas had the dual shape.
-
-    Fix: treat the three shapes as a priority chain, not an
-    accumulation. Prefer reasoning_details (most typed, canonical on
-    OR), fall back to reasoning_content, fall back to reasoning.
-    Stop at the first non-empty source. This is safe because all
-    three express the same underlying reasoning stream — no provider
-    is known to split reasoning ACROSS shapes on a single delta.
-    """
-    details = delta.get("reasoning_details")
-    if isinstance(details, list) and details:
-        tokens: list[str] = []
-        for detail in details:
-            if not isinstance(detail, dict):
-                continue
-            text = detail.get("text")
-            if isinstance(text, str) and text:
-                tokens.append(text)
-            else:
-                summary = detail.get("summary")
-                if isinstance(summary, str) and summary:
-                    tokens.append(summary)
-        if tokens:
-            return tokens
-
-    for field_name in ("reasoning_content", "reasoning"):
-        value = delta.get(field_name)
-        if isinstance(value, str) and value:
-            return [value]
-
-    return []
-
-
-def _consume_stream(resp, raw_dump_path: Path | None = None) -> tuple[str, str]:
-    """Read an SSE stream from an OpenAI-compatible chat completion.
-
-    Returns (content_text, reasoning_text). Both are plain strings
-    accumulated from deltas. Mirrors the shape of
-    auto_grader.vlm_inference._consume_streaming_response but without
-    the narrator hooks — the probe has no narrator.
-
-    If raw_dump_path is given, every delta dict is appended to that
-    file as a JSONL row before flattening. This is a diagnostic
-    affordance used to inspect provider-specific reasoning shapes;
-    remove or leave unused in normal runs.
-    """
-    content_parts: list[str] = []
-    reasoning_parts: list[str] = []
-    dump_fh = open(raw_dump_path, "a") if raw_dump_path else None
-    try:
-        for raw_line in resp:
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            # Some providers (notably OpenRouter) send non-choice events
-            # mid-stream — usage summaries, keep-alives, provider metadata
-            # — with an empty or absent `choices` array. Naive
-            # chunk["choices"][0] crashes on those. Guard explicitly.
-            choices = chunk.get("choices") or []
-            if not choices:
-                continue
-            delta = (choices[0] or {}).get("delta", {}) or {}
-            if dump_fh is not None:
-                dump_fh.write(json.dumps(delta, ensure_ascii=False) + "\n")
-            for tok in _extract_reasoning_tokens(delta):
-                reasoning_parts.append(tok)
-            c = delta.get("content", "")
-            if isinstance(c, str) and c:
-                content_parts.append(c)
-    finally:
-        if dump_fh is not None:
-            dump_fh.close()
-    return "".join(content_parts), "".join(reasoning_parts)
-
-
-def _call(
+def _build_request_config(
+    *,
     backend: ProbeBackend,
     model: str,
-    prompt: str,
-    image_data_url: str,
-    max_tokens: int = 4096,
-    temperature: float = 0.3,
-    timeout: float = 600,
-    raw_dump_path: Path | None = None,
-) -> tuple[str, str, float]:
-    """Single chat-completion call, streaming.
-
-    Returns (content, reasoning, elapsed_sec). Raises on HTTP /
-    transport errors — caller decides whether to retry or record as a
-    probe failure.
-
-    temperature defaults to 0.3 (low) because the task is
-    description-only and we want stable perception, not exploration.
-    max_tokens default 4096 is generous for a description task;
-    perception responses should be much shorter than grading
-    reasoning.
-    """
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": image_data_url}},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
-    body: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "stream": True,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    # OpenRouter wants an explicit reasoning flag to turn thinking on
-    # for reasoning-capable models. Without it OR suppresses the
-    # reasoning stream even on models that have it natively.
-    if backend.is_openrouter:
-        body["reasoning"] = {"enabled": True}
-
-    # Compose URL. Local OMLX wants /v1/chat/completions; OpenRouter's
-    # base already ends with /v1, so just append /chat/completions.
-    if backend.base_url.rstrip("/").endswith("/v1"):
-        url = f"{backend.base_url.rstrip('/')}/chat/completions"
-    else:
-        url = f"{backend.base_url.rstrip('/')}/v1/chat/completions"
-
-    headers = {"Content-Type": "application/json"}
-    if backend.api_key:
-        headers["Authorization"] = f"Bearer {backend.api_key}"
-
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers=headers,
+    model_family: str,
+    max_tokens: int,
+    temperature_override: float | None,
+) -> ServerConfig:
+    config = ServerConfig(
+        base_url=backend.base_url,
+        api_key=backend.api_key,
+        model=model,
+        max_tokens=max_tokens,
     )
-    t0 = time.time()
-    resp = urllib.request.urlopen(req, timeout=timeout)
-    try:
-        content, reasoning = _consume_stream(resp, raw_dump_path=raw_dump_path)
-    finally:
-        try:
-            resp.close()
-        except Exception:
-            pass
-    elapsed = time.time() - t0
-    return content, reasoning, elapsed
+    config = apply_model_sampling_preset(
+        config,
+        family=model_family,
+        task="describe",
+    )
+    if temperature_override is not None:
+        config = replace(config, temperature=temperature_override)
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +221,15 @@ def main() -> int:
         "local OMLX, or google/gemma-3-27b-it for openrouter).",
     )
     parser.add_argument(
+        "--model-family",
+        choices=known_model_families(),
+        default=None,
+        help=(
+            "Explicit sampling family override for unregistered models. "
+            "Required when --model does not match a known family prefix."
+        ),
+    )
+    parser.add_argument(
         "--backend",
         choices=("local", "openrouter"),
         default="local",
@@ -415,8 +262,11 @@ def main() -> int:
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.3,
-        help="Sampling temperature (default: 0.3 — low, stable perception)",
+        default=None,
+        help=(
+            "Optional override for the family default temperature. "
+            "Describe-only runs otherwise use low, stable perception settings."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -433,7 +283,15 @@ def main() -> int:
     args = parser.parse_args()
 
     backend = _build_backend(args)
+    resolved_family = resolve_model_family(args.model, args.model_family)
     items = _load_items(args.pick)
+    config = _build_request_config(
+        backend=backend,
+        model=args.model,
+        model_family=resolved_family,
+        max_tokens=args.max_tokens,
+        temperature_override=args.temperature,
+    )
 
     run_dir = Path(args.run_dir) if args.run_dir else _run_dir(args.model)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -441,9 +299,15 @@ def main() -> int:
 
     print(f"Backend:  {backend.name} ({backend.base_url})")
     print(f"Model:    {args.model}")
+    print(f"Family:   {resolved_family}")
     print(f"Items:    {len(items)} — {[f'{i.exam_id}:{i.question_id}' for i in items]}")
     print(f"Run dir:  {run_dir}")
-    print(f"Prompt:   {PROBE_PROMPT_VERSION}")
+    print(f"Prompt:   {DESCRIBE_ONLY_PROMPT_VERSION}")
+    print(
+        f"Sampling: temp={config.temperature} top_p={config.top_p} "
+        f"top_k={config.top_k} min_p={config.min_p} "
+        f"presence={config.presence_penalty} rep={config.repetition_penalty}"
+    )
     print()
 
     if args.dry_run:
@@ -460,10 +324,11 @@ def main() -> int:
                     "backend": backend.name,
                     "base_url": backend.base_url,
                     "model": args.model,
-                    "prompt_version": PROBE_PROMPT_VERSION,
-                    "prompt": PROBE_PROMPT,
-                    "temperature": args.temperature,
-                    "max_tokens": args.max_tokens,
+                    "model_family": resolved_family,
+                    "prompt_version": DESCRIBE_ONLY_PROMPT_VERSION,
+                    "prompt": DESCRIBE_ONLY_PROMPT,
+                    "temperature": config.temperature,
+                    "max_tokens": config.max_tokens,
                     "started": datetime.now().isoformat(timespec="seconds"),
                 }
             )
@@ -499,7 +364,6 @@ def main() -> int:
                 continue
             page_cache[key] = extract_page_image(pdf_path, item.page)
         image_bytes = page_cache[key]
-        image_url = _image_to_data_url(image_bytes)
 
         print(
             f"[{i}/{len(items)}] {item.exam_id}:{item.question_id} "
@@ -516,15 +380,20 @@ def main() -> int:
             "backend": backend.name,
         }
         try:
-            content, reasoning, elapsed = _call(
-                backend,
-                args.model,
-                PROBE_PROMPT,
-                image_url,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
+            t0 = time.time()
+            content, reasoning = stream_vision_completion(
+                config=config,
+                prompt_text=DESCRIBE_ONLY_PROMPT,
+                page_image=image_bytes,
+                extra_body=(
+                    {"reasoning": {"enabled": True}}
+                    if backend.is_openrouter
+                    else None
+                ),
                 raw_dump_path=Path(args.raw_dump) if args.raw_dump else None,
+                failure_context=f"{item.exam_id}/{item.question_id}",
             )
+            elapsed = time.time() - t0
             row["description"] = content
             row["reasoning"] = reasoning
             row["elapsed_sec"] = round(elapsed, 2)
@@ -538,18 +407,6 @@ def main() -> int:
                 f"    ({elapsed:.1f}s, {len(content)} chars content, "
                 f"{len(reasoning)} chars reasoning)"
             )
-        except urllib.error.HTTPError as e:
-            body = ""
-            try:
-                body = e.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                pass
-            row["description"] = ""
-            row["reasoning"] = ""
-            row["elapsed_sec"] = None
-            row["error"] = f"HTTPError {e.code}: {body}"
-            n_err += 1
-            print(f"    HTTPError {e.code}: {body[:200]}", file=sys.stderr)
         except Exception as e:
             row["description"] = ""
             row["reasoning"] = ""

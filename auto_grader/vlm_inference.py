@@ -95,61 +95,118 @@ class ServerConfig:
 
 
 # ---------------------------------------------------------------------------
-# Per-model sampling presets
+# Per-model-family sampling presets
 # ---------------------------------------------------------------------------
 
-# Model-specific sampling param overrides applied on top of ServerConfig
-# defaults via apply_model_sampling_preset(). The keys are model names
-# as registered on the OMLX server (and accepted in --model). Each value
-# is a partial dict — only the fields a vendor explicitly recommends are
-# specified, the rest fall back to ServerConfig defaults (which are
-# Qwen-coding-mode-tuned and conservative for everything else).
-#
-# Sources for each preset are linked in inline comments. When adding a
-# new model, link to the canonical vendor recommendation rather than
-# eyeballing values from forum posts.
-_MODEL_SAMPLING_PRESETS: dict[str, dict[str, float | int]] = {
-    # Qwen3.5 thinking-mode coding (Alibaba official, "precise coding
-    # tasks e.g. WebDev" row of the model card sampling table). This
-    # mirrors the ServerConfig defaults — having it here explicitly
-    # makes the preset table the source of truth for "what we run Qwen
-    # at" rather than relying on the dataclass defaults.
-    "qwen3p5-35B-A3B": {
-        "temperature": 0.6,
-        "top_p": 0.95,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 0.0,
-        "repetition_penalty": 1.0,
+_MODEL_FAMILY_PATTERNS: dict[str, tuple[str, ...]] = {
+    "qwen": (
+        "qwen/",
+        "qwen3.5",
+        "qwen3-",
+        "qwen3p5-",
+    ),
+    "gemma-4": (
+        "gemma-4-",
+        "google/gemma-4-",
+    ),
+}
+
+_TASK_SAMPLING_PRESETS: dict[str, dict[str, dict[str, float | int]]] = {
+    "grading": {
+        "neutral": {
+            "temperature": 0.3,
+            "top_p": 0.95,
+            "top_k": 40,
+            "min_p": 0.0,
+            "presence_penalty": 0.0,
+            "repetition_penalty": 1.0,
+        },
+        "qwen": {
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0.0,
+            "presence_penalty": 0.0,
+            "repetition_penalty": 1.0,
+        },
+        "gemma-4": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "top_k": 64,
+        },
     },
-    # Gemma-4 (Google official). Google only specifies three sampling
-    # params for gemma-4; the others fall through to ServerConfig
-    # defaults (which are neutral for min_p / presence_penalty /
-    # repetition_penalty). The user's local server enforces these
-    # values regardless of what the client sends, but we mirror them
-    # here so our recorded params match what's actually being used.
-    "gemma-4-26b-a4b-it-bf16": {
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 64,
+    "describe": {
+        "neutral": {
+            "temperature": 0.3,
+            "top_p": 0.95,
+            "top_k": 40,
+            "min_p": 0.0,
+            "presence_penalty": 0.0,
+            "repetition_penalty": 1.0,
+        },
+        "qwen": {
+            "temperature": 0.3,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0.0,
+            "presence_penalty": 0.0,
+            "repetition_penalty": 1.0,
+        },
+        "gemma-4": {
+            "temperature": 0.3,
+            "top_p": 0.95,
+            "top_k": 64,
+            "min_p": 0.0,
+            "presence_penalty": 0.0,
+            "repetition_penalty": 1.0,
+        },
     },
 }
 
 
+def known_model_families() -> tuple[str, ...]:
+    return ("qwen", "gemma-4", "neutral")
+
+
+def resolve_model_family(model: str, requested_family: str | None = None) -> str:
+    """Resolve a model into a registered family or raise loudly."""
+    families = known_model_families()
+    if requested_family is not None:
+        family = requested_family.strip().lower()
+        if family not in families:
+            valid = ", ".join(families)
+            raise ValueError(
+                f"Unknown model-family '{requested_family}'. Valid values: {valid}."
+            )
+        return family
+
+    normalized = model.strip().lower()
+    for family, prefixes in _MODEL_FAMILY_PATTERNS.items():
+        if any(normalized.startswith(prefix) for prefix in prefixes):
+            return family
+
+    valid = ", ".join(families)
+    raise ValueError(
+        f"Unregistered model '{model}'. Pass --model-family "
+        f"{{{valid}}} to choose explicit sampling defaults."
+    )
+
+
 def apply_model_sampling_preset(
-    config: ServerConfig, model: str | None = None
+    config: ServerConfig,
+    model: str | None = None,
+    *,
+    family: str | None = None,
+    task: str = "grading",
 ) -> ServerConfig:
-    """Return a new ServerConfig with the per-model sampling preset
-    applied. Falls back to the input config if no preset is registered
-    for the model. Useful right after argparse to flip sampling regimes
-    based on --model without each call site having to know the preset
-    table.
-    """
+    """Return a new ServerConfig with explicit family-based sampling."""
     import dataclasses
+
+    if task not in _TASK_SAMPLING_PRESETS:
+        raise ValueError(f"Unknown sampling task '{task}'")
     name = model or config.model
-    preset = _MODEL_SAMPLING_PRESETS.get(name)
-    if not preset:
-        return config
+    resolved_family = resolve_model_family(name, family)
+    preset = _TASK_SAMPLING_PRESETS[task][resolved_family]
     return dataclasses.replace(config, **preset)
 
 
@@ -223,6 +280,20 @@ must be filled in before model_score:
 """
 
 GRADING_PROMPT_VERSION = "2026-04-08-condensed-v1"
+DESCRIBE_ONLY_PROMPT_VERSION = "2026-04-11-describe-only-v2"
+DESCRIBE_ONLY_PROMPT = (
+    "This is a page from a student's chemistry exam. The page may "
+    "contain multiple questions; describe everything visually "
+    "present on it.\n\n"
+    "For each distinct piece of writing or drawing, transcribe what "
+    "the student wrote as literally as possible — numbers, "
+    "equations, diagrams, marginal notes — and note where it sits "
+    "on the page (near which question number, in which margin). If "
+    "any handwriting or drawing is ambiguous and admits more than "
+    "one reasonable reading, list the alternatives.\n\n"
+    "Do not grade. Do not apply chemistry knowledge to judge "
+    "correctness. Describe what is visually present, nothing more."
+)
 
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
@@ -272,6 +343,16 @@ def grading_prompt_metadata() -> dict[str, str]:
     ).hexdigest()
     return {
         "version": GRADING_PROMPT_VERSION,
+        "content_hash": content_hash,
+    }
+
+
+def describe_prompt_metadata() -> dict[str, str]:
+    content_hash = hashlib.sha256(
+        DESCRIBE_ONLY_PROMPT.encode("utf-8")
+    ).hexdigest()
+    return {
+        "version": DESCRIBE_ONLY_PROMPT_VERSION,
         "content_hash": content_hash,
     }
 
@@ -347,6 +428,157 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
     raise ValueError(f"Could not parse VLM response as JSON: {text[:300]}")
 
 
+def _chat_completions_url(base_url: str) -> str:
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        return f"{root}/chat/completions"
+    return f"{root}/v1/chat/completions"
+
+
+def _extract_reasoning_tokens(delta: dict[str, Any]) -> list[str]:
+    """Flatten provider-specific reasoning delta shapes into plain text."""
+    details = delta.get("reasoning_details")
+    if isinstance(details, list) and details:
+        tokens: list[str] = []
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            text = detail.get("text")
+            if isinstance(text, str) and text:
+                tokens.append(text)
+                continue
+            summary = detail.get("summary")
+            if isinstance(summary, str) and summary:
+                tokens.append(summary)
+        if tokens:
+            return tokens
+
+    for field_name in ("reasoning_content", "reasoning"):
+        value = delta.get(field_name)
+        if isinstance(value, str) and value:
+            return [value]
+
+    return []
+
+
+def stream_vision_completion(
+    *,
+    config: ServerConfig,
+    prompt_text: str,
+    page_image: bytes | None = None,
+    image_data_url: str | None = None,
+    system_prompt: str | None = None,
+    on_reasoning_delta: Any = None,
+    extra_body: dict[str, Any] | None = None,
+    raw_dump_path: Path | None = None,
+    timeout: float = 600,
+    retries: int = 3,
+    failure_context: str | None = None,
+) -> tuple[str, str]:
+    """Shared OpenAI-compatible vision call path for grading and smokes."""
+    import time
+    import urllib.error
+    import urllib.request
+
+    if image_data_url is None:
+        if page_image is None:
+            raise ValueError("page_image or image_data_url is required")
+        image_data_url = _image_to_data_url(page_image)
+
+    messages: list[dict[str, Any]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_data_url},
+                },
+                {"type": "text", "text": prompt_text},
+            ],
+        }
+    )
+
+    payload: dict[str, Any] = {
+        "model": config.model,
+        "messages": messages,
+        "max_tokens": config.max_tokens,
+        "temperature": config.temperature,
+        "top_p": config.top_p,
+        "top_k": config.top_k,
+        "min_p": config.min_p,
+        "presence_penalty": config.presence_penalty,
+        "repetition_penalty": config.repetition_penalty,
+        "stream": True,
+    }
+    if extra_body:
+        payload.update(extra_body)
+
+    body = json.dumps(payload).encode()
+    url = _chat_completions_url(config.base_url)
+
+    def _build_request():
+        headers = {"Content-Type": "application/json"}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+        return urllib.request.Request(
+            url,
+            data=body,
+            headers=headers,
+        )
+
+    last_err: Exception | None = None
+    content = ""
+    reasoning = ""
+    for attempt in range(retries):
+        try:
+            req = _build_request()
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            try:
+                content, reasoning = _consume_streaming_response(
+                    resp,
+                    on_reasoning_delta=on_reasoning_delta,
+                    raw_dump_path=raw_dump_path,
+                )
+            except KeyboardInterrupt:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            break
+        except KeyboardInterrupt:
+            raise
+        except (TimeoutError, OSError) as e:
+            last_err = e
+            if isinstance(e, urllib.error.HTTPError):
+                try:
+                    body_text = e.read().decode(
+                        "utf-8", errors="replace"
+                    )[:4096]
+                except Exception:
+                    body_text = "<could not read response body>"
+                last_err = RuntimeError(
+                    f"HTTP Error {e.code}: {e.reason} — server body: {body_text}"
+                )
+            if attempt < retries - 1:
+                time.sleep(2)
+    else:
+        context = f" for {failure_context}" if failure_context else ""
+        raise TimeoutError(
+            f"VLM request failed after {retries} attempts{context}: {last_err}"
+        )
+
+    return content, reasoning
+
+
 def grade_single_item(
     item: EvalItem,
     page_image: bytes,
@@ -362,103 +594,15 @@ def grade_single_item(
     stream is consumed silently and we just need the final content.
     Closing the response mid-stream tells OMLX to abort the inference.
     """
-    import urllib.request
-
     prompt_text = _build_grading_prompt(item, template_question)
-    image_url = _image_to_data_url(page_image)
-
-    payload = {
-        "model": config.model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": image_url},
-                    },
-                    {"type": "text", "text": prompt_text},
-                ],
-            },
-        ],
-        "max_tokens": config.max_tokens,
-        "temperature": config.temperature,
-        "top_p": config.top_p,
-        "top_k": config.top_k,
-        "min_p": config.min_p,
-        "presence_penalty": config.presence_penalty,
-        "repetition_penalty": config.repetition_penalty,
-        "stream": True,
-    }
-
-    body = json.dumps(payload).encode()
-
-    def _build_request():
-        return urllib.request.Request(
-            f"{config.base_url}/v1/chat/completions",
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {config.api_key}",
-            },
-        )
-
-    last_err = None
-    content = ""
-    reasoning = ""
-    for attempt in range(3):
-        try:
-            req = _build_request()
-            resp = urllib.request.urlopen(req, timeout=600)
-            try:
-                content, reasoning = _consume_streaming_response(
-                    resp, on_reasoning_delta
-                )
-            except KeyboardInterrupt:
-                # User hit Ctrl-C — close the socket so OMLX cancels
-                # the in-flight inference, then re-raise.
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-                raise
-            finally:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-            break
-        except KeyboardInterrupt:
-            raise
-        except (TimeoutError, OSError) as e:
-            import urllib.error
-
-            if isinstance(e, urllib.error.HTTPError):
-                # Capture the server's response body before discarding the
-                # exception object. For 5xx errors this almost always contains
-                # a Python traceback naming the exact component that crashed
-                # (chat template renderer, vision encoder, sampler, etc.).
-                # Without this read() the body is lost and the final
-                # TimeoutError only carries the generic HTTP reason phrase.
-                # Operation Body Bag (err-capture lane) — 2026-04-11.
-                try:
-                    _body = e.read().decode("utf-8", errors="replace")[:4096]
-                except Exception:
-                    _body = "<could not read response body>"
-                last_err = RuntimeError(
-                    f"HTTP Error {e.code}: {e.reason} — server body: {_body}"
-                )
-            else:
-                last_err = e
-            if attempt < 2:
-                import time
-                time.sleep(2)
-    else:
-        raise TimeoutError(
-            f"VLM request failed after 3 attempts for "
-            f"{item.exam_id}/{item.question_id}: {last_err}"
-        )
+    content, reasoning = stream_vision_completion(
+        config=config,
+        prompt_text=prompt_text,
+        page_image=page_image,
+        system_prompt=_SYSTEM_PROMPT,
+        on_reasoning_delta=on_reasoning_delta,
+        failure_context=f"{item.exam_id}/{item.question_id}",
+    )
 
     parsed = _parse_vlm_response(content)
 
@@ -500,7 +644,7 @@ def grade_single_item(
 
 
 def _consume_streaming_response(
-    resp, on_reasoning_delta
+    resp, on_reasoning_delta=None, raw_dump_path: Path | None = None
 ) -> tuple[str, str]:
     """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
     through the callback as they arrive (when provided); returns
@@ -524,32 +668,39 @@ def _consume_streaming_response(
     """
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
-    for raw_line in resp:
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].strip()
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        delta = chunk.get("choices", [{}])[0].get("delta", {})
-        # Reasoning tokens — accumulate for the critic, and pump to
-        # narrator if wired.
-        rc_delta = delta.get("reasoning_content", "")
-        if rc_delta:
-            reasoning_parts.append(rc_delta)
-            if on_reasoning_delta is not None:
-                try:
-                    on_reasoning_delta(rc_delta)
-                except Exception:
-                    pass
-        # Final assistant content — accumulate for parsing
-        c_delta = delta.get("content", "")
-        if c_delta:
-            content_parts.append(c_delta)
+    dump_fh = open(raw_dump_path, "a") if raw_dump_path else None
+    try:
+        for raw_line in resp:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            delta = (choices[0] or {}).get("delta", {}) or {}
+            if dump_fh is not None:
+                dump_fh.write(json.dumps(delta, ensure_ascii=False) + "\n")
+            for token in _extract_reasoning_tokens(delta):
+                reasoning_parts.append(token)
+                if on_reasoning_delta is not None:
+                    try:
+                        on_reasoning_delta(token)
+                    except Exception:
+                        pass
+            # Final assistant content — accumulate for parsing
+            c_delta = delta.get("content", "")
+            if c_delta:
+                content_parts.append(c_delta)
+    finally:
+        if dump_fh is not None:
+            dump_fh.close()
     return "".join(content_parts), "".join(reasoning_parts)
 
 

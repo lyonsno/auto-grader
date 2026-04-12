@@ -25,10 +25,17 @@ from auto_grader.eval_harness import (
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
 from auto_grader.vlm_inference import (
+    DESCRIBE_ONLY_PROMPT,
     ServerConfig,
+    _EXAM_PDF_MAP,
     apply_model_sampling_preset,
+    describe_prompt_metadata,
+    extract_page_image,
     grade_all_items,
     grading_prompt_metadata,
+    known_model_families,
+    resolve_model_family,
+    stream_vision_completion,
 )
 
 
@@ -325,9 +332,141 @@ def _build_manifest(
     return manifest
 
 
+def run_describe_only_mode(
+    args: argparse.Namespace,
+    subset: list[EvalItem],
+    config: ServerConfig,
+    *,
+    model_family: str,
+) -> dict[str, object]:
+    """Describe selected pages without invoking the grading pipeline."""
+    run_id, run_dir = _run_identity(config.model, args.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    probe_path = run_dir / "probe.jsonl"
+    prompt_meta = describe_prompt_metadata()
+
+    with open(probe_path, "w") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "type": "header",
+                    "mode": "describe-only",
+                    "model": config.model,
+                    "model_family": model_family,
+                    "base_url": config.base_url,
+                    "run_id": run_id,
+                    "run_dir": str(run_dir),
+                    "prompt_version": prompt_meta["version"],
+                    "prompt_content_hash": prompt_meta["content_hash"],
+                    "prompt": DESCRIBE_ONLY_PROMPT,
+                    "started": _iso_now(),
+                }
+            )
+            + "\n"
+        )
+
+    page_cache: dict[tuple[str, int], bytes] = {}
+    n_ok = 0
+    n_err = 0
+    for i, item in enumerate(subset, start=1):
+        cache_key = (item.exam_id, item.page)
+        if cache_key not in page_cache:
+            pdf_name = _EXAM_PDF_MAP.get(item.exam_id)
+            if not pdf_name:
+                msg = f"No PDF mapping for exam_id: {item.exam_id}"
+                print(f"[{i}/{len(subset)}] {msg}", file=sys.stderr)
+                n_err += 1
+                continue
+            pdf_path = _SCANS_DIR / pdf_name
+            if not pdf_path.exists():
+                msg = f"Scan PDF not found: {pdf_path}"
+                print(f"[{i}/{len(subset)}] {msg}", file=sys.stderr)
+                n_err += 1
+                continue
+            page_cache[cache_key] = extract_page_image(pdf_path, item.page)
+
+        print(
+            f"[{i}/{len(subset)}] {item.exam_id}:{item.question_id} "
+            f"(page {item.page}) ...",
+            flush=True,
+        )
+        row: dict[str, object] = {
+            "type": "probe",
+            "mode": "describe-only",
+            "exam_id": item.exam_id,
+            "question_id": item.question_id,
+            "page": item.page,
+            "student_answer_for_reference": item.student_answer,
+            "model": config.model,
+            "model_family": model_family,
+        }
+        try:
+            t0 = time.time()
+            content, reasoning = stream_vision_completion(
+                config=config,
+                prompt_text=DESCRIBE_ONLY_PROMPT,
+                page_image=page_cache[cache_key],
+                failure_context=f"{item.exam_id}/{item.question_id}",
+            )
+            elapsed = time.time() - t0
+            row["description"] = content
+            row["reasoning"] = reasoning
+            row["elapsed_sec"] = round(elapsed, 2)
+            row["error"] = None
+            n_ok += 1
+            preview = (content or "").strip().splitlines()[0:3]
+            for line in preview:
+                print(f"    {line[:140]}")
+            print(
+                f"    ({elapsed:.1f}s, {len(content)} chars content, "
+                f"{len(reasoning)} chars reasoning)"
+            )
+        except Exception as e:
+            row["description"] = ""
+            row["reasoning"] = ""
+            row["elapsed_sec"] = None
+            row["error"] = f"{type(e).__name__}: {e}"
+            n_err += 1
+            print(f"    {type(e).__name__}: {e}", file=sys.stderr)
+
+        with open(probe_path, "a") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    with open(probe_path, "a") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "type": "footer",
+                    "ended": _iso_now(),
+                    "count_ok": n_ok,
+                    "count_err": n_err,
+                }
+            )
+            + "\n"
+        )
+
+    print(f"Wrote {probe_path}")
+    return {
+        "run_id": run_id,
+        "run_dir": run_dir,
+        "records_path": probe_path,
+        "count_ok": n_ok,
+        "count_err": n_err,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="qwen3p5-35B-A3B")
+    parser.add_argument(
+        "--model-family",
+        choices=known_model_families(),
+        default=None,
+        help=(
+            "Explicit sampling family override for unregistered models. "
+            "Required when --model does not match a known family prefix."
+        ),
+    )
     parser.add_argument("--items", type=int, default=8,
                         help="Number of items to grade (from first exam)")
     parser.add_argument(
@@ -358,6 +497,14 @@ def main():
             "partial credit + Lewis structure partial. Overrides --items."
         ),
     )
+    parser.add_argument(
+        "--describe-only",
+        action="store_true",
+        help=(
+            "Run a bare perception smoke against the selected pages instead "
+            "of the grading pipeline. Writes probe.jsonl in the run dir."
+        ),
+    )
     parser.add_argument("--narrate", action="store_true",
                         help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
     parser.add_argument("--narrate-stderr", action="store_true",
@@ -386,6 +533,8 @@ def main():
 
     gt = load_ground_truth(_GROUND_TRUTH)
     subset, test_set_id = _select_subset(args, gt)
+    resolved_family = resolve_model_family(args.model, args.model_family)
+    task = "describe" if args.describe_only else "grading"
 
     config = ServerConfig(
         base_url=args.base_url,
@@ -394,9 +543,14 @@ def main():
     # Apply per-model sampling preset (Qwen coding-mode, Gemma official,
     # etc.) so the right vendor-recommended params are sent without the
     # operator having to remember them at command-line time.
-    config = apply_model_sampling_preset(config)
+    config = apply_model_sampling_preset(
+        config,
+        family=resolved_family,
+        task=task,
+    )
 
     print(f"Model: {config.model}")
+    print(f"Family: {resolved_family}")
     print(f"Items: {len(subset)} of {len(gt)}")
     print(f"Server: {config.base_url}")
     print(
@@ -406,6 +560,16 @@ def main():
     )
     print(f"Scans: {_SCANS_DIR}")
     print()
+
+    if args.describe_only:
+        print("Mode: describe-only")
+        result = run_describe_only_mode(
+            args,
+            subset,
+            config,
+            model_family=resolved_family,
+        )
+        return 0 if result["count_err"] == 0 else 1
 
     narrator_enabled = args.narrate or args.narrate_stderr
 
