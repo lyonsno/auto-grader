@@ -120,6 +120,9 @@ class PostgresDatabaseContractTests(unittest.TestCase):
             "scan_artifacts",
             "grade_records",
             "audit_events",
+            "mc_scan_sessions",
+            "mc_scan_pages",
+            "mc_question_outcomes",
         }
 
         missing_tables = expected_tables - actual_tables
@@ -139,6 +142,9 @@ class PostgresDatabaseContractTests(unittest.TestCase):
             "scan_artifacts",
             "grade_records",
             "audit_events",
+            "mc_scan_sessions",
+            "mc_scan_pages",
+            "mc_question_outcomes",
         )
 
         source_yaml = "slug: idempotent-template\nversion: 1"
@@ -208,6 +214,9 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 "scan_artifacts",
                 "grade_records",
                 "audit_events",
+                "mc_scan_sessions",
+                "mc_scan_pages",
+                "mc_question_outcomes",
             },
             "initialize_schema() must be rerunnable against an existing schema "
             "without dropping or renaming workflow tables.",
