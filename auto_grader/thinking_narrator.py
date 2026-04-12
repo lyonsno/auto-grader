@@ -258,8 +258,8 @@ _SIMILARITY_STOP_WORDS = frozenset({
     "eyeing", "weighing", "considering", "leaning", "hesitating",
 })
 
-_REVIEW_NEEDED_HINT_RE = re.compile(
-    r"\b(review (?:is )?(?:needed|warranted)|human review|ambigu(?:ity|ous)|uncertain)\b",
+_EXPLICIT_REVIEW_NEEDED_RE = re.compile(
+    r"\b(review (?:is )?(?:needed|warranted)|human review)\b",
     re.IGNORECASE,
 )
 
@@ -555,6 +555,9 @@ class ThinkingNarrator:
         self._prior_checkpoints: list[str] = []
         self._accepted_since_checkpoint = 0
         self._dedupe_streak = 0
+        self._item_turbulence_dedup_count = 0
+        self._item_turbulence_status_dedup_count = 0
+        self._item_turbulence_grooming_count = 0
         self._legibility_jobs: list[dict] = []
         self._idle_legibility_pending = False
         self._idle_legibility_generation = 0
@@ -611,6 +614,9 @@ class ThinkingNarrator:
             self._prior_checkpoints = []
             self._accepted_since_checkpoint = 0
             self._dedupe_streak = 0
+            self._item_turbulence_dedup_count = 0
+            self._item_turbulence_status_dedup_count = 0
+            self._item_turbulence_grooming_count = 0
             self._legibility_jobs = []
             self._idle_legibility_pending = False
             self._idle_legibility_generation += 1
@@ -781,6 +787,7 @@ class ThinkingNarrator:
         with self._lock:
             if self._dedupe_streak < _DEDUP_GROOMING_THRESHOLD:
                 return
+            self._item_turbulence_grooming_count += 1
             accepted_line = (
                 self._current_status
                 or (prior_statuses[-1] if prior_statuses else "")
@@ -1092,16 +1099,55 @@ class ThinkingNarrator:
     @staticmethod
     def _review_needed_text(prediction: Any) -> str | None:
         reasoning = str(getattr(prediction, "model_reasoning", "")).strip()
-        confidence = float(getattr(prediction, "model_confidence", 1.0))
         if not reasoning:
             return None
-        if not _REVIEW_NEEDED_HINT_RE.search(reasoning) and confidence >= 0.6:
+        if not _EXPLICIT_REVIEW_NEEDED_RE.search(reasoning):
             return None
         return (
             "Human review warranted because the cancellation handwriting "
             "remains ambiguity-sensitive after a bounded pass."
             if "ambigu" in reasoning.lower()
             else "Human review warranted after a bounded ambiguity pass."
+        )
+
+    def _ambiguity_prompt_from_turbulence(
+        self,
+        prediction: Any,
+        item: Any,
+    ) -> str | None:
+        with self._lock:
+            dedup_count = self._item_turbulence_dedup_count
+            status_dedup_count = self._item_turbulence_status_dedup_count
+            grooming_count = self._item_turbulence_grooming_count
+            current_status = self._current_status or ""
+            prior_statuses = list(self._prior_statuses)
+            thoughts_since_status = list(self._thoughts_since_status)
+            prior_checkpoints = list(self._prior_checkpoints)
+
+        if grooming_count <= 0 and (dedup_count + status_dedup_count) < _DEDUP_GROOMING_THRESHOLD:
+            return None
+
+        status_block = "\n".join(f"- {status}" for status in prior_statuses[-_STATUS_CONTEXT_LIMIT:]) or "- (none)"
+        thought_block = "\n".join(f"- {thought}" for thought in thoughts_since_status[-_THOUGHT_CONTEXT_LIMIT:]) or "- (none)"
+        checkpoint_block = "\n".join(f"- {checkpoint}" for checkpoint in prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:]) or "- (none)"
+        current_status_block = current_status or "(none)"
+        return (
+            "Write one short row body for 'Ambiguity:'. "
+            "Name the concrete unstable read or unresolved scoring choice that kept this item looping. "
+            "Use the accepted status/thought/checkpoint context below. "
+            "Do not mention loops, dedup, Bonsai, statuses, or human review. "
+            "Return ONLY the row body.\n\n"
+            f"Question: {item.question_id} ({item.answer_type})\n"
+            f"Student answer: {item.student_answer}\n"
+            f"Model read: {getattr(prediction, 'model_read', '')}\n"
+            f"Score basis: {getattr(prediction, 'score_basis', '')}\n"
+            f"Model reasoning: {getattr(prediction, 'model_reasoning', '')}\n"
+            f"Turbulence signals: thought dedup drops={dedup_count}, "
+            f"status dedup drops={status_dedup_count}, grooming passes={grooming_count}\n"
+            f"Current status: {current_status_block}\n"
+            f"Accepted statuses:\n{status_block}\n"
+            f"Accepted recent thoughts:\n{thought_block}\n"
+            f"Recent checkpoints:\n{checkpoint_block}"
         )
 
     @staticmethod
@@ -1121,13 +1167,14 @@ class ThinkingNarrator:
         prediction: Any,
         item: Any,
         *,
+        ambiguity_needed: bool,
         review_needed: str | None,
         professor_mismatch: str | None,
     ) -> bool:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
         if not score_basis:
             return False
-        if review_needed or professor_mismatch:
+        if ambiguity_needed or review_needed or professor_mismatch:
             return True
         if prediction.model_score < item.max_points:
             return True
@@ -1146,18 +1193,24 @@ class ThinkingNarrator:
 
     def _handle_legibility_rows(self, prediction: Any, item: Any) -> None:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
+        ambiguity_prompt = self._ambiguity_prompt_from_turbulence(prediction, item)
         review_needed = self._review_needed_text(prediction)
         professor_mismatch = self._professor_mismatch_text(item)
 
         if self._should_emit_basis_row(
             prediction,
             item,
+            ambiguity_needed=ambiguity_prompt is not None,
             review_needed=review_needed,
             professor_mismatch=professor_mismatch,
         ):
             self._write_legibility_row_now("basis", score_basis)
 
         extras = 0
+
+        if ambiguity_prompt and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+            self._enqueue_legibility_job("ambiguity", prompt=ambiguity_prompt)
+            extras += 1
 
         if review_needed and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
             self._write_legibility_row_now("review_marker", review_needed)
@@ -1550,6 +1603,9 @@ class ThinkingNarrator:
                     logger.info("Narrator: dropped repetitive summary: %s", full)
                     with self._lock:
                         self._dedupe_streak += 1
+                        self._item_turbulence_dedup_count += 1
+                        if status_drop_reason == "dedup-status":
+                            self._item_turbulence_status_dedup_count += 1
                     self._maybe_groom_after_repeated_dedup(
                         chunk,
                         prior_thoughts,

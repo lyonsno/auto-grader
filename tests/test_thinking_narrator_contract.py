@@ -18,6 +18,7 @@ class _DummySink:
         self.topics: list[tuple[str, str | None]] = []
         self.checkpoints: list[str] = []
         self.basis_rows: list[str] = []
+        self.ambiguity_rows: list[str] = []
         self.credit_preserved_rows: list[str] = []
         self.deduction_rows: list[str] = []
         self.review_markers: list[str] = []
@@ -45,6 +46,9 @@ class _DummySink:
     def write_basis(self, text: str) -> None:
         self.basis_rows.append(text)
 
+    def write_ambiguity(self, text: str) -> None:
+        self.ambiguity_rows.append(text)
+
     def write_credit_preserved(self, text: str) -> None:
         self.credit_preserved_rows.append(text)
 
@@ -66,6 +70,9 @@ class _LegacyStructuredRowSink:
         self.drops.append((reason, text))
 
     def write_basis(self, text: str) -> None:
+        pass
+
+    def write_ambiguity(self, text: str) -> None:
         pass
 
     def write_review_marker(self, text: str) -> None:
@@ -463,6 +470,9 @@ class ThinkingNarratorContract(unittest.TestCase):
             ["Core issue: unit conversion path is looping on the same mismatch."],
         )
         self.assertEqual(narrator._dedupe_streak, 2)
+        self.assertEqual(narrator._item_turbulence_dedup_count, 1)
+        self.assertEqual(narrator._item_turbulence_status_dedup_count, 1)
+        self.assertEqual(narrator._item_turbulence_grooming_count, 1)
 
     def test_feed_keeps_dispatching_during_dedupe_streak(self):
         sink = _DummySink()
@@ -1155,6 +1165,102 @@ class ThinkingNarratorContract(unittest.TestCase):
             ["Historical professor awarded 2/4; corrected truth is 4/4."],
         )
         self.assertEqual(narrator._legibility_jobs, [])
+
+    def test_after_action_does_not_emit_review_needed_from_low_confidence_alone(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 0/0.5 (student answered 2, correct answer is 1). Prof: 0/0.5 (same).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-11c",
+            answer_type="exact_match",
+            page=1,
+            professor_score=0.0,
+            max_points=0.5,
+            professor_mark="0/0.5",
+            student_answer="2",
+            notes="same miss",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-11c",
+            model_score=0.0,
+            model_confidence=0.22,
+            model_reasoning="The student answered 2, but the correct answer is 1.",
+            model_read="2",
+            score_basis="Student answered 2; correct answer is 1.",
+        )
+
+        narrator._produce_after_action(188.0, prediction, item, template_question=None)
+
+        self.assertEqual(sink.review_markers, [])
+
+    def test_after_action_queues_ambiguity_row_from_turbulence_context(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 0/0.5 (student answered 2, correct answer is 1). Prof: 0/0.5 (same).",
+                "Crossed-out cancellation digit kept reading as either 1 or 2, which changes the count.",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-11c",
+            answer_type="exact_match",
+            page=1,
+            professor_score=0.0,
+            max_points=0.5,
+            professor_mark="0/0.5",
+            student_answer="2",
+            notes="same miss",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-11c",
+            model_score=0.0,
+            model_confidence=0.55,
+            model_reasoning="The cancellation mark makes one digit hard to read, but the final keyed answer is 1.",
+            model_read="2",
+            score_basis="Student answered 2; keyed answer is 1.",
+        )
+        narrator._prior_statuses = [
+            "Rechecking the crossed-out cancellation digit.",
+            "Staying on whether the digit is 1 or 2.",
+        ]
+        narrator._thoughts_since_status = [
+            "I'm torn between a 1 and a 2 in the cancellation trail.",
+        ]
+        narrator._prior_checkpoints = [
+            "Core issue: crossed-out digit changes the final count.",
+        ]
+        narrator._item_turbulence_dedup_count = 1
+        narrator._item_turbulence_status_dedup_count = 1
+        narrator._item_turbulence_grooming_count = 1
+
+        narrator._produce_after_action(188.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            [job["row_type"] for job in narrator._legibility_jobs],
+            ["ambiguity", "deduction"],
+        )
+        self.assertTrue(narrator._flush_idle_legibility_once())
+        self.assertIn(
+            "Rechecking the crossed-out cancellation digit.",
+            narrator.prompts[-1],
+        )
+        self.assertIn(
+            "crossed-out digit changes the final count",
+            narrator.prompts[-1],
+        )
+        self.assertEqual(
+            sink.ambiguity_rows,
+            ["Crossed-out cancellation digit kept reading as either 1 or 2, which changes the count."],
+        )
 
     def test_after_action_queues_only_generated_partial_credit_rows(self):
         sink = _DummySink()
