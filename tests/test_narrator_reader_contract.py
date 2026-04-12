@@ -1483,6 +1483,43 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_render_keeps_topic_above_core_issue_in_topicless_neighbor_case(self):
+        display = self._make_display()
+        display.history.append(
+            ("header", "[item 2/15] 15-blue/fr-11c (exact_match, 0.5 pts)", None)
+        )
+        display.history.append(
+            ("header", "[item 1/15] 15-blue/fr-10b (numeric, 1.0 pts)", None)
+        )
+        display.history.append(
+            (
+                "checkpoint",
+                "Core issue: Student used frequency from part (a) in denominator, but question asked for energy per mole of photons.",
+                None,
+            )
+        )
+        display.history.append(
+            (
+                "topic",
+                "183s · 15-blue/fr-10b: grader did not commit to a score (truncated)",
+                "match",
+            )
+        )
+
+        history_text = display.render().renderables[-1].renderable.plain
+        topic_pos = history_text.index(
+            "183s  ·  15-blue/fr-10b: grader did not commit to a score (truncated)"
+        )
+        core_issue_pos = history_text.index(
+            "Core issue: Student used frequency from part (a) in denominator, but question asked for energy per mole of photons."
+        )
+
+        self.assertLess(
+            topic_pos,
+            core_issue_pos,
+            "even when a neighbor item above is header-only, the visible topic/timing line must still sit above Core issue rows for its own item",
+        )
+
     def test_display_no_longer_exposes_scrollback_snapshot_affordance(self):
         display = self._make_display()
         self.assertFalse(
