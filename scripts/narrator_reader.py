@@ -936,7 +936,7 @@ _TEXTURE_BG_RGB = (8, 10, 14)
 #: Solid-block glyph ramp by normalized density (1.0 = fully solid,
 #: 0.0 = empty). Indexes into this array based on the local density
 #: at a given cell position.
-_SOLID_BLOCK_RAMP = ("█", "▓", "▒", "░", " ")
+_SOLID_BLOCK_RAMP = ("█", "▓", "▒", "░")
 
 #: Braille base codepoint — U+2800 is the empty braille pattern.
 #: Add a bitmask in [0, 255] to get a braille char with that dot
