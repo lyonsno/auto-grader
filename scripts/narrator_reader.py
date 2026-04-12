@@ -3167,6 +3167,22 @@ class PaintDryDisplay:
         )
         return [*header, *rest, *reversed(lines)]
 
+    @staticmethod
+    def _ordered_group_entries(
+        group: list[tuple[str, str, int | None]],
+    ) -> list[tuple[str, str, int | None]]:
+        header = [entry for entry in group if entry[0] == "header"]
+        lines = [entry for entry in group if entry[0] == "line"]
+        rest = [entry for entry in group if entry[0] not in ("header", "line")]
+        rest.sort(
+            key=lambda entry: {
+                "topic": 0,
+                **_LEGIBILITY_STRUCTURED_ROW_ORDER,
+                "checkpoint": 7,
+            }.get(entry[0], 2)
+        )
+        return [*header, *rest, *reversed(lines)]
+
     # -- History viewport (Crispy Drips) --------------------------------
 
     def _resolve_wrap_width(self) -> int:
@@ -3283,8 +3299,9 @@ class PaintDryDisplay:
         groups.reverse()
         out: list[tuple[tuple[str, str, int | None], bool, int]] = []
         for group in groups:
+            ordered_group = self._ordered_group_entries(group)
             group_depth = -1
-            for entry in group:
+            for entry in ordered_group:
                 if entry[0] == "header":
                     group_depth = 0
                 else:
@@ -3294,6 +3311,7 @@ class PaintDryDisplay:
         return out
 
     def _priority_filter(
+        self,
         entries: list[tuple[str, str, int | None]],
         *,
         wrap_width: int | None,
