@@ -39,7 +39,7 @@ can act on them. Each item is tagged with priority and what's blocked on it.
   higher-quality rubrics will directly improve LLM grading accuracy later.
 
 ### Additional exam templates
-- **Priority**: After generation pipeline is working
+- **Priority**: After the current MC answer-sheet / scan pipeline is merged and stable
 - **What**: The system currently has one exam template (Fall 2023 final).
   For the skeletonizer and LLM inferencer helpers (build order steps 7-8),
   we'll want multiple historical versions of the same exam with different
