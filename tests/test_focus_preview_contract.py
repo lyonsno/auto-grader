@@ -82,6 +82,39 @@ class FocusPreviewContract(unittest.TestCase):
             self.assertGreater(sum(sample), center_sum - 20)
             self.assertLess(sum(sample), center_sum + 20)
 
+    def test_preview_downscales_oversized_focus_crop_to_terminal_scale(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        giant_page = _solid_png(6000, 3000, (220, 220, 220))
+        full_page_focus = FocusRegion(
+            page=1,
+            x=0.0,
+            y=0.0,
+            width=1.0,
+            height=1.0,
+            source="operator_annotated",
+        )
+
+        preview = render_focus_preview(giant_page, full_page_focus)
+        width, height = _png_dimensions(preview)
+
+        self.assertLessEqual(
+            max(width, height),
+            1400,
+            "focus preview should be capped to a terminal-friendly long edge instead of preserving giant source resolution",
+        )
+        self.assertLessEqual(
+            width * height,
+            600_000,
+            "focus preview should stay within a bounded pixel budget so Paint Dry doesn't try to stream poster-sized PNGs",
+        )
+        self.assertAlmostEqual(
+            width / height,
+            2.0,
+            delta=0.05,
+            msg="downscaled focus preview should preserve the source aspect ratio",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

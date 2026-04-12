@@ -33,6 +33,12 @@ _GRAIN_AMPLITUDE = 8
 #: texture rather than signal noise.
 _GRAIN_INK_IMMUNITY = 0.85
 
+#: Paint Dry is a terminal surface, not an archival image viewer. Keep
+#: preview crops bounded so the sink never tries to push poster-sized PNGs
+#: through the fifo.
+_FOCUS_PREVIEW_MAX_LONG_EDGE = 1400
+_FOCUS_PREVIEW_MAX_TOTAL_PIXELS = 600_000
+
 
 def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
     """Render a terminal-friendly preview crop for a focus region.
@@ -42,6 +48,11 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
     is handled entirely by the textured-band renderer.
     """
     crop_rgb, crop_width, crop_height = _crop_focus_region(page_png, focus_region)
+    crop_rgb, crop_width, crop_height = _downscale_preview_if_needed(
+        crop_rgb,
+        crop_width,
+        crop_height,
+    )
     out = bytearray(crop_width * crop_height * 3)
 
     for y in range(crop_height):
@@ -112,6 +123,50 @@ def _crop_focus_region(
             crop[dest_offset : dest_offset + 3] = samples[src_offset : src_offset + 3]
 
     return bytes(crop), crop_width, crop_height
+
+
+def _downscale_preview_if_needed(
+    rgb: bytes,
+    width: int,
+    height: int,
+) -> tuple[bytes, int, int]:
+    long_edge = max(width, height)
+    area = width * height
+    if (
+        long_edge <= _FOCUS_PREVIEW_MAX_LONG_EDGE
+        and area <= _FOCUS_PREVIEW_MAX_TOTAL_PIXELS
+    ):
+        return rgb, width, height
+
+    scale = min(
+        _FOCUS_PREVIEW_MAX_LONG_EDGE / long_edge,
+        math.sqrt(_FOCUS_PREVIEW_MAX_TOTAL_PIXELS / area),
+        1.0,
+    )
+    dest_width = max(1, int(math.floor(width * scale)))
+    dest_height = max(1, int(math.floor(height * scale)))
+    while dest_width * dest_height > _FOCUS_PREVIEW_MAX_TOTAL_PIXELS:
+        if dest_width >= dest_height and dest_width > 1:
+            dest_width -= 1
+            continue
+        if dest_height > 1:
+            dest_height -= 1
+            continue
+        break
+    dest = bytearray(dest_width * dest_height * 3)
+
+    x_scale = width / dest_width
+    y_scale = height / dest_height
+
+    for dest_y in range(dest_height):
+        src_y = min(height - 1, int(dest_y * y_scale))
+        for dest_x in range(dest_width):
+            src_x = min(width - 1, int(dest_x * x_scale))
+            src_offset = (src_y * width + src_x) * 3
+            dest_offset = (dest_y * dest_width + dest_x) * 3
+            dest[dest_offset : dest_offset + 3] = rgb[src_offset : src_offset + 3]
+
+    return bytes(dest), dest_width, dest_height
 
 
 def _png_to_pixmap(png_bytes: bytes) -> fitz.Pixmap:
