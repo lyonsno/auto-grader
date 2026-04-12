@@ -95,7 +95,11 @@ _LEGIBILITY_STRUCTURED_ROW_ORDER = {
 _LEGIBILITY_STRUCTURED_ROW_KINDS = frozenset(_LEGIBILITY_STRUCTURED_ROW_LABELS)
 
 
-_MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
+_MAX_HISTORY_LINES = 500  # cap so we don't grow unbounded; raised from 90
+                          # because the viewport now lets the operator scroll
+                          # through all retained history, so the deque cap is
+                          # the real scroll-depth limit. 500 entries covers a
+                          # full exam run with headroom and is cheap in memory.
 _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # not logical entries. Keep the old overall
                             # depth, but count it coherently now that the
