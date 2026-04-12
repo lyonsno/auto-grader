@@ -30,7 +30,12 @@ from auto_grader.focus_regions import (
 )
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
-from auto_grader.vlm_inference import ServerConfig, grade_all_items
+from auto_grader.vlm_inference import (
+    ServerConfig,
+    apply_model_sampling_preset,
+    grade_all_items,
+    known_model_families,
+)
 import yaml
 
 
@@ -138,13 +143,24 @@ def _validate_narrator_model(model: str) -> str:
     return normalized
 
 
-def _server_config_for_model(*, base_url: str, model: str) -> ServerConfig:
+def _server_config_for_model(
+    *,
+    base_url: str,
+    model: str,
+    model_family: str | None = None,
+) -> ServerConfig:
     preset = _SMOKE_MODEL_PRESETS.get(model, {})
-    return ServerConfig(
+    config = ServerConfig(
         base_url=base_url,
         model=model,
         **preset,
     )
+    if model_family is not None or model not in _SMOKE_MODEL_PRESETS:
+        return apply_model_sampling_preset(
+            config,
+            family=model_family,
+        )
+    return config
 
 
 def _scorebug_session_meta(
@@ -340,6 +356,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "qwen3p5-35B-A3B and Harmonic-27B-MLX-16bit."
         ),
     )
+    parser.add_argument(
+        "--model-family",
+        choices=known_model_families(),
+        default=None,
+        help=(
+            "Explicit sampling family override for unregistered models. "
+            "Optional for built-in smoke presets; useful when a backend "
+            "serves a Qwen-family model under a custom id."
+        ),
+    )
     parser.add_argument("--items", type=int, default=8,
                         help="Number of items to grade (from first exam)")
     parser.add_argument(
@@ -471,7 +497,11 @@ def main():
     else:
         subset = gt[: args.items]
 
-    config = _server_config_for_model(base_url=args.base_url, model=args.model)
+    config = _server_config_for_model(
+        base_url=args.base_url,
+        model=args.model,
+        model_family=args.model_family,
+    )
 
     print(f"Model: {config.model}")
     print(f"Items: {len(subset)} of {len(gt)}")

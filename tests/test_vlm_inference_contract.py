@@ -4,6 +4,27 @@ import unittest
 
 
 class SamplingPresetContract(unittest.TestCase):
+    def test_harmonic_27b_resolves_as_qwen_family(self):
+        from auto_grader.vlm_inference import ServerConfig, apply_model_sampling_preset
+
+        config = ServerConfig(
+            base_url="http://example.test",
+            model="Harmonic-27B-MLX-16bit",
+        )
+
+        resolved = apply_model_sampling_preset(config)
+
+        self.assertEqual(
+            resolved.temperature,
+            0.6,
+            "Harmonic should inherit the Qwen-family grading temperature instead of forcing an explicit override",
+        )
+        self.assertEqual(
+            resolved.top_k,
+            20,
+            "Harmonic should inherit the Qwen-family grading top_k",
+        )
+
     def test_gemma4_variant_uses_family_defaults(self):
         from auto_grader.vlm_inference import ServerConfig, apply_model_sampling_preset
 

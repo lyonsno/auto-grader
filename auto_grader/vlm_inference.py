@@ -100,6 +100,7 @@ class ServerConfig:
 
 _MODEL_FAMILY_PATTERNS: dict[str, tuple[str, ...]] = {
     "qwen": (
+        "harmonic-27b-mlx-16bit",
         "qwen/",
         "qwen3.5",
         "qwen3-",

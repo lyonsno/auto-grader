@@ -40,6 +40,15 @@ class _DummySink:
 
 
 class SmokeVlmContract(unittest.TestCase):
+    def test_smoke_vlm_exposes_model_family_override(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+
+        args = parser.parse_args(
+            ["--model", "custom-model", "--model-family", "qwen"]
+        )
+
+        self.assertEqual(args.model_family, "qwen")
+
     def test_harmonic_27b_uses_same_smoke_sampler_as_qwen_35b(self) -> None:
         qwen = smoke_vlm._server_config_for_model(
             base_url="http://example.test",
@@ -58,6 +67,17 @@ class SmokeVlmContract(unittest.TestCase):
         self.assertEqual(harmonic.min_p, qwen.min_p)
         self.assertEqual(harmonic.presence_penalty, qwen.presence_penalty)
         self.assertEqual(harmonic.repetition_penalty, qwen.repetition_penalty)
+
+    def test_explicit_model_family_applies_qwen_sampler_to_unregistered_model(self) -> None:
+        config = smoke_vlm._server_config_for_model(
+            base_url="http://example.test",
+            model="custom-harmonic-build",
+            model_family="qwen",
+        )
+
+        self.assertEqual(config.temperature, 0.6)
+        self.assertEqual(config.top_k, 20)
+        self.assertEqual(config.presence_penalty, 0.0)
 
     def test_smoke_vlm_help_mentions_harmonic_27b(self) -> None:
         parser = smoke_vlm._build_arg_parser()
