@@ -447,14 +447,13 @@ class NarratorSink:
             )
 
         runner = fifo.parent / "run.sh"
-        reader_stdout = fifo.parent / "reader.stdout"
         reader_stderr = fifo.parent / "reader.stderr"
         runner.write_text(
             "#!/bin/bash\n"
             "set -u\n"
             f"cd {project_root}\n"
             f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
-            f">\"{reader_stdout}\" 2>\"{reader_stderr}\"\n"
+            f"2>\"{reader_stderr}\"\n"
             "status=$?\n"
             "if [ \"$status\" -ne 0 ]; then\n"
             "  echo \"Project Paint Dry reader exited with status $status\"\n"

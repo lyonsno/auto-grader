@@ -111,6 +111,11 @@ class TestWezTermResolution(unittest.TestCase):
 
         self.assertIn("reader.stderr", script)
         self.assertIn("Press Enter to close", script)
+        self.assertNotIn("reader.stdout", script)
+        launch_line = script.splitlines()[3]
+        self.assertNotRegex(launch_line, r"(^|\s)(?:1>|>)")
+        self.assertNotIn(" 1>", launch_line)
+        self.assertIn("2>", launch_line)
 
     def test_start_raises_if_reader_never_connects_to_fifo(self):
         sink = NarratorSink(SinkConfig(spawn_terminal=True))
