@@ -1588,10 +1588,10 @@ class NarratorReaderContract(unittest.TestCase):
             basis_rgb[1],
             "basis rows under the heading should return to a red-led bone family instead of green-led body ink",
         )
-        self.assertGreaterEqual(
-            checkpoint_rgb[0],
+        self.assertGreater(
             checkpoint_rgb[1],
-            "checkpoint descendants under the heading should stay in the bone-led body family",
+            checkpoint_rgb[0],
+            "the second descendant should now carry the moss alternate lane instead of staying bone-on-bone",
         )
         self.assertLess(
             self._hex_luminance(checkpoint_style),
@@ -1602,6 +1602,33 @@ class NarratorReaderContract(unittest.TestCase):
             self._hex_luminance(line_style),
             self._hex_luminance(checkpoint_style),
             "deeper narrator rows should continue dimming below the structured rows",
+        )
+
+    def test_second_body_descendant_shifts_toward_moss_without_alternating_item_start(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "45s  ·  Grader: 1/2. Prof: 1/2.", "undershoot"))
+        display.history.append(("basis", "Warm anchor row.", None))
+        display.history.append(("checkpoint", "Second descendant should tilt moss.", 0))
+
+        history_text = display.render().renderables[-1].renderable
+        basis_style = self._style_for_substring(history_text, "Warm anchor row.")
+        checkpoint_style = self._style_for_substring(
+            history_text,
+            "Second descendant should tilt moss.",
+        )
+        basis_rgb = self._rgb_from_hex(basis_style.split()[-1])
+        checkpoint_rgb = self._rgb_from_hex(checkpoint_style.split()[-1])
+
+        self.assertGreaterEqual(
+            basis_rgb[0],
+            basis_rgb[1],
+            "the first descendant under each item should stay warm instead of alternating item starts",
+        )
+        self.assertGreater(
+            checkpoint_rgb[1],
+            checkpoint_rgb[0],
+            "the second descendant should lean mossward so short blocks still show the alternate lane",
         )
 
     def test_wrapped_history_lines_consume_visual_row_budget(self):
@@ -2878,9 +2905,18 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(_history_tier_dim_factor(7), _history_tier_dim_factor(6))
         self.assertLess(_history_tier_dim_factor(8), _history_tier_dim_factor(7))
         self.assertEqual(_history_tier_dim_factor(9), _history_tier_dim_factor(10))
+        self.assertLess(
+            _history_tier_dim_factor(1),
+            0.92,
+            "the first visible drop should be strong enough to read in the common 2-3 row item blocks",
+        )
 
     def test_only_reasoning_lines_use_group_depth_for_fade(self):
-        self.assertEqual(_render_layer_index("line", 2), 2)
+        self.assertEqual(
+            _render_layer_index("line", 2),
+            1,
+            "body fade should now start counting after the topic row so the first descendant is the first visible drop",
+        )
         self.assertEqual(
             _render_layer_index("topic", 2),
             0,
