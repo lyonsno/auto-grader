@@ -68,7 +68,12 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
 
-_MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
+_MAX_HISTORY_LINES = 500  # cap so we don't grow unbounded; raised from 90
+                          # because the viewport now lets the operator scroll
+                          # through all retained history, so the deque cap is
+                          # the real scroll-depth limit. 500 entries covers a
+                          # full exam run (~40 items × ~10 entries each) with
+                          # headroom, and is trivially cheap in memory.
 _VISIBLE_HISTORY_LINES = 30  # how many to actually render
 
 # The priority-fill budget counts LOGICAL ENTRIES (headers, topics,
