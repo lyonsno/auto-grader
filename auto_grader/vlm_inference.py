@@ -428,6 +428,43 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
     raise ValueError(f"Could not parse VLM response as JSON: {text[:300]}")
 
 
+def _failure_prediction(
+    item: EvalItem,
+    *,
+    message: str,
+    raw_assistant: str,
+    raw_reasoning: str,
+) -> Prediction:
+    """Return a structured grader failure as a Prediction.
+
+    Runs should degrade on one bad item rather than crashing the whole
+    batch. The grader did not commit to a score — either because the
+    VLM ran out of its token budget before finishing the JSON, or
+    because the emitted output was otherwise unparseable — so we record
+    ``model_score=None`` / ``model_confidence=None`` / ``truncated=True``
+    per the Operation Zilch Reaper (forward lane) contract. See
+    ``attractors/auto-grader_zilch-reaper-forward_stop-recording-\
+truncated-grader-output-as-model-score-zero_2026-04-11.md``.
+
+    The raw payloads are still preserved verbatim so the post-hoc
+    critic and human forensics can inspect what the model was chewing
+    on when it ran out of tokens.
+    """
+    return Prediction(
+        exam_id=item.exam_id,
+        question_id=item.question_id,
+        model_score=None,
+        model_confidence=None,
+        model_reasoning=message,
+        model_read="",
+        raw_assistant=raw_assistant,
+        raw_reasoning=raw_reasoning,
+        upstream_dependency="none",
+        if_dependent_then_consistent=None,
+        truncated=True,
+    )
+
+
 def _chat_completions_url(base_url: str) -> str:
     root = base_url.rstrip("/")
     if root.endswith("/v1"):
@@ -604,7 +641,22 @@ def grade_single_item(
         failure_context=f"{item.exam_id}/{item.question_id}",
     )
 
-    parsed = _parse_vlm_response(content)
+    try:
+        parsed = _parse_vlm_response(content)
+    except ValueError:
+        # Operation Zilch Reaper (forward lane): degrade-instead-of-
+        # crash. The grader did not commit to a score, so we return a
+        # sentinel Prediction (null score, null confidence, truncated
+        # flag set) instead of raising and killing the whole run.
+        return _failure_prediction(
+            item,
+            message=(
+                "Grader output could not be parsed as the required "
+                "JSON (truncated or malformed)."
+            ),
+            raw_assistant=content,
+            raw_reasoning=reasoning,
+        )
 
     # Coerce upstream-dependency fields tolerantly. Older grader models or
     # gemma-4 may not honor the new schema; default to "none" / null so
@@ -629,10 +681,26 @@ def grade_single_item(
     else:
         if_dependent_then_consistent = None
 
+    # Operation Zilch Reaper (forward lane): if the parsed JSON has no
+    # model_score at all, the grader did not commit to a score — same
+    # category as the unparseable cases above. Fall through to the
+    # truncation sentinel instead of silently defaulting to 0.0.
+    raw_model_score = parsed.get("model_score")
+    if raw_model_score is None:
+        return _failure_prediction(
+            item,
+            message=(
+                "Grader emitted parseable JSON but did not include a "
+                "model_score field."
+            ),
+            raw_assistant=content,
+            raw_reasoning=reasoning,
+        )
+
     return Prediction(
         exam_id=item.exam_id,
         question_id=item.question_id,
-        model_score=float(parsed.get("model_score", 0)),
+        model_score=float(raw_model_score),
         model_confidence=float(parsed.get("model_confidence", 0.5)),
         model_reasoning=str(parsed.get("model_reasoning", "")),
         model_read=str(parsed.get("model_read", "")),

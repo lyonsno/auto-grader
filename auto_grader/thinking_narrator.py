@@ -680,6 +680,21 @@ class ThinkingNarrator:
                 self._sink.write_topic(f"{elapsed:.0f}s elapsed")
                 return
 
+            # Truncated / unparseable rows are non-predictions — the
+            # grader never committed to a score. Emit a distinct
+            # after-action shape instead of feeding None into the
+            # verdict comparison path (which would TypeError on
+            # None < float) or into bonsai's comparative-line prompt
+            # (which would lie about the grader having scored zero).
+            # Operation Zilch Reaper, forward lane.
+            if getattr(prediction, "truncated", False):
+                self._sink.write_topic(
+                    f"{elapsed:.0f}s · "
+                    f"{item.exam_id}/{item.question_id}: "
+                    f"grader did not commit to a score (truncated)"
+                )
+                return
+
             # Build the structured verdict context for bonsai
             qprompt = ""
             expected = ""
