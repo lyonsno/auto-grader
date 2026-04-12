@@ -15,8 +15,9 @@ _WARM_TARGET_RGB = (220, 205, 180)
 
 #: How strongly the warm tone-map pulls source pixels toward the
 #: target. 0.0 = no tint (raw scan), 1.0 = fully tinted.
-#: ~0.25 is visible on white paper without distorting ink contrast.
-_WARM_MIX = 0.25
+#: ~0.35 gives the paper a visible parchment warmth without
+#: washing out ink contrast.
+_WARM_MIX = 0.35
 
 
 def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:

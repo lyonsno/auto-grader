@@ -909,10 +909,12 @@ _KITTY_CHUNK_SIZE = 4096
 _BAND_EXTRA_ROWS = 2
 
 #: Number of solid-block columns hugging the image edge.
-#: Column 0 (touching image) = █, column 1 = ▓, then braille starts.
-#: No graduated ramp — the intermediate block shades (▒░) clash with
-#: braille dot patterns, so a hard cut reads cleaner.
-_SOLID_COLUMNS = 2
+#: Column 0 = █ (bright, matches the extra rows above/below),
+#: column 1 = █ (same glyph, color has started fading slightly),
+#: column 2 = ▓, then braille starts. Three columns gives the
+#: sides enough visual weight to read as a continuous frame with
+#: the top/bottom extra rows.
+_SOLID_COLUMNS = 3
 
 #: Braille ramp length in cells after the solid columns. Braille
 #: density ramps from peak to the edge floor over this distance.
@@ -1075,8 +1077,9 @@ def _texture_cell(
     rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, color_intensity)
 
     # Zone 1: solid blocks — deterministic, no randomness needed.
+    # d=0,1 → █ (full block), d=2 → ▓ (dense block).
     if d < _SOLID_COLUMNS:
-        glyph = "█" if d == 0 else "▓"
+        glyph = "▓" if d == _SOLID_COLUMNS - 1 else "█"
         return glyph, rgb
 
     # Zone 2+3: braille. Density starts at 1.0 right after the
