@@ -909,34 +909,38 @@ _KITTY_CHUNK_SIZE = 4096
 _BAND_EXTRA_ROWS = 2
 
 #: Solid-block weight falls off this many cells away from the image
-#: edge. Outside this range the solid-block substrate has zero
-#: probability of being picked for a cell.
-_SOLID_FALLOFF_CELLS = 5
+#: edge. Wider than before (was 5) so the solid substrate overlaps
+#: with braille across a generous crossfade zone and there's no
+#: visible "mange" gap where one substrate ends and the other hasn't
+#: fully committed.
+_SOLID_FALLOFF_CELLS = 8
 
 #: Braille substrate starts ramping up this many cells from the
 #: image edge and reaches peak weight after `_BRAILLE_RAMP_CELLS`.
-_BRAILLE_RAMP_START = 2
-_BRAILLE_RAMP_CELLS = 4
+#: Starts at 1 (was 2) so braille appears almost immediately and
+#: coexists with solid blocks across the 1-8 cell range.
+_BRAILLE_RAMP_START = 1
+_BRAILLE_RAMP_CELLS = 5
 
 #: Braille substrate falls off over this many cells after its peak,
 #: approaching (but not reaching) zero density at the far edge.
 _BRAILLE_FALLOFF_CELLS = 24
 
-#: Color fade distance. Foreground color lerps from the sepia image
-#: tint near the image edge toward the faint floor (NOT the pure
-#: terminal background) over this many cells.
+#: Color fade distance. Foreground color lerps from the accent tone
+#: near the image edge toward the faint floor (NOT the pure terminal
+#: background) over this many cells.
 _TEXTURE_COLOR_FADE_CELLS = 30
 
 #: Faint floor for the foreground color at the terminal edges.
-#: Fraction of the sepia tint that remains visible even at the far
+#: Fraction of the accent tone that remains visible even at the far
 #: edges. 0.12 means the edge color is ~12% of the way from
-#: background toward sepia, so the outermost cells are faintly
+#: background toward the accent, so the outermost cells are faintly
 #: visible rather than invisible.
 _TEXTURE_EDGE_FLOOR = 0.12
 
-#: Texture foreground color near the image edge — warm sepia tone
-#: that matches the in-image sepia tint applied by focus_preview.py.
-_TEXTURE_SEPIA_RGB = (184, 158, 124)
+#: Texture accent color near the image edge — warm bone from the
+#: narrator's moss/bone palette, replacing the earlier sepia tone.
+_TEXTURE_ACCENT_RGB = (220, 205, 180)
 
 #: Terminal background color the texture fades toward. Matches the
 #: panel background in focus_preview.py and the dark narrator UI.
@@ -1129,7 +1133,7 @@ def _texture_cell(
         if roll < _TEXTURE_EDGE_FLOOR:
             # Emit a single-dot braille char at the floor color.
             glyph = chr(_BRAILLE_BASE + (1 << (rand.randint(0, 7))))
-            rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_SEPIA_RGB, color_intensity)
+            rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, color_intensity)
             return glyph, rgb
         return " ", _TEXTURE_BG_RGB
 
@@ -1157,7 +1161,7 @@ def _texture_cell(
             bits |= 1 << bit_idx
         glyph = chr(_BRAILLE_BASE + bits)
 
-    rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_SEPIA_RGB, color_intensity)
+    rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, color_intensity)
     return glyph, rgb
 
 
@@ -1179,7 +1183,9 @@ def _emit_band_border_row(term_width: int, *, title: str):
     """Yield one full-width `─` border row, optionally with an
     inlined left-aligned title.
     """
-    border_style = Style.parse(_rgb_to_hex(_TEXTURE_SEPIA_RGB))
+    # Moss for the structural border — bone is reserved for the
+    # texture fill, giving the same moss/bone cadence as the history.
+    border_style = Style.parse(_rgb_to_hex((135, 160, 145)))
     if title:
         prefix_text = f"─ {title} "
         remaining = term_width - len(prefix_text)
@@ -1721,7 +1727,7 @@ class FocusPreviewLoadingBand:
         text_col = image_left + max(
             0, (cell_width - len(placeholder_text)) // 2
         )
-        dim_style = Style.parse(_rgb_to_hex(_TEXTURE_SEPIA_RGB) + " dim")
+        dim_style = Style.parse(_rgb_to_hex(_TEXTURE_ACCENT_RGB) + " dim")
         bg_style = Style.parse("on " + _rgb_to_hex(_TEXTURE_BG_RGB))
 
         for image_row in range(cell_height):
