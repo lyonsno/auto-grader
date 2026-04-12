@@ -478,7 +478,25 @@ def grade_single_item(
         except KeyboardInterrupt:
             raise
         except (TimeoutError, OSError) as e:
-            last_err = e
+            import urllib.error
+
+            if isinstance(e, urllib.error.HTTPError):
+                # Capture the server's response body before discarding the
+                # exception object. For 5xx errors this almost always contains
+                # a Python traceback naming the exact component that crashed
+                # (chat template renderer, vision encoder, sampler, etc.).
+                # Without this read() the body is lost and the final
+                # TimeoutError only carries the generic HTTP reason phrase.
+                # Operation Body Bag (err-capture lane) — 2026-04-11.
+                try:
+                    _body = e.read().decode("utf-8", errors="replace")[:4096]
+                except Exception:
+                    _body = "<could not read response body>"
+                last_err = RuntimeError(
+                    f"HTTP Error {e.code}: {e.reason} — server body: {_body}"
+                )
+            else:
+                last_err = e
             if attempt < 2:
                 import time
                 time.sleep(2)
