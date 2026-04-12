@@ -158,6 +158,20 @@ class TestWezTermResolution(unittest.TestCase):
                 ):
                     sink.start()
 
+    def test_fifo_writer_switches_back_to_blocking_mode_after_connect(self):
+        sink = NarratorSink(SinkConfig(spawn_terminal=True))
+        fifo = Path("/tmp/mock-narrator.fifo")
+
+        with mock.patch("os.open", return_value=123), mock.patch(
+            "os.set_blocking"
+        ) as set_blocking_mock, mock.patch(
+            "os.fdopen", return_value=mock.sentinel.writer
+        ):
+            writer = sink._open_fifo_writer_with_timeout(fifo)
+
+        self.assertIs(writer, mock.sentinel.writer)
+        set_blocking_mock.assert_called_once_with(123, True)
+
     def test_commit_live_can_emit_status_mode_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sink = NarratorSink(

@@ -399,6 +399,7 @@ class NarratorSink:
         while time.monotonic() < deadline:
             try:
                 fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                os.set_blocking(fd, True)
                 return os.fdopen(fd, "w", buffering=1)
             except OSError as exc:
                 last_err = exc
