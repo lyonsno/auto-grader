@@ -521,6 +521,21 @@ class ThinkingNarratorContract(unittest.TestCase):
             [("missing-sink-row", "deduction: Wrong final target species.")],
         )
 
+    def test_immediate_legibility_missing_sink_writer_drops_row_instead_of_crashing(self):
+        sink = _LegacyStructuredRowSink()
+        narrator = ThinkingNarrator(sink)  # type: ignore[arg-type]
+
+        emitted = narrator._write_legibility_row_now(
+            "professor_mismatch",
+            "Historical professor awarded 2/4; corrected truth is 4/4.",
+        )
+
+        self.assertFalse(emitted)
+        self.assertEqual(
+            sink.drops,
+            [("missing-sink-row", "professor_mismatch: Historical professor awarded 2/4; corrected truth is 4/4.")],
+        )
+
     def test_idle_legibility_thread_logs_flush_exception_without_unboundlocal(self):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink)

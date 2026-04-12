@@ -1187,7 +1187,16 @@ class ThinkingNarrator:
         body = str(text or "").strip()
         if not body:
             return False
-        writer = getattr(self._sink, f"write_{row_type}")
+        writer = getattr(self._sink, f"write_{row_type}", None)
+        if writer is None:
+            drop_writer = getattr(self._sink, "write_drop", None)
+            if drop_writer is not None:
+                drop_writer("missing-sink-row", f"{row_type}: {body}")
+            logger.warning(
+                "Narrator sink missing writer for structured row type %s; dropping row",
+                row_type,
+            )
+            return False
         writer(body)
         return True
 
