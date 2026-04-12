@@ -1046,6 +1046,21 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("i=1", seq)
         self.assertIn("c=80", seq)
         self.assertIn("r=20", seq)
+        # Must include C=1 to suppress cursor movement after the
+        # place. Without this flag, Kitty's default behavior is to
+        # move the cursor right by c and down by r after placing,
+        # which scrambles all subsequent output from the renderable
+        # (right border, subsequent row borders, bottom border)
+        # because Rich's layout accounting doesn't know the cursor
+        # just jumped. Regression guard: if someone removes C=1,
+        # the frame collapses visually and the image is surrounded
+        # by a vertical column of border characters painted below
+        # it instead of around it.
+        self.assertIn(
+            "C=1",
+            seq,
+            "place sequence must set C=1 to suppress post-place cursor movement",
+        )
         # Place sequences have no payload — the semicolon and
         # everything after it is just the terminator. So the
         # sequence body (between ESC_G and ESC\) should contain
