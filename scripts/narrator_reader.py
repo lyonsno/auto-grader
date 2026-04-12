@@ -3117,71 +3117,22 @@ class PaintDryDisplay:
         self,
         wrap_width: int | None = None,
     ) -> list[tuple[tuple[str, str, int | None], bool]]:
-        """Return the priority-filtered flat list of history entries in
-        natural chronological (oldest -> newest) order, with a boolean
-        marking the most-recently-committed entry.
+        """Return the full history deque in chronological order.
 
-        Applies the essentials-first priority rule: headers and topics
-        for every item always survive, and optional narrator lines
-        are kept newest-first only until the visible-row budget
-        (`_PRIORITY_FILL_ENTRY_BUDGET`) is exhausted. This preserves the
-        legacy live-edge trim semantics — a long
-        chatty item cannot push older items' headers/topics off the
-        pane.
+        No priority filtering is applied here. The viewport sees every
+        entry the deque holds, and the live-edge essentials-first trim
+        is applied later in `_viewport_display_entries`. That keeps the
+        old compact live-edge behavior while still letting scroll-up
+        reach the oldest surviving history.
         """
         history_list = list(self.history)
         if not history_list:
             return []
         most_recent_idx = len(history_list) - 1
-
-        # Forward-iterate, grouping at header boundaries, tracking
-        # original deque indices. The budgeting and ordering matches
-        # the non-viewport display path, but we return the kept entries
-        # back in chronological order so the viewport can own the
-        # visible slice and live-edge anchoring coherently.
-        groups = self._history_groups_with_indices(history_list)
-        groups.reverse()
-
-        flat: list[tuple[tuple, int]] = []
-        for group in groups:
-            flat.extend(self._ordered_group_pairs(group))
-
-        budget = _VISIBLE_HISTORY_ROWS
-        keep_positions: set[int] = set()
-        used_rows = 0
-
-        for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic", "basis", "review_marker", "checkpoint"):
-                row_cost = self._entry_visual_rows(entry, wrap_width)
-                if used_rows >= budget:
-                    break
-                if used_rows > 0 and used_rows + row_cost > budget:
-                    break
-                keep_positions.add(pos)
-                used_rows += row_cost
-
-        optionals = [
-            (pos, entry, idx)
-            for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic", "basis", "review_marker", "checkpoint")
+        return [
+            (entry, idx == most_recent_idx)
+            for idx, entry in enumerate(history_list)
         ]
-        optionals.sort(key=lambda t: -t[2])  # newest first
-
-        for pos, _entry, _idx in optionals:
-            row_cost = self._entry_visual_rows(_entry, wrap_width)
-            if used_rows >= budget:
-                break
-            if used_rows > 0 and used_rows + row_cost > budget:
-                continue
-            keep_positions.add(pos)
-            used_rows += row_cost
-
-        kept_by_idx: list[tuple[int, tuple[str, str, int | None], bool]] = []
-        for pos, (entry, idx) in enumerate(flat):
-            if pos in keep_positions:
-                kept_by_idx.append((idx, entry, idx == most_recent_idx))
-        kept_by_idx.sort(key=lambda t: t[0])
-        return [(entry, is_most_recent) for _idx, entry, is_most_recent in kept_by_idx]
 
     @staticmethod
     def _history_groups_with_indices(
@@ -3215,6 +3166,7 @@ class PaintDryDisplay:
             }.get(pair[0][0], 2)
         )
         return [*header, *rest, *reversed(lines)]
+
     # -- History viewport (Crispy Drips) --------------------------------
 
     def _resolve_wrap_width(self) -> int:
@@ -3298,9 +3250,20 @@ class PaintDryDisplay:
         """
         with self._viewport_lock:
             vp = self._sync_viewport()
+            at_live_edge = vp.at_live_edge
             visible = vp.visible_entries()
         if not visible:
             return []
+
+        # At the live edge, apply essentials-first priority so a
+        # chatty item's body lines can't push older headers/topics
+        # off the pane. When scrolled up, bypass the filter entirely:
+        # the operator explicitly asked to see older content.
+        if at_live_edge:
+            visible = self._priority_filter(
+                visible,
+                wrap_width=self._resolve_wrap_width(),
+            )
 
         history_list = list(self.history)
         most_recent_entry = history_list[-1] if history_list else None
@@ -3329,6 +3292,50 @@ class PaintDryDisplay:
                 is_recent = entry == most_recent_entry
                 out.append((entry, is_recent, group_depth))
         return out
+
+    def _priority_filter(
+        entries: list[tuple[str, str, int | None]],
+        *,
+        wrap_width: int | None,
+    ) -> list[tuple[str, str, int | None]]:
+        """Essentials-first priority filter for the live-edge window.
+
+        Given visible entries in chronological order, keep structural
+        anchors first, then fill the remaining row budget with the
+        newest body lines. This is only used at the live edge; scrolled
+        views bypass it so older content stays reachable.
+        """
+        budget = _VISIBLE_HISTORY_ROWS
+        essentials_kinds = {"header", "topic", "checkpoint", * _LEGIBILITY_STRUCTURED_ROW_KINDS}
+        keep_positions: set[int] = set()
+        used_rows = 0
+
+        for pos, entry in enumerate(entries):
+            if entry[0] in essentials_kinds:
+                row_cost = self._entry_visual_rows(entry, wrap_width)
+                if used_rows >= budget:
+                    break
+                if used_rows > 0 and used_rows + row_cost > budget:
+                    break
+                keep_positions.add(pos)
+                used_rows += row_cost
+
+        optionals = [
+            (pos, entry)
+            for pos, entry in enumerate(entries)
+            if entry[0] not in essentials_kinds
+        ]
+        optionals.reverse()  # newest first within the visible slice
+        for pos, entry in optionals:
+            row_cost = self._entry_visual_rows(entry, wrap_width)
+            if used_rows >= budget:
+                break
+            if used_rows > 0 and used_rows + row_cost > budget:
+                continue
+            keep_positions.add(pos)
+            used_rows += row_cost
+
+        return [entry for pos, entry in enumerate(entries) if pos in keep_positions]
 
     def scroll_history_up(self, rows: int = 1) -> None:
         with self._viewport_lock:
