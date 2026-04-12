@@ -71,6 +71,21 @@ _TRICKY_PLUS_PLUS_PICKS = [
     *_TRICKY_PLUS_PICKS,
 ]
 
+_QWEN_SMOKE_SAMPLER = {
+    "max_tokens": 8192,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+    "repetition_penalty": 1.0,
+}
+
+_SMOKE_MODEL_PRESETS = {
+    "qwen3p5-35B-A3B": _QWEN_SMOKE_SAMPLER,
+    "Harmonic-27B-MLX-16bit": _QWEN_SMOKE_SAMPLER,
+}
+
 
 def _default_run_dir(model: str, *, now: datetime | None = None) -> Path:
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
@@ -121,6 +136,15 @@ def _validate_narrator_model(model: str) -> str:
             "--narrator-model must be the full snapshot model path, not the bare snapshots/ directory."
         )
     return normalized
+
+
+def _server_config_for_model(*, base_url: str, model: str) -> ServerConfig:
+    preset = _SMOKE_MODEL_PRESETS.get(model, {})
+    return ServerConfig(
+        base_url=base_url,
+        model=model,
+        **preset,
+    )
 
 
 def _scorebug_session_meta(
@@ -308,7 +332,14 @@ class _PredictionWriter:
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="qwen3p5-35B-A3B")
+    parser.add_argument(
+        "--model",
+        default="qwen3p5-35B-A3B",
+        help=(
+            "Grader model name. Smoke presets are pinned for "
+            "qwen3p5-35B-A3B and Harmonic-27B-MLX-16bit."
+        ),
+    )
     parser.add_argument("--items", type=int, default=8,
                         help="Number of items to grade (from first exam)")
     parser.add_argument(
@@ -440,10 +471,7 @@ def main():
     else:
         subset = gt[: args.items]
 
-    config = ServerConfig(
-        base_url=args.base_url,
-        model=args.model,
-    )
+    config = _server_config_for_model(base_url=args.base_url, model=args.model)
 
     print(f"Model: {config.model}")
     print(f"Items: {len(subset)} of {len(gt)}")

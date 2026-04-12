@@ -40,6 +40,35 @@ class _DummySink:
 
 
 class SmokeVlmContract(unittest.TestCase):
+    def test_harmonic_27b_uses_same_smoke_sampler_as_qwen_35b(self) -> None:
+        qwen = smoke_vlm._server_config_for_model(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+        harmonic = smoke_vlm._server_config_for_model(
+            base_url="http://example.test",
+            model="Harmonic-27B-MLX-16bit",
+        )
+
+        self.assertEqual(harmonic.model, "Harmonic-27B-MLX-16bit")
+        self.assertEqual(harmonic.max_tokens, qwen.max_tokens)
+        self.assertEqual(harmonic.temperature, qwen.temperature)
+        self.assertEqual(harmonic.top_p, qwen.top_p)
+        self.assertEqual(harmonic.top_k, qwen.top_k)
+        self.assertEqual(harmonic.min_p, qwen.min_p)
+        self.assertEqual(harmonic.presence_penalty, qwen.presence_penalty)
+        self.assertEqual(harmonic.repetition_penalty, qwen.repetition_penalty)
+
+    def test_smoke_vlm_help_mentions_harmonic_27b(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+        model_action = next(
+            action
+            for action in parser._actions
+            if "--model" in action.option_strings
+        )
+
+        self.assertIn("Harmonic-27B-MLX-16bit", model_action.help)
+
     def test_smoke_vlm_defaults_narrator_to_nlmb2p_bonsai(self) -> None:
         parser = smoke_vlm._build_arg_parser()
 
