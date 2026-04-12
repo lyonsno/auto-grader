@@ -515,5 +515,41 @@ class McScanDbContractTests(unittest.TestCase):
         self.assertEqual(outcomes[0]["status"], "multiple_marked")
 
 
+    # ------------------------------------------------------------------
+    # Atomicity contract
+    # ------------------------------------------------------------------
+
+    def test_partial_failure_does_not_leave_orphan_session_row(self) -> None:
+        persist = _load_persist_module(self)
+        # Build a manifest with a question outcome that will violate a DB
+        # constraint (question_id is blank, which violates nonblank CHECK).
+        manifest = _build_matched_manifest()
+        manifest["scan_results"][0]["scored_questions"]["mc-1"]["question_id"] = ""
+        # Also put an empty string as the dict key so the module uses it.
+        manifest["scan_results"][0]["scored_questions"] = {
+            "": manifest["scan_results"][0]["scored_questions"]["mc-1"]
+        }
+
+        with self.assertRaises(Exception):
+            persist(
+                manifest=manifest,
+                exam_instance_id=self.exam_instance_id,
+                connection=self.connection,
+            )
+
+        # No session row should exist — the transaction must have rolled back.
+        count = self.connection.execute(
+            "SELECT count(*) AS n FROM mc_scan_sessions "
+            "WHERE exam_instance_id = %s",
+            (self.exam_instance_id,),
+        ).fetchone()["n"]
+        self.assertEqual(
+            count,
+            0,
+            "A failed persist must not leave orphan session rows in the database. "
+            "All mutations must be atomic.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

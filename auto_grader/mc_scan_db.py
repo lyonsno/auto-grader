@@ -73,60 +73,63 @@ def persist_scan_session_to_db(
             }
             prior_scan_outcomes[pp["scan_id"]] = pp
 
-    # Insert session row.
-    session_row = connection.execute(
-        "INSERT INTO mc_scan_sessions "
-        "(exam_instance_id, manifest_fingerprint, session_ordinal, supersedes_session_id) "
-        "VALUES (%s, %s, %s, %s) RETURNING id",
-        (exam_instance_id, fingerprint, session_ordinal, supersedes_session_id),
-    ).fetchone()
-    session_id = session_row["id"]
-
-    # Insert scan pages and question outcomes.
-    for scan_result in manifest["scan_results"]:
-        divergence_detected = _detect_divergence(scan_result, prior_scan_outcomes)
-
-        page_row = connection.execute(
-            "INSERT INTO mc_scan_pages "
-            "(mc_scan_session_id, scan_id, checksum, status, failure_reason, "
-            " page_number, fallback_page_code, divergence_detected) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-            (
-                session_id,
-                scan_result["scan_id"],
-                scan_result["checksum"],
-                scan_result["status"],
-                scan_result.get("failure_reason"),
-                scan_result.get("page_number"),
-                scan_result.get("fallback_page_code"),
-                divergence_detected,
-            ),
+    # All mutations in a single transaction — if anything fails mid-way,
+    # nothing is committed. Prevents partial sessions from appearing in the DB.
+    with connection.transaction():
+        # Insert session row.
+        session_row = connection.execute(
+            "INSERT INTO mc_scan_sessions "
+            "(exam_instance_id, manifest_fingerprint, session_ordinal, supersedes_session_id) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            (exam_instance_id, fingerprint, session_ordinal, supersedes_session_id),
         ).fetchone()
-        page_id = page_row["id"]
+        session_id = session_row["id"]
 
-        # Only matched scans carry scored questions.
-        scored_questions = scan_result.get("scored_questions")
-        if scan_result["status"] == "matched" and scored_questions:
-            for question_id, outcome in scored_questions.items():
-                connection.execute(
-                    "INSERT INTO mc_question_outcomes "
-                    "(mc_scan_page_id, question_id, status, is_correct, "
-                    " review_required, marked_bubble_labels, resolved_bubble_labels, "
-                    " correct_bubble_label, correct_choice_key, marked_choice_keys) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        page_id,
-                        question_id,
-                        outcome["status"],
-                        outcome["is_correct"],
-                        outcome["review_required"],
-                        json.dumps(outcome.get("marked_bubble_labels", [])),
-                        json.dumps(outcome.get("resolved_bubble_labels", [])),
-                        outcome["correct_bubble_label"],
-                        outcome["correct_choice_key"],
-                        json.dumps(outcome.get("marked_choice_keys", [])),
-                    ),
-                )
+        # Insert scan pages and question outcomes.
+        for scan_result in manifest["scan_results"]:
+            divergence_detected = _detect_divergence(scan_result, prior_scan_outcomes)
+
+            page_row = connection.execute(
+                "INSERT INTO mc_scan_pages "
+                "(mc_scan_session_id, scan_id, checksum, status, failure_reason, "
+                " page_number, fallback_page_code, divergence_detected) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    session_id,
+                    scan_result["scan_id"],
+                    scan_result["checksum"],
+                    scan_result["status"],
+                    scan_result.get("failure_reason"),
+                    scan_result.get("page_number"),
+                    scan_result.get("fallback_page_code"),
+                    divergence_detected,
+                ),
+            ).fetchone()
+            page_id = page_row["id"]
+
+            # Only matched scans carry scored questions.
+            scored_questions = scan_result.get("scored_questions")
+            if scan_result["status"] == "matched" and scored_questions:
+                for question_id, outcome in scored_questions.items():
+                    connection.execute(
+                        "INSERT INTO mc_question_outcomes "
+                        "(mc_scan_page_id, question_id, status, is_correct, "
+                        " review_required, marked_bubble_labels, resolved_bubble_labels, "
+                        " correct_bubble_label, correct_choice_key, marked_choice_keys) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            page_id,
+                            question_id,
+                            outcome["status"],
+                            outcome["is_correct"],
+                            outcome["review_required"],
+                            json.dumps(outcome.get("marked_bubble_labels", [])),
+                            json.dumps(outcome.get("resolved_bubble_labels", [])),
+                            outcome["correct_bubble_label"],
+                            outcome["correct_choice_key"],
+                            json.dumps(outcome.get("marked_choice_keys", [])),
+                        ),
+                    )
 
     return {"mc_scan_session_id": session_id, "created": True}
 
