@@ -76,6 +76,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_bubble_interpretation_contract",
                 "tests.test_mc_scoring_contract",
                 "tests.test_mc_page_extraction_contract",
+                "tests.test_mc_scan_ingest_contract",
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
                 "tests.test_paper_threshold_packet_contract",
@@ -85,9 +86,9 @@ class ContractTestRunnerTests(unittest.TestCase):
             "metadata, bootstrap-script, connection, Postgres harness, runner, "
             "template schema, eval harness, shimmer phases, generation, PDF "
             "rendering, scan readback, scan registration, bubble "
-            "interpretation, MC scoring, matched-page extraction, the synthetic "
-            "mark-profile smoke contract, and the discovery guardrail suites in "
-            "a fixed, repo-local order.",
+            "interpretation, MC scoring, matched-page extraction, scan-level "
+            "ingest packaging, the synthetic mark-profile smoke contract, and "
+            "the discovery guardrail suites in a fixed, repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -144,6 +145,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_bubble_interpretation_contract",
                 "tests.test_mc_scoring_contract",
                 "tests.test_mc_page_extraction_contract",
+                "tests.test_mc_scan_ingest_contract",
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
                 "tests.test_paper_threshold_packet_contract",

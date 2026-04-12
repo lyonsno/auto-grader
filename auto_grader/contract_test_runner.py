@@ -22,6 +22,7 @@ _ALWAYS_ON_SUITES = (
     "tests.test_bubble_interpretation_contract",
     "tests.test_mc_scoring_contract",
     "tests.test_mc_page_extraction_contract",
+    "tests.test_mc_scan_ingest_contract",
     "tests.test_mark_profile_smoke_contract",
     "tests.test_paper_calibration_packet_contract",
     "tests.test_paper_threshold_packet_contract",

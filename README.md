@@ -183,6 +183,20 @@ states and must record an explicit, non-blank failure reason. Exact re-ingestion
 same file should be idempotent via a unique checksum key. Richer `duplicate` artifact
 linkage is deferred until there is canonical-artifact linkage to point at.
 
+Current implementation status on this ingest surface:
+
+- scan-level MC ingest packaging is implemented via `auto_grader.mc_scan_ingest`
+  so one batch of scanned page images plus a known exam artifact can now produce
+  explicit `matched`, `unmatched`, and `ambiguous` outcomes without forcing
+  downstream callers to hand-compose QR readback, page matching, and matched-page
+  extraction
+- unique matched scans carry the full normalized/scored page bundle from
+  `auto_grader.mc_page_extraction`
+- duplicate claims on the same page code stay explicit `ambiguous` outcomes
+  instead of silently picking a canonical scan
+- unreadable scans remain tracked `unmatched` artifacts with explicit failure
+  reasons
+
 ### 5. Grading (Bubbles -> Responses -> Score)
 
 Once pages are identified and registered:
