@@ -65,6 +65,12 @@ class McOpenCvDemoContractTests(unittest.TestCase):
                 "The demo runner should surface a human-readable score summary instead of "
                 "only dumping raw ingest JSON.",
             )
+            self.assertEqual(
+                result["summary"]["scored_question_status_counts"]["blank"],
+                5,
+                "A matched page should only contribute the question slots that actually "
+                "exist on that page, not the full exam answer key.",
+            )
 
             summary_path = output_dir / "summary.json"
             ingest_path = output_dir / "ingest_result.json"
@@ -86,6 +92,12 @@ class McOpenCvDemoContractTests(unittest.TestCase):
             self.assertEqual(
                 ingest_result["matched_pages"][0]["scored_questions"]["cal-01"]["status"],
                 "correct",
+            )
+            self.assertEqual(
+                len(ingest_result["matched_pages"][0]["scored_questions"]),
+                6,
+                "Matched-page extraction should stay page-local so the demo bundle does "
+                "not inflate blanks for questions that live on other pages.",
             )
             self.assertNotIn(
                 "normalized_image",

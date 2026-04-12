@@ -110,6 +110,12 @@ def _build_multi_question_artifact() -> dict:
     )
 
 
+def _build_paper_calibration_artifact() -> dict:
+    from auto_grader.paper_calibration_packet import build_mc_paper_calibration_packet
+
+    return build_mc_paper_calibration_packet()["artifact"]
+
+
 def _load_extraction_module(test_case: unittest.TestCase):
     try:
         from auto_grader.mc_page_extraction import extract_scored_mc_page
@@ -423,6 +429,26 @@ class McPageExtractionContractTests(unittest.TestCase):
         self.assertEqual(extracted["marked_bubble_labels"], {"mc-1": []})
         self.assertEqual(extracted["scored_questions"]["mc-1"]["status"], "blank")
         self.assertFalse(extracted["scored_questions"]["mc-1"]["review_required"])
+
+    def test_extract_scored_mc_page_scores_only_questions_present_on_that_page(self) -> None:
+        extract_scored_mc_page = _load_extraction_module(self)
+        artifact = _build_paper_calibration_artifact()
+        page = artifact["pages"][0]
+
+        distorted = _perspective_distort(
+            _render_marked_page(page, marked_labels={"cal-01": ["B"]})
+        )
+
+        extracted = extract_scored_mc_page(distorted, page, artifact["answer_key"])
+
+        self.assertEqual(
+            sorted(extracted["scored_questions"]),
+            ["cal-01", "cal-02", "cal-03", "cal-04", "cal-05", "cal-06"],
+            "Matched-page extraction should score only the question ids whose bubble "
+            "regions actually live on that page, not inflate blanks for the rest of "
+            "the exam answer key.",
+        )
+        self.assertEqual(len(extracted["marked_bubble_labels"]), 6)
 
     def test_extract_scored_mc_page_handles_mixed_outcomes_on_one_degraded_page(self) -> None:
         extract_scored_mc_page = _load_extraction_module(self)

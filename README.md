@@ -201,7 +201,11 @@ Current implementation status on this ingest surface:
   one directory of scans, runs the landed ingest surface, writes a sanitized
   `ingest_result.json`, writes per-scan normalized page images for matched
   pages, and emits a small human-readable summary so the lane can be smoked end
-  to end without inventing a second persistence format
+  to end without inventing a second persistence format; that runner has now
+  also survived a first real-paper smoke against the durable two-page
+  pencil-and-scanner calibration packet, and the only bug it exposed was a
+  page-local scoring-accounting issue that has since been fixed in
+  `auto_grader.mc_page_extraction`
 
 ### 5. Grading (Bubbles -> Responses -> Score)
 

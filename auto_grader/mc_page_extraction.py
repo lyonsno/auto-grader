@@ -25,13 +25,20 @@ def extract_scored_mc_page(
     normalized_image = normalize_page_image(image, page)
     bubble_observations = read_bubble_observations(normalized_image, page)
     bubble_evidence = read_bubble_evidence(normalized_image, page)
+    page_answer_key = {
+        question_id: _require_mapping(
+            answer_key.get(question_id),
+            f"answer_key.{question_id}",
+        )
+        for question_id in bubble_observations
+    }
     marked_bubble_labels = {
         question_id: observation["marked_bubble_labels"]
         for question_id, observation in bubble_observations.items()
     }
     scored_questions = score_marked_mc_bubbles(
         bubble_observations,
-        answer_key,
+        page_answer_key,
         bubble_evidence,
     )
 
@@ -52,6 +59,12 @@ def extract_scored_mc_page(
 def _require_int(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{label} must be an integer")
+    return value
+
+
+def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{label} must be a mapping")
     return value
 
 
