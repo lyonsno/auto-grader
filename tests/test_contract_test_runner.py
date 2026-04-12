@@ -83,6 +83,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
                 "tests.test_paper_threshold_packet_contract",
+                "tests.test_generated_exam_demo_contract",
                 "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
@@ -92,8 +93,8 @@ class ContractTestRunnerTests(unittest.TestCase):
             "interpretation, MC scoring, matched-page extraction, scan-level "
             "ingest packaging, scan-session persistence, the prototype demo "
             "runner, review override, the synthetic mark-profile smoke "
-            "contract, and the discovery guardrail suites in a fixed, "
-            "repo-local order.",
+                "contract, and the discovery guardrail suites in a fixed, "
+                "repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -157,6 +158,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
                 "tests.test_paper_threshold_packet_contract",
+                "tests.test_generated_exam_demo_contract",
                 "test_unittest_discovery_contract",
                 "tests.test_db_postgres_smoke_contract",
                 "tests.postgres_contract_bootstrap_script_smoke_contract",
