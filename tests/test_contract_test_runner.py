@@ -79,6 +79,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_mc_scan_ingest_contract",
                 "tests.test_mc_scan_session_persist_contract",
                 "tests.test_mc_opencv_demo_contract",
+                "tests.test_mc_review_override_contract",
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
                 "tests.test_paper_threshold_packet_contract",
@@ -89,11 +90,10 @@ class ContractTestRunnerTests(unittest.TestCase):
             "template schema, eval harness, shimmer phases, generation, PDF "
             "rendering, scan readback, scan registration, bubble "
             "interpretation, MC scoring, matched-page extraction, scan-level "
-            "ingest packaging, scan-session persistence, the synthetic "
             "ingest packaging, scan-session persistence, the prototype demo "
-            "runner, the synthetic "
-            "mark-profile smoke contract, and the discovery guardrail suites "
-            "in a fixed, repo-local order.",
+            "runner, review override, the synthetic mark-profile smoke "
+            "contract, and the discovery guardrail suites in a fixed, "
+            "repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -153,6 +153,7 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_mc_scan_ingest_contract",
                 "tests.test_mc_scan_session_persist_contract",
                 "tests.test_mc_opencv_demo_contract",
+                "tests.test_mc_review_override_contract",
                 "tests.test_mark_profile_smoke_contract",
                 "tests.test_paper_calibration_packet_contract",
                 "tests.test_paper_threshold_packet_contract",
