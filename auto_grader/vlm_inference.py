@@ -164,6 +164,8 @@ _TASK_SAMPLING_PRESETS: dict[str, dict[str, dict[str, float | int]]] = {
     },
 }
 
+_GRADE_REQUEST_TIMEOUTS_S = (180, 60, 60)
+
 
 def known_model_families() -> tuple[str, ...]:
     return ("qwen", "gemma-4", "neutral")
@@ -742,10 +744,10 @@ def grade_single_item(
     content = ""
     reasoning = ""
     finish_reason: str | None = None
-    for attempt in range(3):
+    for attempt, request_timeout_s in enumerate(_GRADE_REQUEST_TIMEOUTS_S):
         try:
             req = _build_request()
-            resp = urllib.request.urlopen(req, timeout=600)
+            resp = urllib.request.urlopen(req, timeout=request_timeout_s)
             try:
                 content, reasoning, finish_reason = _consume_streaming_response(
                     resp, on_reasoning_delta
@@ -786,12 +788,12 @@ def grade_single_item(
                 )
             else:
                 last_err = e
-            if attempt < 2:
+            if attempt < len(_GRADE_REQUEST_TIMEOUTS_S) - 1:
                 import time
                 time.sleep(2)
     else:
         raise TimeoutError(
-            f"VLM request failed after 3 attempts for "
+            f"VLM request failed after {len(_GRADE_REQUEST_TIMEOUTS_S)} attempts for "
             f"{item.exam_id}/{item.question_id}: {last_err}"
         )
 

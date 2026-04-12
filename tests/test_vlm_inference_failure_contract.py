@@ -114,6 +114,36 @@ class VlmInferenceFailureContract(unittest.TestCase):
         self.assertEqual(pred.raw_reasoning, "reasoning trace")
         self.assertIn("parse", pred.model_reasoning.lower())
 
+    def test_grade_single_item_uses_longer_first_timeout_then_shorter_retries(self):
+        timeouts: list[float] = []
+
+        def fake_urlopen(_req, timeout):
+            timeouts.append(timeout)
+            raise TimeoutError("server wedged")
+
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=fake_urlopen,
+        ), mock.patch(
+            "time.sleep",
+            return_value=None,
+        ):
+            with self.assertRaisesRegex(
+                TimeoutError,
+                "VLM request failed after 3 attempts",
+            ):
+                grade_single_item(
+                    self._item(),
+                    page_image=b"png",
+                    config=self._config(),
+                )
+
+        self.assertEqual(
+            timeouts,
+            [180, 60, 60],
+            "smoke grading should allow a longer first request for cold model load, then fail faster on later retries",
+        )
+
     def test_stream_consumer_falls_back_to_model_reasoning_content_when_reasoning_channel_missing(self):
         seen: list[str] = []
         resp = [
