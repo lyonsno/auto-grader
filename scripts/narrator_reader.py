@@ -4614,21 +4614,18 @@ def main() -> int:
         session_exit = threading.Event()
         scroll_controller = HistoryScrollController(display)
 
-        # screen=False — stay in the terminal's main screen buffer.
-        # Alt-screen (screen=True) was tried and reverted: the focus-
-        # preview image panel can push the total rendered height past
-        # the terminal's row count, and alt-screen has no scrollback
-        # to absorb the overflow — the result is doubled/garbled
-        # panels. screen=False lets the terminal scroll naturally.
-        # Trade-off: Rich's in-place redraw leaves prior frames in
-        # the terminal's native scrollback (ghost header trails when
-        # scrolling the terminal up). That is accepted until a fixed-
-        # height layout or Rich transient mode can eliminate it.
+        # screen=True — own the terminal viewport while Paint Dry is
+        # alive so native terminal scrollback cannot reveal stale Live
+        # redraw frames above the current UI. The old screen=False
+        # workaround only existed because oversized focus previews
+        # could overflow the terminal height; preview payloads are now
+        # capped before render, so we can retire that compromise and
+        # let the in-pane history viewport be the only scroll surface.
         with Live(
             display.render(),
             console=console,
             refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
-            screen=False,
+            screen=True,
             auto_refresh=False,
         ) as live:
             def _wait_for_manual_close() -> int:
