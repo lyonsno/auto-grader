@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -140,6 +141,64 @@ class McScanIngestContractTests(unittest.TestCase):
             "The scan-level packaging surface should surface review-required matched pages "
             "without forcing downstream callers to re-scan every scored question by hand.",
         )
+
+    def test_ingest_mc_scans_marks_conflicting_qr_payloads_as_ambiguous(self) -> None:
+        ingest_mc_scans = _load_ingest_module(self)
+        artifact = _build_artifact()
+
+        from tests.test_scan_readback_contract import _synthetic_page
+
+        conflicting_scan = _synthetic_page("inst_test-p1", "inst_test-p2")
+
+        packaged = ingest_mc_scans({"conflicting.png": conflicting_scan}, artifact)
+
+        self.assertEqual([result["status"] for result in packaged["scan_results"]], ["ambiguous"])
+        self.assertRegex(
+            packaged["scan_results"][0]["failure_reason"],
+            r"(?is)ambiguous|conflicting",
+            "A scan whose duplicated QR payloads disagree should stay explicitly ambiguous "
+            "at the ingest layer instead of falling through to an unrelated unmatched path.",
+        )
+
+    def test_ingest_mc_scans_treats_lowercase_ambiguous_error_as_ambiguous(self) -> None:
+        ingest_module = __import__("auto_grader.mc_scan_ingest", fromlist=["ingest_mc_scans"])
+        artifact = _build_artifact()
+        blank_scan = np.full((600, 900, 3), 255, dtype=np.uint8)
+
+        with mock.patch.object(
+            ingest_module,
+            "read_page_identity_qr_payload",
+            side_effect=ValueError("ambiguous duplicated payloads"),
+        ):
+            packaged = ingest_module.ingest_mc_scans({"conflicting.png": blank_scan}, artifact)
+
+        self.assertEqual([result["status"] for result in packaged["scan_results"]], ["ambiguous"])
+
+    def test_ingest_mc_scans_rejects_extraction_key_collisions(self) -> None:
+        ingest_module = __import__("auto_grader.mc_scan_ingest", fromlist=["ingest_mc_scans"])
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        correct_bubble = artifact["answer_key"]["mc-1"]["correct_bubble_label"]
+        matched_scan = _perspective_distort(
+            _render_marked_page(page, marked_labels={"mc-1": [correct_bubble]})
+        )
+
+        with mock.patch.object(
+            ingest_module,
+            "extract_scored_mc_page",
+            return_value={
+                "scan_id": "collision",
+                "page_number": page["page_number"],
+                "fallback_page_code": page["fallback_page_code"],
+                "normalized_image": matched_scan,
+                "bubble_observations": {},
+                "bubble_evidence": {},
+                "marked_bubble_labels": {},
+                "scored_questions": {},
+            },
+        ):
+            with self.assertRaisesRegex(ValueError, "reserved ingest keys"):
+                ingest_module.ingest_mc_scans({"matched-page.png": matched_scan}, artifact)
 
 
 if __name__ == "__main__":

@@ -41,7 +41,12 @@ def ingest_mc_scans(
             payload = read_page_identity_qr_payload(image)
         except ValueError as exc:
             error_text = str(exc)
-            status = "ambiguous" if "Ambiguous" in error_text else "unmatched"
+            lowered_error_text = error_text.lower()
+            status = (
+                "ambiguous"
+                if ("ambiguous" in lowered_error_text or "conflict" in lowered_error_text)
+                else "unmatched"
+            )
             provisional_results.append(
                 {
                     "scan_id": normalized_scan_id,
@@ -102,6 +107,7 @@ def ingest_mc_scans(
             page = result.pop("_page")
             image = result.pop("_image")
             extracted = extract_scored_mc_page(image, page, answer_key)
+            _raise_on_reserved_key_collisions(extracted)
             matched_result = {
                 "scan_id": result["scan_id"],
                 "checksum": result["checksum"],
@@ -164,6 +170,16 @@ def _image_checksum(image: np.ndarray) -> str:
     digest.update(str(tuple(image.shape)).encode("ascii"))
     digest.update(image.tobytes())
     return digest.hexdigest()
+
+
+def _raise_on_reserved_key_collisions(extracted: Mapping[str, Any]) -> None:
+    reserved_keys = {"scan_id", "checksum", "status", "failure_reason"}
+    colliding_keys = sorted(reserved_keys.intersection(extracted))
+    if colliding_keys:
+        raise ValueError(
+            "extract_scored_mc_page returned reserved ingest keys: "
+            + ", ".join(colliding_keys)
+        )
 
 
 def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
