@@ -964,6 +964,24 @@ def _build_kitty_place_sequence(
     )
 
 
+def _sigmoid(t: float) -> float:
+    """Attempt smooth-step sigmoid: holds near 1.0 longer, drops
+    faster through the mid-range, and approaches the floor more
+    gently than a linear ramp. t in [0, 1] → [1, 0].
+    """
+    # Hermite smoothstep on (1-t) so t=0 → 1.0, t=1 → 0.0.
+    s = 1.0 - t
+    return s * s * (3.0 - 2.0 * s)
+
+
+#: Braille dot indices for left column (bits 0,1,2,6) and right
+#: column (bits 3,4,5,7). Near the image edge, preferring vertical
+#: stripe patterns creates a directional grain that echoes the
+#: solid-block boundary.
+_BRAILLE_LEFT_COL = (0, 1, 2, 6)
+_BRAILLE_RIGHT_COL = (3, 4, 5, 7)
+
+
 def _texture_cell(
     *,
     distance_from_image: int,
@@ -974,50 +992,46 @@ def _texture_cell(
     Three zones with hard cuts between them:
 
     1. **Solid columns** (d < _SOLID_COLUMNS): deterministic solid
-       blocks — █ at d=0, ▓ at d=1. No randomness, no braille.
-    2. **Braille ramp** (d in [_SOLID_COLUMNS, _SOLID_COLUMNS +
+       blocks — █ at d=0,1; ▓ at d=2. No randomness, no braille.
+    2. **Braille near** (d in [_SOLID_COLUMNS, _SOLID_COLUMNS +
        _BRAILLE_RAMP_CELLS)): braille dots at peak density ramping
-       down linearly.
-    3. **Braille tail** (beyond the ramp): braille density falls
-       toward the edge floor over _BRAILLE_FALLOFF_CELLS, then
-       holds at the floor.
+       down via sigmoid. Dot selection biases toward vertical
+       column patterns near the image to create directional grain.
+    3. **Braille far** (beyond the ramp): braille density sigmoids
+       toward the edge floor over _BRAILLE_FALLOFF_CELLS.
 
-    Color intensity fades independently from full accent at d=0 to
-    the edge floor at _TEXTURE_COLOR_FADE_CELLS.
-
-    The seed_key is hashed to produce deterministic per-cell
-    randomness so the pattern is stable across render ticks and
-    resize-safe.
+    Color intensity uses a separate sigmoid from full accent at d=0
+    to the edge floor at _TEXTURE_COLOR_FADE_CELLS.
     """
     d = max(0, distance_from_image)
 
-    # Color intensity curve — independent of substrate.
+    # Color intensity — sigmoid holds bone color presence longer
+    # near the image, then drops through mid-distance.
     if d >= _TEXTURE_COLOR_FADE_CELLS:
         color_intensity = _TEXTURE_EDGE_FLOOR
     else:
         t = d / _TEXTURE_COLOR_FADE_CELLS
-        color_intensity = 1.0 - (1.0 - _TEXTURE_EDGE_FLOOR) * t
+        color_intensity = _TEXTURE_EDGE_FLOOR + (1.0 - _TEXTURE_EDGE_FLOOR) * _sigmoid(t)
 
     rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, color_intensity)
 
     # Zone 1: solid blocks — deterministic, no randomness needed.
-    # d=0,1 → █ (full block), d=2 → ▓ (dense block).
     if d < _SOLID_COLUMNS:
         glyph = "▓" if d == _SOLID_COLUMNS - 1 else "█"
         return glyph, rgb
 
-    # Zone 2+3: braille. Density starts at 1.0 right after the
-    # solid columns, ramps down over _BRAILLE_RAMP_CELLS, then
-    # falls further over _BRAILLE_FALLOFF_CELLS to the floor.
+    # Zone 2+3: braille with sigmoid density falloff.
     braille_d = d - _SOLID_COLUMNS
     if braille_d < _BRAILLE_RAMP_CELLS:
-        # Ramp from 1.0 down to a transition point.
-        density = 1.0 - (braille_d / _BRAILLE_RAMP_CELLS) * 0.5
+        t = braille_d / _BRAILLE_RAMP_CELLS
+        density = _TEXTURE_EDGE_FLOOR + (1.0 - _TEXTURE_EDGE_FLOOR) * _sigmoid(t)
     else:
         fall_d = braille_d - _BRAILLE_RAMP_CELLS
         if fall_d < _BRAILLE_FALLOFF_CELLS:
             t = fall_d / _BRAILLE_FALLOFF_CELLS
-            density = 0.5 - (0.5 - _TEXTURE_EDGE_FLOOR) * t
+            # Sigmoid from the ramp's exit value down to the floor.
+            ramp_exit = _TEXTURE_EDGE_FLOOR + (1.0 - _TEXTURE_EDGE_FLOOR) * _sigmoid(1.0)
+            density = _TEXTURE_EDGE_FLOOR + (ramp_exit - _TEXTURE_EDGE_FLOOR) * _sigmoid(t)
         else:
             density = _TEXTURE_EDGE_FLOOR
 
@@ -1031,13 +1045,36 @@ def _texture_cell(
             return glyph, rgb
         return " ", _TEXTURE_BG_RGB
 
-    # Number of dots lit scales with density (1-8).
+    # Directional bias: near the image, prefer vertical column
+    # patterns. The bias fades out over _BRAILLE_RAMP_CELLS so
+    # the far field is uniformly random.
+    vertical_bias = max(0.0, 1.0 - braille_d / max(1, _BRAILLE_RAMP_CELLS))
+
     n_dots = max(1, min(8, int(round(density * 8))))
     bits = 0
-    dot_order = list(range(8))
-    rand.shuffle(dot_order)
-    for bit_idx in dot_order[:n_dots]:
-        bits |= 1 << bit_idx
+
+    if rand.random() < vertical_bias:
+        # Vertical-biased: pick from one column first, overflow
+        # to the other if we need more dots than 4.
+        col = _BRAILLE_LEFT_COL if rand.random() < 0.5 else _BRAILLE_RIGHT_COL
+        other = _BRAILLE_RIGHT_COL if col is _BRAILLE_LEFT_COL else _BRAILLE_LEFT_COL
+        pool = list(col) + list(other)
+        # Shuffle within each column group for variety, but keep
+        # the primary column first.
+        primary = list(col)
+        secondary = list(other)
+        rand.shuffle(primary)
+        rand.shuffle(secondary)
+        pool = primary + secondary
+        for bit_idx in pool[:n_dots]:
+            bits |= 1 << bit_idx
+    else:
+        # Uniform random dot selection.
+        dot_order = list(range(8))
+        rand.shuffle(dot_order)
+        for bit_idx in dot_order[:n_dots]:
+            bits |= 1 << bit_idx
+
     glyph = chr(_BRAILLE_BASE + bits)
     return glyph, rgb
 
