@@ -26,9 +26,9 @@ def extract_scored_mc_page(
     bubble_observations = read_bubble_observations(normalized_image, page)
     bubble_evidence = read_bubble_evidence(normalized_image, page)
     page_answer_key = {
-        question_id: _require_mapping(
-            answer_key.get(question_id),
-            f"answer_key.{question_id}",
+        question_id: _require_answer_key_entry(
+            answer_key,
+            question_id,
         )
         for question_id in bubble_observations
     }
@@ -66,6 +66,15 @@ def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError(f"{label} must be a mapping")
     return value
+
+
+def _require_answer_key_entry(
+    answer_key: Mapping[str, Mapping[str, Any]],
+    question_id: str,
+) -> Mapping[str, Any]:
+    if question_id not in answer_key:
+        raise KeyError(f"Missing answer_key entry for page question {question_id!r}")
+    return _require_mapping(answer_key[question_id], f"answer_key.{question_id}")
 
 
 def _require_string(value: Any, label: str) -> str:

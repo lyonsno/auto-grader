@@ -450,6 +450,20 @@ class McPageExtractionContractTests(unittest.TestCase):
         )
         self.assertEqual(len(extracted["marked_bubble_labels"]), 6)
 
+    def test_extract_scored_mc_page_rejects_missing_answer_key_entry_clearly(self) -> None:
+        extract_scored_mc_page = _load_extraction_module(self)
+        artifact = _build_artifact()
+        page = artifact["pages"][0]
+        distorted = _perspective_distort(
+            _render_marked_page(
+                page,
+                marked_labels={"mc-1": [artifact["answer_key"]["mc-1"]["correct_bubble_label"]]},
+            )
+        )
+
+        with self.assertRaisesRegex(KeyError, r"mc-1"):
+            extract_scored_mc_page(distorted, page, answer_key={})
+
     def test_extract_scored_mc_page_handles_mixed_outcomes_on_one_degraded_page(self) -> None:
         extract_scored_mc_page = _load_extraction_module(self)
         read_page_identity_qr_payload = _load_readback_module(self)

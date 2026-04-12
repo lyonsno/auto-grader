@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import PurePath
 import tempfile
 from collections.abc import Mapping
 from typing import Any
@@ -43,8 +44,9 @@ def persist_scan_session(
     serializable_results: list[dict[str, Any]] = []
 
     for scan_result in ingest_result["scan_results"]:
+        safe_scan_id = _require_safe_scan_id(scan_result["scan_id"])
         entry: dict[str, Any] = {
-            "scan_id": scan_result["scan_id"],
+            "scan_id": safe_scan_id,
             "checksum": scan_result["checksum"],
             "status": scan_result["status"],
             "failure_reason": scan_result["failure_reason"],
@@ -59,7 +61,7 @@ def persist_scan_session(
 
             # Write normalized image.
             os.makedirs(normalized_dir, exist_ok=True)
-            image_path = os.path.join(normalized_dir, scan_result["scan_id"])
+            image_path = os.path.join(normalized_dir, safe_scan_id)
             _write_image_atomic(image_path, scan_result["normalized_image"])
 
         serializable_results.append(entry)
@@ -102,6 +104,14 @@ def _serialize_scored_questions(
     return serialized
 
 
+def _require_safe_scan_id(scan_id: Any) -> str:
+    if not isinstance(scan_id, str) or scan_id == "":
+        raise ValueError("scan_id must be a non-empty safe filename")
+    if scan_id != PurePath(scan_id).name or scan_id in {".", ".."}:
+        raise ValueError("scan_id must be a non-empty safe filename")
+    return scan_id
+
+
 def _write_json_atomic(path: str, data: Any) -> None:
     """Write JSON atomically via tmp + rename."""
     dir_name = os.path.dirname(path)
@@ -125,7 +135,8 @@ def _write_image_atomic(path: str, image: np.ndarray) -> None:
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".png")
     os.close(fd)
     try:
-        cv2.imwrite(tmp_path, image)
+        if not cv2.imwrite(tmp_path, image):
+            raise OSError(f"Failed to write normalized image to temporary path: {tmp_path}")
         os.replace(tmp_path, path)
     except BaseException:
         try:
