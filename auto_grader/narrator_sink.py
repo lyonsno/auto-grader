@@ -447,7 +447,10 @@ class NarratorSink:
             )
 
         runner = fifo.parent / "run.sh"
-        reader_stderr = fifo.parent / "reader.stderr"
+        diagnostics_dir = self.config.log_dir or fifo.parent
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        reader_stderr = diagnostics_dir / "reader.stderr"
+        reader_exit = diagnostics_dir / "reader.exit"
         runner.write_text(
             "#!/bin/bash\n"
             "set -u\n"
@@ -455,9 +458,11 @@ class NarratorSink:
             f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
             f"2>\"{reader_stderr}\"\n"
             "status=$?\n"
+            f"printf '%s\\n' \"$status\" >\"{reader_exit}\"\n"
             "if [ \"$status\" -ne 0 ]; then\n"
             "  echo \"Project Paint Dry reader exited with status $status\"\n"
             f"  echo \"stderr log: {reader_stderr}\"\n"
+            f"  echo \"exit log: {reader_exit}\"\n"
             "  if [ -s "
             f"\"{reader_stderr}\""
             " ]; then\n"

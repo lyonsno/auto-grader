@@ -117,6 +117,26 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertNotIn(" 1>", launch_line)
         self.assertIn("2>", launch_line)
 
+    def test_spawn_runner_persists_reader_diagnostics_in_log_dir_when_available(self):
+        with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as logdir:
+            sink = NarratorSink(SinkConfig(log_dir=Path(logdir)))
+            fifo = Path(tmpdir) / "narrator.fifo"
+            fifo.touch()
+
+            with mock.patch.object(
+                sink,
+                "_resolve_wezterm_executable",
+                return_value="/Applications/WezTerm.app/Contents/MacOS/wezterm",
+            ), mock.patch("subprocess.run"):
+                sink._spawn_terminal_window(fifo)
+
+            runner = fifo.parent / "run.sh"
+            script = runner.read_text()
+
+        self.assertIn(str(Path(logdir) / "reader.stderr"), script)
+        self.assertIn(str(Path(logdir) / "reader.exit"), script)
+        self.assertNotIn(str(fifo.parent / "reader.stderr"), script)
+
     def test_start_raises_if_reader_never_connects_to_fifo(self):
         sink = NarratorSink(SinkConfig(spawn_terminal=True))
         with tempfile.TemporaryDirectory() as tmpdir:
