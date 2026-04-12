@@ -17,7 +17,11 @@ just routes events to its outputs. JSON line protocol over the fifo:
     {"type": "commit", "mode": "thought"}
     {"type": "topic",  "text": "Thought for 47s · density calc"}
     {"type": "basis", "text": "Correct setup, lost credit for units."}
+    {"type": "ambiguity", "text": "Coefficient could read as 2 or 7."}
+    {"type": "credit_preserved", "text": "Correct setup and carry-forward."}
+    {"type": "deduction", "text": "Lost credit for missing net ionic form."}
     {"type": "review_marker", "text": "Human review warranted."}
+    {"type": "professor_mismatch", "text": "Historical professor awarded 2/4; corrected truth is 4/4."}
     {"type": "end"}
 """
 
@@ -223,24 +227,26 @@ class NarratorSink:
                 self._fallback.flush()
 
     def write_basis(self, text: str) -> None:
-        """Write a compact post-game basis row into durable history."""
-        with self._lock:
-            self._emit({"type": "basis", "text": text})
-            if self._txt_file is not None:
-                self._txt_file.write(f"  ≡ Basis: {text}\n")
-            if not self.config.spawn_terminal:
-                self._fallback.write(f"  ≡ Basis: {text}\n")
-                self._fallback.flush()
+        self._write_structured_row("basis", "Basis", text)
+
+    def write_ambiguity(self, text: str) -> None:
+        self._write_structured_row("ambiguity", "Ambiguity", text)
+
+    def write_credit_preserved(self, text: str) -> None:
+        self._write_structured_row(
+            "credit_preserved", "Credit preserved for", text
+        )
+
+    def write_deduction(self, text: str) -> None:
+        self._write_structured_row("deduction", "Deduction", text)
 
     def write_review_marker(self, text: str) -> None:
-        """Write a post-game review-needed marker into durable history."""
-        with self._lock:
-            self._emit({"type": "review_marker", "text": text})
-            if self._txt_file is not None:
-                self._txt_file.write(f"  ! Review needed: {text}\n")
-            if not self.config.spawn_terminal:
-                self._fallback.write(f"  ! Review needed: {text}\n")
-                self._fallback.flush()
+        self._write_structured_row("review_marker", "Review needed", text)
+
+    def write_professor_mismatch(self, text: str) -> None:
+        self._write_structured_row(
+            "professor_mismatch", "Professor mismatch", text
+        )
 
     def write_drop(self, reason: str, text: str) -> None:
         """Record a dropped summary (dedup, empty, etc.) for observability.
@@ -335,6 +341,18 @@ class NarratorSink:
             except (BrokenPipeError, OSError):
                 # Reader closed — we'll keep logging to disk only
                 self._fifo_writer = None
+
+    def _write_structured_row(self, event_type: str, label: str, text: str) -> None:
+        """Write one structured legibility row under the current item."""
+        if not text:
+            return
+        with self._lock:
+            self._emit({"type": event_type, "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"  {label}: {text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  {label}: {text}\n")
+                self._fallback.flush()
 
     @staticmethod
     def _make_fifo() -> Path:

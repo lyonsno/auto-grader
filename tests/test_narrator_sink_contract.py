@@ -202,6 +202,83 @@ class TestWezTermResolution(unittest.TestCase):
             "Correct setup, lost credit for octet violation.",
         )
 
+    def test_write_ambiguity_emits_ambiguity_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_ambiguity("Scan leaves the coefficient ambiguous.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        ambiguity = next(event for event in events if event["type"] == "ambiguity")
+        self.assertEqual(ambiguity["text"], "Scan leaves the coefficient ambiguous.")
+
+    def test_write_deduction_emits_deduction_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_deduction("Lost credit for missing net ionic form.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        deduction = next(event for event in events if event["type"] == "deduction")
+        self.assertEqual(deduction["text"], "Lost credit for missing net ionic form.")
+
+    def test_write_credit_preserved_emits_credit_preserved_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_credit_preserved("Correct setup and carry-forward handling.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        credit = next(
+            event for event in events if event["type"] == "credit_preserved"
+        )
+        self.assertEqual(
+            credit["text"], "Correct setup and carry-forward handling."
+        )
+
+    def test_write_professor_mismatch_emits_professor_mismatch_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_professor_mismatch("Historical professor awarded 2/4; corrected truth is 4/4.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        mismatch = next(
+            event for event in events if event["type"] == "professor_mismatch"
+        )
+        self.assertEqual(
+            mismatch["text"],
+            "Historical professor awarded 2/4; corrected truth is 4/4.",
+        )
+
     def test_write_review_marker_emits_review_event(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sink = NarratorSink(
