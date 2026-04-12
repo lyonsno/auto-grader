@@ -62,7 +62,7 @@ class FocusPreviewContract(unittest.TestCase):
         self.assertGreater(sum(center), 3 * 170)
         self.assertNotEqual(center, (220, 220, 220))
 
-    def test_preview_no_longer_vignettes_or_rounds_edges(self):
+    def test_preview_keeps_edges_bright_without_heavy_vignette_or_rounding(self):
         from auto_grader.focus_preview import render_focus_preview
 
         preview = render_focus_preview(self.page_png, self.focus)
@@ -72,9 +72,15 @@ class FocusPreviewContract(unittest.TestCase):
         near_corner = _pixel_at(preview, 2, 2)
         center = _pixel_at(preview, width // 2, height // 2)
 
-        self.assertEqual(near_top, center)
-        self.assertEqual(near_side, center)
-        self.assertEqual(near_corner, center)
+        # The current preview pass intentionally adds deterministic paper
+        # grain, so edge pixels should not be byte-identical to the center.
+        # The stable contract is that there is no strong vignette or
+        # corner-darkening gradient: edge samples stay in the same bright
+        # neighborhood as the center, with only low-amplitude texture drift.
+        center_sum = sum(center)
+        for sample in (near_top, near_side, near_corner):
+            self.assertGreater(sum(sample), center_sum - 20)
+            self.assertLess(sum(sample), center_sum + 20)
 
 
 if __name__ == "__main__":
