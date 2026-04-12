@@ -293,6 +293,14 @@ Dry," used during smoke and eval runs to watch the grader's reasoning in flight.
 Its semantics, scorebug vocabulary, and checkpoint/history contract are
 documented in [docs/project_paint_dry.md](docs/project_paint_dry.md).
 
+Current implementation status on the MC review surface:
+
+- `auto_grader.mc_review_override` now provides the first explicit human
+  resolution seam for flagged MC questions
+- that surface is intentionally narrow and still in-memory: it corrects scored
+  question records with provenance, but it does not yet persist those review
+  resolutions into the database spine
+
 ## Data model
 
 This is high-level and intentionally does not commit to table names yet.

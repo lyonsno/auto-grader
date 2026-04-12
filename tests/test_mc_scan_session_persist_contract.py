@@ -15,6 +15,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -220,6 +221,32 @@ class McScanSessionPersistContractTests(unittest.TestCase):
             self.assertEqual(summary["unmatched"], 1)
             self.assertEqual(summary["ambiguous"], 0)
             self.assertEqual(summary["review_required"], 0)
+
+    def test_persist_scan_session_rejects_scan_ids_that_are_not_safe_filenames(self) -> None:
+        persist_scan_session = _load_persist_module(self)
+        artifact, scan_images = self._build_matched_scan()
+        matched_scan = scan_images["matched-page.png"]
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            with self.assertRaisesRegex(ValueError, r"scan_id.*safe filename"):
+                persist_scan_session(
+                    scan_images={"../escape.png": matched_scan},
+                    artifact=artifact,
+                    output_dir=output_dir,
+                )
+
+    def test_persist_scan_session_raises_when_normalized_image_write_fails(self) -> None:
+        persist_scan_session = _load_persist_module(self)
+        artifact, scan_images = self._build_matched_scan()
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            with mock.patch("auto_grader.mc_scan_session.cv2.imwrite", return_value=False):
+                with self.assertRaisesRegex(OSError, r"Failed to write normalized image"):
+                    persist_scan_session(
+                        scan_images=scan_images,
+                        artifact=artifact,
+                        output_dir=output_dir,
+                    )
 
 
 if __name__ == "__main__":

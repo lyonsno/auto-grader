@@ -16,12 +16,28 @@ _ALWAYS_ON_SUITES = (
     "tests.test_eval_harness_contract",
     "tests.test_cull_zilch_reaper_contract",
     "tests.test_shimmer_phases",
+    "tests.test_generation_contract",
+    "tests.test_pdf_rendering_contract",
+    "tests.test_scan_readback_contract",
+    "tests.test_scan_registration_contract",
+    "tests.test_bubble_interpretation_contract",
+    "tests.test_mc_scoring_contract",
+    "tests.test_mc_page_extraction_contract",
+    "tests.test_mc_scan_ingest_contract",
+    "tests.test_mc_scan_session_persist_contract",
+    "tests.test_mc_opencv_demo_contract",
+    "tests.test_mc_review_override_contract",
+    "tests.test_mark_profile_smoke_contract",
+    "tests.test_paper_calibration_packet_contract",
+    "tests.test_paper_threshold_packet_contract",
+    "tests.test_generated_exam_demo_contract",
     "test_unittest_discovery_contract",
 )
 _POSTGRES_SUITES = (
     "tests.test_db_postgres_smoke_contract",
     "tests.postgres_contract_bootstrap_script_smoke_contract",
     "tests.test_db_postgres_contract",
+    "tests.test_mc_scan_db_contract",
 )
 
 
