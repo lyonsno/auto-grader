@@ -69,12 +69,25 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_template_schema_contract",
                 "tests.test_eval_harness_contract",
                 "tests.test_shimmer_phases",
+                "tests.test_generation_contract",
+                "tests.test_pdf_rendering_contract",
+                "tests.test_scan_readback_contract",
+                "tests.test_scan_registration_contract",
+                "tests.test_bubble_interpretation_contract",
+                "tests.test_mc_scoring_contract",
+                "tests.test_mc_page_extraction_contract",
+                "tests.test_mark_profile_smoke_contract",
+                "tests.test_paper_calibration_packet_contract",
+                "tests.test_paper_threshold_packet_contract",
                 "test_unittest_discovery_contract",
             ],
             "Default contract-runner invocation should execute the always-on "
             "metadata, bootstrap-script, connection, Postgres harness, runner, "
-            "template schema, eval harness, shimmer phases, and discovery "
-            "guardrail suites in a fixed, repo-local order.",
+            "template schema, eval harness, shimmer phases, generation, PDF "
+            "rendering, scan readback, scan registration, bubble "
+            "interpretation, MC scoring, matched-page extraction, the synthetic "
+            "mark-profile smoke contract, and the discovery guardrail suites in "
+            "a fixed, repo-local order.",
         )
         self.assertNotIn(
             "tests.test_db_postgres_contract",
@@ -124,6 +137,16 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_template_schema_contract",
                 "tests.test_eval_harness_contract",
                 "tests.test_shimmer_phases",
+                "tests.test_generation_contract",
+                "tests.test_pdf_rendering_contract",
+                "tests.test_scan_readback_contract",
+                "tests.test_scan_registration_contract",
+                "tests.test_bubble_interpretation_contract",
+                "tests.test_mc_scoring_contract",
+                "tests.test_mc_page_extraction_contract",
+                "tests.test_mark_profile_smoke_contract",
+                "tests.test_paper_calibration_packet_contract",
+                "tests.test_paper_threshold_packet_contract",
                 "test_unittest_discovery_contract",
                 "tests.test_db_postgres_smoke_contract",
                 "tests.postgres_contract_bootstrap_script_smoke_contract",

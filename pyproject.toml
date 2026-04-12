@@ -9,10 +9,13 @@ description = "Local-first personalized exam generation and grading tooling."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "opencv-python-headless>=4.13.0.92",
+    "pillow>=12.2.0",
     "psycopg[binary]>=3.2,<4",
     "pymupdf>=1.27.2.2",
     "pyyaml>=6.0,<7",
     "rich>=14.3.3",
+    "qrcode>=8.2",
 ]
 
 [tool.setuptools.packages.find]
