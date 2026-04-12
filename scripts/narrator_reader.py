@@ -791,6 +791,14 @@ _INLINE_IMAGE_CELL_HEIGHT = 18
 #: real images tolerate larger panels aesthetically.
 _INLINE_IMAGE_MAX_CELL_WIDTH = 140
 
+#: Rows to leave for the rest of the Paint Dry surface when sizing the
+#: focus preview inside the reclaimed alt-screen layout.
+_FOCUS_PREVIEW_LAYOUT_RESERVE_ROWS = 14
+
+#: Smallest total band height (including rules / texture chrome) that
+#: still reads as an intentional companion surface on a short terminal.
+_FOCUS_PREVIEW_MIN_BAND_ROWS = 10
+
 #: Fallback terminal cell aspect ratio (height / width) used when
 #: the terminal's real cell dimensions can't be queried via CSI
 #: 16t. Most monospace fonts at common sizes fall in [2.0, 2.3].
@@ -866,6 +874,28 @@ def _compute_inline_image_cell_dimensions(
         cell_height = max(1, int(round(cell_height * shrink)))
     cell_width = max(1, cell_width)
     return (cell_width, cell_height)
+
+
+def _focus_preview_max_cell_height(
+    max_terminal_rows: int | None,
+    *,
+    default_cell_height: int = _INLINE_IMAGE_CELL_HEIGHT,
+) -> int:
+    """Return the tallest image-cell footprint Paint Dry should spend
+    on the focus-preview band for the current terminal height.
+
+    The preview band consumes image rows plus four chrome rows. On a
+    short terminal we need to leave visible room for the scorebug,
+    status/live lane, and at least a slice of history, or the focus
+    preview dominates the reclaimed alt-screen surface again.
+    """
+    if max_terminal_rows is None or max_terminal_rows <= 0:
+        return max(1, default_cell_height)
+    max_band_rows = max(
+        _FOCUS_PREVIEW_MIN_BAND_ROWS,
+        max_terminal_rows - _FOCUS_PREVIEW_LAYOUT_RESERVE_ROWS,
+    )
+    return max(1, min(default_cell_height, max_band_rows - 4))
 
 
 # ---------------------------------------------------------------------
@@ -1533,16 +1563,22 @@ class FocusPreviewKittyImage:
         self._terminal_cell_aspect = terminal_cell_aspect
         self._title = title
 
-    def _compute_box(self, available_width: int) -> tuple[int, int]:
+    def _compute_box(
+        self,
+        available_width: int,
+        *,
+        available_height_rows: int | None = None,
+    ) -> tuple[int, int]:
         """Compute (cell_width, cell_height) for the image at the
         given available width budget. Leaves 2 cells for the
         border so the usable interior is ``available_width - 2``.
         """
         inner_budget = max(1, available_width - 2)
+        max_cell_height = _focus_preview_max_cell_height(available_height_rows)
         cw, ch = _compute_inline_image_cell_dimensions(
             self._image_pixel_width,
             self._image_pixel_height,
-            max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+            max_cell_height=max_cell_height,
             max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
             terminal_cell_aspect=self._terminal_cell_aspect,
         )
@@ -1586,7 +1622,10 @@ class FocusPreviewKittyImage:
         to absolute terminal positions during resize.
         """
         term_width = max(1, options.max_width)
-        cell_width, cell_height = self._compute_box(term_width)
+        cell_width, cell_height = self._compute_box(
+            term_width,
+            available_height_rows=options.max_height,
+        )
 
         # Center the image horizontally in the band.
         image_left = max(0, (term_width - cell_width) // 2)
@@ -1682,7 +1721,7 @@ class FocusPreviewLoadingBand:
         # and caps at _INLINE_IMAGE_MAX_CELL_WIDTH.
         inner_budget = max(1, term_width - 2)
         cell_width = min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget)
-        cell_height = _INLINE_IMAGE_CELL_HEIGHT
+        cell_height = _focus_preview_max_cell_height(options.max_height)
         image_left = max(0, (term_width - cell_width) // 2)
         image_right = image_left + cell_width
 
