@@ -64,24 +64,29 @@ def _kwarg(call: ast.Call, name: str) -> ast.expr | None:
 
 
 class LiveAltScreenContract(unittest.TestCase):
-    def test_live_block_enables_alternate_screen(self):
+    def test_live_block_specifies_screen_mode_explicitly(self):
         call = _find_live_call()
         screen_value = _kwarg(call, "screen")
         self.assertIsNotNone(
             screen_value,
-            "Live(...) must pass screen= explicitly so the alt-screen "
-            "decision is visible at the call site",
+            "Live(...) must pass screen= explicitly so the screen-mode "
+            "decision is visible at the call site and cannot silently "
+            "revert to Rich's default",
         )
-        # AST literal check — Rich accepts screen=True or "auto"-ish
-        # values, but we want the explicit, statically verifiable
-        # True so the contract is mechanical.
+        # screen=False is deliberate: the focus-preview image panel
+        # can push the total rendered height past the terminal's row
+        # count, and Rich alt-screen (screen=True) has no scrollback
+        # to absorb the overflow — the result is doubled/garbled
+        # panels. screen=False lets the terminal scroll naturally.
+        # The ghost-frame-in-scrollback trade-off is documented and
+        # accepted until a fixed-height layout or Rich transient mode
+        # can eliminate it without alt-screen.
         self.assertIsInstance(screen_value, ast.Constant)
         self.assertIs(
-            screen_value.value, True,
-            "Live() must run with screen=True so the terminal's native "
-            "scrollback does not accumulate ghost frames around the "
-            "live surface — Crispy Drips owns in-pane history, the "
-            "terminal's scrollback must not compete with it",
+            screen_value.value, False,
+            "Live() must run with screen=False — the focus-preview "
+            "image panel can exceed the terminal's alt-screen height, "
+            "producing doubled/garbled panels with screen=True",
         )
 
     def test_live_block_still_drives_manual_refresh(self):
