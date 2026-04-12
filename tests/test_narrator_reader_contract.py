@@ -573,6 +573,43 @@ class NarratorReaderContract(unittest.TestCase):
             "the second descendant should lean mossward so short blocks still show the alternate lane",
         )
 
+    def test_no_topic_items_still_alternate_warm_then_moss(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("basis", "Warm anchor row.", None))
+        display.history.append(("checkpoint", "Second descendant should tilt moss.", 0))
+        display.history.append(("line", "Third descendant should return warm.", 0))
+
+        history_text = display.render().renderables[-1].renderable
+        basis_style = self._style_for_substring(history_text, "Warm anchor row.")
+        checkpoint_style = self._style_for_substring(
+            history_text,
+            "Second descendant should tilt moss.",
+        )
+        line_style = self._style_for_substring(
+            history_text,
+            "Third descendant should return warm.",
+        )
+        basis_rgb = self._rgb_from_hex(basis_style.split()[-1])
+        checkpoint_rgb = self._rgb_from_hex(checkpoint_style.split()[-1])
+        line_rgb = self._rgb_from_hex(line_style.split()[-1])
+
+        self.assertGreaterEqual(
+            basis_rgb[0],
+            basis_rgb[1],
+            "without a topic row, the first visible body descendant should still stay warm",
+        )
+        self.assertGreater(
+            checkpoint_rgb[1],
+            checkpoint_rgb[0],
+            "without a topic row, the second visible body descendant should still tip mossward",
+        )
+        self.assertGreaterEqual(
+            line_rgb[0],
+            line_rgb[1],
+            "the third visible body descendant should come back to the warm lane",
+        )
+
     def test_wrapped_history_lines_consume_visual_row_budget(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))

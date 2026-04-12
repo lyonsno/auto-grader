@@ -146,9 +146,10 @@ _HISTORY_TIER_EARLY_DROP_SCALE = 1.08  # sharpen the first 1-2 descendants so
 # lane as the body descends. That keeps the first descendant a stable anchor
 # while restoring the older moss/bone cadence in short item blocks.
 _BASE_RGB = {
-    "line": (176, 170, 158),     # warm bone body row — dimmer than the
-                                  # structured descendants above it so the
-                                  # stack actually falls away as it descends
+    "line": (158, 150, 140),     # warm bone body row — the returning warm
+                                  # lane for deeper descendants should stay
+                                  # dimmer than the moss checkpoint tier
+                                  # above it so the stack keeps falling away
     "line_alt": (138, 154, 142), # muted moss companion — visible enough
                                   # that the alternate lane actually reads
                                   # in short 2-3 row blocks
@@ -178,13 +179,15 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
-    "checkpoint": (196, 186, 170),        # anchored warm bone checkpoint —
-                                          # durable synthesis lines should
-                                          # stay inside the same paper/ink
-                                          # family as the body rows
-    "checkpoint_alt": (154, 168, 150),    # moss-inflected companion so the
-                                          # second visible descendant carries
-                                          # the old cool lane back into view
+    "checkpoint": (162, 152, 138),        # anchored warm bone checkpoint —
+                                          # still a synthesis line, but
+                                          # pulled down toward the body so
+                                          # it stays inside the same paper/ink
+                                          # family instead of floating above it
+    "checkpoint_alt": (146, 156, 144),    # moss-inflected companion — close
+                                          # enough to the body rows that the
+                                          # cool lane reads as texture rather
+                                          # than a separate annotation band
     "checkpoint_mark": (162, 114, 82),    # embered rust notch — structural
                                           # mark for checkpoint rows so the
                                           # checkpoint doesn't begin with a
@@ -246,14 +249,16 @@ _SHIMMER_KIND_PEAK_RGB = {
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
-    "line": (196, 190, 180),      # lifted warm bone — a quieter paper
-                                   # glint than the structured row crests
+    "line": (178, 170, 160),      # lifted warm bone — still warmer than the
+                                   # moss lane, but dim enough that the
+                                   # third descendant does not bounce back up
     "line_alt": (168, 188, 178),  # lifted muted moss companion
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "checkpoint": (224, 214, 192),      # pale anchored bone crest for
-                                        # synthesis rows
-    "checkpoint_alt": (182, 202, 186),  # lifted moss companion for the
+    "checkpoint": (188, 178, 162),      # lifted warm-bone crest for
+                                        # synthesis rows that should still
+                                        # sit with the history body
+    "checkpoint_alt": (166, 178, 160),  # softened moss companion for the
                                         # alternating checkpoint lane
     "checkpoint_mark": (226, 166, 114), # brighter ember crest for the
                                         # checkpoint mark, tied to the
@@ -1863,6 +1868,7 @@ class PaintDryDisplay:
         global_history_phase = self._shimmer_phases.phase(0)
         current_group_index = -1
         current_group_base_phase = 0.0
+        current_body_depth = 0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
@@ -1870,7 +1876,13 @@ class PaintDryDisplay:
             if kind == "header":
                 current_group_index += 1
                 current_group_base_phase = self._shimmer_phases.phase(current_group_index)
-            render_layer = _render_layer_index(kind, group_depth)
+                current_body_depth = 0
+            if kind in {"header", "topic"}:
+                render_layer = 0
+                body_depth = 0
+            else:
+                body_depth = current_body_depth
+                render_layer = max(1, body_depth + 1)
             if i > 0:
                 history_text.append("\n")
 
@@ -1947,6 +1959,7 @@ class PaintDryDisplay:
             elif kind == "topic":
                 indent = "  · "
                 history_text.append(indent, style="grey50")
+                current_body_depth = 0
                 # Pick the topic color variant based on the stored
                 # verdict (third tuple slot, named "parity" for line
                 # entries but reused as the verdict string for topic
@@ -1990,7 +2003,6 @@ class PaintDryDisplay:
                     )
             elif kind in _LEGIBILITY_STRUCTURED_ROW_LABELS:
                 indent = "  ! " if kind == "review_marker" else "  ≡ "
-                body_depth = max(0, group_depth - 2)
                 content_kind = (
                     "checkpoint_alt"
                     if body_depth % 2 == 1
@@ -2010,9 +2022,9 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
+                current_body_depth += 1
             elif kind == "checkpoint":
                 indent = "  ≈ "
-                body_depth = max(0, group_depth - 2)
                 _apply_shimmer(
                     history_text, indent, "checkpoint_mark",
                     layer_index=render_layer,
@@ -2034,13 +2046,13 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
+                current_body_depth += 1
             else:
                 indent = "    "
                 history_text.append(indent, style="dim")
                 # The body should alternate as it descends within an
                 # item, so visible depth — not producer-side parity —
                 # drives the warm/cool bone lane here.
-                body_depth = max(0, group_depth - 2)
                 line_kind = "line_alt" if body_depth % 2 == 1 else "line"
                 _apply_shimmer(
                     history_text, text, line_kind,
@@ -2050,6 +2062,7 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
+                current_body_depth += 1
 
         if not display_entries:
             history_text = Text(
