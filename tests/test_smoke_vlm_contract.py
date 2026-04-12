@@ -282,6 +282,95 @@ class SmokeVlmContract(unittest.TestCase):
             describe_mock.assert_called_once()
             self.assertIn("describe-only", stdout.getvalue().lower())
 
+    def test_describe_only_mode_carries_openrouter_request_affordances(self):
+        module = _load_smoke_vlm()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            run_dir = tmp / "describe-only-openrouter"
+            scans_dir = tmp / "scans"
+            scans_dir.mkdir()
+            (scans_dir / "15-blue.pdf").write_bytes(b"%PDF-1.4\n")
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(
+                        module, "load_ground_truth", return_value=[self.item]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(module, "_SCANS_DIR", scans_dir)
+                )
+                stack.enter_context(
+                    mock.patch.dict(
+                        module._EXAM_PDF_MAP,
+                        {"15-blue": "15-blue.pdf"},
+                        clear=False,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        module,
+                        "extract_page_image",
+                        return_value=b"fake-page-bytes",
+                    )
+                )
+                stream_mock = stack.enter_context(
+                    mock.patch.object(
+                        module,
+                        "stream_vision_completion",
+                        return_value=("visual description", "reasoning trace"),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.dict(
+                        os.environ,
+                        {"OPENROUTER_API_KEY": "openrouter-test-key"},
+                        clear=False,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "smoke_vlm.py",
+                            "--describe-only",
+                            "--pick",
+                            "15-blue:fr-1",
+                            "--run-dir",
+                            str(run_dir),
+                            "--base-url",
+                            "https://openrouter.ai/api/v1",
+                            "--model-family",
+                            "neutral",
+                        ],
+                    )
+                )
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                    stderr
+                ):
+                    code = module.main()
+
+        self.assertEqual(
+            code,
+            0,
+            f"describe-only OpenRouter smoke should succeed when inference is mocked; stderr was: {stderr.getvalue()}",
+        )
+        stream_mock.assert_called_once()
+        kwargs = stream_mock.call_args.kwargs
+        self.assertEqual(
+            kwargs.get("extra_body"),
+            {"reasoning": {"enabled": True}},
+            "describe-only mode should carry the OpenRouter reasoning flag just like smoke_probe",
+        )
+        self.assertEqual(
+            kwargs["config"].api_key,
+            "openrouter-test-key",
+            "describe-only mode should source the OpenRouter bearer token from the environment",
+        )
+
     def test_prediction_record_carries_corrected_score_and_reason(self):
         """predictions.jsonl must be self-contained for offline analysis.
 

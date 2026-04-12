@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -55,6 +56,28 @@ _TRICKY_PICKS = [
     ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
 ]
 _TRICKY_TEST_SET_ID = "tricky-v1"
+
+
+def _is_openrouter_base_url(base_url: str) -> bool:
+    return "openrouter.ai" in base_url.lower()
+
+
+def _resolve_api_key(base_url: str) -> str:
+    if _is_openrouter_base_url(base_url):
+        key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if not key:
+            raise SystemExit(
+                "--base-url openrouter.ai requires OPENROUTER_API_KEY in the "
+                "environment. Set it and re-run."
+            )
+        return key
+    return "1234"
+
+
+def _describe_only_extra_body(base_url: str) -> dict[str, object] | None:
+    if _is_openrouter_base_url(base_url):
+        return {"reasoning": {"enabled": True}}
+    return None
 
 
 def _progress(i: int, total: int, item, pred):
@@ -427,6 +450,7 @@ def run_describe_only_mode(
                 config=config,
                 prompt_text=DESCRIBE_ONLY_PROMPT,
                 page_image=page_cache[cache_key],
+                extra_body=_describe_only_extra_body(config.base_url),
                 failure_context=f"{item.exam_id}/{item.question_id}",
             )
             elapsed = time.time() - t0
@@ -559,6 +583,7 @@ def main():
 
     config = ServerConfig(
         base_url=args.base_url,
+        api_key=_resolve_api_key(args.base_url),
         model=args.model,
     )
     # Apply per-model sampling preset (Qwen coding-mode, Gemma official,
