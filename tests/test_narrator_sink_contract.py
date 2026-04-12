@@ -69,6 +69,30 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertIn(".venv/bin/python", script)
         self.assertNotIn("uv run python", script)
 
+    def test_spawn_raises_if_wezterm_cli_hangs(self):
+        sink = NarratorSink()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fifo = Path(tmpdir) / "narrator.fifo"
+            fifo.touch()
+            timeout = __import__("subprocess").TimeoutExpired(
+                cmd=["wezterm", "cli", "spawn"],
+                timeout=5.0,
+            )
+
+            with mock.patch.object(
+                sink,
+                "_resolve_wezterm_executable",
+                return_value="/Applications/WezTerm.app/Contents/MacOS/wezterm",
+            ), mock.patch(
+                "subprocess.run",
+                side_effect=[mock.Mock(returncode=0), timeout],
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Timed out spawning WezTerm window for narrator",
+                ):
+                    sink._spawn_terminal_window(fifo)
+
     def test_start_raises_if_reader_never_connects_to_fifo(self):
         sink = NarratorSink(SinkConfig(spawn_terminal=True))
         with tempfile.TemporaryDirectory() as tmpdir:

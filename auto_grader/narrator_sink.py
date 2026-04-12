@@ -54,6 +54,7 @@ class SinkConfig:
 class NarratorSink:
     _FIFO_CONNECT_TIMEOUT_S = 5.0
     _FIFO_CONNECT_POLL_S = 0.05
+    _WEZTERM_SPAWN_TIMEOUT_S = 5.0
 
     """Fan-out destination for narrator events.
 
@@ -464,7 +465,13 @@ class NarratorSink:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=self._WEZTERM_SPAWN_TIMEOUT_S,
             )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                "Timed out spawning WezTerm window for narrator after "
+                f"{self._WEZTERM_SPAWN_TIMEOUT_S:.1f}s: {e}"
+            ) from e
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             stderr = getattr(e, "stderr", "") or ""
             raise RuntimeError(
