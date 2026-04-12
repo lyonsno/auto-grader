@@ -498,6 +498,54 @@ class NarratorReaderContract(unittest.TestCase):
             "checkpoint text should stay close to the history-row value range instead of jumping to a much brighter anchored-steel tier",
         )
 
+    def test_body_rows_below_header_return_to_bone_family_and_descend_in_value(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "45s  ·  Grader: 1/2. Prof: 1/2.", "undershoot"))
+        display.history.append(("basis", "Correct setup, lost credit for octet violation.", None))
+        display.history.append(("checkpoint", "Core issue: ozone drawing misses resonance.", 0))
+        display.history.append(("line", "I'm tracing the ozone structure.", 0))
+
+        group = display.render()
+        history_text = group.renderables[-1].renderable
+
+        basis_style = self._style_for_substring(
+            history_text,
+            "Correct setup, lost credit for octet violation.",
+        )
+        checkpoint_style = self._style_for_substring(
+            history_text,
+            "Core issue: ozone drawing misses resonance.",
+        )
+        line_style = self._style_for_substring(
+            history_text,
+            "I'm tracing the ozone structure.",
+        )
+
+        basis_rgb = self._rgb_from_hex(basis_style.split()[-1])
+        checkpoint_rgb = self._rgb_from_hex(checkpoint_style.split()[-1])
+        line_rgb = self._rgb_from_hex(line_style.split()[-1])
+        self.assertGreaterEqual(
+            basis_rgb[0],
+            basis_rgb[1],
+            "basis rows under the heading should return to a red-led bone family instead of green-led body ink",
+        )
+        self.assertGreaterEqual(
+            checkpoint_rgb[0],
+            checkpoint_rgb[1],
+            "checkpoint descendants under the heading should stay in the bone-led body family",
+        )
+        self.assertLess(
+            self._hex_luminance(checkpoint_style),
+            self._hex_luminance(basis_style),
+            "body descendants should keep the old downward fade instead of sitting on one flat checkpoint tier",
+        )
+        self.assertLess(
+            self._hex_luminance(line_style),
+            self._hex_luminance(checkpoint_style),
+            "deeper narrator rows should continue dimming below the structured rows",
+        )
+
     def test_wrapped_history_lines_consume_visual_row_budget(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))

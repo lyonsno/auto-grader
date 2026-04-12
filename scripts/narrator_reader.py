@@ -135,22 +135,17 @@ _HISTORY_GROUP_DIM_STEP = 0.05  # each successive thought line under a header
                                  # flattening by line 6.
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
-# Sumi-e palette: a Japanese garden floor in two desaturated rows
-# (sage moss + dust earth), with persimmon (柿色) headers, indigo
-# (藍色) [item N/M] markers, and bright garden colors — celadon (青磁),
-# vermilion (朱色), ochre (黄土) — landing as full-saturation accents
-# on verdict topics. The narration alternation now carries the
-# garden palette structurally (instead of bone-on-bone, which was
-# too subtle to read), so celadon/vermilion/ochre exist on screen
-# regardless of which verdicts the grader produces. Bone survives
-# as the live-field background, the unknown-verdict topic fallback,
-# and the global shimmer-peak highlight color.
+# Sumi-e palette: warm lacquered headers and verdict accents sitting on
+# a bone-led history field. The item body should read more like faded ink
+# on paper than like a second band of little colored widgets, so the rows
+# beneath each header return to alternating warm/cool bone families with a
+# descending-value fade instead of riding the moss/earth garden palette.
 _BASE_RGB = {
-    "line": (135, 160, 145),     # muted celadon — sage moss row,
-                                  # desaturated cousin of topic_match
-                                  # so the verdict variant still pops
-    "line_alt": (175, 160, 130), # muted ochre — dust earth row,
-                                  # desaturated cousin of topic_undershoot
+    "line": (192, 182, 166),     # warm bone body row — dimmer than the
+                                  # structured descendants above it so the
+                                  # stack actually falls away as it descends
+    "line_alt": (176, 168, 156), # cooler weathered bone companion, still
+                                  # quieter than checkpoint rows
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
@@ -177,16 +172,13 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
-    "checkpoint": (138, 156, 142),        # anchored moss checkpoint —
-                                          # checkpoints should feel like
-                                          # compressed descendants of the
-                                          # live history rows, not a separate
-                                          # steel annotation layer
-    "checkpoint_alt": (178, 162, 132),    # anchored bone-earth checkpoint —
-                                          # alternating companion to the
-                                          # moss checkpoint tone so durable
-                                          # history keeps the familiar
-                                          # moss/bone cadence
+    "checkpoint": (196, 186, 170),        # anchored warm bone checkpoint —
+                                          # durable synthesis lines should
+                                          # stay inside the same paper/ink
+                                          # family as the body rows
+    "checkpoint_alt": (180, 172, 160),    # smoke-bone companion so
+                                          # checkpoints can still alternate
+                                          # as the body stack descends
     "checkpoint_mark": (162, 114, 82),    # embered rust notch — structural
                                           # mark for checkpoint rows so the
                                           # checkpoint doesn't begin with a
@@ -248,16 +240,14 @@ _SHIMMER_KIND_PEAK_RGB = {
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
-    "line": (175, 215, 180),      # glazed celadon — sage moss row
-                                   # brightens toward kiln-glaze green
-    "line_alt": (225, 200, 150),  # fired ochre — dust earth row
-                                   # brightens toward kiln-fired earth
+    "line": (218, 208, 190),      # lifted warm bone — a quieter paper
+                                   # glint than the structured row crests
+    "line_alt": (202, 194, 182),  # lifted weathered bone companion
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "checkpoint": (176, 204, 180),      # brighter celadon crest —
-                                        # still in the history family, just
-                                        # a touch more settled than live rows
-    "checkpoint_alt": (222, 198, 150),  # brighter bone-earth crest for the
+    "checkpoint": (224, 214, 192),      # pale anchored bone crest for
+                                        # synthesis rows
+    "checkpoint_alt": (206, 198, 184),  # cooler smoke-bone crest for the
                                         # alternating checkpoint lane
     "checkpoint_mark": (226, 166, 114), # brighter ember crest for the
                                         # checkpoint mark, tied to the
@@ -633,12 +623,15 @@ def _history_tier_dim_factor(layer_index: int) -> float:
 def _render_layer_index(kind: str, group_depth: int) -> int:
     """Return the effective fade layer for a history entry.
 
-    Only narrator thought lines should sink within an item block.
-    Structural lines such as headers and resolution/topic lines stay
-    at full strength so the eye can keep finding the question/result
-    anchors quickly.
+    Headers and verdict/topic lines stay on the strong anchor tier so
+    the eye can keep finding the item and its outcome quickly. The body
+    beneath them should descend in value together: structured rows,
+    checkpoints, and narrator lines all participate in the same local
+    fade so the history feels like one breathing paragraph again.
     """
-    return group_depth if kind == "line" else 0
+    if kind in {"header", "topic"}:
+        return 0
+    return max(1, group_depth)
 
 
 def _message_requires_immediate_refresh(msg_type: str) -> bool:
@@ -1988,11 +1981,7 @@ class PaintDryDisplay:
                     )
             elif kind in _LEGIBILITY_STRUCTURED_ROW_LABELS:
                 indent = "  ! " if kind == "review_marker" else "  ≡ "
-                content_kind = (
-                    "checkpoint"
-                    if kind in {"review_marker", "deduction", "professor_mismatch"}
-                    else "checkpoint_alt"
-                )
+                content_kind = "checkpoint_alt" if group_depth % 2 else "checkpoint"
                 label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
                 history_text.append(indent, style="grey50")
                 history_text.append(
@@ -2017,7 +2006,7 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
-                checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
+                checkpoint_kind = "checkpoint_alt" if group_depth % 2 else "checkpoint"
                 _apply_shimmer(
                     history_text, text, checkpoint_kind,
                     layer_index=render_layer,
@@ -2029,11 +2018,10 @@ class PaintDryDisplay:
             else:
                 indent = "    "
                 history_text.append(indent, style="dim")
-                # Pick mauve or warmer pink based on the line's stored
-                # parity. Stored per-entry (not computed from position)
-                # so the alternation is stable as new lines arrive and
-                # old lines fall off the deque.
-                line_kind = "line_alt" if parity == 1 else "line"
+                # The body should alternate as it descends within an
+                # item, so visible depth — not producer-side parity —
+                # drives the warm/cool bone lane here.
+                line_kind = "line_alt" if group_depth % 2 else "line"
                 _apply_shimmer(
                     history_text, text, line_kind,
                     layer_index=render_layer,
