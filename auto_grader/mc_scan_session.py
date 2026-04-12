@@ -41,7 +41,6 @@ def persist_scan_session(
     normalized_dir = os.path.join(output_dir, "normalized_images")
 
     serializable_results: list[dict[str, Any]] = []
-    has_matched = False
 
     for scan_result in ingest_result["scan_results"]:
         entry: dict[str, Any] = {
@@ -52,7 +51,6 @@ def persist_scan_session(
         }
 
         if scan_result["status"] == "matched":
-            has_matched = True
             entry["page_number"] = scan_result["page_number"]
             entry["fallback_page_code"] = scan_result["fallback_page_code"]
             entry["scored_questions"] = _serialize_scored_questions(
