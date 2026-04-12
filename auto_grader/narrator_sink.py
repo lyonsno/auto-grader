@@ -28,6 +28,7 @@ just routes events to its outputs. JSON line protocol over the fifo:
 from __future__ import annotations
 
 import base64
+import errno
 import json
 import os
 import shutil
@@ -51,6 +52,9 @@ class SinkConfig:
 
 
 class NarratorSink:
+    _FIFO_CONNECT_TIMEOUT_S = 5.0
+    _FIFO_CONNECT_POLL_S = 0.05
+
     """Fan-out destination for narrator events.
 
     Use as a context manager:
@@ -107,9 +111,7 @@ class NarratorSink:
         if self.config.spawn_terminal:
             self._fifo_path = self._make_fifo()
             self._spawn_terminal_window(self._fifo_path)
-            # Open the fifo for writing — blocks until reader connects.
-            # Use line buffering so messages flush on \n.
-            self._fifo_writer = open(self._fifo_path, "w", buffering=1)
+            self._fifo_writer = self._open_fifo_writer_with_timeout(self._fifo_path)
 
         if self.config.session_meta:
             self._emit({"type": "session_meta", **self.config.session_meta})
@@ -361,6 +363,35 @@ class NarratorSink:
         os.mkfifo(fifo)
         return fifo
 
+    def _open_fifo_writer_with_timeout(self, fifo: Path) -> IO[str]:
+        """Open the writer side of the narrator FIFO without wedging forever.
+
+        A plain blocking open() can hang the whole smoke run indefinitely
+        if the reader window fails to boot or exits before connecting.
+        Retry a non-blocking open for a short bounded window, then fail
+        loudly so the operator gets a real startup error instead of a
+        silent stall at 'Run dir:'.
+        """
+        deadline = time.monotonic() + self._FIFO_CONNECT_TIMEOUT_S
+        last_err: OSError | None = None
+        while time.monotonic() < deadline:
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                return os.fdopen(fd, "w", buffering=1)
+            except OSError as exc:
+                last_err = exc
+                if exc.errno not in {errno.ENXIO, errno.ENOENT}:
+                    raise RuntimeError(
+                        f"Could not open narrator FIFO writer at {fifo}: {exc}"
+                    ) from exc
+                time.sleep(self._FIFO_CONNECT_POLL_S)
+
+        detail = f"{last_err}" if last_err is not None else "reader never attached"
+        raise RuntimeError(
+            "Narrator reader did not connect to the FIFO within "
+            f"{self._FIFO_CONNECT_TIMEOUT_S:.1f}s: {detail}"
+        )
+
     @staticmethod
     def _resolve_wezterm_executable() -> str:
         """Find the WezTerm CLI binary.
@@ -408,12 +439,17 @@ class NarratorSink:
 
         # Project root for uv run
         project_root = Path(__file__).resolve().parent.parent
+        project_python = project_root / ".venv" / "bin" / "python"
+        if not project_python.exists():
+            raise RuntimeError(
+                f"project python not found at {project_python}"
+            )
 
         runner = fifo.parent / "run.sh"
         runner.write_text(
             "#!/bin/bash\n"
             f"cd {project_root}\n"
-            f"exec uv run python {reader_script} {fifo}\n"
+            f"exec {project_python} {reader_script} {fifo}\n"
         )
         runner.chmod(0o755)
         self._owns_tmpdir = fifo.parent

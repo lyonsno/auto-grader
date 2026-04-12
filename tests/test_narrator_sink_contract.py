@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import io
 import json
 import tempfile
@@ -48,6 +49,46 @@ class TestWezTermResolution(unittest.TestCase):
                 "--new-window",
             ],
         )
+
+    def test_spawn_runner_uses_checkout_python_not_uv_run(self):
+        sink = NarratorSink()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fifo = Path(tmpdir) / "narrator.fifo"
+            fifo.touch()
+
+            with mock.patch.object(
+                sink,
+                "_resolve_wezterm_executable",
+                return_value="/Applications/WezTerm.app/Contents/MacOS/wezterm",
+            ), mock.patch("subprocess.run"):
+                sink._spawn_terminal_window(fifo)
+
+            runner = fifo.parent / "run.sh"
+            script = runner.read_text()
+
+        self.assertIn(".venv/bin/python", script)
+        self.assertNotIn("uv run python", script)
+
+    def test_start_raises_if_reader_never_connects_to_fifo(self):
+        sink = NarratorSink(SinkConfig(spawn_terminal=True))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fifo = Path(tmpdir) / "narrator.fifo"
+            fifo.touch()
+
+            now = [0.0]
+
+            with mock.patch.object(sink, "_make_fifo", return_value=fifo), mock.patch.object(
+                sink, "_spawn_terminal_window"
+            ), mock.patch("os.open", side_effect=OSError(errno.ENXIO, "no reader")), mock.patch(
+                "time.monotonic", side_effect=lambda: now[0]
+            ), mock.patch(
+                "time.sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Narrator reader did not connect to the FIFO",
+                ):
+                    sink.start()
 
     def test_commit_live_can_emit_status_mode_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
