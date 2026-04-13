@@ -3279,33 +3279,6 @@ class NarratorReaderContract(unittest.TestCase):
             "inline image previews should stop the 24 FPS shimmer loop so WezTerm doesn't re-rasterize the whole preview on every tick",
         )
 
-    def test_inline_focus_preview_skips_delta_repaints_but_keeps_boundary_repaints(self) -> None:
-        display = self._make_display()
-        display._inline_images_supported = True
-        display._kitty_graphics_supported = False
-        display.on_focus_preview(
-            self._make_png(),
-            label="15-blue/fr-10b",
-            source="mock_tricky",
-        )
-
-        self.assertFalse(
-            display.should_refresh_on_event("delta"),
-            "inline preview mode should not repaint on every token delta",
-        )
-        self.assertFalse(
-            display.should_refresh_on_event("header"),
-            "headers already stay non-immediate on the normal surface and shouldn't suddenly become token-like churn in inline preview mode",
-        )
-        self.assertTrue(
-            display.should_refresh_on_event("commit"),
-            "inline preview mode still needs repaint on committed live changes",
-        )
-        self.assertTrue(
-            display.should_refresh_on_event("focus_preview"),
-            "the preview image itself must still repaint immediately when it changes",
-        )
-
     def test_session_end_stops_animation(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")

@@ -3106,37 +3106,6 @@ class PaintDryDisplay:
         now = time.monotonic() if now is None else now
         return now < (self._session_ended_at + _SESSION_END_ANIMATION_LINGER_S)
 
-    def should_refresh_on_event(self, msg_type: str | None) -> bool:
-        """Return whether a FIFO event should force an immediate repaint.
-
-        Inline image previews on WezTerm are especially sensitive to
-        repaint churn because each repaint re-emits the whole preview
-        sequence. In that mode, repaint only on boundary/state-change
-        events, not every token delta.
-        """
-        if msg_type is None:
-            return False
-        if (
-            self.focus_preview_inline_renderable is not None
-            and not self.focus_preview_pending
-            and not self.session_ended
-        ):
-            return msg_type in {
-                "session_meta",
-                "focus_preview",
-                "commit",
-                "rollback_live",
-                "topic",
-                "basis",
-                "review_marker",
-                "checkpoint",
-                "drop",
-                "wrap_up_pending",
-                "wrap_up",
-                "end",
-            }
-        return _message_requires_immediate_refresh(msg_type)
-
     @staticmethod
     def _entry_visual_rows(entry: tuple, wrap_width: int | None) -> int:
         """Estimate how many visual rows an entry will consume when wrapped."""
@@ -4920,7 +4889,10 @@ def main() -> int:
                         anim_thread.join(timeout=0.5)
                         return 0
 
-                    if display.should_refresh_on_event(msg_type):
+                    if (
+                        _message_requires_immediate_refresh(msg_type)
+                        or not display.should_animate()
+                    ):
                         _refresh_live()
     finally:
         animation_stop.set()
