@@ -169,9 +169,24 @@ class ScanReadbackContractTests(unittest.TestCase):
         QR decodes fine at a different scale.  The readback contract must
         try alternate scales automatically rather than reporting 'no QR found'.
         """
+        from auto_grader.scan_readback import (
+            _detect_at_native_resolution,
+        )
+
         read_page_identity_qr_payload = _load_readback_module(self)
 
         image = _page_with_scale_sensitive_qrs()
+
+        # Guard: the fixture must actually fail at native resolution.
+        # If a future OpenCV version starts decoding this image natively,
+        # the test would silently stop exercising the rescale path.
+        self.assertEqual(
+            _detect_at_native_resolution(image),
+            [],
+            "Test fixture precondition violated: native-resolution detection "
+            "should fail on this image so the rescale fallback is exercised. "
+            "If OpenCV improved, adjust the fixture parameters.",
+        )
 
         payload = read_page_identity_qr_payload(image)
 

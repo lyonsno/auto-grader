@@ -79,7 +79,7 @@ def _scale_detection(
 ) -> dict[str, Any]:
     """Scale detection point coordinates by a constant factor."""
     return {
-        "payload": detection["payload"],
+        **detection,
         "points": [
             [float(point[0] * factor), float(point[1] * factor)]
             for point in detection["points"]
