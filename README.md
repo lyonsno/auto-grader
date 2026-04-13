@@ -335,6 +335,14 @@ Current implementation status on this review surface:
   into a compact demo/export bundle for one exam instance, with a small text
   summary that is suitable for same-day operator/demo use without a GUI
 
+Example same-day export invocation:
+
+```bash
+python scripts/export_mc_results_demo.py \
+  --exam-instance-id 123 \
+  --output-dir /tmp/mc-results-demo
+```
+
 ## Data model
 
 This is high-level and intentionally does not commit to table names yet.
