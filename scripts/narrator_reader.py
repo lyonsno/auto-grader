@@ -175,15 +175,20 @@ _BASE_RGB = {
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (70, 92, 156),         # deep indigo agreement —
-                                          # darker than the header-index
-                                          # blue so it harmonizes with
-                                          # structure without duplicating it
-    "topic_truncated": (104, 100, 92),    # dimmed ash-bone placeholder —
+    "topic_match": (88, 108, 168),        # smoke-indigo agreement —
+                                          # still cool and clearly distinct
+                                          # from the warm body rows, but
+                                          # lifted enough that match topics
+                                          # no longer collapse into a dark haze
+    "topic_truncated": (108, 112, 126),   # dimmed ash-plum placeholder —
                                           # fallback/truncated after-action
                                           # lines should read as degraded
                                           # verdict placeholders, not as
-                                          # full-strength match topics
+                                          # warm brown status spillover
+    "topic_truncated_time": (122, 126, 140),  # slightly brighter companion
+                                               # for truncated time prefixes
+                                               # so they stay in-family with
+                                               # the placeholder topic body
     "checkpoint": (162, 152, 138),        # anchored warm bone checkpoint —
                                           # still a synthesis line, but
                                           # pulled down toward the body so
@@ -219,10 +224,9 @@ _SHIMMER_KIND_INTENSITY = {
                           # coupled-oscillator phase ripple more
                           # presence on the largest visual surface
     "topic": 1.00,
-    "topic_match": 1.10,        # slight extra shimmer lift so agreement
-                                # gets its own pulse instead of reading
-                                # like a neutral fallback
-    "topic_truncated": 0.82,    # visibly dimmer than a real verdict line
+    "topic_match": 1.06,        # keep the cool pulse, but back off a touch
+                                # so the line reads as inked prose first
+    "topic_truncated": 0.86,    # visibly dimmer than a real verdict line
                                  # so fallback topics read as degraded
                                  # placeholders, not normal topics
     "checkpoint": 0.92,
@@ -261,9 +265,10 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # moss lane, but dim enough that the
                                    # third descendant does not bounce back up
     "line_alt": (168, 188, 178),  # lifted muted moss companion
-    "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
-                                        # agreement lines
-    "topic_truncated": (124, 118, 108), # lifted ash-bone crest — still
+    "topic_match": (148, 174, 232),     # rain-lit smoke-indigo crest for
+                                        # agreement lines — brighter than
+                                        # before so the pane breathes more
+    "topic_truncated": (128, 132, 148), # lifted ash-plum crest — still
                                         # alive, but clearly less assertive
                                         # than a real verdict topic
     "checkpoint": (188, 178, 162),      # lifted warm-bone crest for
@@ -2020,7 +2025,7 @@ class PaintDryDisplay:
                     history_text.append(
                         time_prefix,
                         style=(
-                            f"{_rgb_to_hex(_BASE_RGB['status'])}"
+                            f"bold {_rgb_to_hex(_BASE_RGB['topic_truncated_time'])}"
                             if is_truncated_topic
                             else f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}"
                         ),

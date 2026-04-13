@@ -539,6 +539,54 @@ class NarratorReaderContract(unittest.TestCase):
             "truncated fallback topics should read as dimmer placeholders than ordinary match verdict lines",
         )
 
+    def test_truncated_topic_time_prefix_stays_with_placeholder_family(self):
+        truncated = self._make_display()
+        truncated.history.append(("header", "[item 1/6] first", None))
+        truncated.history.append(
+            ("topic", "190s · 15-blue/fr-10b: grader did not commit to a score (truncated)", "match")
+        )
+        truncated_text = truncated.render().renderables[-1].renderable
+        body_style = self._style_for_substring(
+            truncated_text,
+            "15-blue/fr-10b: grader did not commit to a score (truncated)",
+        )
+        time_style = self._style_for_substring(truncated_text, "190s")
+        body_rgb = self._rgb_from_hex(body_style.split()[-1])
+        time_rgb = self._rgb_from_hex(time_style.split()[-1])
+        family_distance = sum(abs(a - b) for a, b in zip(body_rgb, time_rgb))
+
+        self.assertLess(
+            family_distance,
+            60,
+            "the truncated-topic time prefix should stay in the same placeholder ink family instead of breaking off into a separate brown status color",
+        )
+
+    def test_match_topic_stays_within_readable_band_of_basis_row(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(
+            ("topic", "42s · Grader: 4/4 (Correct net ionic equation with proper states and balance.)", "match")
+        )
+        display.history.append(
+            ("basis", "Full credit: Correct net ionic equation with states and stoichiometry.", None)
+        )
+
+        history_text = display.render().renderables[-1].renderable
+        topic_style = self._style_for_substring(
+            history_text,
+            "Grader: 4/4 (Correct net ionic equation with proper states and balance.)",
+        )
+        basis_style = self._style_for_substring(
+            history_text,
+            "Full credit: Correct net ionic equation with states and stoichiometry.",
+        )
+
+        self.assertLess(
+            self._hex_luminance(basis_style) - self._hex_luminance(topic_style),
+            80,
+            "ordinary match topics should stay in a readable indigo band instead of collapsing into a much darker blue haze than the structured rows beneath them",
+        )
+
     def test_display_no_longer_exposes_scrollback_snapshot_affordance(self):
         display = self._make_display()
         self.assertFalse(
