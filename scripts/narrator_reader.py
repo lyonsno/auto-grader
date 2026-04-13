@@ -1426,12 +1426,18 @@ class FocusPreviewKittyImage:
         self,
         *,
         image_id: int,
+        texture_seed: int,
         image_pixel_width: int,
         image_pixel_height: int,
         terminal_cell_aspect: float,
         title: str = "",
     ) -> None:
         self._image_id = image_id
+        # Separate from image_id: the Kitty cache ID is held constant
+        # so each transmit overwrites the previous image (bounded
+        # memory), but the texture seed must vary per image so the
+        # surrounding braille/block pattern isn't identical every time.
+        self._texture_seed = texture_seed
         self._image_pixel_width = image_pixel_width
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
@@ -1511,7 +1517,7 @@ class FocusPreviewKittyImage:
             image_left=image_left,
             image_right=image_right,
             row_seed_id=0,
-            image_id=self._image_id,
+            image_id=self._texture_seed,
         )
 
         # ─── Image rows ───
@@ -1525,7 +1531,7 @@ class FocusPreviewKittyImage:
                 image_right=image_right,
                 term_width=term_width,
                 row_seed_id=1 + image_row,
-                image_id=self._image_id,
+                image_id=self._texture_seed,
             )
             # Middle: image placement on row 0, cursor-forward only
             # on rows 1+.
@@ -1542,7 +1548,7 @@ class FocusPreviewKittyImage:
                 image_right=image_right,
                 term_width=term_width,
                 row_seed_id=1 + image_row,
-                image_id=self._image_id,
+                image_id=self._texture_seed,
             )
             yield Segment.line()
 
@@ -1552,7 +1558,7 @@ class FocusPreviewKittyImage:
             image_left=image_left,
             image_right=image_right,
             row_seed_id=1 + cell_height,
-            image_id=self._image_id,
+            image_id=self._texture_seed,
         )
 
         # ─── Bottom border rule ───
@@ -2571,6 +2577,7 @@ class PaintDryDisplay:
         # event thread), then the renderable below yields only the
         # tiny place command on each frame.
         self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
+        self._focus_preview_texture_counter: int = 0
         self._kitty_graphics_supported: bool = _supports_kitty_graphics(
             os.environ.get("TERM_PROGRAM")
         )
@@ -3647,8 +3654,10 @@ class PaintDryDisplay:
                 for chunk in chunks:
                     transmit_stream.write(chunk)
                 transmit_stream.flush()
+                self._focus_preview_texture_counter += 1
                 self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
                     image_id=_KITTY_IMAGE_ID,
+                    texture_seed=self._focus_preview_texture_counter,
                     image_pixel_width=pix.width,
                     image_pixel_height=pix.height,
                     terminal_cell_aspect=self._terminal_cell_aspect,

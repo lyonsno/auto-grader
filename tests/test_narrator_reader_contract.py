@@ -1084,6 +1084,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         renderable = FocusPreviewKittyImage(
             image_id=1,
+            texture_seed=1,
             image_pixel_width=1600,
             image_pixel_height=900,
             terminal_cell_aspect=2.1,
@@ -1122,6 +1123,7 @@ class NarratorReaderContract(unittest.TestCase):
         # max would be well over 80 cells.
         renderable = FocusPreviewKittyImage(
             image_id=1,
+            texture_seed=1,
             image_pixel_width=3000,
             image_pixel_height=1000,
             terminal_cell_aspect=2.1,
@@ -1181,6 +1183,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         renderable = FocusPreviewKittyImage(
             image_id=1,
+            texture_seed=1,
             image_pixel_width=1600,
             image_pixel_height=900,
             terminal_cell_aspect=2.1,
