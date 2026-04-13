@@ -179,6 +179,11 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
+    "topic_truncated": (104, 100, 92),    # dimmed ash-bone placeholder —
+                                          # fallback/truncated after-action
+                                          # lines should read as degraded
+                                          # verdict placeholders, not as
+                                          # full-strength match topics
     "checkpoint": (162, 152, 138),        # anchored warm bone checkpoint —
                                           # still a synthesis line, but
                                           # pulled down toward the body so
@@ -217,6 +222,9 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
+    "topic_truncated": 0.82,    # visibly dimmer than a real verdict line
+                                 # so fallback topics read as degraded
+                                 # placeholders, not normal topics
     "checkpoint": 0.92,
     "checkpoint_alt": 0.92,
     "checkpoint_mark": 0.96,
@@ -255,6 +263,9 @@ _SHIMMER_KIND_PEAK_RGB = {
     "line_alt": (168, 188, 178),  # lifted muted moss companion
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
+    "topic_truncated": (124, 118, 108), # lifted ash-bone crest — still
+                                        # alive, but clearly less assertive
+                                        # than a real verdict topic
     "checkpoint": (188, 178, 162),      # lifted warm-bone crest for
                                         # synthesis rows that should still
                                         # sit with the history body
@@ -287,6 +298,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header_dash",
     "topic",
     "topic_match",
+    "topic_truncated",
     "checkpoint",
     "checkpoint_alt",
     "checkpoint_mark",
@@ -1420,6 +1432,25 @@ class PaintDryDisplay:
         return display
 
     @staticmethod
+    def _trim_leading_orphan_entries(
+        display_entries: list[tuple[tuple, bool, int]],
+    ) -> list[tuple[tuple, bool, int]]:
+        """Drop any leading mid-item rows until the next visible header.
+
+        This is a defensive renderer guard: if a viewport slice or
+        budgeted history pass ever hands us a list that starts in the
+        middle of an item, the pane should not paint orphaned topic /
+        basis / checkpoint rows without their owning header.
+        """
+        first_header_idx = next(
+            (idx for idx, (entry, _recent, _depth) in enumerate(display_entries) if entry[0] == "header"),
+            None,
+        )
+        if first_header_idx in (None, 0):
+            return display_entries
+        return display_entries[first_header_idx:]
+
+    @staticmethod
     def _history_groups_with_indices(
         history_list: list[tuple[str, str, int | None]],
     ) -> list[list[tuple[tuple[str, str, int | None], int]]]:
@@ -1863,7 +1894,9 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._build_display_entries(wrap_width=wrap_width)
+        display_entries = self._trim_leading_orphan_entries(
+            self._build_display_entries(wrap_width=wrap_width)
+        )
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
         current_group_index = -1
@@ -1971,6 +2004,12 @@ class PaintDryDisplay:
                     "overshoot": "topic_overshoot",
                     "undershoot": "topic_undershoot",
                 }.get(parity, "topic")
+                is_truncated_topic = (
+                    "(truncated)" in text.lower()
+                    or "(after-action unavailable)" in text.lower()
+                )
+                if is_truncated_topic:
+                    topic_kind = "topic_truncated"
                 # Pull out the elapsed-time prefix and color it as a
                 # punchy warm accent (bold orange3 — same warm as the
                 # post-game border and header base) so it pops out
@@ -1980,7 +2019,11 @@ class PaintDryDisplay:
                     time_prefix, rest = m.group(1), m.group(2)
                     history_text.append(
                         time_prefix,
-                        style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                        style=(
+                            f"{_rgb_to_hex(_BASE_RGB['status'])}"
+                            if is_truncated_topic
+                            else f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}"
+                        ),
                     )
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")

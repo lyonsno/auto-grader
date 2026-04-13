@@ -462,6 +462,83 @@ class NarratorReaderContract(unittest.TestCase):
             "even when a neighbor item above is header-only, the visible topic/timing line must still sit above Core issue rows for its own item",
         )
 
+    def test_render_drops_leading_orphan_rows_until_next_header(self):
+        display = self._make_display()
+
+        orphaned_entries = [
+            (
+                ("checkpoint", "Core issue: orphaned top row should not render.", None),
+                False,
+                0,
+            ),
+            (
+                ("topic", "42s · orphaned topic should not render.", "match"),
+                False,
+                0,
+            ),
+            (
+                ("header", "[item 4/15] 27-blue-2023/fr-3 (balanced_equation, 4.0 pts)", None),
+                False,
+                0,
+            ),
+            (
+                ("topic", "38s · Grader: 4/4 (Correct net ionic equation).", "match"),
+                True,
+                1,
+            ),
+        ]
+
+        with mock.patch.object(
+            display,
+            "_build_display_entries",
+            return_value=orphaned_entries,
+        ):
+            history_text = display.render().renderables[-1].renderable.plain
+
+        self.assertNotIn(
+            "orphaned top row should not render",
+            history_text,
+            "the history pane should never begin with a mid-item body row when the owning header is out of view",
+        )
+        self.assertNotIn(
+            "orphaned topic should not render",
+            history_text,
+            "the history pane should trim leading topic/body fragments until the next visible header",
+        )
+        self.assertTrue(
+            history_text.lstrip().startswith("─ [item 4/15]"),
+            "once leading orphans are trimmed, the first visible history line should be the next item header",
+        )
+
+    def test_truncated_topic_renders_dimmer_than_normal_match_topic(self):
+        regular = self._make_display()
+        regular.history.append(("header", "[item 1/6] first", None))
+        regular.history.append(
+            ("topic", "42s · Grader: 2/2 (Correct stoichiometric calculation with proper charges.)", "match")
+        )
+        regular_text = regular.render().renderables[-1].renderable
+        regular_style = self._style_for_substring(
+            regular_text,
+            "Grader: 2/2 (Correct stoichiometric calculation with proper charges.)",
+        )
+
+        truncated = self._make_display()
+        truncated.history.append(("header", "[item 1/6] first", None))
+        truncated.history.append(
+            ("topic", "190s · 15-blue/fr-10b: grader did not commit to a score (truncated)", "match")
+        )
+        truncated_text = truncated.render().renderables[-1].renderable
+        truncated_style = self._style_for_substring(
+            truncated_text,
+            "15-blue/fr-10b: grader did not commit to a score (truncated)",
+        )
+
+        self.assertLess(
+            self._hex_luminance(truncated_style),
+            self._hex_luminance(regular_style),
+            "truncated fallback topics should read as dimmer placeholders than ordinary match verdict lines",
+        )
+
     def test_display_no_longer_exposes_scrollback_snapshot_affordance(self):
         display = self._make_display()
         self.assertFalse(
