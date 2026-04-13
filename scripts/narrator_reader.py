@@ -365,26 +365,12 @@ _LIVE_FROZEN_VAL_MUL = 0.85
 _SHIMMER_PEAK_RGB = (235, 215, 175)
 
 
-def _interp_rgb(
-    base: tuple[int, int, int],
-    peak: tuple[int, int, int],
-    t: float,
-) -> tuple[int, int, int]:
-    """Linear interpolate from base toward peak by t in [0, 1]."""
-    t = max(0.0, min(1.0, t))
-    return (
-        int(base[0] + (peak[0] - base[0]) * t),
-        int(base[1] + (peak[1] - base[1]) * t),
-        int(base[2] + (peak[2] - base[2]) * t),
-    )
-
-
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
 
-# Focus-preview rendering surface lives in scripts.focus_preview_renderer and
-# is re-imported above. The reader keeps only its non-preview display logic.
+# Focus-preview rendering helpers live in scripts.focus_preview_renderer and
+# are re-imported above. The reader keeps only its non-preview display logic.
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     """Convert HSV (h in degrees, s/v in [0, 1]) to 8-bit RGB."""
     h = h % 360
@@ -660,7 +646,7 @@ def _append_shimmer_char(
     else:
         raw_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
         intensity = raw_intensity * layer_recency
-        color_rgb = _interp_rgb(base_rgb, peak_rgb, intensity)
+        color_rgb = _lerp_rgb(base_rgb, peak_rgb, intensity)
         bold_head = (layer_index == 0 and -0.5 <= distance < 1.5)
     style = _rgb_to_hex(color_rgb)
     if bold_head:

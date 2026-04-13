@@ -21,9 +21,10 @@ from rich.style import Style
 from rich.text import Text
 
 
-# ── Shared trivial utilities (duplicated from narrator_reader.py) ───
-# These are tiny pure functions also present in narrator_reader.py.
-# Duplicated here to avoid circular imports.
+# ── Shared trivial utilities for the extracted preview renderer ─────
+# narrator_reader re-exports a small subset of these helpers so the
+# preview surface can keep a stable module seam without re-owning the
+# implementations locally.
 
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
