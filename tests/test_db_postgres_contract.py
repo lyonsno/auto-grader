@@ -373,6 +373,137 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 title="\t",
             )
 
+    def test_initialize_schema_rolls_back_strengthening_when_cross_page_uniqueness_upgrade_fails(
+        self,
+    ) -> None:
+        self._require_tables(
+            "students",
+            "template_versions",
+            "exam_definitions",
+            "exam_instances",
+            "mc_scan_sessions",
+            "mc_scan_pages",
+            "mc_question_outcomes",
+        )
+
+        template_version_id = self._insert_template_version(
+            slug="txn-upgrade-template",
+            version=1,
+        )
+        exam_definition_id = self._insert_exam_definition(
+            slug="txn-upgrade-exam",
+            version=1,
+            template_version_id=template_version_id,
+            title="Transaction Upgrade Exam",
+        )
+        student_id = self._insert_student("txn-upgrade-student")
+        exam_instance_id = self._insert_exam_instance_record(
+            exam_definition_id=exam_definition_id,
+            student_id=student_id,
+            attempt_number=1,
+            opaque_instance_code="TXN-UPGRADE-001",
+        )
+
+        session_id = self.connection.execute(
+            """
+            INSERT INTO mc_scan_sessions
+                (exam_instance_id, manifest_fingerprint, session_ordinal, supersedes_session_id)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (exam_instance_id, self._sha256(7001), 1, None),
+        ).fetchone()["id"]
+        page_1_id = self.connection.execute(
+            """
+            INSERT INTO mc_scan_pages
+                (mc_scan_session_id, scan_id, checksum, status, failure_reason,
+                 page_number, fallback_page_code, divergence_detected)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                session_id,
+                "txn-page-1.png",
+                self._sha256(7002),
+                "matched",
+                None,
+                1,
+                "TXN-P1",
+                False,
+            ),
+        ).fetchone()["id"]
+        page_2_id = self.connection.execute(
+            """
+            INSERT INTO mc_scan_pages
+                (mc_scan_session_id, scan_id, checksum, status, failure_reason,
+                 page_number, fallback_page_code, divergence_detected)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                session_id,
+                "txn-page-2.png",
+                self._sha256(7003),
+                "matched",
+                None,
+                2,
+                "TXN-P2",
+                False,
+            ),
+        ).fetchone()["id"]
+
+        self.connection.execute(
+            """
+            ALTER TABLE mc_question_outcomes
+                DROP CONSTRAINT IF EXISTS mc_question_outcomes_unique_per_session
+            """
+        )
+        self.connection.execute(
+            """
+            ALTER TABLE mc_question_outcomes
+                ALTER COLUMN mc_scan_session_id DROP NOT NULL
+            """
+        )
+
+        for page_id in (page_1_id, page_2_id):
+            self.connection.execute(
+                """
+                INSERT INTO mc_question_outcomes
+                    (mc_scan_page_id, mc_scan_session_id, question_id, status, is_correct,
+                     review_required, marked_bubble_labels, resolved_bubble_labels,
+                     correct_bubble_label, correct_choice_key, marked_choice_keys)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb)
+                """,
+                (
+                    page_id,
+                    session_id,
+                    "dup-q-1",
+                    "correct",
+                    True,
+                    False,
+                    '["B"]',
+                    '["B"]',
+                    "B",
+                    "choice-b",
+                    '["choice-b"]',
+                ),
+            )
+
+        with self.assertRaises(errors.UniqueViolation):
+            initialize_schema(self.connection)
+
+        self.assertTrue(
+            self._column_is_nullable("mc_question_outcomes", "mc_scan_session_id"),
+            "If a rerun fails while re-tightening cross-page uniqueness, "
+            "initialize_schema() must not leave earlier migration steps "
+            "partially applied.",
+        )
+        self.assertFalse(
+            self._constraint_exists("mc_question_outcomes_unique_per_session"),
+            "If the uniqueness re-tightening fails, the whole schema upgrade "
+            "should roll back instead of leaving a half-upgraded state behind.",
+        )
+
         student_id = self._insert_student("legacy-upgrade-student")
         exam_definition_id = self._insert_exam_definition(
             slug="legacy-upgrade-midterm",
@@ -1976,6 +2107,37 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 """
             )
         }
+
+    def _constraint_exists(self, constraint_name: str) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = %s
+            ) AS exists_flag
+            """,
+            (constraint_name,),
+        ).fetchone()
+        assert row is not None
+        return bool(row["exists_flag"])
+
+    def _column_is_nullable(self, table_name: str, column_name: str) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = %s
+              AND column_name = %s
+            """,
+            (table_name, column_name),
+        ).fetchone()
+        self.assertIsNotNone(
+            row,
+            f"Expected column {table_name}.{column_name} to exist in schema {self.schema_name}.",
+        )
+        return row["is_nullable"] == "YES"
 
     def _database_clock_now(self) -> datetime:
         row = self.connection.execute(
