@@ -4500,9 +4500,11 @@ class PaintDryDisplay:
                 # output stream. Bypasses Rich entirely and runs
                 # on the event thread, so the decode has a head
                 # start on the next Rich refresh.
-                transmit_stream = (
-                    self._console.file if self._console is not None else sys.stdout
-                )
+                transmit_stream = getattr(sys, "__stdout__", None)
+                if transmit_stream is None:
+                    transmit_stream = (
+                        self._console.file if self._console is not None else sys.stdout
+                    )
                 chunks = _build_kitty_transmit_chunks(png_bytes, _KITTY_IMAGE_ID)
                 for chunk in chunks:
                     transmit_stream.write(chunk)
@@ -4690,6 +4692,8 @@ def main() -> int:
             refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
             screen=True,
             auto_refresh=False,
+            redirect_stdout=False,
+            redirect_stderr=False,
         ) as live:
             def _wait_for_manual_close() -> int:
                 while True:

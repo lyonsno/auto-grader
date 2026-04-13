@@ -355,6 +355,33 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(status_live_idx, inline_idx)
         self.assertLess(inline_idx, history_idx)
 
+    def test_kitty_focus_preview_transmits_to_process_stdout_not_console_file(self):
+        display = self._make_display()
+        display._kitty_graphics_supported = True
+        display._inline_images_supported = False
+        console_file = mock.Mock()
+        display._console.file = console_file
+        raw_stdout = mock.Mock()
+
+        with mock.patch(
+            "scripts.narrator_reader._build_kitty_transmit_chunks",
+            return_value=["chunk-1", "chunk-2"],
+        ):
+            with mock.patch("scripts.narrator_reader.sys.__stdout__", raw_stdout):
+                display.on_focus_preview(
+                    self._make_png(),
+                    label="15-blue/fr-12a",
+                    source="mock_tricky",
+                )
+
+        self.assertEqual(
+            [call.args[0] for call in raw_stdout.write.call_args_list],
+            ["chunk-1", "chunk-2"],
+            "Kitty preview transmit should go straight to the process stdout so Rich's live stdout proxy can't scramble the raw control stream",
+        )
+        console_file.write.assert_not_called()
+        raw_stdout.flush.assert_called_once()
+
     def test_new_header_keeps_previous_preview_visible_in_pending_state(self):
         display = self._make_display()
         display.on_focus_preview(
