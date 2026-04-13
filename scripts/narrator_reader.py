@@ -4699,19 +4699,22 @@ def main() -> int:
         # from the user's perspective — no visible flicker.  The cost is
         # a handful of extra bytes per frame (ESC[2J = 4 bytes at ~8 FPS
         # = 32 B/s, negligible).
-        # Flag set by SIGWINCH — forces an immediate clear + repaint
-        # on the next animation tick even during idle polling.
+        # Resize coordination.  SIGWINCH fires on the main thread
+        # (signal delivery) while the animation thread is writing to
+        # stdout via live.update().  Writing \033[2J from the signal
+        # handler interleaves with Rich's output and corrupts the
+        # frame.  Instead, the handler only sets a flag and wakes the
+        # animation thread; all stdout writes happen on one thread.
         _resize_pending = threading.Event()
+        # Wakeup event: the animation thread sleeps on this instead
+        # of time.sleep() so SIGWINCH can cut the sleep short.
+        _animation_wake = threading.Event()
 
         _prev_sigwinch = signal.getsignal(signal.SIGWINCH)
 
         def _on_sigwinch(signum, frame):
-            # Clear the screen immediately so any stale content from
-            # the previous frame doesn't linger until the next tick.
-            sys.stdout.write("\033[2J")
-            sys.stdout.flush()
             _resize_pending.set()
-            # Chain to any previous handler (e.g. Rich's own).
+            _animation_wake.set()  # wake the animation thread NOW
             if callable(_prev_sigwinch):
                 _prev_sigwinch(signum, frame)
 
@@ -4721,9 +4724,10 @@ def main() -> int:
             """Clear the alt-screen then update the Live display.
 
             If a SIGWINCH arrived since the renderable was built, the
-            layout may have been computed at the old terminal size.
-            Discard it and re-render at the current size so we never
-            paint stale-geometry content onto the cleared screen.
+            layout was computed at the old terminal size — discard it
+            and re-render at the current size.  All stdout writes
+            (clear + paint) happen here on one thread, never from the
+            signal handler, so there is no interleaving.
             """
             if _resize_pending.is_set():
                 _resize_pending.clear()
@@ -4764,16 +4768,18 @@ def main() -> int:
 
             def _animation_tick():
                 while not animation_stop.is_set():
-                    if display.should_animate():
+                    if display.should_animate() or _resize_pending.is_set():
                         try:
                             _live_update(display.render())
                         except Exception:
                             # Transient race with the message loop mutating
                             # display state — next tick will recover.
                             pass
-                        time.sleep(1.0 / _ACTIVE_ANIMATION_FPS)
+                        _animation_wake.clear()
+                        _animation_wake.wait(timeout=1.0 / _ACTIVE_ANIMATION_FPS)
                     else:
-                        time.sleep(_IDLE_POLL_S)
+                        _animation_wake.clear()
+                        _animation_wake.wait(timeout=_IDLE_POLL_S)
 
             anim_thread = threading.Thread(
                 target=_animation_tick,
