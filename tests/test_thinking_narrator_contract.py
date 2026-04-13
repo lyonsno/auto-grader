@@ -1135,5 +1135,209 @@ class ThinkingNarratorContract(unittest.TestCase):
         thread.start.assert_called_once()
 
 
+    # ------------------------------------------------------------------
+    # Selective bloom from narrator turbulence (Operation Paint Flakes)
+    # ------------------------------------------------------------------
+
+    def test_should_emit_basis_row_returns_true_when_turbulence_is_high(self):
+        """_should_emit_basis_row must accept a turbulence_is_high flag and
+        return True for a full-credit match when that flag is set, even with
+        no ambiguity, review, or professor mismatch.  This is the core
+        contract for the selective-history-bloom attractor: turbulence is a
+        direct, first-class bloom trigger."""
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="2/2",
+            student_answer="6.98 mL",
+            notes="full credit",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=2.0,
+            model_confidence=0.95,
+            model_reasoning="Correct.",
+            model_read="6.98 mL",
+            score_basis="Correct density calculation.",
+        )
+        result = ThinkingNarrator._should_emit_basis_row(
+            prediction,
+            item,
+            ambiguity_needed=False,
+            review_needed=None,
+            professor_mismatch=None,
+            turbulence_is_high=True,
+        )
+        self.assertTrue(
+            result,
+            "High turbulence on a full-credit match must trigger basis row bloom",
+        )
+
+    def test_should_emit_basis_row_returns_false_for_quiet_full_credit(self):
+        """A full-credit match with turbulence_is_high=False and no other
+        expansion signals must NOT emit a basis row.  Boring stays collapsed."""
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="2/2",
+            student_answer="6.98 mL",
+            notes="full credit",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=2.0,
+            model_confidence=0.95,
+            model_reasoning="Correct.",
+            model_read="6.98 mL",
+            score_basis="Correct density calculation.",
+        )
+        result = ThinkingNarrator._should_emit_basis_row(
+            prediction,
+            item,
+            ambiguity_needed=False,
+            review_needed=None,
+            professor_mismatch=None,
+            turbulence_is_high=False,
+        )
+        self.assertFalse(
+            result,
+            "Quiet full-credit match must stay collapsed",
+        )
+
+    def test_handle_legibility_rows_blooms_turbulent_full_credit_match(self):
+        """End-to-end: a full-credit match with high narrator turbulence
+        counters gets a basis row emitted during _handle_legibility_rows.
+        This tests the wiring from turbulence counters through the bloom
+        decision into the sink."""
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 2/2 (correct density). Prof: 2/2 (same).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="2/2",
+            student_answer="6.98 mL",
+            notes="full credit",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=2.0,
+            model_confidence=0.92,
+            model_reasoning="Density = mass/volume = 6.98 mL. Correct.",
+            model_read="6.98 mL",
+            score_basis="Correct density calculation, mass/volume yields 6.98 mL.",
+        )
+        # High turbulence — many dedup drops and grooming passes
+        narrator._item_turbulence_dedup_count = 12
+        narrator._item_turbulence_status_dedup_count = 6
+        narrator._item_turbulence_grooming_count = 3
+
+        narrator._handle_legibility_rows(prediction, item)
+
+        self.assertEqual(
+            sink.basis_rows,
+            ["Correct density calculation, mass/volume yields 6.98 mL."],
+            "Turbulent full-credit match should bloom with a basis row",
+        )
+
+    def test_handle_legibility_rows_collapses_quiet_full_credit_match(self):
+        """End-to-end: a full-credit match with zero turbulence stays
+        collapsed — no basis row, no queued legibility jobs."""
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 2/2 (correct). Prof: 2/2 (same).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="2/2",
+            student_answer="6.98 mL",
+            notes="full credit",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=2.0,
+            model_confidence=0.95,
+            model_reasoning="Straightforward.",
+            model_read="6.98 mL",
+            score_basis="Correct density calculation.",
+        )
+        narrator._item_turbulence_dedup_count = 0
+        narrator._item_turbulence_status_dedup_count = 0
+        narrator._item_turbulence_grooming_count = 0
+
+        narrator._handle_legibility_rows(prediction, item)
+
+        self.assertEqual(sink.basis_rows, [])
+        self.assertEqual(narrator._legibility_jobs, [])
+
+    def test_handle_legibility_rows_does_not_bloom_moderate_turbulence(self):
+        """Moderate turbulence (a couple of dedup drops, no grooming) on a
+        full-credit match must NOT trigger bloom.  Selective bloom, not
+        universal elaboration."""
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 2/2 (correct). Prof: 2/2 (same).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="2/2",
+            student_answer="6.98 mL",
+            notes="full credit",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=2.0,
+            model_confidence=0.95,
+            model_reasoning="Correct.",
+            model_read="6.98 mL",
+            score_basis="Correct density calculation.",
+        )
+        # Below bloom threshold: 1 dedup, no grooming
+        narrator._item_turbulence_dedup_count = 1
+        narrator._item_turbulence_status_dedup_count = 0
+        narrator._item_turbulence_grooming_count = 0
+
+        narrator._handle_legibility_rows(prediction, item)
+
+        self.assertEqual(sink.basis_rows, [])
+
+
 if __name__ == "__main__":
     unittest.main()
