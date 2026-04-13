@@ -99,6 +99,26 @@ class _RetryNarrator(ThinkingNarrator):
         return text
 
 
+class _AmbiguityRetryNarrator(ThinkingNarrator):
+    _PLAYBACK_CHUNK_DELAY_S = 0.0
+
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+        self.calls: list[str] = []
+
+    def _chat_completion_stream(self, messages, on_delta, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        if "present-participle status line" in system:
+            text = "Rechecking the crossed-out cancellation digit."
+            self.calls.append("status")
+        else:
+            text = "I'm torn between a 1 and a 2 in the cancellation trail."
+            self.calls.append("thought")
+        for token in text.split():
+            on_delta(token + " ")
+        return text
+
+
 class _BadStatusRetryNarrator(ThinkingNarrator):
     _PLAYBACK_CHUNK_DELAY_S = 0.0
 
@@ -328,6 +348,48 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertIn(
             "Dropped status retry:\n- Rechecking the same unit conversion.",
             prompt,
+        )
+
+    def test_double_dedup_queues_live_ambiguity_row_for_ambiguity_shaped_basin(self):
+        sink = _DummySink()
+        narrator = _AmbiguityRetryNarrator(sink)
+        narrator.start(item_header="15-blue/fr-11c (exact_match, 0.5 pts)")
+        narrator._current_status = "Rechecking the crossed-out cancellation digit."
+        narrator._prior_statuses = ["Rechecking the crossed-out cancellation digit."]
+        narrator._thoughts_since_status = ["I'm torn between a 1 and a 2 in the cancellation trail."]
+        narrator._prior_checkpoints = ["Core issue: crossed-out digit changes the final count."]
+        narrator._dedupe_streak = 1
+        narrator._chat_completion = mock.Mock(  # type: ignore[method-assign]
+            side_effect=[
+                "Core issue: crossed-out digit changes the final count.",
+                "Crossed-out cancellation digit still reads as either 1 or 2.",
+            ]
+        )
+        narrator._schedule_idle_legibility_if_needed = mock.Mock()  # type: ignore[method-assign]
+
+        narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        self.assertEqual(
+            [job["row_type"] for job in narrator._legibility_jobs],
+            ["ambiguity"],
+        )
+        self.assertTrue(narrator._item_live_ambiguity_queued)
+        narrator._schedule_idle_legibility_if_needed.assert_called_once()
+        prompt = narrator._legibility_jobs[0]["prompt"]
+        self.assertIn("15-blue/fr-11c (exact_match, 0.5 pts)", prompt)
+        self.assertIn(
+            "Dropped thought retry:\n- I'm torn between a 1 and a 2 in the cancellation trail.",
+            prompt,
+        )
+        self.assertIn(
+            "Dropped status retry:\n- Rechecking the crossed-out cancellation digit.",
+            prompt,
+        )
+
+        self.assertTrue(narrator._flush_idle_legibility_once())
+        self.assertEqual(
+            sink.ambiguity_rows,
+            ["Crossed-out cancellation digit still reads as either 1 or 2."],
         )
 
     def test_feed_keeps_dispatching_during_dedupe_streak(self):
