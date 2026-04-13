@@ -20,7 +20,7 @@ def read_page_identity_qr_payload(image: np.ndarray) -> str:
     return next(iter(payloads))
 
 
-_RESCALE_FACTORS = (1.5, 2.0)
+_RESCALE_FACTORS = (1.5, 2.0, 2.5)
 
 
 def decode_page_identity_qr_codes(image: np.ndarray) -> list[dict[str, Any]]:
