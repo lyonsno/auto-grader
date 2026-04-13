@@ -1446,13 +1446,14 @@ class FocusPreviewInlineImage:
     terminal-painted image pixels are preserved because nothing is
     written over them.
 
-    The renderable yields, in order:
-      1. A top border row ``╭─… title …─╮``
-      2. A content row ``│`` + space + image escape sequence +
-         cursor-forward past the image cells + ``│``
-      3. ``cell_height - 1`` more content rows ``│`` + cursor-forward
-         past the image cells + ``│``
-      4. A bottom border row ``╰─…─╯``
+    The renderable now reserves the framed box FIRST and then paints
+    the inline image back into that reserved region as a post-pass.
+    That ordering matters on WezTerm: if the OSC image sequence lands
+    on the first interior row, later writes for the remaining rows in
+    the same render can still stomp the rasterized region, leaving the
+    operator with only the top strip of the image. By emitting the
+    image after the bottom border, the frame geometry is fully laid
+    down before the terminal rasterizes the preview.
 
     Rich sees the border segments as visible text with the expected
     cell widths, so its layout accounting treats this renderable as a
@@ -1525,22 +1526,10 @@ class FocusPreviewInlineImage:
         # to line-fit, truncate, or pad around it.
         forward_escape = f"\x1b[{inner_width}C"
 
-        # First interior row carries the iTerm2 image escape sequence.
-        # Must re-emit on every render because Rich Live's
-        # position_cursor() erases every row of the previous frame
-        # before each refresh (see note in __init__).
-        yield Segment("│", border)
-        yield Segment(self._sequence, None, [(ControlType.BELL,)])
-        yield Segment(forward_escape, None, [(ControlType.BELL,)])
-        yield Segment("│", border)
-        yield Segment.line()
-
-        # Remaining interior rows: border + cursor-forward + border.
-        # These rows are visually "blank" from Rich's perspective but
-        # the terminal has image pixels painted into the cells from
-        # the first row's escape sequence. Cursor-forward preserves
-        # those pixels; writing spaces here would overwrite them.
-        for _ in range(self._cell_height - 1):
+        # Interior rows: reserve the full image rectangle without
+        # writing visible spaces into it. We paint the actual image
+        # back in as a post-pass after the whole frame is laid down.
+        for _ in range(self._cell_height):
             yield Segment("│", border)
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
             yield Segment("│", border)
@@ -1550,6 +1539,18 @@ class FocusPreviewInlineImage:
         bottom_border = "╰" + ("─" * (total_width - 2)) + "╯"
         yield Segment(bottom_border, border)
         yield Segment.line()
+
+        # Post-pass image overlay. Save the cursor at the row after
+        # the bottom border, jump back up into the first interior row,
+        # emit the inline image, then restore the cursor so the rest
+        # of Rich's bookkeeping stays at the expected position.
+        save_cursor = "\x1b7"
+        restore_cursor = "\x1b8"
+        yield Segment(save_cursor, None, [(ControlType.BELL,)])
+        yield Segment("", None, [(ControlType.CURSOR_UP, self._cell_height)])
+        yield Segment("", None, [(ControlType.CURSOR_FORWARD, 1)])
+        yield Segment(self._sequence, None, [(ControlType.BELL,)])
+        yield Segment(restore_cursor, None, [(ControlType.BELL,)])
 
 
 class FocusPreviewKittyImage:
