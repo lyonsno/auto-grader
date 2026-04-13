@@ -1010,15 +1010,14 @@ class NarratorReaderContract(unittest.TestCase):
     # Kitty graphics protocol path. This is the durable fix for the
     # flicker problem: transmit the PNG once to the terminal with a
     # numeric image ID, then reference it by ID on every subsequent
-    # frame via tiny `a=p` place commands. In theory WezTerm also
-    # speaks the protocol, but the live Paint Dry surface is still
-    # corrupt there once the first real preview lands. Keep WezTerm
-    # on the safer inline-image path until that terminal-specific
-    # Kitty behavior is actually fixed.
+    # frame via tiny `a=p` place commands. WezTerm and Kitty both
+    # support this protocol. Unlike the iTerm2 path, place-by-ID
+    # does not re-parse the PNG payload, so emitting it every frame
+    # at 24 FPS costs nothing.
     # ------------------------------------------------------------------
 
-    def test_supports_kitty_graphics_rejects_wezterm_for_now(self):
-        self.assertFalse(_supports_kitty_graphics("WezTerm"))
+    def test_supports_kitty_graphics_recognizes_wezterm(self):
+        self.assertTrue(_supports_kitty_graphics("WezTerm"))
 
     def test_supports_kitty_graphics_recognizes_kitty(self):
         self.assertTrue(_supports_kitty_graphics("kitty"))
@@ -1028,23 +1027,6 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertFalse(_supports_kitty_graphics("Apple_Terminal"))
         self.assertFalse(_supports_kitty_graphics(None))
         self.assertFalse(_supports_kitty_graphics(""))
-
-    def test_wezterm_prefers_inline_focus_preview_over_kitty_path(self):
-        with mock.patch.dict("os.environ", {"TERM_PROGRAM": "WezTerm"}):
-            display = PaintDryDisplay(
-                console=Console(
-                    width=100,
-                    record=True,
-                    color_system="truecolor",
-                    force_terminal=True,
-                )
-            )
-
-        self.assertTrue(display._inline_images_supported)
-        self.assertFalse(
-            display._kitty_graphics_supported,
-            "WezTerm should stay on the inline-image path until the live Kitty path stops corrupting Paint Dry",
-        )
 
     def test_build_kitty_transmit_chunks_wraps_in_apc_envelope(self):
         png = b"\x89PNG\r\n\x1a\n" + b"x" * 32
