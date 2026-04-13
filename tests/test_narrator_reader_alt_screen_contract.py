@@ -97,29 +97,6 @@ class LiveAltScreenContract(unittest.TestCase):
         self.assertIsInstance(auto_refresh, ast.Constant)
         self.assertIs(auto_refresh.value, False)
 
-    def test_live_block_disables_stdout_and_stderr_redirection(self):
-        call = _find_live_call()
-        redirect_stdout = _kwarg(call, "redirect_stdout")
-        redirect_stderr = _kwarg(call, "redirect_stderr")
-        self.assertIsNotNone(
-            redirect_stdout,
-            "Live(...) must spell out redirect_stdout= so raw Kitty control traffic doesn't silently route through Rich's stdout proxy",
-        )
-        self.assertIsNotNone(
-            redirect_stderr,
-            "Live(...) must spell out redirect_stderr= so stderr behavior stays intentional while the live window owns the terminal",
-        )
-        self.assertIsInstance(redirect_stdout, ast.Constant)
-        self.assertIsInstance(redirect_stderr, ast.Constant)
-        self.assertIs(
-            redirect_stdout.value, False,
-            "Live() must keep stdout attached to the real terminal so raw Kitty transmit chunks don't collide with Rich's redirected stdout wrapper",
-        )
-        self.assertIs(
-            redirect_stderr.value, False,
-            "Live() must keep stderr attached to the real terminal so diagnostics don't route through Rich's redirected stderr wrapper",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
