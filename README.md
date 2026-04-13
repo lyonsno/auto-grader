@@ -300,6 +300,12 @@ Current implementation status on this grading surface:
   current result surface per `exam_instance_id`, with the latest scan session,
   persisted machine outcomes, latest human review resolutions, and still-open
   review-required questions composed together instead of reconstructed ad hoc
+- a compact DB-backed demo/export surface is implemented via
+  `auto_grader.mc_results_demo_export` plus
+  `scripts/export_mc_results_demo.py`; this intentionally sits downstream of
+  the authoritative read model and writes one compact JSON bundle plus one
+  human-readable summary file instead of re-inventing result semantics in the
+  script layer
 
 ### 6. Review + Export
 
@@ -325,6 +331,9 @@ Current implementation status on this review surface:
   MC truth surface for one exam instance, combining the latest persisted scan
   session with any persisted review resolutions while keeping unresolved
   review-required questions explicit
+- `auto_grader.mc_results_demo_export` now turns that DB-backed current truth
+  into a compact demo/export bundle for one exam instance, with a small text
+  summary that is suitable for same-day operator/demo use without a GUI
 
 ## Data model
 
