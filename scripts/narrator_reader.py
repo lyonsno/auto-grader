@@ -4727,25 +4727,29 @@ def main() -> int:
 
         signal.signal(signal.SIGWINCH, _on_sigwinch)
 
-        def _live_update(renderable):
-            """Clear + home then update the Live display.
+        def _live_update():
+            """Render, clear, and paint one frame.
 
-            If a SIGWINCH arrived since the renderable was built, the
-            layout was computed at the old terminal size — discard it
-            and re-render at the current size.  All stdout writes
-            happen here on the animation thread, never from the
-            signal handler, so there is no interleaving.
+            Render and paint are size-checked: the terminal size is
+            snapshotted before render and verified again after.  If
+            the size changed during render (resize arrived mid-
+            layout), re-render at the new size.  Up to 3 retries to
+            converge during rapid resize; after that, paint whatever
+            we have (a briefly stale frame is better than dropping
+            a frame entirely).
 
-            We manage alt-screen ourselves (entered before Live,
-            exited after).  Each frame: clear entire screen, home
-            cursor, then let Rich paint.  This avoids Rich's Screen
-            wrapper whose height-padding relies on options.size being
-            perfectly synchronized with the physical terminal —
-            which it isn't during rapid resize.
+            All stdout writes happen here on the animation thread,
+            never from the signal handler, so there is no interleaving.
             """
-            if _resize_pending.is_set():
-                _resize_pending.clear()
+            _resize_pending.clear()
+            renderable = None
+            for _attempt in range(3):
+                size_before = (console.size.width, console.size.height)
                 renderable = display.render()
+                size_after = (console.size.width, console.size.height)
+                if size_before == size_after:
+                    break  # geometry stable — safe to paint
+
             sys.stdout.write("\033[2J\033[H")
             sys.stdout.flush()
             live.update(renderable, refresh=True)
@@ -4768,7 +4772,7 @@ def main() -> int:
                 while True:
                     if not display.should_animate():
                         try:
-                            _live_update(display.render())
+                            _live_update()
                         except Exception:
                             pass
                     try:
@@ -4791,7 +4795,7 @@ def main() -> int:
                 while not animation_stop.is_set():
                     if display.should_animate() or _resize_pending.is_set():
                         try:
-                            _live_update(display.render())
+                            _live_update()
                         except Exception:
                             # Transient race with the message loop mutating
                             # display state — next tick will recover.
@@ -4942,7 +4946,7 @@ def main() -> int:
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:
-                            _live_update(display.render())
+                            _live_update()
                         except Exception:
                             pass
     finally:
