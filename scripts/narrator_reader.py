@@ -3093,6 +3093,12 @@ class PaintDryDisplay:
         ended and the final frame is meant to stay still while waiting
         for Enter.
         """
+        if (
+            self.focus_preview_inline_renderable is not None
+            and not self.focus_preview_pending
+            and not self.session_ended
+        ):
+            return False
         if not self.session_ended:
             return True
         if self._session_ended_at is None:
@@ -4706,13 +4712,16 @@ def main() -> int:
             redirect_stdout=False,
             redirect_stderr=False,
         ) as live:
+            def _refresh_live() -> None:
+                try:
+                    live.update(display.render(), refresh=True)
+                except Exception:
+                    pass
+
             def _wait_for_manual_close() -> int:
                 while True:
                     if not display.should_animate():
-                        try:
-                            live.update(display.render(), refresh=True)
-                        except Exception:
-                            pass
+                        _refresh_live()
                     try:
                         ready, _, _ = select.select([sys.stdin], [], [], _IDLE_POLL_S)
                     except Exception:
@@ -4732,12 +4741,10 @@ def main() -> int:
             def _animation_tick():
                 while not animation_stop.is_set():
                     if display.should_animate():
-                        try:
-                            live.update(display.render(), refresh=True)
-                        except Exception:
-                            # Transient race with the message loop mutating
-                            # display state — next tick will recover.
-                            pass
+                        # Transient races with the message loop are okay;
+                        # event-driven refreshes on the next tick/message
+                        # will recover.
+                        _refresh_live()
                         time.sleep(1.0 / _ACTIVE_ANIMATION_FPS)
                     else:
                         time.sleep(_IDLE_POLL_S)
@@ -4766,6 +4773,8 @@ def main() -> int:
                     if not ch:
                         return
                     handled = scroll_controller.handle_key(ch)
+                    if handled and not display.should_animate():
+                        _refresh_live()
                     if not handled and display.session_ended:
                         session_exit.set()
                         return
@@ -4880,11 +4889,11 @@ def main() -> int:
                         anim_thread.join(timeout=0.5)
                         return 0
 
-                    if _message_requires_immediate_refresh(msg_type):
-                        try:
-                            live.update(display.render(), refresh=True)
-                        except Exception:
-                            pass
+                    if (
+                        _message_requires_immediate_refresh(msg_type)
+                        or not display.should_animate()
+                    ):
+                        _refresh_live()
     finally:
         animation_stop.set()
         try:

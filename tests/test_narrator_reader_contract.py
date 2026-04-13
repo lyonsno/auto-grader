@@ -3264,6 +3264,21 @@ class NarratorReaderContract(unittest.TestCase):
             )
         )
 
+    def test_inline_focus_preview_switches_live_surface_to_event_driven_refresh(self) -> None:
+        display = self._make_display()
+        display._inline_images_supported = True
+        display._kitty_graphics_supported = False
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-10b",
+            source="mock_tricky",
+        )
+
+        self.assertFalse(
+            display.should_animate(),
+            "inline image previews should stop the 24 FPS shimmer loop so WezTerm doesn't re-rasterize the whole preview on every tick",
+        )
+
     def test_session_end_stops_animation(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")
