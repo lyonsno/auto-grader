@@ -550,6 +550,93 @@ class McScanDbContractTests(unittest.TestCase):
             "All mutations must be atomic.",
         )
 
+    # ------------------------------------------------------------------
+    # Cross-page question_id uniqueness contract
+    # ------------------------------------------------------------------
+
+    def test_duplicate_question_id_across_pages_rejected_by_db(self) -> None:
+        """The same question_id on two different pages within one session
+        must be rejected by the DB constraint, not silently accepted."""
+        persist = _load_persist_module(self)
+        checksum_a = hashlib.sha256(b"page-a").hexdigest()
+        checksum_b = hashlib.sha256(b"page-b").hexdigest()
+
+        manifest = {
+            "opaque_instance_code": "TEST-INSTANCE-001",
+            "expected_page_codes": ["PAGE-1-CODE", "PAGE-2-CODE"],
+            "scan_results": [
+                {
+                    "scan_id": "page-a.png",
+                    "checksum": checksum_a,
+                    "status": "matched",
+                    "failure_reason": None,
+                    "page_number": 1,
+                    "fallback_page_code": "PAGE-1-CODE",
+                    "scored_questions": {
+                        "mc-1": {
+                            "question_id": "mc-1",
+                            "status": "correct",
+                            "is_correct": True,
+                            "review_required": False,
+                            "marked_bubble_labels": ["B"],
+                            "correct_bubble_label": "B",
+                            "resolved_bubble_labels": ["B"],
+                            "marked_choice_keys": ["choice-b"],
+                            "correct_choice_key": "choice-b",
+                        },
+                    },
+                },
+                {
+                    "scan_id": "page-b.png",
+                    "checksum": checksum_b,
+                    "status": "matched",
+                    "failure_reason": None,
+                    "page_number": 2,
+                    "fallback_page_code": "PAGE-2-CODE",
+                    "scored_questions": {
+                        "mc-1": {
+                            "question_id": "mc-1",
+                            "status": "incorrect",
+                            "is_correct": False,
+                            "review_required": False,
+                            "marked_bubble_labels": ["A"],
+                            "correct_bubble_label": "B",
+                            "resolved_bubble_labels": ["A"],
+                            "marked_choice_keys": ["choice-a"],
+                            "correct_choice_key": "choice-b",
+                        },
+                    },
+                },
+            ],
+            "summary": {
+                "total_scans": 2,
+                "matched": 2,
+                "unmatched": 0,
+                "ambiguous": 0,
+                "review_required": 0,
+            },
+        }
+
+        with self.assertRaises(Exception):
+            persist(
+                manifest=manifest,
+                exam_instance_id=self.exam_instance_id,
+                connection=self.connection,
+            )
+
+        # The transaction must have rolled back — no session should exist.
+        count = self.connection.execute(
+            "SELECT count(*) AS n FROM mc_scan_sessions "
+            "WHERE exam_instance_id = %s",
+            (self.exam_instance_id,),
+        ).fetchone()["n"]
+        self.assertEqual(
+            count,
+            0,
+            "A manifest with the same question_id on two different pages must be "
+            "rejected by the DB constraint and rolled back atomically.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

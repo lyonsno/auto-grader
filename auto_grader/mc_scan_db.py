@@ -113,12 +113,13 @@ def persist_scan_session_to_db(
                 for question_id, outcome in scored_questions.items():
                     connection.execute(
                         "INSERT INTO mc_question_outcomes "
-                        "(mc_scan_page_id, question_id, status, is_correct, "
+                        "(mc_scan_page_id, mc_scan_session_id, question_id, status, is_correct, "
                         " review_required, marked_bubble_labels, resolved_bubble_labels, "
                         " correct_bubble_label, correct_choice_key, marked_choice_keys) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         (
                             page_id,
+                            session_id,
                             question_id,
                             outcome["status"],
                             outcome["is_correct"],
