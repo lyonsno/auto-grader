@@ -32,6 +32,7 @@ import os
 import random
 import re
 import select
+import signal
 import sys
 import termios
 import threading
@@ -4686,25 +4687,41 @@ def main() -> int:
         # rendered height could exceed the terminal's row count, but
         # render() now caps the history panel via a height budget so
         # the total output never exceeds console.size.height.
-        # Track terminal size so we can detect resizes and clear the
-        # alt-screen before Rich repaints.  Rich's alt-screen path
-        # sends Control.home() (cursor to 0,0) but does NOT clear
-        # the screen, so stale content from the previous frame
-        # persists below the new content when the terminal shrinks or
-        # panels reflow to a different height.
-        _prev_term_size: tuple[int, int] | None = None
+        # Clear the alt-screen before every repaint.  Rich's alt-screen
+        # Live path sends Control.home() (cursor to 0,0) then overwrites
+        # from the top, but does NOT clear the screen.  When the terminal
+        # resizes, the previous frame may occupy more or fewer rows than
+        # the new frame, leaving stale ghost content visible.
+        #
+        # Clearing every frame (not just on resize) is safe in alt-screen
+        # mode: WezTerm and other modern terminals double-buffer the
+        # alternate screen, so the clear + repaint happens atomically
+        # from the user's perspective — no visible flicker.  The cost is
+        # a handful of extra bytes per frame (ESC[2J = 4 bytes at ~8 FPS
+        # = 32 B/s, negligible).
+        # Flag set by SIGWINCH — forces an immediate clear + repaint
+        # on the next animation tick even during idle polling.
+        _resize_pending = threading.Event()
+
+        _prev_sigwinch = signal.getsignal(signal.SIGWINCH)
+
+        def _on_sigwinch(signum, frame):
+            # Clear the screen immediately so any stale content from
+            # the previous frame doesn't linger until the next tick.
+            sys.stdout.write("\033[2J")
+            sys.stdout.flush()
+            _resize_pending.set()
+            # Chain to any previous handler (e.g. Rich's own).
+            if callable(_prev_sigwinch):
+                _prev_sigwinch(signum, frame)
+
+        signal.signal(signal.SIGWINCH, _on_sigwinch)
 
         def _live_update(renderable):
-            """Update the Live display, clearing the alt-screen first
-            if the terminal size changed since the last frame."""
-            nonlocal _prev_term_size
-            cur = (console.size.width, console.size.height)
-            if _prev_term_size is not None and cur != _prev_term_size:
-                # Terminal resized — clear the entire alt-screen so
-                # Rich doesn't paint over stale ghost content.
-                sys.stdout.write("\033[2J")
-                sys.stdout.flush()
-            _prev_term_size = cur
+            """Clear the alt-screen then update the Live display."""
+            _resize_pending.clear()
+            sys.stdout.write("\033[2J")
+            sys.stdout.flush()
             live.update(renderable, refresh=True)
 
         with Live(
@@ -4901,6 +4918,11 @@ def main() -> int:
             pass
         try:
             fifo.close()
+        except Exception:
+            pass
+        # Restore SIGWINCH handler.
+        try:
+            signal.signal(signal.SIGWINCH, _prev_sigwinch)
         except Exception:
             pass
         if stdin_fd is not None and saved_termios is not None:
