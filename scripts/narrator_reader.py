@@ -919,6 +919,19 @@ def _compute_inline_image_cell_dimensions(
 #: than accumulating. Bounded memory footprint on the terminal side.
 _KITTY_IMAGE_ID = 1
 
+
+def _kitty_delete_image(image_id: int, stream=None) -> None:
+    """Delete a Kitty graphics image from the terminal's cache.
+
+    Emits ``ESC _G a=d,d=I,i=<id> ESC \\`` which removes the image
+    with the given ID.  ``d=I`` means "delete by image ID" (as
+    opposed to other delete modes like "all images" or "by position").
+    """
+    if stream is None:
+        stream = sys.stdout
+    stream.write(f"\x1b_Ga=d,d=I,i={image_id}\x1b\\")
+    stream.flush()
+
 #: Base64 chunks must be at most this many characters. Kitty protocol
 #: spec: "chunk size of 4096 for the base64-encoded data".
 _KITTY_CHUNK_SIZE = 4096
@@ -4472,6 +4485,36 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
+    def retransmit_kitty_image(self) -> None:
+        """Delete and re-upload the Kitty graphics image.
+
+        Called on terminal resize to flush the terminal's image
+        compositing layer.  The terminal caches rendered image pixels
+        independently of the character cell grid — a screen clear
+        (ESC[2J) removes text but can leave image pixels behind.
+        Deleting and re-transmitting the image forces the terminal
+        to re-render the image at the correct geometry.
+        """
+        if not self._kitty_graphics_supported:
+            return
+        if self.focus_preview_png is None:
+            return
+        if self.focus_preview_kitty_renderable is None:
+            return
+        stream = self._console.file if self._console is not None else sys.stdout
+        # Delete the old image from the terminal cache.
+        _kitty_delete_image(_KITTY_IMAGE_ID, stream=stream)
+        # Re-transmit.
+        try:
+            chunks = _build_kitty_transmit_chunks(
+                self.focus_preview_png, _KITTY_IMAGE_ID
+            )
+            for chunk in chunks:
+                stream.write(chunk)
+            stream.flush()
+        except Exception:
+            pass  # Next focus_preview event will recover.
+
     def on_focus_preview(
         self,
         png_bytes: bytes,
@@ -4727,6 +4770,8 @@ def main() -> int:
 
         signal.signal(signal.SIGWINCH, _on_sigwinch)
 
+        _last_paint_size: tuple[int, int] | None = None
+
         def _live_update():
             """Render, clear, and paint one frame.
 
@@ -4738,10 +4783,22 @@ def main() -> int:
             we have (a briefly stale frame is better than dropping
             a frame entirely).
 
+            On resize, Kitty graphics images are deleted and
+            re-transmitted so the terminal's image compositing layer
+            doesn't retain stale pixels from the previous geometry.
+
             All stdout writes happen here on the animation thread,
             never from the signal handler, so there is no interleaving.
             """
+            nonlocal _last_paint_size
             _resize_pending.clear()
+
+            cur_size = (console.size.width, console.size.height)
+            resized = _last_paint_size is not None and cur_size != _last_paint_size
+
+            if resized:
+                display.retransmit_kitty_image()
+
             renderable = None
             for _attempt in range(3):
                 size_before = (console.size.width, console.size.height)
@@ -4753,6 +4810,7 @@ def main() -> int:
             sys.stdout.write("\033[2J\033[H")
             sys.stdout.flush()
             live.update(renderable, refresh=True)
+            _last_paint_size = (console.size.width, console.size.height)
 
         # Enter alt-screen manually.  We use screen=False on Live so
         # Rich doesn't wrap our renderable in Screen (which pads to a
