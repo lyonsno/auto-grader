@@ -425,6 +425,10 @@ _SHIMMER_PEAK_RGB = (235, 215, 175)
 _EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
                                      # we want warm structural emphasis
                                      # without a full verdict signal
+_ALERT_ACCENT_RGB = (220, 100, 72)   # warmer vermilion for alert labels
+                                     # (Review needed, Professor mismatch)
+                                     # — reads as "attention" against the
+                                     # standard ember explanation labels
 
 _SCOREBUG_BIG_DIGITS = {
     "0": ("╔═╗", "╠ ╣", "╚═╝"),
@@ -2057,10 +2061,17 @@ class PaintDryDisplay:
                     else "checkpoint"
                 )
                 label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
+                # Alert rows (review_marker, professor_mismatch) get a
+                # warmer vermilion accent; explanation rows keep ember.
+                label_rgb = (
+                    _ALERT_ACCENT_RGB
+                    if kind in ("review_marker", "professor_mismatch")
+                    else _EMBER_ACCENT_RGB
+                )
                 history_text.append(indent, style="grey50")
                 history_text.append(
                     label,
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    style=f"bold {_rgb_to_hex(label_rgb)}",
                 )
                 _apply_shimmer(
                     history_text, text, content_kind,
