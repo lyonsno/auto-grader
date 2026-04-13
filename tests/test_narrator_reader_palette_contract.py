@@ -19,39 +19,233 @@ def _load_narrator_reader():
 
 
 class NarratorReaderPaletteContract(unittest.TestCase):
-    def test_match_verdict_base_color_reads_cooler_than_warm_celadon(self):
+    def test_header_title_reads_as_deeper_wine_red_not_plain_orange(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._BASE_RGB["header"]
+
+        self.assertGreater(
+            red,
+            blue,
+            "header title should stay red-led rather than drifting fully violet",
+        )
+        self.assertGreater(
+            blue,
+            green,
+            "header title should now carry a bruised wine / aubergine undertone instead of reading as simple orange-red",
+        )
+        self.assertLess(
+            green,
+            75,
+            "header title should sit darker and less orange than the earlier persimmon pass",
+        )
+        self.assertGreaterEqual(
+            blue,
+            60,
+            "header title should bring some plum depth into the heading family",
+        )
+
+    def test_header_shimmer_peak_keeps_red_lead_with_plum_undertone(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._SHIMMER_KIND_PEAK_RGB["header"]
+
+        self.assertGreater(
+            red,
+            blue,
+            "header peak should still crest in burgundy-red rather than tipping fully violet",
+        )
+        self.assertGreater(
+            blue,
+            green,
+            "header peak should carry a visible plum undertone instead of flattening to plain red-orange",
+        )
+        self.assertLess(
+            green,
+            135,
+            "header peak should stay restrained and lacquered, not flare back toward orange glare",
+        )
+
+    def test_match_verdict_base_color_reads_as_indigo_steel_not_aqua(self):
         module = _load_narrator_reader()
         red, green, blue = module._BASE_RGB["topic_match"]
 
         self.assertGreater(
             blue,
-            red,
-            "match verdict should stay on the cool side, not read amber/wheat",
+            green,
+            "match verdict should land in the blue-forward family, not aqua",
         )
-        self.assertLessEqual(
-            abs(green - blue),
-            12,
-            "match verdict should read as a colder electric aqua, not mossy green",
+        self.assertGreater(
+            green,
+            red,
+            "match verdict should still stay steel-cool rather than pure violet",
+        )
+        self.assertLess(
+            green - red,
+            45,
+            "match verdict should be restrained and inky, not bright turquoise",
         )
 
-    def test_match_verdict_gets_its_own_shimmer_lift_and_cool_peak(self):
+    def test_status_rail_reads_as_warm_structural_auburn(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._BASE_RGB["status"]
+
+        self.assertGreater(
+            red,
+            green,
+            "status rail should move into the warm structural family",
+        )
+        self.assertGreater(
+            green,
+            blue,
+            "status rail should stay auburn/umber, not purple-burgundy",
+        )
+
+    def test_status_rail_pushes_darker_toward_coal_ember_umber(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._BASE_RGB["status"]
+
+        self.assertLess(
+            green,
+            80,
+            "status rail should sit deeper in the coal/umber band, not a rosy midtone",
+        )
+        self.assertLess(
+            blue,
+            50,
+            "status rail should stay out of pink-magenta territory and keep a dark ember base",
+        )
+
+    def test_status_rail_is_darker_than_header_title(self):
+        module = _load_narrator_reader()
+        status_red, status_green, status_blue = module._BASE_RGB["status"]
+        header_red, header_green, header_blue = module._BASE_RGB["header"]
+
+        self.assertLess(
+            status_red + status_green + status_blue,
+            header_red + header_green + header_blue,
+            "status rail should sit a step darker than the lacquer-red header title",
+        )
+
+    def test_match_verdict_is_darker_and_more_indigo_than_header_index(self):
+        module = _load_narrator_reader()
+        match_red, match_green, match_blue = module._BASE_RGB["topic_match"]
+        index_red, index_green, index_blue = module._BASE_RGB["header_index"]
+
+        self.assertLess(
+            match_red,
+            index_red,
+            "match verdict should sit deeper in the indigo family than the index blue",
+        )
+        self.assertLess(
+            match_green,
+            index_green,
+            "match verdict should be darker than the header-index accent, not identical",
+        )
+        self.assertLess(
+            match_blue,
+            index_blue,
+            "match verdict should complement the header-index blue rather than duplicate it",
+        )
+
+    def test_match_verdict_and_status_get_their_intended_shimmer_families(self):
         module = _load_narrator_reader()
         self.assertGreater(
             module._SHIMMER_KIND_INTENSITY["topic_match"],
             module._SHIMMER_KIND_INTENSITY["topic"],
-            "match verdict should shimmer slightly more than a generic topic",
+            "match verdict should still shimmer a little more than a generic topic",
         )
 
-        red, green, blue = module._SHIMMER_KIND_PEAK_RGB["topic_match"]
-        self.assertGreaterEqual(
-            blue,
+        match_red, match_green, match_blue = module._SHIMMER_KIND_PEAK_RGB["topic_match"]
+        self.assertGreater(match_blue, match_green)
+        self.assertGreater(match_green, match_red)
+
+        status_red, status_green, status_blue = module._SHIMMER_KIND_PEAK_RGB["status"]
+        self.assertGreater(status_red, status_green)
+        self.assertGreater(status_green, status_blue)
+
+    def test_undershoot_verdict_shifts_toward_wheat_ale_instead_of_hard_gold(self):
+        module = _load_narrator_reader()
+        red, green, blue = module._BASE_RGB["topic_undershoot"]
+
+        self.assertGreater(
+            red,
             green,
-            "match shimmer peak should borrow the cooler sky accent, not warm toward ochre",
+            "undershoot should stay warm-led rather than drifting olive",
         )
         self.assertGreater(
             green,
-            red,
-            "match shimmer peak should stay in the cool family",
+            blue,
+            "undershoot should still read as a warm wheat/ale family rather than pink or grey",
+        )
+        self.assertLess(
+            red - green,
+            42,
+            "undershoot should soften toward wheat/ale and stop reading like a failed gold signal",
+        )
+        self.assertGreaterEqual(
+            blue,
+            85,
+            "undershoot should carry more brown/amber depth than the earlier goldier pass",
+        )
+
+    def test_status_and_live_top_band_keep_dark_fire_vs_cool_wash_roles(self):
+        module = _load_narrator_reader()
+
+        self.assertLessEqual(
+            module._STATUS_BASE_VAL,
+            0.60,
+            "status rail should keep a darker body so the fiery edge has somewhere to glow from",
+        )
+        self.assertGreaterEqual(
+            module._LIVE_HUE_CENTER_DEG,
+            190,
+            "cool live band should stay on the cool side of the spectrum even after pulling in more moss green",
+        )
+
+    def test_live_field_is_tempered_below_the_old_hot_pass(self):
+        module = _load_narrator_reader()
+
+        self.assertLessEqual(
+            module._LIVE_BASE_SAT,
+            0.74,
+            "live field should be calmer than the earlier hotter saturation pass",
+        )
+        self.assertLessEqual(
+            module._LIVE_BASE_VAL,
+            0.92,
+            "live field should be slightly dimmer than the earlier glare-prone pass",
+        )
+
+    def test_top_band_counterflow_cycles_are_materially_faster_than_the_slow_pass(self):
+        module = _load_narrator_reader()
+
+        self.assertLessEqual(
+            module._LIVE_UNDULATION_CYCLE_S,
+            4.0,
+            "live counterflow should move materially faster than the slow 6.0s pass",
+        )
+        self.assertLessEqual(
+            module._STATUS_UNDULATION_CYCLE_S,
+            6.2,
+            "status counterflow should stay in the visibly-moving range even after easing back",
+        )
+        self.assertGreater(
+            module._STATUS_UNDULATION_CYCLE_S,
+            module._LIVE_UNDULATION_CYCLE_S,
+            "status should remain the slower top-band motion after the FPS bump",
+        )
+
+    def test_slower_animation_families_are_eased_back_a_bit(self):
+        module = _load_narrator_reader()
+
+        self.assertGreaterEqual(
+            module._SHIMMER_DEFAULT_CYCLE_S,
+            3.1,
+            "the slower default shimmer should ease back a bit as redraw FPS increases",
+        )
+        self.assertGreaterEqual(
+            module._STATUS_UNDULATION_CYCLE_S,
+            5.8,
+            "status should stay the slower top-band motion after the FPS bump",
         )
 
 

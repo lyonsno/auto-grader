@@ -33,8 +33,10 @@ import random
 import re
 import select
 import sys
+import termios
 import threading
 import time
+import tty
 from collections import deque
 from pathlib import Path
 from typing import Deque
@@ -57,61 +59,6 @@ if str(_REPO_ROOT) not in sys.path:
 
 from auto_grader.shimmer_phases import ShimmerPhaseState  # noqa: E402
 
-from scripts.focus_preview_renderer import (  # noqa: E402
-    FocusPreviewInlineImage,
-    FocusPreviewKittyImage,
-    FocusPreviewLoadingBand,
-    _build_focus_preview_pixels,
-    _build_iterm2_inline_image_sequence,
-    _build_kitty_place_sequence,
-    _build_kitty_transmit_chunks,
-    _compute_inline_image_cell_dimensions,
-    _emit_band_border_row,
-    _emit_band_texture_only_row,
-    _emit_band_texture_span,
-    _focus_preview_budget,
-    _otsu_threshold,
-    _query_terminal_cell_aspect,
-    _render_focus_preview_pending,
-    _render_focus_preview_pixels,
-    _render_focus_preview_steady,
-    _sample_preview_rgb,
-    _scaled_preview_size,
-    _supports_inline_images,
-    _supports_kitty_graphics,
-    _texture_cell,
-    _BAND_EXTRA_ROWS,
-    _BRAILLE_BASE,
-    _BRAILLE_LEFT_COL,
-    _BRAILLE_RIGHT_COL,
-    _DEFAULT_TERMINAL_CELL_ASPECT,
-    _FOCUS_PREVIEW_BG_RGB,
-    _FOCUS_PREVIEW_COMPANION_SCALE,
-    _FOCUS_PREVIEW_HARD_INK_RGB,
-    _FOCUS_PREVIEW_HARD_PAPER_RGB,
-    _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
-    _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
-    _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
-    _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
-    _FOCUS_PREVIEW_OVERLAY_CHARS,
-    _FOCUS_PREVIEW_OVERLAY_RGBS,
-    _FOCUS_PREVIEW_PAPER_RGB,
-    _FOCUS_PREVIEW_PENDING_FPS,
-    _INLINE_IMAGE_CELL_HEIGHT,
-    _INLINE_IMAGE_MAX_CELL_WIDTH,
-    _KITTY_CHUNK_SIZE,
-    _KITTY_IMAGE_ID,
-    _SOLID_COLUMNS,
-    _TEXTURE_ACCENT_RGB,
-    _TEXTURE_BG_RGB,
-    _TEXTURE_EDGE_FLOOR,
-)
-# Re-export focus_preview_renderer utilities that were originally defined here.
-# The _lerp_rgb, _clamp, _pixel_luma functions are now only in the renderer module.
-from scripts.focus_preview_renderer import _clamp  # noqa: E402, F401
-from scripts.focus_preview_renderer import _lerp_rgb  # noqa: E402, F401
-from scripts.focus_preview_renderer import _pixel_luma  # noqa: E402, F401
-
 
 # Matches the elapsed-time prefix on after-action topic lines:
 #   "47s · Grader: 2/2 (matched). Prof: 2/2. · Even the kid called this."
@@ -126,21 +73,74 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 # cool note that's structural metadata, not status.
 _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
+# Keep the full structured-row family recorded locally near the reader
+# surface, even while implementation is still partial, so scrollback
+# archiving and in-pane rendering share one stable vocabulary.
+_LEGIBILITY_STRUCTURED_ROW_LABELS = {
+    "basis": "Basis",
+    "ambiguity": "Ambiguity",
+    "credit_preserved": "Credit preserved for",
+    "deduction": "Deduction",
+    "review_marker": "Review needed",
+    "professor_mismatch": "Professor mismatch",
+}
+_LEGIBILITY_STRUCTURED_ROW_ORDER = {
+    "basis": 1,
+    "ambiguity": 2,
+    "credit_preserved": 3,
+    "deduction": 4,
+    "review_marker": 5,
+    "professor_mismatch": 6,
+}
+_LEGIBILITY_STRUCTURED_ROW_KINDS = frozenset(_LEGIBILITY_STRUCTURED_ROW_LABELS)
 
-_MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
+
+_MAX_HISTORY_LINES = 500  # cap so we don't grow unbounded; raised from 90
+                          # because the viewport now lets the operator scroll
+                          # through all retained history, so the deque cap is
+                          # the real scroll-depth limit. 500 entries covers a
+                          # full exam run with headroom and is cheap in memory.
 _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # not logical entries. Keep the old overall
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
-
-# Focus preview constants moved to scripts/focus_preview_renderer.py
-# and re-imported above.
+_FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
+_FOCUS_PREVIEW_MAX_WIDTH_CHARS = 116
+_FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
+_FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
+_FOCUS_PREVIEW_COMPANION_SCALE = 0.69
+_FOCUS_PREVIEW_PENDING_FPS = 8.0
+_FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
+_FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)  # used only by the transition
+                                             # (pending) glyph overlay; the
+                                             # steady-state renderer uses
+                                             # the harder colors below
+# Legibility-first steady-state palette. High luminance delta against the
+# panel background so binary-thresholded cells read as page, not as mush.
+# Aesthetics are explicitly deferred — pick whatever reads cleanest first.
+_FOCUS_PREVIEW_HARD_INK_RGB = (50, 54, 62)
+_FOCUS_PREVIEW_HARD_PAPER_RGB = (238, 232, 220)
+_FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
+_FOCUS_PREVIEW_OVERLAY_RGBS = (
+    (108, 122, 154),
+    (132, 115, 86),
+    (94, 116, 106),
+)
 _HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
                                    # descending deeper into the stack before
                                    # it settles at the floor.
 _HISTORY_TIER_DIM_EASE_POWER = 1.72  # fast initial drop, then a slower tail
                                      # instead of a purely linear ramp.
+
+# The priority-fill budget counts LOGICAL ENTRIES (headers, topics,
+# narrator lines). The viewport's visible-row budget counts VISUAL
+# ROWS (accounting for wrapped long entries). These are approximately
+# equal for short entries but diverge when entries wrap. The visual-
+# row budget should be at least as large as the entry budget so the
+# viewport can display all entries the priority filter retains.
+_PRIORITY_FILL_ENTRY_BUDGET = _VISIBLE_HISTORY_ROWS
+_VIEWPORT_VISIBLE_ROWS = _VISIBLE_HISTORY_ROWS * 2  # headroom for wrapping
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
@@ -173,31 +173,34 @@ _HISTORY_GROUP_DIM_STEP = 0.05  # each successive thought line under a header
                                  # take longer to settle so deeper within-item
                                  # stacks still read as a gradient instead of
                                  # flattening by line 6.
+_HISTORY_TIER_EARLY_DROP_SCALE = 1.08  # sharpen the first 1-2 descendants so
+                                        # short blocks still show the old
+                                        # abrupt initial falloff before the
+                                        # later asymptote takes over
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
-# Sumi-e palette: a Japanese garden floor in two desaturated rows
-# (sage moss + dust earth), with persimmon (柿色) headers, indigo
-# (藍色) [item N/M] markers, and bright garden colors — celadon (青磁),
-# vermilion (朱色), ochre (黄土) — landing as full-saturation accents
-# on verdict topics. The narration alternation now carries the
-# garden palette structurally (instead of bone-on-bone, which was
-# too subtle to read), so celadon/vermilion/ochre exist on screen
-# regardless of which verdicts the grader produces. Bone survives
-# as the live-field background, the unknown-verdict topic fallback,
-# and the global shimmer-peak highlight color.
+# Sumi-e palette: warm lacquered headers and verdict accents sitting on
+# a bone-led history field. The item body should read more like faded ink
+# on paper than like a second band of little colored widgets, so the rows
+# beneath each header start warm and then tip into a moss-inflected second
+# lane as the body descends. That keeps the first descendant a stable anchor
+# while restoring the older moss/bone cadence in short item blocks.
 _BASE_RGB = {
-    "line": (135, 160, 145),     # muted celadon — sage moss row,
-                                  # desaturated cousin of topic_match
-                                  # so the verdict variant still pops
-    "line_alt": (175, 160, 130), # muted ochre — dust earth row,
-                                  # desaturated cousin of topic_undershoot
+    "line": (158, 150, 140),     # warm bone body row — the returning warm
+                                  # lane for deeper descendants should stay
+                                  # dimmer than the moss checkpoint tier
+                                  # above it so the stack keeps falling away
+    "line_alt": (138, 154, 142), # muted moss companion — visible enough
+                                  # that the alternate lane actually reads
+                                  # in short 2-3 row blocks
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
-    "header": (186, 82, 52),     # lacquered persimmon red — darker and
-                                  # redder than the earlier orange pass,
-                                  # so structural titles read like warm
-                                  # lacquer instead of pumpkin glow
+    "header": (156, 52, 62),     # lacquered burgundy — red-led enough to
+                                  # read warmer at a glance, but still dark
+                                  # enough that the plum undertone shows up
+                                  # as a secondary accent rather than the
+                                  # whole header drifting purple
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
@@ -216,28 +219,34 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
-    "checkpoint": (138, 156, 142),        # anchored moss checkpoint —
-                                          # checkpoints should feel like
-                                          # compressed descendants of the
-                                          # live history rows, not a separate
-                                          # steel annotation layer
-    "checkpoint_alt": (178, 162, 132),    # anchored bone-earth checkpoint —
-                                          # alternating companion to the
-                                          # moss checkpoint tone so durable
-                                          # history keeps the familiar
-                                          # moss/bone cadence
+    "topic_truncated": (104, 100, 92),    # dimmed ash-bone placeholder —
+                                          # fallback/truncated after-action
+                                          # lines should read as degraded
+                                          # verdict placeholders, not as
+                                          # full-strength match topics
+    "checkpoint": (162, 152, 138),        # anchored warm bone checkpoint —
+                                          # still a synthesis line, but
+                                          # pulled down toward the body so
+                                          # it stays inside the same paper/ink
+                                          # family instead of floating above it
+    "checkpoint_alt": (146, 156, 144),    # moss-inflected companion — close
+                                          # enough to the body rows that the
+                                          # cool lane reads as texture rather
+                                          # than a separate annotation band
     "checkpoint_mark": (162, 114, 82),    # embered rust notch — structural
                                           # mark for checkpoint rows so the
                                           # checkpoint doesn't begin with a
                                           # dead grey gutter
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
-    "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
+    "topic_undershoot": (188, 154, 98),   # wheat ale — too strict,
+                                          # softened away from signal-gold
+                                          # toward a browner paper-earth
     # Header dash — vermilion stroke at the start of every item header.
     # Gives vermilion a STRUCTURAL home (was the only verdict color
     # appearing purely as a verdict indicator) and pulses in sync with
     # the rest of the header so the painting reads as one stroke per
     # item: vermilion dash → indigo index → persimmon title.
-    "header_dash": (210, 90, 65),
+    "header_dash": (210, 118, 78),
 }
 # Per-kind shimmer intensity multiplier — applied on top of layer_recency.
 # Headers get cranked up so section markers really pulse, while normal
@@ -253,6 +262,9 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
+    "topic_truncated": 0.82,    # visibly dimmer than a real verdict line
+                                 # so fallback topics read as degraded
+                                 # placeholders, not normal topics
     "checkpoint": 0.92,
     "checkpoint_alt": 0.92,
     "checkpoint_mark": 0.96,
@@ -278,22 +290,26 @@ _SHIMMER_KIND_PEAK_RGB = {
     "live": (245, 155, 80),       # persimmon ember — live field warms
                                    # toward the same lacquer-red as the
                                    # headers as the wave passes
-    "header": (232, 136, 102),    # fired lacquer red — brighter crest,
-                                   # but still clearly red-led rather than
-                                   # tipping back into orange
+    "header": (214, 104, 122),    # fired burgundy crest — visibly redder
+                                   # than the base, but still carrying plum
+                                   # on the high end so the header gets a
+                                   # subtle internal wine/plum undulation
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
-    "line": (175, 215, 180),      # glazed celadon — sage moss row
-                                   # brightens toward kiln-glaze green
-    "line_alt": (225, 200, 150),  # fired ochre — dust earth row
-                                   # brightens toward kiln-fired earth
+    "line": (178, 170, 160),      # lifted warm bone — still warmer than the
+                                   # moss lane, but dim enough that the
+                                   # third descendant does not bounce back up
+    "line_alt": (168, 188, 178),  # lifted muted moss companion
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "checkpoint": (176, 204, 180),      # brighter celadon crest —
-                                        # still in the history family, just
-                                        # a touch more settled than live rows
-    "checkpoint_alt": (222, 198, 150),  # brighter bone-earth crest for the
+    "topic_truncated": (124, 118, 108), # lifted ash-bone crest — still
+                                        # alive, but clearly less assertive
+                                        # than a real verdict topic
+    "checkpoint": (188, 178, 162),      # lifted warm-bone crest for
+                                        # synthesis rows that should still
+                                        # sit with the history body
+    "checkpoint_alt": (166, 178, 160),  # softened moss companion for the
                                         # alternating checkpoint lane
     "checkpoint_mark": (226, 166, 114), # brighter ember crest for the
                                         # checkpoint mark, tied to the
@@ -304,8 +320,9 @@ _SHIMMER_KIND_PEAK_RGB = {
                                         # darker coal base
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
-    "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
-    "header_dash": (250, 140, 105),      # fired vermilion — the dash
+    "topic_undershoot": (228, 192, 136), # wheat-lit earth — warm,
+                                         # but no longer a bright gold flare
+    "header_dash": (234, 152, 108),      # fired apricot-vermilion — the dash
                                           # brightens toward the same
                                           # bright lacquer that the
                                           # topic_overshoot verdict uses,
@@ -321,6 +338,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header_dash",
     "topic",
     "topic_match",
+    "topic_truncated",
     "checkpoint",
     "checkpoint_alt",
     "checkpoint_mark",
@@ -355,13 +373,17 @@ _LIVE_PHASE_OFFSET_RAD = 0.0
 _LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
                                     # shimmer sweep, so the top band feels
                                     # like its own counter-current
-_LIVE_BASE_SAT = 0.34              # still soft, but with a more visible wash
-_LIVE_BASE_VAL = 0.86              # slightly less white, a little more pigment
+_LIVE_BASE_SAT = 0.28              # softened back down so the cool lane reads
+                                   # like washed mineral color, not electric light
+_LIVE_BASE_VAL = 0.80              # dimmer for legibility and to sit inside the
+                                   # paper/ink world instead of above it
 _LIVE_WARM_HUE_CENTER_DEG = 22     # yellow-red sibling, friendlier than a hot
                                    # alarm band but more chromatic than before
 _LIVE_WARM_HUE_RANGE_DEG = 18
-_LIVE_WARM_BASE_SAT = 0.30
-_LIVE_WARM_BASE_VAL = 0.87
+_LIVE_WARM_BASE_SAT = 0.34         # a touch more pigment so the warm lane reads
+                                   # as color instead of almost-white
+_LIVE_WARM_BASE_VAL = 0.82         # still pastel, but no longer teasing the eye
+                                   # from the edge of white
 _LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH = 0.30
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
@@ -440,18 +462,18 @@ _EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
                                      # without a full verdict signal
 
 _SCOREBUG_BIG_DIGITS = {
-    "0": ("╔═╗", "║ ║", "╚═╝"),
-    "1": ("╔╗ ", " ║ ", " ║ "),
+    "0": ("╔═╗", "╠ ╣", "╚═╝"),
+    "1": ("╔╗ ", " ║ ", " ╹ "),
     "2": ("╔═╗", "╔═╝", "╚═ "),
     "3": ("╔═╗", " ═╣", "╚═╝"),
-    "4": ("║ ║", "╚═╣", "  ║"),
+    "4": ("╔ ╗", "╚═╣", "  ╹"),
     "5": ("╔═ ", "╚═╗", "╚═╝"),
     "6": ("╔═ ", "╠═╗", "╚═╝"),
     "7": ("╔═╗", "╔╝ ", "║  "),
     "8": ("╔═╗", "╠═╣", "╚═╝"),
     "9": ("╔═╗", "╚═╣", "  ╝"),
     ".": ("   ", "   ", " ▪ "),
-    "/": ("   ", " ╱ ", "╱  "),
+    "/": ("   ", " ╱ ", "   "),
     "-": ("   ", "═══", "   "),
 }
 
@@ -575,23 +597,60 @@ def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
     )
 
 
+def _append_header_title(text: Text, title: str, phase: float) -> None:
+    """Keep the scene-setter title flat white so the color lives in the field below."""
+    del phase
+    text.append(title, style="bold bright_white")
+
+
 def _append_scorebug_value_row(
     row: Text,
     content: str,
     *,
     strong_style: str,
     mid_style: str,
+    texture_style: str,
+    texture_seed: int,
 ) -> None:
-    """Append one scoreboard value row with weighted two-tone strokes."""
+    """Append one scoreboard value row with weighted strokes and sparse field texture."""
     strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "═", "▪"}
-    mid_chars = {"╱", " "}
-    for ch in content:
+    mid_chars = {"╱"}
+    for idx, ch in enumerate(content):
         if ch in strong_chars:
             row.append(ch, style=strong_style)
         elif ch in mid_chars:
             row.append(ch, style=mid_style)
+        elif ch == " ":
+            texture_char = _scorebug_texture_char(idx, texture_seed)
+            if texture_char == " ":
+                row.append(" ", style=texture_style)
+            else:
+                row.append(texture_char, style=texture_style)
         else:
             row.append(ch, style=strong_style)
+
+
+def _scorebug_texture_char(slot_index: int, seed: int) -> str:
+    """Return a sparse deterministic texture character for the scorebug field.
+
+    The field should read like low-frequency terminal texture, not like a
+    repeating wallpaper. Keep density low and avoid strong vertical glyphs.
+    """
+    group = slot_index // 3
+    within = slot_index % 3
+    mixed = (group * 17) + (seed * 13) + ((group // 4) * 7)
+    bucket = mixed % 19
+    if bucket in {0, 1, 2} and within in {1, 2}:
+        return "░"
+    if seed == 1 and bucket in {3, 4} and within in {0, 2}:
+        return "·"
+    if bucket in {5, 6} and within in {0, 1}:
+        return "▒"
+    if bucket in {9, 12, 15} and within == 1:
+        return "·"
+    if bucket == 17 and within in {0, 1, 2}:
+        return "┈"
+    return " "
 
 
 def _live_placeholder(now_s: float) -> str:
@@ -619,7 +678,10 @@ def _history_tier_dim_factor(layer_index: int) -> float:
         return 1.0
     if layer_index >= _HISTORY_TIER_DIM_FLOOR_DEPTH:
         return _HISTORY_TIER_DIM_MIN
-    t = layer_index / _HISTORY_TIER_DIM_FLOOR_DEPTH
+    t = min(
+        1.0,
+        (layer_index / _HISTORY_TIER_DIM_FLOOR_DEPTH) * _HISTORY_TIER_EARLY_DROP_SCALE,
+    )
     eased = (1.0 - t) ** _HISTORY_TIER_DIM_EASE_POWER
     return _HISTORY_TIER_DIM_MIN + ((1.0 - _HISTORY_TIER_DIM_MIN) * eased)
 
@@ -627,12 +689,15 @@ def _history_tier_dim_factor(layer_index: int) -> float:
 def _render_layer_index(kind: str, group_depth: int) -> int:
     """Return the effective fade layer for a history entry.
 
-    Only narrator thought lines should sink within an item block.
-    Structural lines such as headers and resolution/topic lines stay
-    at full strength so the eye can keep finding the question/result
-    anchors quickly.
+    Headers and verdict/topic lines stay on the strong anchor tier so
+    the eye can keep finding the item and its outcome quickly. The body
+    beneath them should descend in value together: structured rows,
+    checkpoints, and narrator lines all participate in the same local
+    fade so the history feels like one breathing paragraph again.
     """
-    return group_depth if kind == "line" else 0
+    if kind in {"header", "topic"}:
+        return 0
+    return max(1, group_depth - 1)
 
 
 def _message_requires_immediate_refresh(msg_type: str) -> bool:
@@ -642,19 +707,1409 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
     idle and active motion feel consistent. Only boundary moments that would
     feel laggy at 12 FPS get an immediate forced refresh.
     """
-    return msg_type in {"session_meta", "focus_preview", "wrap_up", "end"}
+    return msg_type in {
+        "session_meta",
+        "focus_preview",
+        "wrap_up",
+        "basis",
+        "review_marker",
+        "end",
+    }
+
+
+def _focus_preview_budget(
+    term_width: int | None,
+    *,
+    source_width_px: int | None = None,
+    source_height_px: int | None = None,
+) -> tuple[int, int]:
+    """Return a terminal-aware preview raster budget.
+
+    The preview should feel like a real companion surface, not a
+    postage stamp. Use most of the terminal width while leaving enough
+    margin that the panel still breathes, but let high-detail crops
+    earn a denser raster than tiny crops on the same terminal.
+    """
+    if term_width is None or term_width <= 0:
+        return _FOCUS_PREVIEW_MIN_WIDTH_CHARS, _FOCUS_PREVIEW_MIN_HEIGHT_ROWS
+    available_width = min(
+        _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
+        int(round((term_width - 8) * _FOCUS_PREVIEW_COMPANION_SCALE)),
+    )
+    detail_factor = 1.0
+    if (
+        source_width_px is not None
+        and source_height_px is not None
+        and source_width_px > 0
+        and source_height_px > 0
+    ):
+        source_area = source_width_px * source_height_px
+        detail_factor = _clamp(
+            math.sqrt(source_area / float(900 * 500)),
+            0.35,
+            1.0,
+        )
+    width_chars = max(
+        _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
+        int(
+            round(
+                _FOCUS_PREVIEW_MIN_WIDTH_CHARS
+                + ((available_width - _FOCUS_PREVIEW_MIN_WIDTH_CHARS) * detail_factor)
+            )
+        ),
+    )
+    if (
+        source_width_px is not None
+        and source_height_px is not None
+        and source_width_px > 0
+        and source_height_px > 0
+    ):
+        source_aspect = source_height_px / source_width_px
+        height_target = int(round(width_chars * source_aspect * 0.46))
+    else:
+        height_target = int(round(width_chars * 0.24))
+    height_rows = max(
+        _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
+        min(_FOCUS_PREVIEW_MAX_HEIGHT_ROWS, height_target),
+    )
+    return width_chars, height_rows
+
+
+# ---------------------------------------------------------------------
+# Inline image rendering path (iTerm2 OSC 1337 protocol).
+#
+# The half-block renderer below is the fallback for terminals that
+# can't do image escapes. On WezTerm and iTerm2, we take the much
+# simpler and strictly-more-legible path: hand the focus preview PNG
+# directly to the terminal via the iTerm2 inline image escape sequence
+# and let the terminal rasterize it into screen pixels at the requested
+# cell span.
+#
+# Integration with Rich: the inline image is wrapped in a custom Rich
+# Renderable (`FocusPreviewInlineImage`) that yields the escape
+# sequence plus enough blank rows to reserve the image's visual
+# vertical footprint. Rich thinks it's rendering N rows of padding
+# and positions the next panel below where the terminal has drawn
+# the image. No Live-region splitting needed.
+# ---------------------------------------------------------------------
+
+#: Cell height the inline image path targets. Matches the half-block
+#: renderer's typical panel height so the layout doesn't shift when
+#: the path switches.
+_INLINE_IMAGE_CELL_HEIGHT = 18
+
+#: Max cell width the inline image path will request. Companion-scale
+#: similar to the half-block renderer but a bit more generous because
+#: real images tolerate larger panels aesthetically.
+_INLINE_IMAGE_MAX_CELL_WIDTH = 140
+
+#: Fallback terminal cell aspect ratio (height / width) used when
+#: the terminal's real cell dimensions can't be queried via CSI
+#: 16t. Most monospace fonts at common sizes fall in [2.0, 2.3].
+#: The Kitty place command is aspect-preserving, so if this
+#: fallback is wrong the image will letterbox inside the box —
+#: tune at the deployment level or (better) ensure the terminal
+#: supports CSI 16t query so we get the real value at startup.
+_DEFAULT_TERMINAL_CELL_ASPECT = 2.1
+
+
+def _build_iterm2_inline_image_sequence(
+    png_bytes: bytes,
+    *,
+    cell_width: int,
+    cell_height: int,
+) -> str:
+    """Return an iTerm2 OSC 1337 File= escape sequence that embeds the
+    given PNG at the requested cell dimensions.
+
+    Format::
+
+        ESC ] 1337 ; File = inline=1;width=<W>;height=<H>;preserveAspectRatio=1 : <base64> BEL
+
+    WezTerm, iTerm2, and a few other terminals render this as a real
+    raster image at the requested footprint. Unsupported terminals
+    will either show the sequence as garbled text or (more commonly)
+    swallow it silently. Capability detection via
+    `_supports_inline_images` gates whether to emit this at all.
+    """
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    args = (
+        f"inline=1;width={cell_width};height={cell_height};preserveAspectRatio=1"
+    )
+    return f"\x1b]1337;File={args}:{b64}\x07"
+
+
+def _compute_inline_image_cell_dimensions(
+    crop_width_px: int,
+    crop_height_px: int,
+    *,
+    max_cell_height: int = _INLINE_IMAGE_CELL_HEIGHT,
+    max_cell_width: int = _INLINE_IMAGE_MAX_CELL_WIDTH,
+    terminal_cell_aspect: float = _DEFAULT_TERMINAL_CELL_ASPECT,
+) -> tuple[int, int]:
+    """Compute the (cell_width, cell_height) footprint for an inline
+    image given its source pixel dimensions and the terminal's
+    real cell-pixel aspect ratio.
+
+    Strategy: start from max_cell_height, derive cell_width from
+    the image aspect and cell aspect. If cell_width exceeds
+    max_cell_width, clamp it and shrink cell_height proportionally
+    so the image tight-fits the clamped width.
+
+    ``terminal_cell_aspect`` is ``cell_height_px / cell_width_px``
+    of the terminal's font as rendered on screen. For typical
+    monospace fonts this is around 2.0-2.3. Pass the queried
+    value from ``_query_terminal_cell_aspect`` for accuracy, or
+    the default constant as a fallback.
+    """
+    if crop_width_px <= 0 or crop_height_px <= 0:
+        return (max(1, max_cell_width), max(1, max_cell_height))
+    crop_aspect = crop_width_px / crop_height_px
+    cell_height = max(1, max_cell_height)
+    # cell_width / cell_height = image_aspect × terminal_cell_aspect
+    # derivation: for the box to tight-fit the image in screen pixels,
+    #   (cell_width × cell_px_w) / (cell_height × cell_px_h) == image_aspect
+    #   (cell_width / cell_height) × (1 / terminal_cell_aspect) == image_aspect
+    #   cell_width / cell_height == image_aspect × terminal_cell_aspect
+    cell_width = int(round(cell_height * crop_aspect * terminal_cell_aspect))
+    if cell_width > max_cell_width:
+        shrink = max_cell_width / cell_width
+        cell_width = max_cell_width
+        cell_height = max(1, int(round(cell_height * shrink)))
+    cell_width = max(1, cell_width)
+    return (cell_width, cell_height)
+
+
+# ---------------------------------------------------------------------
+# Kitty graphics protocol path (the durable fix for the flicker).
+#
+# The iTerm2 OSC 1337 path above has a fundamental problem: Rich's
+# Live display clears the image region between frames (via CSI 2K),
+# so we have to re-emit the full base64 PNG on every frame to keep
+# the image visible. WezTerm then re-parses the PNG 24 times per
+# second and the operator sees seizure-grade strobing.
+#
+# The Kitty graphics protocol has a native solution: upload the PNG
+# once with a numeric image ID (via APC ESC_G with no action key and
+# chunked base64 payload), then reference it on subsequent frames
+# with tiny `a=p,i=<id>,c=W,r=H` place commands. Place-by-ID doesn't
+# re-parse the PNG — the terminal just blits the cached bitmap at
+# the requested cell footprint. ~30 bytes per frame instead of
+# ~200 KB, no re-parse, no flicker.
+#
+# WezTerm supports the Kitty protocol alongside iTerm2's OSC 1337.
+# We pick Kitty when available and fall back to OSC 1337 only for
+# terminals that don't speak Kitty.
+#
+# The transmit step is done OUTSIDE Rich's render cycle — we write
+# the chunks directly to stdout from PaintDryDisplay.on_focus_preview,
+# which runs on the narrator reader's event thread. By the time
+# Rich's next frame emits the `a=p` place command via the
+# FocusPreviewKittyImage renderable, WezTerm has decoded the PNG in
+# the background and the cache is ready. The place command renders
+# the image at the correct cursor position inside the renderable's
+# own border frame.
+# ---------------------------------------------------------------------
+
+#: Numeric Kitty image ID used for the focus preview cache. We use a
+#: single fixed ID because we only ever care about the current item's
+#: preview — each new focus_preview event re-transmits with the same
+#: ID, which overwrites the previous image in WezTerm's cache rather
+#: than accumulating. Bounded memory footprint on the terminal side.
+_KITTY_IMAGE_ID = 1
+
+#: Base64 chunks must be at most this many characters. Kitty protocol
+#: spec: "chunk size of 4096 for the base64-encoded data".
+_KITTY_CHUNK_SIZE = 4096
+
+# ---------------------------------------------------------------------
+# Band texture parameters for the focus-preview horizontal band.
+#
+# The focus preview renders as a horizontal strip that runs the full
+# terminal width. The image lives centered in the middle of the
+# strip; the cells to the left and right of the image are filled
+# with a character-texture gradient that fades from solid sepia
+# blocks near the image out to faint braille dots at the terminal
+# edges. The gradient is on three continuous dimensions — substrate
+# choice (solid block vs braille), density within each substrate,
+# and foreground color — so adjacent cells never show a hard seam.
+# ---------------------------------------------------------------------
+
+#: Extra rows above and below the image inside the band. These rows
+#: run full terminal width with texture but no image content. Two
+#: means one row above the image and one row below.
+_BAND_EXTRA_ROWS = 2
+
+#: Number of solid-block columns hugging the image edge.
+#: Column 0 = █ (bright, matches the extra rows above/below),
+#: column 1 = █ (same glyph, color has started fading slightly),
+#: column 2 = ▓, then braille starts. Three columns gives the
+#: sides enough visual weight to read as a continuous frame with
+#: the top/bottom extra rows.
+_SOLID_COLUMNS = 3
+
+#: Faint floor for both braille density and color intensity at the
+#: terminal edges. 0.12 means the outermost cells carry ~12% of
+#: peak density/color — faintly visible rather than invisible.
+_TEXTURE_EDGE_FLOOR = 0.12
+
+#: Texture accent color near the image edge — warm bone from the
+#: narrator's moss/bone palette, replacing the earlier sepia tone.
+_TEXTURE_ACCENT_RGB = (220, 205, 180)
+
+#: Terminal background color the texture fades toward. Matches the
+#: panel background in focus_preview.py and the dark narrator UI.
+_TEXTURE_BG_RGB = (8, 10, 14)
+
+
+#: Braille base codepoint — U+2800 is the empty braille pattern.
+#: Add a bitmask in [0, 255] to get a braille char with that dot
+#: combination lit. The bitmask follows the Unicode braille ordering:
+#:   bit 0 = dot 1 (top-left), bit 1 = dot 2 (middle-left),
+#:   bit 2 = dot 3 (bottom-left of main 3), bit 3 = dot 4 (top-right),
+#:   bit 4 = dot 5 (middle-right), bit 5 = dot 6 (bottom-right),
+#:   bit 6 = dot 7 (bottom-left extra), bit 7 = dot 8 (bottom-right extra).
+_BRAILLE_BASE = 0x2800
+
+
+def _build_kitty_transmit_chunks(
+    png_bytes: bytes,
+    image_id: int,
+) -> list[str]:
+    """Return a list of Kitty APC escape sequences that transmit the
+    given PNG to the terminal under the specified numeric image ID.
+
+    Format per chunk::
+
+        ESC _G <control>;<base64 chunk> ESC \\
+
+    First chunk carries the full control string
+    ``f=100,i=<id>,t=d,m=<flag>``. Subsequent chunks carry only
+    ``m=<flag>``. All chunks except the last have ``m=1`` (more data
+    coming); the last has ``m=0``. All chunks except the last have
+    payload size that is a multiple of 4 (base64 alignment).
+
+    No action key (``a=``) is set — this is a transmit-only operation
+    that caches the image under ``image_id`` without displaying it.
+    Displaying happens later via :func:`_build_kitty_place_sequence`.
+    """
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    # Chunk size must be a multiple of 4 for all but the last chunk
+    # to maintain base64 alignment. _KITTY_CHUNK_SIZE is already a
+    # multiple of 4, so naive slicing works.
+    raw_chunks = [
+        b64[i : i + _KITTY_CHUNK_SIZE] for i in range(0, len(b64), _KITTY_CHUNK_SIZE)
+    ]
+    if not raw_chunks:
+        # Degenerate: zero-byte input. Emit a single empty last chunk
+        # so the caller gets a well-formed envelope to send.
+        raw_chunks = [""]
+    envelopes: list[str] = []
+    for idx, chunk in enumerate(raw_chunks):
+        is_last = idx == len(raw_chunks) - 1
+        m_flag = "0" if is_last else "1"
+        if idx == 0:
+            control = f"f=100,i={image_id},t=d,m={m_flag}"
+        else:
+            control = f"m={m_flag}"
+        envelopes.append(f"\x1b_G{control};{chunk}\x1b\\")
+    return envelopes
+
+
+def _build_kitty_place_sequence(
+    image_id: int,
+    *,
+    cell_width: int,
+    cell_height: int,
+) -> str:
+    """Return a Kitty APC escape sequence that places a previously-
+    transmitted image by ID at the current cursor position, occupying
+    ``cell_width × cell_height`` terminal cells.
+
+    Format::
+
+        ESC _G a=p,i=<id>,c=<W>,r=<H>,C=1 ESC \\
+
+    The ``C=1`` parameter is LOAD-BEARING. Without it, Kitty's default
+    cursor-movement policy after `a=p` is "move the cursor right by
+    ``c`` cells AND down by ``r`` rows." Since Rich's layout engine
+    has no idea that our control-marked Segment containing the place
+    sequence causes cursor movement in the terminal, the rest of
+    Rich's frame output (right border, subsequent border rows, the
+    bottom border) lands at completely wrong physical coordinates:
+    Rich thinks it's writing "row 2" of the frame, but the cursor is
+    actually at physical row ``1 + r`` + column ``1 + c``, so row 2's
+    left border appears 18 rows below where we want it and the
+    "letterbox" you see below the image is actually Rich's row 2..18
+    border segments painted into the empty area below the image.
+
+    With ``C=1``, the place command paints the image but leaves the
+    cursor where it was before, so subsequent writes land at the
+    expected text-cell coordinates and Rich's frame lines up with
+    the image the way we expect.
+
+    No payload — this is a control-only sequence, so the body after
+    ``ESC_G`` is just the comma-separated control keys followed
+    directly by the terminator.
+    """
+    return (
+        f"\x1b_Ga=p,i={image_id},c={cell_width},r={cell_height},C=1\x1b\\"
+    )
 
 
 
-# _focus_preview_budget moved to scripts/focus_preview_renderer.py
+#: Braille dot indices for left column (bits 0,1,2,6) and right
+#: column (bits 3,4,5,7). Near the image edge, preferring vertical
+#: stripe patterns creates a directional grain that echoes the
+#: solid-block boundary.
+_BRAILLE_LEFT_COL = (0, 1, 2, 6)
+_BRAILLE_RIGHT_COL = (3, 4, 5, 7)
+
+
+def _texture_cell(
+    *,
+    distance_from_image: int,
+    max_distance: int,
+    seed_key: tuple,
+) -> tuple[str, tuple[int, int, int]]:
+    """Pick a (glyph, rgb) pair for one texture cell.
+
+    Two zones:
+
+    1. **Solid columns** (d < _SOLID_COLUMNS): deterministic solid
+       blocks — █ at d=0,1; ▓ at d=2. No randomness, no braille.
+    2. **Braille field** (d >= _SOLID_COLUMNS): braille dots with
+       density and color that fall off gently over the full distance
+       to the terminal edge. Uses a power curve (exponent 1.8) that
+       holds presence through mid-distance and reaches the floor
+       near the edge. Dots near the image prefer vertical column
+       patterns for directional grain.
+
+    ``max_distance`` is the distance from image edge to the terminal
+    edge on this side — density and color are normalized against it
+    so the curve adapts to any terminal width.
+    """
+    d = max(0, distance_from_image)
+    span = max(1, max_distance)
+
+    # Normalized position [0, 1] from image edge to terminal edge.
+    t = min(1.0, d / span)
+
+    # Gentle power curve: (1 - t)^1.8 holds value through the
+    # middle of the range better than smoothstep, which was
+    # collapsing too fast. Floor keeps edges faintly visible.
+    falloff = (1.0 - t) ** 1.8
+    intensity = _TEXTURE_EDGE_FLOOR + (1.0 - _TEXTURE_EDGE_FLOOR) * falloff
+
+    rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, intensity)
+
+    # Zone 1: solid blocks — deterministic, no randomness needed.
+    if d < _SOLID_COLUMNS:
+        glyph = "▓" if d == _SOLID_COLUMNS - 1 else "█"
+        return glyph, rgb
+
+    # Zone 2: braille — density tracks the same power curve.
+    density = intensity
+
+    # Deterministic randomness from the seed key.
+    rand = random.Random(hash(seed_key))
+
+    # At the floor, most cells are empty with rare single dots.
+    if density <= _TEXTURE_EDGE_FLOOR + 0.01:
+        if rand.random() < _TEXTURE_EDGE_FLOOR:
+            glyph = chr(_BRAILLE_BASE + (1 << rand.randint(0, 7)))
+            return glyph, rgb
+        return " ", _TEXTURE_BG_RGB
+
+    # Directional bias: near the image, prefer vertical column
+    # patterns. Bias fades linearly over the first 20% of the span.
+    bias_zone = max(1, int(span * 0.2))
+    braille_d = d - _SOLID_COLUMNS
+    vertical_bias = max(0.0, 1.0 - braille_d / bias_zone)
+
+    n_dots = max(1, min(8, int(round(density * 8))))
+    bits = 0
+
+    if rand.random() < vertical_bias:
+        col = _BRAILLE_LEFT_COL if rand.random() < 0.5 else _BRAILLE_RIGHT_COL
+        other = _BRAILLE_RIGHT_COL if col is _BRAILLE_LEFT_COL else _BRAILLE_LEFT_COL
+        primary = list(col)
+        secondary = list(other)
+        rand.shuffle(primary)
+        rand.shuffle(secondary)
+        pool = primary + secondary
+        for bit_idx in pool[:n_dots]:
+            bits |= 1 << bit_idx
+    else:
+        dot_order = list(range(8))
+        rand.shuffle(dot_order)
+        for bit_idx in dot_order[:n_dots]:
+            bits |= 1 << bit_idx
+
+    glyph = chr(_BRAILLE_BASE + bits)
+    return glyph, rgb
+
+
+def _lerp_rgb(
+    a: tuple[int, int, int],
+    b: tuple[int, int, int],
+    t: float,
+) -> tuple[int, int, int]:
+    """Linear interpolation between two RGB tuples."""
+    t = max(0.0, min(1.0, t))
+    return (
+        int(round(a[0] + (b[0] - a[0]) * t)),
+        int(round(a[1] + (b[1] - a[1]) * t)),
+        int(round(a[2] + (b[2] - a[2]) * t)),
+    )
+
+
+def _emit_band_border_row(term_width: int, *, title: str):
+    """Yield one full-width `─` border row, optionally with an
+    inlined left-aligned title.
+    """
+    # Moss for the structural border — bone is reserved for the
+    # texture fill, giving the same moss/bone cadence as the history.
+    border_style = Style.parse(_rgb_to_hex((135, 160, 145)))
+    if title:
+        prefix_text = f"─ {title} "
+        remaining = term_width - len(prefix_text)
+        if remaining < 0:
+            prefix_text = prefix_text[:term_width]
+            remaining = 0
+        row = prefix_text + ("─" * remaining)
+    else:
+        row = "─" * term_width
+    yield Segment(row, border_style)
+    yield Segment.line()
+
+
+def _emit_band_texture_span(
+    *,
+    col_start: int,
+    col_end: int,
+    image_left: int,
+    image_right: int,
+    term_width: int,
+    row_seed_id: int,
+    image_id: int,
+):
+    """Yield one Segment per cell in [col_start, col_end), each picked
+    by :func:`_texture_cell` based on distance from the nearest image
+    edge. ``term_width`` is used to compute the maximum possible
+    distance so the falloff curve spans the full terminal width.
+    """
+    for col in range(col_start, col_end):
+        if col < image_left:
+            distance = image_left - col
+            max_dist = image_left  # left edge to image
+        elif col >= image_right:
+            distance = col - image_right + 1
+            max_dist = max(1, term_width - image_right)  # image to right edge
+        else:
+            distance = 0
+            max_dist = 1
+        glyph, rgb = _texture_cell(
+            distance_from_image=distance,
+            max_distance=max_dist,
+            seed_key=(image_id, row_seed_id, col),
+        )
+        yield Segment(glyph, Style.parse(_rgb_to_hex(rgb)))
+
+
+def _emit_band_texture_only_row(
+    term_width: int,
+    *,
+    image_left: int,
+    image_right: int,
+    row_seed_id: int,
+    image_id: int,
+):
+    """Yield a full-width row of texture cells, with no image
+    placement. Used for the extra rows above and below the image
+    inside the band.
+    """
+    yield from _emit_band_texture_span(
+        col_start=0,
+        col_end=term_width,
+        image_left=image_left,
+        image_right=image_right,
+        term_width=term_width,
+        row_seed_id=row_seed_id,
+        image_id=image_id,
+    )
+    yield Segment.line()
+
+
+def _query_terminal_cell_aspect(
+    *,
+    timeout_s: float = 0.15,
+    stream=None,
+) -> float | None:
+    """Query the terminal for its cell pixel dimensions via CSI 16t.
+
+    Returns the cell aspect ratio (height / width, in screen pixels)
+    if the terminal responds with a well-formed answer. Returns
+    ``None`` on any failure — no tty, unsupported sequence, timeout,
+    parse error, etc. Callers should fall back to
+    ``_DEFAULT_TERMINAL_CELL_ASPECT``.
+
+    Protocol: send ``ESC [ 1 6 t`` to stdout and read the response
+    ``ESC [ 6 ; <height_px> ; <width_px> t`` from stdin. Heights and
+    widths are integers in pixels.
+
+    Implementation notes:
+    - Puts stdin into cbreak mode temporarily so we can read the
+      response without waiting for a newline.
+    - Uses a short timeout (``timeout_s``) so that non-cooperating
+      terminals don't hang startup.
+    - Reads via ``select.select`` in a loop, accumulating bytes
+      until the response terminator ``t`` arrives or we time out.
+    - Restores termios state in a finally block even if the read
+      or parse raises.
+    - Safe to call with stdout as a non-tty (returns None early).
+
+    The ``stream`` argument is for testing: lets a test swap in a
+    fake stream. Normal callers should leave it as None and the
+    function will use ``sys.stdout`` for the query and ``sys.stdin``
+    for the response.
+    """
+    import select
+    import termios
+    import tty
+
+    out = stream if stream is not None else sys.stdout
+    inp = sys.stdin
+    try:
+        if not (out.isatty() and inp.isatty()):
+            return None
+    except (AttributeError, ValueError):
+        return None
+
+    try:
+        fd = inp.fileno()
+        original = termios.tcgetattr(fd)
+    except (termios.error, AttributeError, ValueError, OSError):
+        return None
+
+    try:
+        tty.setcbreak(fd)
+        out.write("\x1b[16t")
+        out.flush()
+
+        # Read the response with a timeout. Expected format:
+        #   ESC [ 6 ; <h> ; <w> t
+        # where h and w are cell pixel dimensions.
+        deadline = time.monotonic() + timeout_s
+        buffer = b""
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(fd, 64)
+            except OSError:
+                return None
+            if not chunk:
+                continue
+            buffer += chunk
+            if b"t" in buffer:
+                break
+        else:
+            return None
+
+        # Find the response signature: b'\x1b[6;<h>;<w>t'
+        start = buffer.find(b"\x1b[6;")
+        if start < 0:
+            return None
+        end = buffer.find(b"t", start)
+        if end < 0:
+            return None
+        payload = buffer[start + len("\x1b[6;") : end].decode(
+            "ascii", errors="ignore"
+        )
+        parts = payload.split(";")
+        if len(parts) != 2:
+            return None
+        cell_height_px = int(parts[0])
+        cell_width_px = int(parts[1])
+        if cell_width_px <= 0:
+            return None
+        return cell_height_px / cell_width_px
+    except (ValueError, OSError, termios.error):
+        return None
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, original)
+        except (termios.error, OSError):
+            pass
+
+
+def _supports_kitty_graphics(term_program: str | None) -> bool:
+    """Return True if the terminal supports the Kitty graphics
+    protocol.
+
+    Known-good: WezTerm (since ~2022), kitty itself. iTerm2 supports
+    Kitty graphics in recent builds too, but we keep it on the OSC
+    1337 path for now since that's the path we have more empirical
+    coverage on. Everything else falls through to whatever other
+    paths are available.
+    """
+    if not term_program:
+        return False
+    return term_program in {"WezTerm", "kitty"}
+
+
+def _supports_inline_images(term_program: str | None) -> bool:
+    """Return True if the terminal identified by ``$TERM_PROGRAM``
+    supports the iTerm2 inline image protocol.
+
+    Known-good: WezTerm, iTerm.app (iTerm2). Everything else — xterm,
+    Apple_Terminal, tmux, unset — is treated as unsupported and falls
+    through to the half-block fallback renderer.
+    """
+    if not term_program:
+        return False
+    return term_program in {"WezTerm", "iTerm.app"}
+
+
+class FocusPreviewInlineImage:
+    """Rich Renderable that emits an iTerm2 inline image framed in a
+    self-drawn border box.
+
+    This renderable is deliberately NOT wrapped in a ``rich.Panel``
+    because Panel's padding logic writes literal spaces to the cells
+    to the right of its inner content on every row, filling the panel
+    to its declared inner width. Those spaces land on exactly the
+    terminal cells that the iTerm2 escape sequence just painted image
+    pixels into, overwriting the image the instant it's drawn. The
+    failure mode is extremely subtle — Rich's output byte stream does
+    carry the full image sequence — but the image is gone before the
+    operator sees it because Rich immediately clobbers its cells.
+
+    The fix is to own the border drawing ourselves and use
+    cursor-forward escape sequences (``ESC[nC``) marked as zero-width
+    control segments to advance the cursor across the image region
+    without writing any visible characters to those cells. The
+    terminal-painted image pixels are preserved because nothing is
+    written over them.
+
+    The renderable yields, in order:
+      1. A top border row ``╭─… title …─╮``
+      2. A content row ``│`` + space + image escape sequence +
+         cursor-forward past the image cells + ``│``
+      3. ``cell_height - 1`` more content rows ``│`` + cursor-forward
+         past the image cells + ``│``
+      4. A bottom border row ``╰─…─╯``
+
+    Rich sees the border segments as visible text with the expected
+    cell widths, so its layout accounting treats this renderable as a
+    (cell_width + 4) × (cell_height + 2) rectangle in the panels
+    stack. No outer Panel needed; the renderable IS the panel.
+    """
+
+    def __init__(
+        self,
+        *,
+        png_bytes: bytes,
+        cell_width: int,
+        cell_height: int,
+        title: str = "",
+    ) -> None:
+        self._png_bytes = png_bytes
+        self._cell_width = cell_width
+        self._cell_height = cell_height
+        self._title = title
+        self._sequence = _build_iterm2_inline_image_sequence(
+            png_bytes, cell_width=cell_width, cell_height=cell_height
+        )
+        # NOTE: Rich's Live.LiveRender.position_cursor() emits
+        # ERASE_IN_LINE (CSI 2K) on every row of the previous frame
+        # before each refresh. That explicitly clears every cell in
+        # the region we drew into, including image pixels. So we
+        # MUST re-emit the iTerm2 escape sequence on every render
+        # call — any "emit once" optimization produces an empty
+        # container frame because the image gets cleared between
+        # frames and never repainted. The visible cost is a ~24 Hz
+        # strobing re-rasterization as WezTerm re-parses the
+        # base64 PNG on every tick. The durable fix is the Kitty
+        # graphics protocol with placement IDs (upload image once
+        # with a=t, reference with a=p on subsequent frames), which
+        # avoids re-sending the PNG data. Tracked as a follow-up
+        # attractor; until then, we eat the flicker because at
+        # least the image is visible.
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        border = Style.parse("#3d4458")
+        # Total cell width of the framed output: image + one padding
+        # space on each side of the image + border char on each side.
+        inner_width = self._cell_width
+        total_width = inner_width + 2  # just the borders, no extra pad
+
+        # Top border with embedded title: ╭─ <title> ─…─╮
+        title_text = self._title
+        max_title = max(0, inner_width - 4)
+        if len(title_text) > max_title:
+            title_text = title_text[: max(0, max_title - 1)] + "…"
+        if title_text:
+            prefix = f"╭─ {title_text} "
+            filler_len = total_width - len(prefix) - 1
+            if filler_len < 0:
+                filler_len = 0
+            top_border = prefix + ("─" * filler_len) + "╮"
+        else:
+            top_border = "╭" + ("─" * (total_width - 2)) + "╮"
+        yield Segment(top_border, border)
+        yield Segment.line()
+
+        # Cursor-forward escape advances the cursor `inner_width`
+        # columns without writing any visible characters. Marked as
+        # a control segment so Rich's cell_length accounting treats
+        # it as zero cells — Rich's line-level logic will not try
+        # to line-fit, truncate, or pad around it.
+        forward_escape = f"\x1b[{inner_width}C"
+
+        # First interior row carries the iTerm2 image escape sequence.
+        # Must re-emit on every render because Rich Live's
+        # position_cursor() erases every row of the previous frame
+        # before each refresh (see note in __init__).
+        yield Segment("│", border)
+        yield Segment(self._sequence, None, [(ControlType.BELL,)])
+        yield Segment(forward_escape, None, [(ControlType.BELL,)])
+        yield Segment("│", border)
+        yield Segment.line()
+
+        # Remaining interior rows: border + cursor-forward + border.
+        # These rows are visually "blank" from Rich's perspective but
+        # the terminal has image pixels painted into the cells from
+        # the first row's escape sequence. Cursor-forward preserves
+        # those pixels; writing spaces here would overwrite them.
+        for _ in range(self._cell_height - 1):
+            yield Segment("│", border)
+            yield Segment(forward_escape, None, [(ControlType.BELL,)])
+            yield Segment("│", border)
+            yield Segment.line()
+
+        # Bottom border.
+        bottom_border = "╰" + ("─" * (total_width - 2)) + "╯"
+        yield Segment(bottom_border, border)
+        yield Segment.line()
+
+
+class FocusPreviewKittyImage:
+    """Rich Renderable that places a previously-transmitted Kitty
+    graphics image inside a self-drawn border frame.
+
+    Unlike :class:`FocusPreviewInlineImage`, this class does NOT
+    carry the PNG data. The transmit (`_build_kitty_transmit_chunks`)
+    must be done out-of-band by the caller — typically directly to
+    stdout from ``PaintDryDisplay.on_focus_preview`` on the narrator
+    event thread, so WezTerm starts decoding in the background
+    before Rich's next refresh fires.
+
+    Cell-box sizing is done at RENDER TIME, not at construction.
+    The renderable stores the image's pixel dimensions and the
+    terminal's cell aspect ratio; on every ``__rich_console__``
+    call, it reads the current ``ConsoleOptions.max_width`` and
+    recomputes the cell box to fit. This makes the preview
+    resize-safe — narrowing or widening the terminal window
+    causes the next render to produce a box that fits the new
+    width automatically, because Rich passes the updated
+    console options through on every refresh.
+
+    The image_id is reused across focus_preview events (see
+    ``_KITTY_IMAGE_ID``), so each transmit overwrites the
+    previous cached image rather than accumulating — bounded
+    memory footprint on the terminal side.
+    """
+
+    def __init__(
+        self,
+        *,
+        image_id: int,
+        image_pixel_width: int,
+        image_pixel_height: int,
+        terminal_cell_aspect: float,
+        title: str = "",
+    ) -> None:
+        self._image_id = image_id
+        self._image_pixel_width = image_pixel_width
+        self._image_pixel_height = image_pixel_height
+        self._terminal_cell_aspect = terminal_cell_aspect
+        self._title = title
+
+    def _compute_box(self, available_width: int) -> tuple[int, int]:
+        """Compute (cell_width, cell_height) for the image at the
+        given available width budget. Leaves 2 cells for the
+        border so the usable interior is ``available_width - 2``.
+        """
+        inner_budget = max(1, available_width - 2)
+        cw, ch = _compute_inline_image_cell_dimensions(
+            self._image_pixel_width,
+            self._image_pixel_height,
+            max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+            max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
+            terminal_cell_aspect=self._terminal_cell_aspect,
+        )
+        return cw, ch
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        """Render the focus preview as a full-terminal-width band.
+
+        Layout per row, from top to bottom:
+
+          1. Top border rule: ``─ focus preview · <label> ─…─`` spanning
+             the full terminal width, clean ─ horizontal rule with the
+             title inlined left-aligned. No corner chars, no side
+             verticals, no ╭╮.
+
+          2. Extra texture row: full-width texture, no image. Gives
+             the image one row of breathing space between the top
+             border and the image content itself.
+
+          3..3+cell_height-1. Image rows: each row is
+             ``<left texture cells> <cursor-forward image_width> <right texture cells>``.
+             The cursor-forward span is filled by the Kitty `a=p`
+             place command emitted on the first image row; on
+             subsequent image rows the cursor-forward skips past
+             the cells the image is painted into so we don't write
+             over them.
+
+          n. Extra texture row: symmetric to row 2.
+
+          n+1. Bottom border rule: ``───…───`` spanning full width,
+             no title.
+
+        The texture cells are picked by ``_texture_cell`` based on
+        their distance from the image edge and a seed key derived
+        from the image ID and the absolute (row, col) position, so
+        the noise is stable across render ticks and stays anchored
+        to absolute terminal positions during resize.
+        """
+        term_width = max(1, options.max_width)
+        cell_width, cell_height = self._compute_box(term_width)
+
+        # Center the image horizontally in the band.
+        image_left = max(0, (term_width - cell_width) // 2)
+        image_right = image_left + cell_width  # exclusive
+
+        place_sequence = _build_kitty_place_sequence(
+            self._image_id,
+            cell_width=cell_width,
+            cell_height=cell_height,
+        )
+
+        # ─── Top border rule with inlined title ───
+        yield from _emit_band_border_row(term_width, title=self._title)
+
+        # ─── Extra texture row above the image ───
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=0,
+            image_id=self._image_id,
+        )
+
+        # ─── Image rows ───
+        forward_escape = f"\x1b[{cell_width}C"
+        for image_row in range(cell_height):
+            # Left texture: columns 0 to image_left - 1.
+            yield from _emit_band_texture_span(
+                col_start=0,
+                col_end=image_left,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=self._image_id,
+            )
+            # Middle: image placement on row 0, cursor-forward only
+            # on rows 1+.
+            if image_row == 0:
+                yield Segment(
+                    place_sequence, None, [(ControlType.BELL,)]
+                )
+            yield Segment(forward_escape, None, [(ControlType.BELL,)])
+            # Right texture: columns image_right to term_width - 1.
+            yield from _emit_band_texture_span(
+                col_start=image_right,
+                col_end=term_width,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=self._image_id,
+            )
+            yield Segment.line()
+
+        # ─── Extra texture row below the image ───
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=1 + cell_height,
+            image_id=self._image_id,
+        )
+
+        # ─── Bottom border rule ───
+        yield from _emit_band_border_row(term_width, title="")
 
 
 
-# Inline image, Kitty graphics, band texture code, and all focus
-# preview rendering functions/classes moved to
-# scripts/focus_preview_renderer.py and re-imported above.
+class FocusPreviewLoadingBand:
+    """Placeholder renderable shown before any focus_preview event
+    fires, or between items while a new preview is loading. Same
+    band structure as :class:`FocusPreviewKittyImage` but with a
+    short ``(preview loading…)`` text string where the image
+    would be, so the layout slot looks continuous across the
+    transition into the first real preview.
+    """
+
+    def __init__(self, *, title: str = "focus preview") -> None:
+        self._title = title
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        term_width = max(1, options.max_width)
+
+        # Scale with the terminal like the real Kitty renderer does.
+        # Use a ~4:3 exam crop aspect ratio as the stand-in so the
+        # placeholder box matches what the first real preview will
+        # look like. The real renderer leaves 2 cells for borders
+        # and caps at _INLINE_IMAGE_MAX_CELL_WIDTH.
+        inner_budget = max(1, term_width - 2)
+        cell_width = min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget)
+        cell_height = _INLINE_IMAGE_CELL_HEIGHT
+        image_left = max(0, (term_width - cell_width) // 2)
+        image_right = image_left + cell_width
+
+        placeholder_text = "(preview loading…)"
+        # Loading band has no image id — use a stable sentinel so the
+        # seeded per-cell texture noise is deterministic across frames
+        # without colliding with real image ids.
+        image_id = 0
+
+        # Top border
+        yield from _emit_band_border_row(term_width, title=self._title)
+
+        # Extra texture row above.
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=0,
+            image_id=image_id,
+        )
+
+        # Image rows — instead of a Kitty place, emit the
+        # placeholder text centered in the middle of the image
+        # region on the middle image row, empty on the others.
+        middle_row = cell_height // 2
+        text_col = image_left + max(
+            0, (cell_width - len(placeholder_text)) // 2
+        )
+        dim_style = Style.parse(_rgb_to_hex(_TEXTURE_ACCENT_RGB) + " dim")
+        bg_style = Style.parse("on " + _rgb_to_hex(_TEXTURE_BG_RGB))
+
+        for image_row in range(cell_height):
+            # Left texture
+            yield from _emit_band_texture_span(
+                col_start=0,
+                col_end=image_left,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=image_id,
+            )
+            # Middle: placeholder text on middle row, empty on others.
+            if image_row == middle_row:
+                pad_left = max(0, text_col - image_left)
+                pad_right = max(
+                    0, cell_width - pad_left - len(placeholder_text)
+                )
+                yield Segment(" " * pad_left, bg_style)
+                yield Segment(placeholder_text, dim_style)
+                yield Segment(" " * pad_right, bg_style)
+            else:
+                yield Segment(" " * cell_width, bg_style)
+            # Right texture
+            yield from _emit_band_texture_span(
+                col_start=image_right,
+                col_end=term_width,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=image_id,
+            )
+            yield Segment.line()
+
+        # Extra texture row below.
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=1 + cell_height,
+            image_id=image_id,
+        )
+
+        # Bottom border.
+        yield from _emit_band_border_row(term_width, title="")
 
 
+def _otsu_threshold(luminances) -> float:
+    """Classic Otsu's method: pick the luminance cut that maximizes
+    between-class variance across a 256-bin histogram.
+
+    Returns a float threshold in [0, 255]. Degenerate inputs (empty,
+    uniform) return a safe midpoint rather than raising — the renderer
+    treats such crops as "no ink" and the exact cut doesn't matter.
+    """
+    histogram = [0] * 256
+    total = 0
+    for value in luminances:
+        bucket = int(value)
+        if bucket < 0:
+            bucket = 0
+        elif bucket > 255:
+            bucket = 255
+        histogram[bucket] += 1
+        total += 1
+    if total == 0:
+        return 127.5
+
+    sum_total = 0.0
+    for i in range(256):
+        sum_total += i * histogram[i]
+
+    sum_bg = 0.0
+    weight_bg = 0
+    best_variance = -1.0
+    best_threshold = 127.5
+    for i in range(256):
+        weight_bg += histogram[i]
+        if weight_bg == 0:
+            continue
+        weight_fg = total - weight_bg
+        if weight_fg == 0:
+            break
+        sum_bg += i * histogram[i]
+        mean_bg = sum_bg / weight_bg
+        mean_fg = (sum_total - sum_bg) / weight_fg
+        variance = weight_bg * weight_fg * (mean_bg - mean_fg) ** 2
+        if variance > best_variance:
+            best_variance = variance
+            best_threshold = float(i)
+    # Return the upper edge of the chosen histogram bin. The histogram
+    # is integer-binned (`int(luma)`), so any float luma that fell into
+    # bin `i` is in [i, i+1). Returning `i + 1.0` means strict `<` at
+    # the caller correctly classifies every member of that bin as
+    # background (the darker / ink class).
+    return best_threshold + 1.0
+
+
+def _build_focus_preview_pixels(
+    png_bytes: bytes,
+    *,
+    max_width_chars: int,
+    max_height_rows: int,
+) -> list[list[tuple[int, int, int]]]:
+    """Sample a source crop into a grid of average-RGB pixels.
+
+    The returned grid has exactly ``target_height`` rows and
+    ``target_width`` cols, where those dimensions are ``_scaled_preview_size``
+    applied to the source. The caller controls whether this is
+    "one row per terminal row" or "two rows per terminal row" (for
+    half-blocks) by passing the appropriate ``max_height_rows``.
+
+    No tone mapping. No filmic. No paper/ink lerp. The downstream
+    renderer is responsible for turning these raw samples into
+    whatever output surface is appropriate.
+    """
+    pix = fitz.Pixmap(png_bytes)
+    target_width, target_height = _scaled_preview_size(
+        pix.width,
+        pix.height,
+        max_width_chars=max_width_chars,
+        max_height_rows=max_height_rows,
+    )
+    pixels: list[list[tuple[int, int, int]]] = []
+    for y in range(target_height):
+        row: list[tuple[int, int, int]] = []
+        for x in range(target_width):
+            row.append(_sample_preview_rgb(pix, x, y, target_width, target_height))
+        pixels.append(row)
+    return pixels
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _pixel_luma(rgb: tuple[int, int, int]) -> float:
+    return (0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2])
+
+
+def _render_focus_preview_pixels(
+    pixels: list[list[tuple[int, int, int]]],
+    *,
+    now: float | None = None,
+    pending: bool = False,
+) -> Group:
+    """Render a sampled pixel grid as a Rich Group.
+
+    ``pixels`` is expected to be sampled at 2× vertical density relative
+    to the terminal row budget — each pair of source rows (2y, 2y+1)
+    becomes one terminal row. The steady-state renderer uses that pair
+    as the top and bottom halves of a half-block (▀). The pending
+    (transition) renderer averages each pair back down to a single
+    per-cell RGB and then runs its existing glyph-overlay animation.
+    """
+    now = time.monotonic() if now is None else now
+    if pending:
+        return _render_focus_preview_pending(pixels, now=now)
+    return _render_focus_preview_steady(pixels)
+
+
+def _render_focus_preview_steady(
+    pixels: list[list[tuple[int, int, int]]],
+) -> Group:
+    """Legibility-first steady-state renderer.
+
+    Binary Otsu threshold across all sampled luminances, half-block
+    cells (one terminal cell = one top half-pixel + one bottom
+    half-pixel), hard ink/paper palette. No tone mapping, no lerp,
+    no gradient. Ugly is acceptable; illegible is not.
+    """
+    if not pixels or not pixels[0]:
+        return Group()
+
+    source_height = len(pixels)
+    source_width = len(pixels[0])
+
+    # Collect all luminances for Otsu. Use ink and paper colors
+    # that are actually visually distinct from the panel background,
+    # so thresholded cells read as "page" and not as "void".
+    luminances = [_pixel_luma(rgb) for row in pixels for rgb in row]
+    threshold = _otsu_threshold(luminances)
+
+    # If the crop is effectively single-tone (variance too low for Otsu
+    # to find a meaningful cut), fall back to marking everything as paper.
+    # This keeps blank regions rendering as page instead of as garbled noise.
+    lum_span = max(luminances) - min(luminances) if luminances else 0.0
+    degenerate = lum_span < 12.0
+
+    ink_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_INK_RGB)
+    paper_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_PAPER_RGB)
+
+    def _color_for(rgb: tuple[int, int, int]) -> str:
+        if degenerate:
+            return paper_hex
+        return ink_hex if _pixel_luma(rgb) < threshold else paper_hex
+
+    rows: list[Text] = []
+    # Walk source rows in pairs. If the source has an odd number of rows,
+    # the dangling final row pairs with itself (top == bottom).
+    y = 0
+    while y < source_height:
+        top_row = pixels[y]
+        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
+        text = Text(no_wrap=True, overflow="ignore")
+        for col in range(source_width):
+            top_color = _color_for(top_row[col])
+            bottom_color = (
+                _color_for(bottom_row[col])
+                if col < len(bottom_row)
+                else top_color
+            )
+            # ▀ = U+2580 UPPER HALF BLOCK. Foreground is the top half,
+            # background is the bottom half. Exactly what we want for a
+            # binary-threshold image surface.
+            text.append("\u2580", style=f"{top_color} on {bottom_color}")
+        rows.append(text)
+        y += 2
+    return Group(*rows)
+
+
+def _render_focus_preview_pending(
+    pixels: list[list[tuple[int, int, int]]],
+    *,
+    now: float,
+) -> Group:
+    """Transition-layer renderer (unchanged animation, now fed from a
+    2×-vertical pixel grid by averaging row pairs back down to 1×)."""
+    if not pixels or not pixels[0]:
+        return Group()
+
+    # Average pairs of sampled rows back down to one row per terminal
+    # row, so the existing glyph-overlay animation keeps working
+    # against the density it was tuned for.
+    source_height = len(pixels)
+    source_width = len(pixels[0])
+    collapsed: list[list[tuple[int, int, int]]] = []
+    y = 0
+    while y < source_height:
+        top_row = pixels[y]
+        bottom_row = pixels[y + 1] if (y + 1) < source_height else top_row
+        merged: list[tuple[int, int, int]] = []
+        for col in range(source_width):
+            top_rgb = top_row[col]
+            bottom_rgb = bottom_row[col] if col < len(bottom_row) else top_rgb
+            merged.append(
+                (
+                    (top_rgb[0] + bottom_rgb[0]) // 2,
+                    (top_rgb[1] + bottom_rgb[1]) // 2,
+                    (top_rgb[2] + bottom_rgb[2]) // 2,
+                )
+            )
+        collapsed.append(merged)
+        y += 2
+
+    rows: list[Text] = []
+    for char_row, pixel_row in enumerate(collapsed):
+        row = Text(no_wrap=True, overflow="ignore")
+        for col, rgb in enumerate(pixel_row):
+            avg_rgb = rgb
+            flow = 0.5 + (
+                0.5
+                * math.sin((col * 0.44) - (char_row * 0.18) - (now * 6.8))
+            )
+            pulse = 0.5 + (
+                0.5
+                * math.sin((col * 0.16) + (char_row * 0.31) + (now * 5.3))
+            )
+            retention = 0.54 + (0.18 * flow)
+            toned_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, avg_rgb, retention)
+            avg_luma = (
+                (0.299 * toned_rgb[0])
+                + (0.587 * toned_rgb[1])
+                + (0.114 * toned_rgb[2])
+            )
+            glyph_gate = 0.38 + (0.20 * pulse)
+            glyph_drive = (0.58 * flow) + (0.25 * pulse)
+            if glyph_drive > glyph_gate:
+                char_phase = (0.62 * flow) + (0.38 * (avg_luma / 255.0))
+                char_index = min(
+                    len(_FOCUS_PREVIEW_OVERLAY_CHARS) - 1,
+                    int(char_phase * len(_FOCUS_PREVIEW_OVERLAY_CHARS)),
+                )
+                palette_index = min(
+                    len(_FOCUS_PREVIEW_OVERLAY_RGBS) - 1,
+                    int((avg_luma / 255.0) * len(_FOCUS_PREVIEW_OVERLAY_RGBS)),
+                )
+                fg_rgb = _interp_rgb(
+                    _FOCUS_PREVIEW_OVERLAY_RGBS[palette_index],
+                    _FOCUS_PREVIEW_PAPER_RGB,
+                    0.16 + (0.18 * flow),
+                )
+                bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
+                row.append(
+                    _FOCUS_PREVIEW_OVERLAY_CHARS[char_index],
+                    style=f"{_rgb_to_hex(fg_rgb)} on {_rgb_to_hex(bg_rgb)}",
+                )
+                continue
+            # Non-glyph cells during the transition: render as a faded
+            # block color. The transition animation no longer tries to
+            # produce a legible steady-state image underneath itself.
+            bg_rgb = _interp_rgb(_FOCUS_PREVIEW_BG_RGB, toned_rgb, 0.34)
+            row.append(
+                " ",
+                style=f"{_rgb_to_hex(bg_rgb)} on {_rgb_to_hex(bg_rgb)}",
+            )
+        rows.append(row)
+    return Group(*rows)
+
+
+def _scaled_preview_size(
+    source_width: int,
+    source_height: int,
+    *,
+    max_width_chars: int,
+    max_height_rows: int,
+) -> tuple[int, int]:
+    scale = min(
+        max_width_chars / max(1, source_width),
+        max_height_rows / max(1, source_height),
+        1.0,
+    )
+    width = max(1, int(round(source_width * scale)))
+    height = max(1, int(round(source_height * scale)))
+    return width, height
+
+
+def _sample_preview_rgb(
+    pix: fitz.Pixmap,
+    x: int,
+    y: int,
+    target_width: int,
+    target_height: int,
+) -> tuple[int, int, int]:
+    src_x0 = max(0, int((x / target_width) * pix.width))
+    src_x1 = min(
+        pix.width,
+        max(src_x0 + 1, int(math.ceil(((x + 1) / target_width) * pix.width))),
+    )
+    src_y0 = max(0, int((y / target_height) * pix.height))
+    src_y1 = min(
+        pix.height,
+        max(src_y0 + 1, int(math.ceil(((y + 1) / target_height) * pix.height))),
+    )
+    samples = pix.samples
+    red = 0
+    green = 0
+    blue = 0
+    count = 0
+    darkest_luma = float("inf")
+    darkest_rgb = _FOCUS_PREVIEW_BG_RGB
+    for src_y in range(src_y0, src_y1):
+        row_offset = src_y * pix.width * pix.n
+        for src_x in range(src_x0, src_x1):
+            offset = row_offset + (src_x * pix.n)
+            sample_red = samples[offset]
+            sample_green = samples[offset + 1]
+            sample_blue = samples[offset + 2]
+            red += sample_red
+            green += sample_green
+            blue += sample_blue
+            count += 1
+            sample_luma = (
+                (0.299 * sample_red)
+                + (0.587 * sample_green)
+                + (0.114 * sample_blue)
+            )
+            if sample_luma < darkest_luma:
+                darkest_luma = sample_luma
+                darkest_rgb = (sample_red, sample_green, sample_blue)
+    if count == 0:
+        return _FOCUS_PREVIEW_BG_RGB
+    avg_rgb = (
+        int(round(red / count)),
+        int(round(green / count)),
+        int(round(blue / count)),
+    )
+    avg_luma = (
+        (0.299 * avg_rgb[0])
+        + (0.587 * avg_rgb[1])
+        + (0.114 * avg_rgb[2])
+    )
+    ink_weight = _clamp((avg_luma - darkest_luma - 18.0) / 120.0, 0.0, 0.58)
+    return _interp_rgb(avg_rgb, darkest_rgb, ink_weight)
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     """Convert HSV (h in degrees, s/v in [0, 1]) to 8-bit RGB."""
     h = h % 360
@@ -1118,6 +2573,217 @@ def _append_shimmer_char(
     text_obj.append(ch, style=style)
 
 
+class HistoryViewport:
+    """Pure-logic scroll viewport for the Paint Dry history pane.
+
+    Carries the entries the renderer should draw plus a scroll offset
+    that is anchored to the *newest* visual row. Offset 0 means "the
+    bottom of the visible window sits at the newest visual row" — the
+    live edge. A positive offset means "the bottom of the window is
+    `scroll_offset` visual rows above the newest visual row," which is
+    what happens when the operator scrolls upward.
+
+    Accounting is done in **visual rows**, not logical entries, so a
+    wrapped long entry occupies its true on-screen footprint. Partial
+    entries are never returned: if the remaining budget cannot contain
+    a whole entry, the entry is dropped rather than sliced.
+
+    Auto-follow semantics:
+
+    * While `at_live_edge` (offset == 0), appending new history keeps
+      the window pinned to newest — the operator always sees fresh
+      rows.
+    * While scrolled up (offset > 0), appending new history does NOT
+      reset the offset. The viewport's offset is re-anchored relative
+      to the new newest row so the same earlier slice stays visible.
+
+    This class is intentionally free of Rich / terminal / input
+    dependencies. Renderer wiring and raw key handling live elsewhere.
+    """
+
+    def __init__(self, visible_rows: int, wrap_width: int):
+        if visible_rows <= 0:
+            raise ValueError("visible_rows must be > 0")
+        if wrap_width <= 0:
+            raise ValueError("wrap_width must be > 0")
+        self._visible_rows = visible_rows
+        self._wrap_width = wrap_width
+        self._entries: list[tuple[str, str, int | None]] = []
+        # scroll_offset counts *visual rows above the newest visual row*.
+        self._scroll_offset = 0
+
+    # -- Visual row accounting --------------------------------------
+
+    def _entry_visual_rows(self, entry: tuple[str, str, int | None]) -> int:
+        text = entry[1] if len(entry) > 1 else ""
+        if not text:
+            return 1
+        # Ceiling division so a 25-char line at wrap_width=10 is 3 rows.
+        return max(1, (len(text) + self._wrap_width - 1) // self._wrap_width)
+
+    def _total_visual_rows(self) -> int:
+        return sum(self._entry_visual_rows(e) for e in self._entries)
+
+    # -- Public state ------------------------------------------------
+
+    @property
+    def scroll_offset(self) -> int:
+        return self._scroll_offset
+
+    @property
+    def at_live_edge(self) -> bool:
+        return self._scroll_offset == 0
+
+    def entries_snapshot(self) -> list[tuple[str, str, int | None]]:
+        """Return a shallow copy of the entries currently held by the
+        viewport in natural (oldest -> newest) order. Used by the
+        sync layer to detect prefix divergence without touching
+        private state."""
+        return list(self._entries)
+
+    # -- Mutation ----------------------------------------------------
+
+    def append(self, entry: tuple[str, str, int | None]) -> None:
+        """Add a new entry. If the viewport is at the live edge, the
+        window auto-follows newest. If scrolled up, the offset is
+        re-anchored so the same earlier slice stays visible.
+        """
+        self._entries.append(entry)
+        if self._scroll_offset == 0:
+            return
+        # Scrolled up: re-anchor the offset so the same earlier content
+        # remains on screen. Offset is "rows above newest visual row",
+        # and a new entry added `k` visual rows to the bottom of the
+        # stream pushes the previously-anchored slice up by `k`, so the
+        # offset must grow by `k` to keep tracking the same slice.
+        self._scroll_offset += self._entry_visual_rows(entry)
+        self._clamp_offset()
+
+    def scroll_up(self, n: int = 1) -> None:
+        if n <= 0:
+            return
+        self._scroll_offset += n
+        self._clamp_offset()
+
+    def scroll_down(self, n: int = 1) -> None:
+        if n <= 0:
+            return
+        self._scroll_offset = max(0, self._scroll_offset - n)
+
+    def scroll_to_live_edge(self) -> None:
+        self._scroll_offset = 0
+
+    def _clamp_offset(self) -> None:
+        # Maximum meaningful offset: push the bottom of the window all
+        # the way up to the top of the oldest visual row. Beyond that
+        # there is nothing more to reveal.
+        total = self._total_visual_rows()
+        max_offset = max(0, total - 1)
+        if self._scroll_offset > max_offset:
+            self._scroll_offset = max_offset
+
+    # -- Windowing ---------------------------------------------------
+
+    def visible_entries(self) -> list[tuple[str, str, int | None]]:
+        """Return the entries whose visual rows fall inside the current
+        window, in natural (oldest -> newest) order. Partial entries
+        are never returned.
+        """
+        if not self._entries:
+            return []
+
+        # Compute the [bottom, top) visual-row window relative to the
+        # newest visual row. Bottom row of the window is at visual-row
+        # index `scroll_offset` from the newest; top row is
+        # `scroll_offset + visible_rows`.
+        rows_per_entry = [self._entry_visual_rows(e) for e in self._entries]
+        total_rows = sum(rows_per_entry)
+
+        # Walk entries from newest backwards, tracking how many visual
+        # rows sit at-or-below the top of each entry, measured from the
+        # newest visual row.
+        # `rows_from_newest_top` = visual rows from the top of this
+        # entry down to (and including) the newest visual row.
+        bottom = self._scroll_offset
+        top = self._scroll_offset + self._visible_rows
+
+        # Build (entry, entry_bottom_from_newest, entry_top_from_newest)
+        # where entry_bottom_from_newest is the visual-row distance from
+        # the *bottom* (newest row) of the stream up to the bottom row
+        # of this entry, and entry_top_from_newest is that distance to
+        # the top row of the entry.
+        spans: list[tuple[tuple[str, str, int | None], int, int]] = []
+        cursor = 0  # rows accumulated from newest so far
+        for entry, rows in zip(reversed(self._entries), reversed(rows_per_entry)):
+            entry_bottom = cursor
+            entry_top = cursor + rows
+            spans.append((entry, entry_bottom, entry_top))
+            cursor += rows
+        # `spans` is newest -> oldest. Reverse back to natural order.
+        spans.reverse()
+
+        selected: list[tuple[str, str, int | None]] = []
+        for entry, eb, et in spans:
+            # Entry is fully inside the window iff its span [eb, et) is
+            # contained in [bottom, top).
+            if eb >= bottom and et <= top:
+                selected.append(entry)
+        # Guard: if total content is smaller than the visible budget,
+        # selected already contains everything that fits. If nothing
+        # fits (e.g. a single entry taller than the window), return
+        # whatever empty slice the window currently sees — the caller
+        # must tolerate an empty return rather than get a partial entry.
+        _ = total_rows
+        return selected
+
+
+_SCROLL_PAGE_ROWS = 10
+
+
+class HistoryScrollController:
+    """Maps single keystrokes to PaintDryDisplay scroll actions.
+
+    Pure logic: the live reader installs one of these and feeds it a
+    character at a time from a cbreak-mode stdin reader thread. Key
+    bindings are intentionally single-byte so the controller does not
+    have to parse escape sequences for arrow keys — that's a future
+    slice if vim-style `hjkl` + `0` proves insufficient.
+    """
+
+    def __init__(self, display: "PaintDryDisplay"):
+        self._display = display
+
+    def bindings(self) -> dict[str, str]:
+        return {
+            "k": "scroll history up one row",
+            "j": "scroll history down one row",
+            "u": f"scroll history up {_SCROLL_PAGE_ROWS} rows (page up)",
+            "d": f"scroll history down {_SCROLL_PAGE_ROWS} rows (page down)",
+            "0": "return to live edge (newest history)",
+        }
+
+    def handle_key(self, key: str) -> bool:
+        """Route `key` to a scroll action. Returns True if the key
+        was bound and an action was taken, False if the key is
+        unbound (caller may swallow or forward it)."""
+        if key == "k":
+            self._display.scroll_history_up(1)
+            return True
+        if key == "j":
+            self._display.scroll_history_down(1)
+            return True
+        if key == "u":
+            self._display.scroll_history_up(_SCROLL_PAGE_ROWS)
+            return True
+        if key == "d":
+            self._display.scroll_history_down(_SCROLL_PAGE_ROWS)
+            return True
+        if key == "0":
+            self._display.scroll_history_to_live_edge()
+            return True
+        return False
+
+
 class PaintDryDisplay:
     """Maintains the live + history state and renders via rich."""
 
@@ -1153,7 +2819,7 @@ class PaintDryDisplay:
         self._freeze_started_at: float | None = None
 
         # History entries are 3-tuples (kind, text, parity):
-        #   kind in {"line", "header", "topic", "checkpoint"}
+        #   kind in {"line", "header", "topic", "basis", "review_marker", "checkpoint"}
         #   parity is 0 or 1 for "line" entries (alternation), None for others
         # Drops live in their own deque, rendered in a separate panel
         # below post-game so they don't clutter the narrative thread.
@@ -1222,7 +2888,6 @@ class PaintDryDisplay:
         # event thread), then the renderable below yields only the
         # tiny place command on each frame.
         self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
-        self._focus_preview_texture_counter: int = 0
         self._kitty_graphics_supported: bool = _supports_kitty_graphics(
             os.environ.get("TERM_PROGRAM")
         )
@@ -1239,12 +2904,43 @@ class PaintDryDisplay:
             if queried_aspect is not None
             else _DEFAULT_TERMINAL_CELL_ASPECT
         )
-        # When True, render() shows a "press Enter to close" footer and
-        # the final frame stays static while waiting for Enter.
+        # When True, render() shows the post-session footer and the
+        # scroll keys remain live via HistoryScrollController. The
+        # animation thread keeps running while the operator inspects
+        # the final state, and any non-scroll key closes the reader.
         self.session_ended: bool = False
         self._session_ended_at: float | None = None
         self._session_started_at: float | None = None
         self._turn_started_at: float | None = None
+
+        # In-pane history scroll viewport. Persistent across frames so
+        # that `HistoryViewport.append()`'s re-anchoring logic carries
+        # scroll state correctly when new history arrives while the
+        # operator is scrolled up. Rebuilt only when the wrap width
+        # changes (terminal resize) — scroll offset is preserved
+        # across rebuilds. The viewport consumes a separately computed
+        # flat list with essentials-first priority applied, so current
+        # live-edge semantics are preserved (see
+        # `_flat_display_entries`).
+        self._viewport: HistoryViewport | None = None
+        self._viewport_wrap_width: int | None = None
+        # Number of flat entries already appended into `_viewport`, so
+        # lazy sync can feed only the delta on each access.
+        self._viewport_synced_len: int = 0
+        # Optional explicit wrap width override for tests and for the
+        # public viewport accessor when no console is attached. The
+        # renderer still prefers `_compute_wrap_width()` from the live
+        # console when present.
+        self._wrap_width_override: int | None = None
+        # Lock protecting viewport state. Three threads touch this:
+        # the animation thread (render → _viewport_display_entries →
+        # _sync_viewport), the scroll thread (scroll_history_* →
+        # _sync_viewport), and the main message-pump thread (mutates
+        # self.history which _flat_display_entries reads). Without
+        # this lock, concurrent rebuild/append/scroll operations on
+        # the viewport produce corrupted entry lists. (F1 fix from
+        # Crispy Drips anaphora 2026-04-12.)
+        self._viewport_lock = threading.Lock()
 
     def __rich__(self) -> Group:
         return self.render()
@@ -1261,11 +2957,12 @@ class PaintDryDisplay:
         *,
         label_style: str,
         value_style: str,
+        separator_style: str = "dim",
         label_pad: int = 1,
         value_pad: int = 1,
     ) -> None:
         if row.plain:
-            row.append("  ", style="dim")
+            row.append("  ", style=separator_style)
         row.append(f"{' ' * label_pad}{label}{' ' * label_pad}", style=label_style)
         row.append(f"{' ' * value_pad}{value}{' ' * value_pad}", style=value_style)
 
@@ -1279,16 +2976,18 @@ class PaintDryDisplay:
         value: str,
         *,
         label_style: str,
-        value_style: str,
-        value_mid_style: str,
+        value_row_styles: tuple[str, str, str],
+        value_mid_row_styles: tuple[str, str, str],
+        value_texture_styles: tuple[str, str, str],
+        separator_styles: tuple[str, str, str, str] = ("dim", "dim", "dim", "dim"),
         label_pad: int = 3,
         value_pad: int = 1,
     ) -> None:
         if label_row.plain:
-            label_row.append("  ", style="dim")
-            value_top_row.append("  ", style="dim")
-            value_middle_row.append("  ", style="dim")
-            value_bottom_row.append("  ", style="dim")
+            label_row.append("  ", style=separator_styles[0])
+            value_top_row.append("  ", style=separator_styles[1])
+            value_middle_row.append("  ", style=separator_styles[2])
+            value_bottom_row.append("  ", style=separator_styles[3])
         top, middle, bottom = _scorebug_big_value_rows(value)
         cell_width = len(f"{' ' * value_pad}{top}{' ' * value_pad}")
         label_lead = ""
@@ -1300,20 +2999,26 @@ class PaintDryDisplay:
         _append_scorebug_value_row(
             value_top_row,
             f"{' ' * value_pad}{top}{' ' * value_pad}",
-            strong_style=value_style,
-            mid_style=value_mid_style,
+            strong_style=value_row_styles[0],
+            mid_style=value_mid_row_styles[0],
+            texture_style=value_texture_styles[0],
+            texture_seed=0,
         )
         _append_scorebug_value_row(
             value_middle_row,
             f"{' ' * value_pad}{middle}{' ' * value_pad}",
-            strong_style=value_style,
-            mid_style=value_mid_style,
+            strong_style=value_row_styles[1],
+            mid_style=value_mid_row_styles[1],
+            texture_style=value_texture_styles[1],
+            texture_seed=9,
         )
         _append_scorebug_value_row(
             value_bottom_row,
             f"{' ' * value_pad}{bottom}{' ' * value_pad}",
-            strong_style=value_style,
-            mid_style=value_mid_style,
+            strong_style=value_row_styles[2],
+            mid_style=value_mid_row_styles[2],
+            texture_style=value_texture_styles[2],
+            texture_seed=2,
         )
 
     def should_animate(self, now: float | None = None) -> bool:
@@ -1345,6 +3050,10 @@ class PaintDryDisplay:
             prefix_width = len("─ ")
         elif kind == "topic":
             prefix_width = len("  · ")
+        elif kind == "basis":
+            prefix_width = len("  ≡ Basis: ")
+        elif kind == "review_marker":
+            prefix_width = len("  ! Review needed: ")
         else:
             prefix_width = len("    ")
 
@@ -1358,26 +3067,8 @@ class PaintDryDisplay:
         """Group history into items, reverse so newest item is first,
         and within each group keep entries in chronological order so
         the header sits ABOVE its narrator lines and topic.
-
-        Then fill the visible budget by priority:
-          1. All headers and topics (ESSENTIAL — structural anchors).
-             These never get dropped while the deque has them.
-          2. Narrator lines, newest first (OPTIONAL — disposable middle).
-             Filled into whatever budget is left after essentials.
-
-        This means a long-thinking item with 30+ narrator lines doesn't
-        push older items' headers and topics off the display — only
-        narrator lines drop. The user can always see "this is the item,
-        here's the verdict" for every visible item; the play-by-play
-        between them is the part that compresses.
-
-        Returns a list of (entry, is_most_recent, group_depth) tuples
-        in display order. group_depth is the per-item depth that resets
-        at each header, so visual fading can restart from every item
-        heading instead of running as one global downhill wash.
-        is_most_recent is True for exactly the entry at the back of the
-        deque (the most-recently-committed thing).
         """
+
         history_list = list(self.history)
         if not history_list:
             return []
@@ -1385,17 +3076,7 @@ class PaintDryDisplay:
 
         # Forward-iterate, grouping at header boundaries, tracking
         # original deque indices.
-        groups: list[list[tuple[tuple, int]]] = []
-        current_group: list[tuple[tuple, int]] = []
-        for idx, entry in enumerate(history_list):
-            if entry[0] == "header":
-                if current_group:
-                    groups.append(current_group)
-                current_group = [(entry, idx)]
-            else:
-                current_group.append((entry, idx))
-        if current_group:
-            groups.append(current_group)
+        groups = self._history_groups_with_indices(history_list)
 
         # Newest item on top. Within each group, keep the header first,
         # move the verdict/topic line directly underneath it for quick
@@ -1406,18 +3087,7 @@ class PaintDryDisplay:
         # Flat list of (entry, deque_idx) in display order (top-down)
         flat: list[tuple[tuple, int]] = []
         for group in groups:
-            header = [pair for pair in group if pair[0][0] == "header"]
-            lines = [pair for pair in group if pair[0][0] == "line"]
-            rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
-            rest.sort(
-                key=lambda pair: {
-                    "topic": 0,
-                    "checkpoint": 1,
-                }.get(pair[0][0], 2)
-            )
-            flat.extend(header)
-            flat.extend(rest)
-            flat.extend(reversed(lines))
+            flat.extend(self._ordered_group_pairs(group))
 
         # Two-pass priority fill:
         #   1. Essentials (headers + topics) — keep newest-first up to budget
@@ -1431,7 +3101,7 @@ class PaintDryDisplay:
         # essentials drop first — but the deque cap should make this
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic", "checkpoint"):
+            if entry[0] in ("header", "topic", "basis", "review_marker", "checkpoint"):
                 row_cost = self._entry_visual_rows(entry, wrap_width)
                 if used_rows >= budget:
                     break
@@ -1447,7 +3117,7 @@ class PaintDryDisplay:
         optionals = [
             (pos, entry, idx)
             for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic", "checkpoint")
+            if entry[0] not in ("header", "topic", "basis", "review_marker", "checkpoint")
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
 
@@ -1471,6 +3141,279 @@ class PaintDryDisplay:
                     group_depth = max(0, group_depth + 1)
                 display.append((entry, idx == most_recent_idx, group_depth))
         return display
+
+    def _flat_display_entries(
+        self,
+        wrap_width: int | None = None,
+    ) -> list[tuple[tuple[str, str, int | None], bool]]:
+        """Return the full history deque in chronological order.
+
+        No priority filtering is applied here. The viewport sees every
+        entry the deque holds, and the live-edge essentials-first trim
+        is applied later in `_viewport_display_entries`. That keeps the
+        old compact live-edge behavior while still letting scroll-up
+        reach the oldest surviving history.
+        """
+        history_list = list(self.history)
+        if not history_list:
+            return []
+        most_recent_idx = len(history_list) - 1
+        return [
+            (entry, idx == most_recent_idx)
+            for idx, entry in enumerate(history_list)
+        ]
+
+    @staticmethod
+    def _trim_leading_orphan_entries(
+        display_entries: list[tuple[tuple, bool, int]],
+    ) -> list[tuple[tuple, bool, int]]:
+        """Drop any leading mid-item rows until the next visible header.
+
+        This is a defensive renderer guard: if a viewport slice or
+        budgeted history pass ever hands us a list that starts in the
+        middle of an item, the pane should not paint orphaned topic /
+        basis / checkpoint rows without their owning header.
+        """
+        first_header_idx = next(
+            (idx for idx, (entry, _recent, _depth) in enumerate(display_entries) if entry[0] == "header"),
+            None,
+        )
+        if first_header_idx in (None, 0):
+            return display_entries
+        return display_entries[first_header_idx:]
+
+    @staticmethod
+    def _history_groups_with_indices(
+        history_list: list[tuple[str, str, int | None]],
+    ) -> list[list[tuple[tuple[str, str, int | None], int]]]:
+        groups: list[list[tuple[tuple[str, str, int | None], int]]] = []
+        current_group: list[tuple[tuple[str, str, int | None], int]] = []
+        for idx, entry in enumerate(history_list):
+            if entry[0] == "header":
+                if current_group:
+                    groups.append(current_group)
+                current_group = [(entry, idx)]
+            else:
+                current_group.append((entry, idx))
+        if current_group:
+            groups.append(current_group)
+        return groups
+
+    @staticmethod
+    def _ordered_group_pairs(
+        group: list[tuple[tuple[str, str, int | None], int]],
+    ) -> list[tuple[tuple[str, str, int | None], int]]:
+        header = [pair for pair in group if pair[0][0] == "header"]
+        lines = [pair for pair in group if pair[0][0] == "line"]
+        rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
+        rest.sort(
+            key=lambda pair: {
+                "topic": 0,
+                **_LEGIBILITY_STRUCTURED_ROW_ORDER,
+                "checkpoint": 7,
+            }.get(pair[0][0], 2)
+        )
+        return [*header, *rest, *reversed(lines)]
+
+    @staticmethod
+    def _ordered_group_entries(
+        group: list[tuple[str, str, int | None]],
+    ) -> list[tuple[str, str, int | None]]:
+        header = [entry for entry in group if entry[0] == "header"]
+        lines = [entry for entry in group if entry[0] == "line"]
+        rest = [entry for entry in group if entry[0] not in ("header", "line")]
+        rest.sort(
+            key=lambda entry: {
+                "topic": 0,
+                **_LEGIBILITY_STRUCTURED_ROW_ORDER,
+                "checkpoint": 7,
+            }.get(entry[0], 2)
+        )
+        return [*header, *rest, *reversed(lines)]
+
+    # -- History viewport (Crispy Drips) --------------------------------
+
+    def _resolve_wrap_width(self) -> int:
+        wrap = self._compute_wrap_width()
+        if wrap is None:
+            wrap = self._wrap_width_override or 80
+        return wrap
+
+    def _sync_viewport(self) -> HistoryViewport:
+        """Ensure `self._viewport` reflects current history + wrap width.
+
+        * Rebuild from scratch on first call, when the wrap width
+          changes (terminal resize), or when the priority-filtered
+          flat list diverges from what the viewport already contains.
+        * Otherwise append only the delta so
+          `HistoryViewport.append()`'s re-anchoring logic carries
+          scroll state across new commits.
+        """
+        wrap_width = self._resolve_wrap_width()
+        flat = self._flat_display_entries()
+        flat_entries = [entry for entry, _ in flat]
+
+        rebuild = (
+            self._viewport is None
+            or self._viewport_wrap_width != wrap_width
+        )
+
+        if not rebuild and self._viewport is not None:
+            # Verify the prefix the viewport already holds still
+            # matches the current priority-filtered flat list. If an
+            # entry was filtered out (e.g. a narrator line dropped by
+            # priority because newer lines took its budget slot), the
+            # prefix diverges and we have to rebuild.
+            current = self._viewport.entries_snapshot()
+            prefix_len = min(len(current), len(flat_entries))
+            if current[:prefix_len] != flat_entries[:prefix_len]:
+                rebuild = True
+            elif len(current) > len(flat_entries):
+                rebuild = True
+
+        if rebuild:
+            held_offset = (
+                self._viewport.scroll_offset if self._viewport is not None else 0
+            )
+            self._viewport = HistoryViewport(
+                visible_rows=_VIEWPORT_VISIBLE_ROWS,
+                wrap_width=wrap_width,
+            )
+            self._viewport_wrap_width = wrap_width
+            for entry in flat_entries:
+                self._viewport.append(entry)
+            self._viewport_synced_len = len(flat_entries)
+            if held_offset > 0:
+                self._viewport.scroll_up(held_offset)
+        else:
+            assert self._viewport is not None
+            # Feed only the new entries so append()'s re-anchoring
+            # logic carries scroll state forward.
+            new_entries = flat_entries[self._viewport_synced_len :]
+            for entry in new_entries:
+                self._viewport.append(entry)
+            self._viewport_synced_len = len(flat_entries)
+        return self._viewport
+
+    def history_viewport(self) -> HistoryViewport:
+        """Public accessor: returns the synced viewport. Used by the
+        render path and by the interactive input loop (slice 3)."""
+        with self._viewport_lock:
+            return self._sync_viewport()
+
+    def _viewport_display_entries(
+        self,
+    ) -> list[tuple[tuple[str, str, int | None], bool, int]]:
+        """Return the render-facing display entries for the history
+        pane: the viewport's currently visible slice, reverse-grouped
+        so the newest item's group sits at the top (natural Paint Dry
+        layout), with entries within each group kept in chronological
+        order so a header sits above its own narrator lines. group_depth
+        resets per visible item so the fade stack still behaves like the
+        non-viewport renderer.
+        """
+        with self._viewport_lock:
+            vp = self._sync_viewport()
+            at_live_edge = vp.at_live_edge
+            visible = vp.visible_entries()
+        if not visible:
+            return []
+
+        # At the live edge, apply essentials-first priority so a
+        # chatty item's body lines can't push older headers/topics
+        # off the pane. When scrolled up, bypass the filter entirely:
+        # the operator explicitly asked to see older content.
+        if at_live_edge:
+            visible = self._priority_filter(
+                visible,
+                wrap_width=self._resolve_wrap_width(),
+            )
+
+        history_list = list(self.history)
+        most_recent_entry = history_list[-1] if history_list else None
+
+        groups: list[list[tuple[str, str, int | None]]] = []
+        current_group: list[tuple[str, str, int | None]] = []
+        for entry in visible:
+            if entry[0] == "header":
+                if current_group:
+                    groups.append(current_group)
+                current_group = [entry]
+            else:
+                current_group.append(entry)
+        if current_group:
+            groups.append(current_group)
+
+        groups.reverse()
+        out: list[tuple[tuple[str, str, int | None], bool, int]] = []
+        for group in groups:
+            ordered_group = self._ordered_group_entries(group)
+            group_depth = -1
+            for entry in ordered_group:
+                if entry[0] == "header":
+                    group_depth = 0
+                else:
+                    group_depth = max(0, group_depth + 1)
+                is_recent = entry == most_recent_entry
+                out.append((entry, is_recent, group_depth))
+        return out
+
+    def _priority_filter(
+        self,
+        entries: list[tuple[str, str, int | None]],
+        *,
+        wrap_width: int | None,
+    ) -> list[tuple[str, str, int | None]]:
+        """Essentials-first priority filter for the live-edge window.
+
+        Given visible entries in chronological order, keep structural
+        anchors first, then fill the remaining row budget with the
+        newest body lines. This is only used at the live edge; scrolled
+        views bypass it so older content stays reachable.
+        """
+        budget = _VISIBLE_HISTORY_ROWS
+        essentials_kinds = {"header", "topic", "checkpoint", * _LEGIBILITY_STRUCTURED_ROW_KINDS}
+        keep_positions: set[int] = set()
+        used_rows = 0
+
+        for pos, entry in enumerate(entries):
+            if entry[0] in essentials_kinds:
+                row_cost = self._entry_visual_rows(entry, wrap_width)
+                if used_rows >= budget:
+                    break
+                if used_rows > 0 and used_rows + row_cost > budget:
+                    break
+                keep_positions.add(pos)
+                used_rows += row_cost
+
+        optionals = [
+            (pos, entry)
+            for pos, entry in enumerate(entries)
+            if entry[0] not in essentials_kinds
+        ]
+        optionals.reverse()  # newest first within the visible slice
+        for pos, entry in optionals:
+            row_cost = self._entry_visual_rows(entry, wrap_width)
+            if used_rows >= budget:
+                break
+            if used_rows > 0 and used_rows + row_cost > budget:
+                continue
+            keep_positions.add(pos)
+            used_rows += row_cost
+
+        return [entry for pos, entry in enumerate(entries) if pos in keep_positions]
+
+    def scroll_history_up(self, rows: int = 1) -> None:
+        with self._viewport_lock:
+            self._sync_viewport().scroll_up(rows)
+
+    def scroll_history_down(self, rows: int = 1) -> None:
+        with self._viewport_lock:
+            self._sync_viewport().scroll_down(rows)
+
+    def scroll_history_to_live_edge(self) -> None:
+        with self._viewport_lock:
+            self._sync_viewport().scroll_to_live_edge()
 
     def _compute_wrap_width(self) -> int | None:
         """Approximate visual width at which the history panel wraps.
@@ -1520,7 +3463,7 @@ class PaintDryDisplay:
         # the top chrome to balance the warm field below. Same color
         # family as the [item N/M] index markers in the history panel.
         header_text = Text()
-        header_text.append(self.title, style="bold bright_white")
+        _append_header_title(header_text, self.title, self._shimmer_phases.phase(0))
         header_text.append("   ", style="dim")
         header_text.append(self.subtitle, style="#5a73b4")
         header_text.append("   ", style="dim")
@@ -1534,29 +3477,65 @@ class PaintDryDisplay:
             if self._turn_started_at is not None
             else None
         )
-        header_text.append(
-            f"total={total_elapsed_s}s",
-            style="#7f95cf" if self._session_started_at is not None else "grey50",
+
+        # Scoreboard-dial treatment for the three event-count counters.
+        # EMITTED / DEDUP / EMPTY each render through
+        # `_append_scorebug_cell` so they reuse the same capsule-and-
+        # value language the Liquid Varnish Squadron scorebug panel
+        # below uses for CURRENT MODEL / ITEM, instead of sitting in
+        # the top chrome as a flat telemetry tail. The event-count
+        # dials light up on green / amber / red capsules only when
+        # nonzero — at zero they fall back to a muted grey capsule so
+        # a quiet run doesn't scream color.
+        #
+        # The two timers (TOTAL and TURN) are NOT rendered here. They
+        # are promoted below into full tall-digit scorebug plates
+        # alongside ON TARGET / LEFT ON TABLE / BAD CALLS so the
+        # timer promotion is actually legible as dial-shape scoreboard
+        # instrumentation rather than being lost in the top header
+        # chrome.
+        _dead_label = "bold #9aa0ac on #2a2d34"
+        _dead_value = "bold #cdd1da on #1a1c22"
+        self._append_scorebug_cell(
+            header_text,
+            "EMITTED",
+            f"{self.stat_emitted}",
+            label_style=(
+                "bold #e0f5dc on #2b4e2a" if self.stat_emitted > 0 else _dead_label
+            ),
+            value_style=(
+                "bold #c7e6c0 on #1a3519" if self.stat_emitted > 0 else _dead_value
+            ),
         )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"turn={turn_elapsed_s}s" if turn_elapsed_s is not None else "turn=--",
-            style=_rgb_to_hex(_EMBER_ACCENT_RGB) if turn_elapsed_s is not None else "grey50",
+        self._append_scorebug_cell(
+            header_text,
+            "DEDUP",
+            f"{self.stat_dropped_dedup}",
+            label_style=(
+                "bold #fff1cc on #5a4420"
+                if self.stat_dropped_dedup > 0
+                else _dead_label
+            ),
+            value_style=(
+                "bold #f2dfa8 on #3d2d13"
+                if self.stat_dropped_dedup > 0
+                else _dead_value
+            ),
         )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"emitted={self.stat_emitted}",
-            style="green4" if self.stat_emitted > 0 else "grey50",
-        )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"dedup={self.stat_dropped_dedup}",
-            style="yellow4" if self.stat_dropped_dedup > 0 else "grey50",
-        )
-        header_text.append("  ", style="dim")
-        header_text.append(
-            f"empty={self.stat_dropped_empty}",
-            style="red3" if self.stat_dropped_empty > 0 else "grey50",
+        self._append_scorebug_cell(
+            header_text,
+            "EMPTY",
+            f"{self.stat_dropped_empty}",
+            label_style=(
+                "bold #ffd6d0 on #5a2620"
+                if self.stat_dropped_empty > 0
+                else _dead_label
+            ),
+            value_style=(
+                "bold #f2b6ad on #3d1813"
+                if self.stat_dropped_empty > 0
+                else _dead_value
+            ),
         )
         header = Panel(
             Align.left(header_text),
@@ -1566,13 +3545,39 @@ class PaintDryDisplay:
 
         scorebug_panel = None
         if self.current_model or self.current_item_bug or self.current_set_label:
+            meta_bg = "#383530"
+            meta_separator_style = "bold #585149 on #383530"
+            tally_label_bg = "#36342f"
+            tally_label_separator_style = "bold #575149 on #36342f"
+            tally_top_separator_style = "bold #545048 on #35332f"
+            tally_mid_separator_style = "bold #514c45 on #33312d"
+            tally_bottom_separator_style = "bold #4c4741 on #302e2b"
+            tally_top_bg = "#34322f"
+            tally_mid_bg = "#322f2d"
+            tally_bottom_bg = "#302d2b"
+            tally_value_strong_styles = (
+                f"bold #f0ece5 on {tally_top_bg}",
+                f"bold #e7e1d8 on {tally_mid_bg}",
+                f"bold #ddd7cd on {tally_bottom_bg}",
+            )
+            tally_value_mid_styles = (
+                f"bold #bdb4a8 on {tally_top_bg}",
+                f"bold #b2a898 on {tally_mid_bg}",
+                f"bold #a69c8d on {tally_bottom_bg}",
+            )
+            tally_value_texture_styles = (
+                f"#5b5750 on {tally_top_bg}",
+                f"#57524c on {tally_mid_bg}",
+                f"#534e48 on {tally_bottom_bg}",
+            )
             scorebug_top = Text()
             self._append_scorebug_cell(
                 scorebug_top,
                 "CURRENT MODEL",
                 self.current_model or "—",
-                label_style="bold #eaf2ff on #405a93",
-                value_style="bold #d8e5ff on #27344f",
+                label_style=f"bold #c9c1b6 on {meta_bg}",
+                value_style=f"bold #ece7de on {meta_bg}",
+                separator_style=meta_separator_style,
             )
             if self.current_set_label:
                 set_value = self.current_set_label
@@ -1580,20 +3585,69 @@ class PaintDryDisplay:
                     scorebug_top,
                     "SET",
                     set_value,
-                    label_style="bold #eef6ff on #32506e",
-                    value_style="bold #d7e8ff on #1d3147",
+                    label_style=f"bold #c9c1b6 on {meta_bg}",
+                    value_style=f"bold #e7decb on {meta_bg}",
+                    separator_style=meta_separator_style,
                 )
             if self.current_item_bug:
                 self._append_scorebug_cell(
                     scorebug_top,
                     "ITEM",
                     self.current_item_bug,
-                    label_style="bold #fff1e6 on #7d4a2e",
-                    value_style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    label_style=f"bold #c9c1b6 on {meta_bg}",
+                    value_style=f"bold #efe0cf on {meta_bg}",
+                    separator_style=meta_separator_style,
                 )
 
             scorebug_gap = Text(" ", style="grey35")
             scorebug_rows: list[Text] = [scorebug_top, scorebug_gap]
+
+            # Timer plate styles (Gauge Saints II). These two plates
+            # sit leftmost in the big-value strip so the run chrome
+            # reads before the grading tally. TOTAL gets a quiet
+            # slate/graphite family so it anchors the strip without
+            # competing with ON TARGET's crisper blue. TURN gets a
+            # warm sand/umber family that reads distinct from both
+            # LEFT ON TABLE's yellow-bronze and BAD CALLS' red-brown,
+            # and carries the "currently on the clock" weight that
+            # matches the ember ITEM tag above.
+            _total_label_style = "bold #e8ecf5 on #3a4256"
+            _total_value_row_styles = (
+                "bold #dde2f0 on #272c39",
+                "bold #d3d8e6 on #1f2430",
+                "bold #c9cedb on #181c27",
+            )
+            _total_value_mid_row_styles = (
+                "bold #8e94a3 on #272c39",
+                "bold #868ca0 on #1f2430",
+                "bold #7d8398 on #181c27",
+            )
+            _total_value_texture_styles = (
+                "#4a515f on #272c39",
+                "#434957 on #1f2430",
+                "#3d434f on #181c27",
+            )
+            _turn_label_style = "bold #ffecd0 on #6b4a22"
+            _turn_value_row_styles = (
+                "bold #ffe2b8 on #4d361a",
+                "bold #f8d6a8 on #3f2b14",
+                "bold #eac598 on #33220f",
+            )
+            _turn_value_mid_row_styles = (
+                "bold #a78768 on #4d361a",
+                "bold #9e7e5f on #3f2b14",
+                "bold #8f7152 on #33220f",
+            )
+            _turn_value_texture_styles = (
+                "#5a4630 on #4d361a",
+                "#523f2b on #3f2b14",
+                "#493827 on #33220f",
+            )
+            _total_value_str = f"{total_elapsed_s}"
+            _turn_value_str = (
+                f"{turn_elapsed_s}" if turn_elapsed_s is not None else "--"
+            )
+
             if self.score_points_possible > 0:
                 scorebug_labels = Text()
                 scorebug_values_top = Text()
@@ -1604,14 +3658,45 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
+                    "TOTAL",
+                    _total_value_str,
+                    label_style=_total_label_style,
+                    value_row_styles=_total_value_row_styles,
+                    value_mid_row_styles=_total_value_mid_row_styles,
+                    value_texture_styles=_total_value_texture_styles,
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "TURN",
+                    _turn_value_str,
+                    label_style=_turn_label_style,
+                    value_row_styles=_turn_value_row_styles,
+                    value_mid_row_styles=_turn_value_mid_row_styles,
+                    value_texture_styles=_turn_value_texture_styles,
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
                     "ON TARGET",
                     (
                         f"{self._format_scorebug_points(self.score_on_target_points)}"
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
-                    label_style="bold #eef3ff on #32578e",
-                    value_style="bold #dce9ff on #1c2d47",
-                    value_mid_style="bold #8ea5cb on #1c2d47",
+                    label_style=f"bold #a8b8bb on {tally_label_bg}",
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1623,9 +3708,16 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
-                    label_style="bold #fff1d6 on #6b5028",
-                    value_style="bold #ffefcf on #3e2f1b",
-                    value_mid_style="bold #a18f66 on #3e2f1b",
+                    label_style=f"bold #c0aa83 on {tally_label_bg}",
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1637,9 +3729,16 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
-                    label_style="bold #ffe5dd on #7a392f",
-                    value_style="bold #ffe3d8 on #47211d",
-                    value_mid_style="bold #a57e76 on #47211d",
+                    label_style=f"bold #bc9589 on {tally_label_bg}",
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
                 )
                 scorebug_rows.extend(
                     [
@@ -1647,6 +3746,7 @@ class PaintDryDisplay:
                         scorebug_values_top,
                         scorebug_values_middle,
                         scorebug_values_bottom,
+                        Text(" ", style="grey35"),
                     ]
                 )
             else:
@@ -1659,11 +3759,42 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
+                    "TOTAL",
+                    _total_value_str,
+                    label_style=_total_label_style,
+                    value_row_styles=_total_value_row_styles,
+                    value_mid_row_styles=_total_value_mid_row_styles,
+                    value_texture_styles=_total_value_texture_styles,
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "TURN",
+                    _turn_value_str,
+                    label_style=_turn_label_style,
+                    value_row_styles=_turn_value_row_styles,
+                    value_mid_row_styles=_turn_value_mid_row_styles,
+                    value_texture_styles=_turn_value_texture_styles,
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
-                    label_style="bold #eef3ff on #32578e",
-                    value_style="bold #dce9ff on #1c2d47",
-                    value_mid_style="bold #8ea5cb on #1c2d47",
+                    label_style=f"bold #a8b8bb on {tally_label_bg}",
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1672,9 +3803,16 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
-                    label_style="bold #fff1d6 on #6b5028",
-                    value_style="bold #ffefcf on #3e2f1b",
-                    value_mid_style="bold #a18f66 on #3e2f1b",
+                    label_style=f"bold #c0aa83 on {tally_label_bg}",
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
                 )
                 self._append_scorebug_big_value_cell(
                     scorebug_labels,
@@ -1683,9 +3821,16 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
-                    label_style="bold #ffe5dd on #7a392f",
-                    value_style="bold #ffe3d8 on #47211d",
-                    value_mid_style="bold #a57e76 on #47211d",
+                    label_style=f"bold #bc9589 on {tally_label_bg}",
+                    value_row_styles=tally_value_strong_styles,
+                    value_mid_row_styles=tally_value_mid_styles,
+                    value_texture_styles=tally_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
                 )
                 scorebug_rows.extend(
                     [
@@ -1693,6 +3838,7 @@ class PaintDryDisplay:
                         scorebug_values_top,
                         scorebug_values_middle,
                         scorebug_values_bottom,
+                        Text(" ", style="grey35"),
                     ]
                 )
 
@@ -1867,7 +4013,6 @@ class PaintDryDisplay:
                 title=preview_title,
                 title_align="left",
             )
-
         # History panel — items grouped by header. Each item is a
         # group: header at the top, decision/topic directly below it,
         # then narrator lines newest-first beneath that. Groups are
@@ -1882,11 +4027,14 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._build_display_entries(wrap_width=wrap_width)
+        display_entries = self._trim_leading_orphan_entries(
+            self._viewport_display_entries()
+        )
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
         current_group_index = -1
         current_group_base_phase = 0.0
+        current_body_depth = 0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
@@ -1894,7 +4042,13 @@ class PaintDryDisplay:
             if kind == "header":
                 current_group_index += 1
                 current_group_base_phase = self._shimmer_phases.phase(current_group_index)
-            render_layer = _render_layer_index(kind, group_depth)
+                current_body_depth = 0
+            if kind in {"header", "topic"}:
+                render_layer = 0
+                body_depth = 0
+            else:
+                body_depth = current_body_depth
+                render_layer = max(1, body_depth + 1)
             if i > 0:
                 history_text.append("\n")
 
@@ -1971,6 +4125,7 @@ class PaintDryDisplay:
             elif kind == "topic":
                 indent = "  · "
                 history_text.append(indent, style="grey50")
+                current_body_depth = 0
                 # Pick the topic color variant based on the stored
                 # verdict (third tuple slot, named "parity" for line
                 # entries but reused as the verdict string for topic
@@ -1982,6 +4137,12 @@ class PaintDryDisplay:
                     "overshoot": "topic_overshoot",
                     "undershoot": "topic_undershoot",
                 }.get(parity, "topic")
+                is_truncated_topic = (
+                    "(truncated)" in text.lower()
+                    or "(after-action unavailable)" in text.lower()
+                )
+                if is_truncated_topic:
+                    topic_kind = "topic_truncated"
                 # Pull out the elapsed-time prefix and color it as a
                 # punchy warm accent (bold orange3 — same warm as the
                 # post-game border and header base) so it pops out
@@ -1991,7 +4152,11 @@ class PaintDryDisplay:
                     time_prefix, rest = m.group(1), m.group(2)
                     history_text.append(
                         time_prefix,
-                        style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                        style=(
+                            f"{_rgb_to_hex(_BASE_RGB['status'])}"
+                            if is_truncated_topic
+                            else f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}"
+                        ),
                     )
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
@@ -2012,6 +4177,28 @@ class PaintDryDisplay:
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                     )
+            elif kind in _LEGIBILITY_STRUCTURED_ROW_LABELS:
+                indent = "  ! " if kind == "review_marker" else "  ≡ "
+                content_kind = (
+                    "checkpoint_alt"
+                    if body_depth % 2 == 1
+                    else "checkpoint"
+                )
+                label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
+                history_text.append(indent, style="grey50")
+                history_text.append(
+                    label,
+                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
+                _apply_shimmer(
+                    history_text, text, content_kind,
+                    layer_index=render_layer,
+                    indent_width=len(indent) + len(label),
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
+                current_body_depth += 1
             elif kind == "checkpoint":
                 indent = "  ≈ "
                 _apply_shimmer(
@@ -2022,7 +4209,11 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
-                checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
+                checkpoint_kind = (
+                    "checkpoint_alt"
+                    if body_depth % 2 == 1
+                    else "checkpoint"
+                )
                 _apply_shimmer(
                     history_text, text, checkpoint_kind,
                     layer_index=render_layer,
@@ -2031,14 +4222,14 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
+                current_body_depth += 1
             else:
                 indent = "    "
                 history_text.append(indent, style="dim")
-                # Pick mauve or warmer pink based on the line's stored
-                # parity. Stored per-entry (not computed from position)
-                # so the alternation is stable as new lines arrive and
-                # old lines fall off the deque.
-                line_kind = "line_alt" if parity == 1 else "line"
+                # The body should alternate as it descends within an
+                # item, so visible depth — not producer-side parity —
+                # drives the warm/cool bone lane here.
+                line_kind = "line_alt" if body_depth % 2 == 1 else "line"
                 _apply_shimmer(
                     history_text, text, line_kind,
                     layer_index=render_layer,
@@ -2047,6 +4238,7 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
+                current_body_depth += 1
 
         if not display_entries:
             history_text = Text(
@@ -2077,11 +4269,7 @@ class PaintDryDisplay:
                 drops_text,
                 border_style="grey30",
                 padding=(0, 1),
-                title=(
-                    f"[grey42]rejected · "
-                    f"dedup={self.stat_dropped_dedup} "
-                    f"empty={self.stat_dropped_empty}[/grey42]"
-                ),
+                title="[grey42]rejected[/grey42]",
                 title_align="left",
             )
 
@@ -2118,14 +4306,14 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: scorebug, header, live, history, post-game, drops, [footer]
-        # The big tally cells are the most glanceable session-state
-        # surface, so they lead the stack. The project header drops
-        # below them as show identity rather than primary telemetry.
+        # Order: header, scorebug, live, history, post-game, drops, [footer]
+        # The PROJECT PAINT DRY band is the primary scene-setter again;
+        # the scorebug stays immediately below it as the denser
+        # instrumentation slab.
         panels = []
+        panels.append(header)
         if scorebug_panel is not None:
             panels.append(scorebug_panel)
-        panels.append(header)
         panels.append(live_panel)
         if focus_preview_panel is not None:
             panels.append(focus_preview_panel)
@@ -2136,7 +4324,7 @@ class PaintDryDisplay:
             panels.append(drops_panel)
         if self.session_ended:
             footer = Text(
-                "  ▌ session ended — press Enter to close ▐",
+                "  ▌ session ended — k/j scroll, u/d page, 0 live edge, any other key closes ▐",
                 style="grey50 italic",
             )
             panels.append(footer)
@@ -2299,10 +4487,8 @@ class PaintDryDisplay:
                 for chunk in chunks:
                     transmit_stream.write(chunk)
                 transmit_stream.flush()
-                self._focus_preview_texture_counter += 1
                 self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
                     image_id=_KITTY_IMAGE_ID,
-                    texture_seed=self._focus_preview_texture_counter,
                     image_pixel_width=pix.width,
                     image_pixel_height=pix.height,
                     terminal_cell_aspect=self._terminal_cell_aspect,
@@ -2409,6 +4595,12 @@ class PaintDryDisplay:
         )
         self.history.append(("checkpoint", text, checkpoint_parity))
 
+    def on_basis(self, text: str) -> None:
+        self.history.append(("basis", text, None))
+
+    def on_review_marker(self, text: str) -> None:
+        self.history.append(("review_marker", text, None))
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -2435,6 +4627,23 @@ def main() -> int:
     # Open the fifo for reading. This blocks until the writer connects.
     fd = os.open(str(fifo_path), os.O_RDONLY)
     fifo = os.fdopen(fd, "r", buffering=1)
+    saw_end_event = False
+
+    # Install cbreak mode on stdin so the interactive scroll loop can
+    # read one byte at a time without waiting for Enter. Best-effort:
+    # if stdin is not a TTY (e.g. the reader is smoke-tested from a
+    # pipe), skip the terminal plumbing and the scroll thread below.
+    # Raw-mode state is restored in the `finally` block so the user's
+    # shell is never left in a broken state on exit.
+    stdin_fd: int | None = None
+    saved_termios = None
+    try:
+        stdin_fd = sys.stdin.fileno()
+        saved_termios = termios.tcgetattr(stdin_fd)
+        tty.setcbreak(stdin_fd)
+    except (termios.error, OSError, ValueError):
+        stdin_fd = None
+        saved_termios = None
 
     try:
         # auto_refresh=False — we drive the render manually from a
@@ -2445,7 +4654,19 @@ def main() -> int:
         # per-character styles changed). Manual update + force
         # refresh works reliably.
         animation_stop = threading.Event()
+        session_exit = threading.Event()
+        scroll_controller = HistoryScrollController(display)
 
+        # screen=False — stay in the terminal's main screen buffer.
+        # Alt-screen (screen=True) was tried and reverted: the focus-
+        # preview image panel can push the total rendered height past
+        # the terminal's row count, and alt-screen has no scrollback
+        # to absorb the overflow — the result is doubled/garbled
+        # panels. screen=False lets the terminal scroll naturally.
+        # Trade-off: Rich's in-place redraw leaves prior frames in
+        # the terminal's native scrollback (ghost header trails when
+        # scrolling the terminal up). That is accepted until a fixed-
+        # height layout or Rich transient mode can eliminate it.
         with Live(
             display.render(),
             console=console,
@@ -2496,11 +4717,49 @@ def main() -> int:
             )
             anim_thread.start()
 
+            # Interactive scroll input. Runs only when stdin is a
+            # real TTY in cbreak mode. Reads one byte at a time and
+            # forwards it to the scroll controller. Before session
+            # end, unbound keys are swallowed (to avoid accidental
+            # exits). After session end, unbound keys trigger the
+            # session exit signal — any keystroke closes the reader.
+            scroll_stop = threading.Event()
+
+            def _scroll_tick():
+                while not scroll_stop.is_set():
+                    try:
+                        ch = sys.stdin.read(1)
+                    except Exception:
+                        return
+                    if not ch:
+                        return
+                    handled = scroll_controller.handle_key(ch)
+                    if not handled and display.session_ended:
+                        session_exit.set()
+                        return
+
+            scroll_thread: threading.Thread | None = None
+            if stdin_fd is not None:
+                scroll_thread = threading.Thread(
+                    target=_scroll_tick,
+                    name="paint-dry-scroll",
+                    daemon=True,
+                )
+                scroll_thread.start()
+
             buffer = ""
             while True:
                 chunk = fifo.read(1)
                 if not chunk:
-                    # Writer closed
+                    if not saw_end_event:
+                        print(
+                            "Project Paint Dry reader saw unexpected FIFO EOF before end event",
+                            file=sys.stderr,
+                        )
+                        animation_stop.set()
+                        scroll_stop.set()
+                        anim_thread.join(timeout=0.5)
+                        return 1
                     break
                 buffer += chunk
                 while "\n" in buffer:
@@ -2552,6 +4811,10 @@ def main() -> int:
                             truth_score=msg.get("truth_score"),
                             max_points=msg.get("max_points"),
                         )
+                    elif msg_type == "basis":
+                        display.on_basis(msg.get("text", ""))
+                    elif msg_type == "review_marker":
+                        display.on_review_marker(msg.get("text", ""))
                     elif msg_type == "checkpoint":
                         display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":
@@ -2564,10 +4827,26 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
+                        saw_end_event = True
+                        # Flag the display so render() shows a
+                        # "press any key to close" footer. Keep
+                        # the animation thread running so the
+                        # shimmer continues to play while the
+                        # user reads the final state. The scroll
+                        # thread stays alive so the operator can
+                        # still scroll the history pane after
+                        # session end — any non-scroll key will
+                        # fire `session_exit` and close the reader.
                         display.session_ended = True
-                        display._session_ended_at = time.monotonic()
-                        live.update(display.render(), refresh=True)
-                        return _wait_for_manual_close()
+                        if stdin_fd is None:
+                            # No interactive input available
+                            # (non-TTY stdin); exit immediately.
+                            session_exit.set()
+                        session_exit.wait()
+                        animation_stop.set()
+                        scroll_stop.set()
+                        anim_thread.join(timeout=0.5)
+                        return 0
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:
@@ -2577,9 +4856,18 @@ def main() -> int:
     finally:
         animation_stop.set()
         try:
+            scroll_stop.set()  # type: ignore[name-defined]
+        except NameError:
+            pass
+        try:
             fifo.close()
         except Exception:
             pass
+        if stdin_fd is not None and saved_termios is not None:
+            try:
+                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_termios)
+            except Exception:
+                pass
 
     return 0
 
