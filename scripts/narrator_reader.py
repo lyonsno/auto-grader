@@ -4718,8 +4718,16 @@ def main() -> int:
         signal.signal(signal.SIGWINCH, _on_sigwinch)
 
         def _live_update(renderable):
-            """Clear the alt-screen then update the Live display."""
-            _resize_pending.clear()
+            """Clear the alt-screen then update the Live display.
+
+            If a SIGWINCH arrived since the renderable was built, the
+            layout may have been computed at the old terminal size.
+            Discard it and re-render at the current size so we never
+            paint stale-geometry content onto the cleared screen.
+            """
+            if _resize_pending.is_set():
+                _resize_pending.clear()
+                renderable = display.render()
             sys.stdout.write("\033[2J")
             sys.stdout.flush()
             live.update(renderable, refresh=True)
