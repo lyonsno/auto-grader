@@ -224,6 +224,8 @@ _CHECKPOINT_TEMPERATURE = 0.5
 _CHECKPOINT_REPETITION_PENALTY = 1.0
 _CHECKPOINT_PRESENCE_PENALTY = 0.0
 _DEDUP_GROOMING_THRESHOLD = 2
+_TURBULENCE_BLOOM_GROOMING_MIN = 1   # at least one grooming pass fired
+_TURBULENCE_BLOOM_DEDUP_MIN = 4      # OR combined dedup count exceeds this
 _PLAYBACK_CHUNK_DELAY_S = 0.03
 _IDLE_LEGIBILITY_DELAY_S = 1.0
 _MAX_LEGIBILITY_EXTRA_ROWS = 2
@@ -1132,11 +1134,14 @@ class ThinkingNarrator:
         ambiguity_needed: bool,
         review_needed: str | None,
         professor_mismatch: str | None,
+        turbulence_is_high: bool = False,
     ) -> bool:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
         if not score_basis:
             return False
         if ambiguity_needed or review_needed or professor_mismatch:
+            return True
+        if turbulence_is_high:
             return True
         if prediction.model_score < item.max_points:
             return True
@@ -1162,11 +1167,25 @@ class ThinkingNarrator:
         writer(body)
         return True
 
+    def _is_turbulence_high(self) -> bool:
+        """Whether this item's narrator turbulence warrants richer history."""
+        with self._lock:
+            grooming = self._item_turbulence_grooming_count
+            total_dedup = (
+                self._item_turbulence_dedup_count
+                + self._item_turbulence_status_dedup_count
+            )
+        return (
+            grooming >= _TURBULENCE_BLOOM_GROOMING_MIN
+            or total_dedup >= _TURBULENCE_BLOOM_DEDUP_MIN
+        )
+
     def _handle_legibility_rows(self, prediction: Any, item: Any) -> None:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
         ambiguity_prompt = self._ambiguity_prompt_from_turbulence(prediction, item)
         review_needed = self._review_needed_text(prediction)
         professor_mismatch = self._professor_mismatch_text(item)
+        turbulence_is_high = self._is_turbulence_high()
 
         if self._should_emit_basis_row(
             prediction,
@@ -1174,6 +1193,7 @@ class ThinkingNarrator:
             ambiguity_needed=ambiguity_prompt is not None,
             review_needed=review_needed,
             professor_mismatch=professor_mismatch,
+            turbulence_is_high=turbulence_is_high,
         ):
             self._write_legibility_row_now("basis", score_basis)
 
