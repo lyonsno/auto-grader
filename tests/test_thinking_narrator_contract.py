@@ -305,6 +305,31 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(narrator._item_turbulence_status_dedup_count, 1)
         self.assertEqual(narrator._item_turbulence_grooming_count, 1)
 
+    def test_double_dedup_consolidation_checkpoint_uses_dropped_basin_context(self):
+        sink = _DummySink()
+        narrator = _RetryNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._current_status = "Rechecking the same unit conversion."
+        narrator._prior_statuses = ["Rechecking the same unit conversion."]
+        narrator._thoughts_since_status = ["I'm tracing the same unit conversion mistake."]
+        narrator._dedupe_streak = 1
+        checkpoint_mock = mock.Mock(  # type: ignore[method-assign]
+            return_value="Core issue: unit conversion path keeps collapsing on the same mismatch."
+        )
+        narrator._chat_completion = checkpoint_mock
+
+        narrator._dispatch("same reasoning chunk", narrator._dispatch_generation)
+
+        prompt = checkpoint_mock.call_args.args[0][-1]["content"]
+        self.assertIn(
+            "Dropped thought retry:\n- I'm tracing the same unit conversion mistake.",
+            prompt,
+        )
+        self.assertIn(
+            "Dropped status retry:\n- Rechecking the same unit conversion.",
+            prompt,
+        )
+
     def test_feed_keeps_dispatching_during_dedupe_streak(self):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink)
