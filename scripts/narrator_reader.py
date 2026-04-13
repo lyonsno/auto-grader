@@ -25,23 +25,27 @@ below live), pushing older lines down.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
+import random
 import re
+import select
 import sys
-import termios
 import threading
 import time
-import tty
 from collections import deque
 from pathlib import Path
 from typing import Deque
 
+import fitz
 from rich.align import Align
-from rich.console import Console, Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
 from rich.panel import Panel
+from rich.segment import ControlType, Segment
+from rich.style import Style
 from rich.text import Text
 
 # scripts/ is not on sys.path by default when narrator_reader.py is
@@ -52,6 +56,61 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from auto_grader.shimmer_phases import ShimmerPhaseState  # noqa: E402
+
+from scripts.focus_preview_renderer import (  # noqa: E402
+    FocusPreviewInlineImage,
+    FocusPreviewKittyImage,
+    FocusPreviewLoadingBand,
+    _build_focus_preview_pixels,
+    _build_iterm2_inline_image_sequence,
+    _build_kitty_place_sequence,
+    _build_kitty_transmit_chunks,
+    _compute_inline_image_cell_dimensions,
+    _emit_band_border_row,
+    _emit_band_texture_only_row,
+    _emit_band_texture_span,
+    _focus_preview_budget,
+    _otsu_threshold,
+    _query_terminal_cell_aspect,
+    _render_focus_preview_pending,
+    _render_focus_preview_pixels,
+    _render_focus_preview_steady,
+    _sample_preview_rgb,
+    _scaled_preview_size,
+    _supports_inline_images,
+    _supports_kitty_graphics,
+    _texture_cell,
+    _BAND_EXTRA_ROWS,
+    _BRAILLE_BASE,
+    _BRAILLE_LEFT_COL,
+    _BRAILLE_RIGHT_COL,
+    _DEFAULT_TERMINAL_CELL_ASPECT,
+    _FOCUS_PREVIEW_BG_RGB,
+    _FOCUS_PREVIEW_COMPANION_SCALE,
+    _FOCUS_PREVIEW_HARD_INK_RGB,
+    _FOCUS_PREVIEW_HARD_PAPER_RGB,
+    _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
+    _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
+    _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
+    _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
+    _FOCUS_PREVIEW_OVERLAY_CHARS,
+    _FOCUS_PREVIEW_OVERLAY_RGBS,
+    _FOCUS_PREVIEW_PAPER_RGB,
+    _FOCUS_PREVIEW_PENDING_FPS,
+    _INLINE_IMAGE_CELL_HEIGHT,
+    _INLINE_IMAGE_MAX_CELL_WIDTH,
+    _KITTY_CHUNK_SIZE,
+    _KITTY_IMAGE_ID,
+    _SOLID_COLUMNS,
+    _TEXTURE_ACCENT_RGB,
+    _TEXTURE_BG_RGB,
+    _TEXTURE_EDGE_FLOOR,
+)
+# Re-export focus_preview_renderer utilities that were originally defined here.
+# The _lerp_rgb, _clamp, _pixel_luma functions are now only in the renderer module.
+from scripts.focus_preview_renderer import _clamp  # noqa: E402, F401
+from scripts.focus_preview_renderer import _lerp_rgb  # noqa: E402, F401
+from scripts.focus_preview_renderer import _pixel_luma  # noqa: E402, F401
 
 
 # Matches the elapsed-time prefix on after-action topic lines:
@@ -68,29 +127,30 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 
 
-_MAX_HISTORY_LINES = 500  # cap so we don't grow unbounded; raised from 90
-                          # because the viewport now lets the operator scroll
-                          # through all retained history, so the deque cap is
-                          # the real scroll-depth limit. 500 entries covers a
-                          # full exam run (~40 items × ~10 entries each) with
-                          # headroom, and is trivially cheap in memory.
-_VISIBLE_HISTORY_LINES = 30  # how many to actually render
+_MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
+_VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
+                            # not logical entries. Keep the old overall
+                            # depth, but count it coherently now that the
+                            # scorebug and long wrapped lines exist.
+_VISIBLE_DROP_LINES = 4
 
-# The priority-fill budget counts LOGICAL ENTRIES (headers, topics,
-# narrator lines). The viewport's visible-row budget counts VISUAL
-# ROWS (accounting for wrapped long entries). These are approximately
-# equal for short entries but diverge when entries wrap. The visual-
-# row budget should be at least as large as the entry budget so the
-# viewport can display all entries the priority filter retains.
-_PRIORITY_FILL_ENTRY_BUDGET = _VISIBLE_HISTORY_LINES
-_VIEWPORT_VISIBLE_ROWS = _VISIBLE_HISTORY_LINES * 2  # headroom for wrapping
+# Focus preview constants moved to scripts/focus_preview_renderer.py
+# and re-imported above.
+_HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
+                                   # descending deeper into the stack before
+                                   # it settles at the floor.
+_HISTORY_TIER_DIM_EASE_POWER = 1.72  # fast initial drop, then a slower tail
+                                     # instead of a purely linear ramp.
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
 # they're in stable orbit, not drifting), and intensity decays with
 # layer position so older lines pulse dimmer than newer ones.
-_SHIMMER_DEFAULT_CYCLE_S = 2.7  # slowed 50% from prior 1.8 — most lines pulse calmly
-_SHIMMER_RECENT_CYCLE_S = 1.2   # most-recently-committed line pulses 50% faster
+_SHIMMER_DEFAULT_CYCLE_S = 3.2  # eased back slightly as redraw cadence rises,
+                                # so the calmer field stays calm instead of
+                                # feeling busier at 24 FPS
+_SHIMMER_RECENT_CYCLE_S = 1.35  # still the quickest history motion, but
+                                # a touch less twitchy under the smoother redraw
                                  # than the original 1.8 — strong contrast against
                                  # the slowed default
 _SHIMMER_WIDTH = 12          # how many characters wide the shimmer trail is
@@ -107,6 +167,12 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # keeps the structural pulse visible all
                                 # the way down the stack instead of just
                                 # on the most recent few items
+_HISTORY_TIER_DIM_MIN = 0.58    # floor for within-item fade.
+_HISTORY_GROUP_DIM_STEP = 0.05  # each successive thought line under a header
+                                 # should visibly dim, but the fade should
+                                 # take longer to settle so deeper within-item
+                                 # stacks still read as a gradient instead of
+                                 # flattening by line 6.
 
 # Base RGB colors per kind (for interpolation toward the shimmer peak).
 # Sumi-e palette: a Japanese garden floor in two desaturated rows
@@ -128,30 +194,42 @@ _BASE_RGB = {
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
-    "header": (228, 100, 50),    # persimmon (柿色) — vivid lacquer red,
-                                  # the warm anchor of the painting.
-                                  # Brighter than the muted version we
-                                  # started with: real torii-gate /
-                                  # tea-ceremony lacquer is bold, not
-                                  # apologetic, and the cool indigo
-                                  # axis was visually outweighing it
+    "header": (186, 82, 52),     # lacquered persimmon red — darker and
+                                  # redder than the earlier orange pass,
+                                  # so structural titles read like warm
+                                  # lacquer instead of pumpkin glow
     "header_index": (90, 115, 180),    # indigo (藍色) — the [item N/M]
                                        # marker carries the cool axis
                                        # of the painting
     "live": (245, 240, 225),     # rice paper — warm off-white for the
                                   # live field, the brightest bone
                                   # surface in the composition
+    "status": (96, 64, 38),      # dark coal-ember umber — persistent status
+                                  # rail, pushed a step deeper so it feels
+                                  # less rosy and more like banked heat
+                                  # under ash
     # Topic verdict variants — full-saturation garden colors. The
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (150, 208, 214),       # electric celadon — cooler,
-                                          # brighter affirmative read.
-                                          # Still garden-adjacent, but
-                                          # pulled toward aqua so
-                                          # agreement feels cleaner and
-                                          # more "alive" than the old
-                                          # mossy celadon
+    "topic_match": (70, 92, 156),         # deep indigo agreement —
+                                          # darker than the header-index
+                                          # blue so it harmonizes with
+                                          # structure without duplicating it
+    "checkpoint": (138, 156, 142),        # anchored moss checkpoint —
+                                          # checkpoints should feel like
+                                          # compressed descendants of the
+                                          # live history rows, not a separate
+                                          # steel annotation layer
+    "checkpoint_alt": (178, 162, 132),    # anchored bone-earth checkpoint —
+                                          # alternating companion to the
+                                          # moss checkpoint tone so durable
+                                          # history keeps the familiar
+                                          # moss/bone cadence
+    "checkpoint_mark": (162, 114, 82),    # embered rust notch — structural
+                                          # mark for checkpoint rows so the
+                                          # checkpoint doesn't begin with a
+                                          # dead grey gutter
     "topic_overshoot": (210, 90, 65),     # vermilion (朱色) — too generous
     "topic_undershoot": (200, 150, 70),   # ochre (黄土) — too strict
     # Header dash — vermilion stroke at the start of every item header.
@@ -175,6 +253,10 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
+    "checkpoint": 0.92,
+    "checkpoint_alt": 0.92,
+    "checkpoint_mark": 0.96,
+    "status": 1.15,
     "topic_overshoot": 1.00,
     "topic_undershoot": 1.00,
     "header": 1.40,      # cranked — section markers pop
@@ -196,9 +278,9 @@ _SHIMMER_KIND_PEAK_RGB = {
     "live": (245, 155, 80),       # persimmon ember — live field warms
                                    # toward the same lacquer-red as the
                                    # headers as the wave passes
-    "header": (255, 165, 95),     # fired persimmon — bright lacquer
-                                   # in-family brightening, pushed to
-                                   # match the brighter base
+    "header": (232, 136, 102),    # fired lacquer red — brighter crest,
+                                   # but still clearly red-led rather than
+                                   # tipping back into orange
     "header_index": (185, 210, 240),  # rain-cleared sky blue — indigo
                                        # brightens toward the pale sky
                                        # after a storm wash painting
@@ -206,11 +288,20 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # brightens toward kiln-glaze green
     "line_alt": (225, 200, 150),  # fired ochre — dust earth row
                                    # brightens toward kiln-fired earth
-    "topic_match": (195, 232, 255),     # rain-lit sky celadon — borrows
-                                        # the cooler blue family we
-                                        # weren't using enough, so the
-                                        # match shimmer reads electric
-                                        # rather than ochre-warm
+    "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
+                                        # agreement lines
+    "checkpoint": (176, 204, 180),      # brighter celadon crest —
+                                        # still in the history family, just
+                                        # a touch more settled than live rows
+    "checkpoint_alt": (222, 198, 150),  # brighter bone-earth crest for the
+                                        # alternating checkpoint lane
+    "checkpoint_mark": (226, 166, 114), # brighter ember crest for the
+                                        # checkpoint mark, tied to the
+                                        # header/status warm structure
+    "status": (188, 118, 68),           # ember-lit umber crest for the
+                                        # sticky status rail — brighter
+                                        # orange note without losing the
+                                        # darker coal base
     "topic_overshoot": (250, 140, 105), # fired vermilion — bright
                                          # lacquer warning
     "topic_undershoot": (245, 195, 110), # fired ochre — bright earth
@@ -230,6 +321,10 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header_dash",
     "topic",
     "topic_match",
+    "checkpoint",
+    "checkpoint_alt",
+    "checkpoint_mark",
+    "status",
     "topic_overshoot",
     "topic_undershoot",
 })
@@ -240,6 +335,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
 # top + bottom borders). When bonsai's output is longer than will
 # fit in that area, we tail-truncate (keep the most recent chars).
 _LIVE_PANEL_CONTENT_LINES = 3
+_TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 
 # Live-line undulation parameters — each character on the live line
 # gets a per-position, per-time hue from a warm orange-amber palette.
@@ -248,28 +344,25 @@ _LIVE_PANEL_CONTENT_LINES = 3
 # Pulled toward orange (away from yellow) and slightly desaturated
 # from the previous values to harmonize with the rest of the sunset
 # palette without losing fire feel.
-_LIVE_UNDULATION_CYCLE_S = 6.0    # bumped from 3.5 (~1.7x) so the
-                                   # hue undulation cycles slower per
-                                   # unit time. Combined with the
-                                   # per-hue luminance compensation,
-                                   # this attacks the "hard on the
-                                   # eyes" problem from the temporal
-                                   # axis — fewer flicker cycles per
-                                   # second = less perceptual fatigue
-                                   # while reading the live line
-_LIVE_HUE_CENTER_DEG = 18          # pulled toward persimmon red-orange
-_LIVE_HUE_RANGE_DEG = 22           # widened swing → −4°-40°, slightly
-                                    # more travel through the persimmon
-                                    # / vermilion family so the per-char
-                                    # undulation is actually visible
+_LIVE_UNDULATION_CYCLE_S = 3.8    # lively enough to read as motion, but
+                                   # still slower than token streaming
+_LIVE_HUE_CENTER_DEG = 196         # pulled slightly toward mossy aqua so the
+                                   # cool lane keeps more green body
+_LIVE_HUE_RANGE_DEG = 22           # broader swing so the green note is
+                                   # visibly present instead of incidental
 _LIVE_PER_CHAR_PHASE_OFFSET = 0.18 # phase shift per character (radians)
-_LIVE_BASE_SAT = 0.80              # bumped from 0.62 — the live field
-                                    # was washing out into static beige
-                                    # because the saturation was too low
-                                    # for the eye to read the undulation;
-                                    # this restores warm pop without
-                                    # crossing into neon territory
-_LIVE_BASE_VAL = 0.95              # bright paper base
+_LIVE_PHASE_OFFSET_RAD = 0.0
+_LIVE_UNDULATION_DIRECTION = -1.0  # move slowly left, against the main
+                                    # shimmer sweep, so the top band feels
+                                    # like its own counter-current
+_LIVE_BASE_SAT = 0.34              # still soft, but with a more visible wash
+_LIVE_BASE_VAL = 0.86              # slightly less white, a little more pigment
+_LIVE_WARM_HUE_CENTER_DEG = 22     # yellow-red sibling, friendlier than a hot
+                                   # alarm band but more chromatic than before
+_LIVE_WARM_HUE_RANGE_DEG = 18
+_LIVE_WARM_BASE_SAT = 0.30
+_LIVE_WARM_BASE_VAL = 0.87
+_LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH = 0.30
 # Per-hue luminance compensation for the live undulation. At constant
 # HSV V, pure red and pure yellow have very different perceived
 # brightness (BT.709 luminance weights yellow ~4× higher than red),
@@ -284,7 +377,30 @@ _LIVE_BASE_VAL = 0.95              # bright paper base
 # 1.0 = fully flat perceived luminance. We use 0.65 — enough to
 # kill the "darker red, lighter yellow" harshness without flattening
 # the hue motion into a static orange band.
-_LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
+_LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.45
+_STATUS_UNDULATION_CYCLE_S = 6.0   # still slower than live, and eased back a
+                                    # bit after the redraw-rate bump
+_STATUS_HUE_CENTER_DEG = 22         # shifted away from hot red toward
+                                    # dark ember-orange / umber
+_STATUS_HUE_RANGE_DEG = 8           # narrower swing so the status rail
+                                    # keeps its heavier umber weight
+_STATUS_PER_CHAR_PHASE_OFFSET = 0.14
+_STATUS_PHASE_OFFSET_RAD = 0.85     # keep status related to live, but out of
+                                    # lockstep so they do not breathe as one
+_STATUS_UNDULATION_DIRECTION = 1.0
+_STATUS_BASE_SAT = 0.66
+_STATUS_BASE_VAL = 0.58
+_STATUS_LUMINANCE_CORRECTION_STRENGTH = 0.55
+_STATUS_COOL_GLINT_RGB = (70, 108, 184)   # restrained deep-indigo glint
+                                           # inside the ember rail
+_STATUS_BONE_GLINT_RGB = (224, 210, 190)   # pale bone lift so the rail
+                                           # can briefly catch ash-light
+_STATUS_COOL_GLINT_CYCLE_S = 7.8
+_STATUS_BONE_GLINT_CYCLE_S = 9.6
+_STATUS_COOL_GLINT_STRENGTH = 0.86
+_STATUS_BONE_GLINT_STRENGTH = 0.44
+_STATUS_COOL_GLINT_PHASE_OFFSET_RAD = 1.55
+_STATUS_BONE_GLINT_PHASE_OFFSET_RAD = 1.10
 # When a streaming dispatch finishes (on_commit), the live field
 # stops updating but stays visible as the "frozen" line until the
 # next dispatch starts. The settled state has slightly muted sat/val
@@ -297,11 +413,62 @@ _LIVE_LUMINANCE_CORRECTION_STRENGTH = 0.65
 _LIVE_FREEZE_FADE_S = 2.5
 _LIVE_FROZEN_SAT_MUL = 0.70
 _LIVE_FROZEN_VAL_MUL = 0.85
+_ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
+                              # the slower animation families above are eased
+                              # back to keep the overall feel restrained
+_IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
+                              # messages quickly, but doesn't need redraw spam
+_SESSION_END_ANIMATION_LINGER_S = 120.0  # keep the finished painting alive
+                                         # and animated for a while before
+                                         # letting it settle
+_LIVE_PLACEHOLDER_ROTATE_S = 6.0
+_LIVE_PLACEHOLDER_OPTIONS = (
+    "thinking through the tape...",
+    "review booth is checking the work...",
+    "grading engine warming up...",
+    "calling for the next replay...",
+    "waiting on the next chain-of-thought...",
+    "running the numbers upstairs...",
+)
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
 # of the ink rather than a fire sweep.
 _SHIMMER_PEAK_RGB = (235, 215, 175)
+_EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
+                                     # we want warm structural emphasis
+                                     # without a full verdict signal
+
+_SCOREBUG_BIG_DIGITS = {
+    "0": ("╔═╗", "║ ║", "╚═╝"),
+    "1": ("╔╗ ", " ║ ", " ║ "),
+    "2": ("╔═╗", "╔═╝", "╚═ "),
+    "3": ("╔═╗", " ═╣", "╚═╝"),
+    "4": ("║ ║", "╚═╣", "  ║"),
+    "5": ("╔═ ", "╚═╗", "╚═╝"),
+    "6": ("╔═ ", "╠═╗", "╚═╝"),
+    "7": ("╔═╗", "╔╝ ", "║  "),
+    "8": ("╔═╗", "╠═╣", "╚═╝"),
+    "9": ("╔═╗", "╚═╣", "  ╝"),
+    ".": ("   ", "   ", " ▪ "),
+    "/": ("   ", " ╱ ", "╱  "),
+    "-": ("   ", "═══", "   "),
+}
+
+_HISTORY_GROUP_SETBACK = 0.036     # lower item headers sit a bit more visibly
+                                   # one above them, but not by enough to read
+                                   # as separate weather systems
+_HISTORY_GROUP_RAKE = 0.022        # gentler within-item rake than the last pass
+                                   # so the grouping reads structural, not
+                                   # algorithmically terraced
+_HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
+                                   # shared across even/odd item groups
+_HISTORY_GROUP_ALT_RATE = 0.55     # slower than the primary history field
+_HISTORY_CONTINUATION_ROW_STEP = 0.08  # wrapped continuation rows should step
+                                       # down in authority below the first
+                                       # visual row of an entry
+_HISTORY_CONTINUATION_ROW_MIN = 0.78   # keep deeper wrapped rows visible, but
+                                       # clearly subordinate to the first row
 
 
 def _interp_rgb(
@@ -320,6 +487,172 @@ def _interp_rgb(
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+def _blend_rgb(
+    base: tuple[int, int, int],
+    target: tuple[int, int, int],
+    weight: float,
+) -> tuple[int, int, int]:
+    """Blend base toward target by weight in [0, 1]."""
+    weight = max(0.0, min(1.0, weight))
+    return tuple(
+        max(
+            0,
+            min(
+                255,
+                int(round(channel + (target_channel - channel) * weight)),
+            ),
+        )
+        for channel, target_channel in zip(base, target, strict=True)
+    )
+
+
+def _history_group_phase(
+    base_phase: float,
+    secondary_phase: float,
+    group_index: int,
+) -> float:
+    """Set back each visible item group and add a subtle parity field.
+
+    The history stack should feel coherent within an item, but item
+    boundaries should not all lie on the exact same shimmer plane.
+    This helper keeps one local field per item, sets lower headers
+    slightly back from the one above them, and layers in a faint
+    alternating parity field so neighboring groups do not ride the
+    same exact shimmer geometry.
+    """
+    parity_direction = -1.0 if group_index % 2 else 1.0
+    alternating_offset = (
+        math.sin(
+            2
+            * math.pi
+            * ((secondary_phase - 0.25) * _HISTORY_GROUP_ALT_RATE)
+        )
+        * _HISTORY_GROUP_ALT_FIELD
+        * parity_direction
+    )
+    return (
+        base_phase
+        - (group_index * _HISTORY_GROUP_SETBACK)
+        + alternating_offset
+    ) % 1.0
+
+
+def _history_entry_phase(
+    base_phase: float,
+    secondary_phase: float,
+    group_index: int,
+    group_depth: int,
+) -> float:
+    """Phase for one visible history entry.
+
+    Item headers sit slightly behind the one above them, but entries
+    within an item still rake back enough to read as a local field.
+    A faint alternating parity field reinforces the item boundaries
+    without making the geometry feel mechanically terraced.
+    """
+    group_phase = _history_group_phase(base_phase, secondary_phase, group_index)
+    return (group_phase - (group_depth * _HISTORY_GROUP_RAKE)) % 1.0
+
+
+def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
+    top_parts: list[str] = []
+    middle_parts: list[str] = []
+    bottom_parts: list[str] = []
+    for ch in value:
+        top, middle, bottom = _SCOREBUG_BIG_DIGITS.get(
+            ch,
+            ("   ", f" {ch} ", "   "),
+        )
+        top_parts.append(top)
+        middle_parts.append(middle)
+        bottom_parts.append(bottom)
+    return (
+        "".join(top_parts),
+        "".join(middle_parts),
+        "".join(bottom_parts),
+    )
+
+
+def _append_scorebug_value_row(
+    row: Text,
+    content: str,
+    *,
+    strong_style: str,
+    mid_style: str,
+) -> None:
+    """Append one scoreboard value row with weighted two-tone strokes."""
+    strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "═", "▪"}
+    mid_chars = {"╱", " "}
+    for ch in content:
+        if ch in strong_chars:
+            row.append(ch, style=strong_style)
+        elif ch in mid_chars:
+            row.append(ch, style=mid_style)
+        else:
+            row.append(ch, style=strong_style)
+
+
+def _live_placeholder(now_s: float) -> str:
+    idx = int(now_s // _LIVE_PLACEHOLDER_ROTATE_S) % len(_LIVE_PLACEHOLDER_OPTIONS)
+    return _LIVE_PLACEHOLDER_OPTIONS[idx]
+
+
+def _scale_rgb(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+    """Scale an RGB triple by factor, preserving channel bounds."""
+    factor = max(0.0, factor)
+    return tuple(
+        max(0, min(255, int(round(channel * factor))))
+        for channel in rgb
+    )
+
+
+def _history_tier_dim_factor(layer_index: int) -> float:
+    """Return the brightness factor for a line within an item group.
+
+    This is intentionally local to the current header block, not the
+    whole viewport. Each step down within an item should be visibly
+    dimmer, then clamp at the floor so deep blocks don't disappear.
+    """
+    if layer_index <= 0:
+        return 1.0
+    if layer_index >= _HISTORY_TIER_DIM_FLOOR_DEPTH:
+        return _HISTORY_TIER_DIM_MIN
+    t = layer_index / _HISTORY_TIER_DIM_FLOOR_DEPTH
+    eased = (1.0 - t) ** _HISTORY_TIER_DIM_EASE_POWER
+    return _HISTORY_TIER_DIM_MIN + ((1.0 - _HISTORY_TIER_DIM_MIN) * eased)
+
+
+def _render_layer_index(kind: str, group_depth: int) -> int:
+    """Return the effective fade layer for a history entry.
+
+    Only narrator thought lines should sink within an item block.
+    Structural lines such as headers and resolution/topic lines stay
+    at full strength so the eye can keep finding the question/result
+    anchors quickly.
+    """
+    return group_depth if kind == "line" else 0
+
+
+def _message_requires_immediate_refresh(msg_type: str) -> bool:
+    """Return whether a FIFO event should bypass the normal animation cadence.
+
+    Regular stream events should let the animation loop own repaint timing so
+    idle and active motion feel consistent. Only boundary moments that would
+    feel laggy at 12 FPS get an immediate forced refresh.
+    """
+    return msg_type in {"session_meta", "focus_preview", "wrap_up", "end"}
+
+
+
+# _focus_preview_budget moved to scripts/focus_preview_renderer.py
+
+
+
+# Inline image, Kitty graphics, band texture code, and all focus
+# preview rendering functions/classes moved to
+# scripts/focus_preview_renderer.py and re-imported above.
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
@@ -392,8 +725,12 @@ def _apply_shimmer(
     if not content:
         return text_obj
 
-    base_rgb = _BASE_RGB.get(kind, _BASE_RGB["line"])
-    peak_rgb = _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB)
+    tier_dim = _history_tier_dim_factor(layer_index)
+    base_rgb = _scale_rgb(_BASE_RGB.get(kind, _BASE_RGB["line"]), tier_dim)
+    peak_rgb = _scale_rgb(
+        _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB),
+        tier_dim,
+    )
     kind_intensity = _SHIMMER_KIND_INTENSITY.get(kind, 1.0)
 
     # Recency dimming — top is full, fades to zero at MAX_LAYERS.
@@ -406,6 +743,8 @@ def _apply_shimmer(
         # Past the dimming horizon and no floor — render fully static
         text_obj.append(content, style=_rgb_to_hex(base_rgb))
         return text_obj
+    if kind in {"line", "line_alt"}:
+        kind_intensity *= tier_dim
     layer_recency = raw_recency * kind_intensity
 
     if phase_override is not None:
@@ -435,9 +774,16 @@ def _apply_shimmer(
         for i, ch in enumerate(content):
             absolute_col = indent_width + i
             visual_col = absolute_col % wrap_width
+            visual_row = absolute_col // wrap_width
             distance = head - visual_col
+            row_dim = max(
+                _HISTORY_CONTINUATION_ROW_MIN,
+                1.0 - (visual_row * _HISTORY_CONTINUATION_ROW_STEP),
+            )
+            row_base_rgb = _scale_rgb(base_rgb, row_dim)
+            row_peak_rgb = _scale_rgb(peak_rgb, row_dim)
             _append_shimmer_char(
-                text_obj, ch, distance, base_rgb, peak_rgb,
+                text_obj, ch, distance, row_base_rgb, row_peak_rgb,
                 layer_recency, layer_index
             )
     else:
@@ -453,23 +799,147 @@ def _apply_shimmer(
     return text_obj
 
 
+def _undulation_hue_deg(
+    now_s: float,
+    global_i: int,
+    *,
+    cycle_s: float,
+    center_deg: float,
+    range_deg: float,
+    per_char_phase_offset: float,
+    phase_offset_rad: float = 0.0,
+    direction: float = 1.0,
+) -> float:
+    """Return the per-character band hue at a given time and position."""
+    phase = (
+        -direction * now_s * (2 * math.pi / cycle_s)
+        + phase_offset_rad
+        + global_i * per_char_phase_offset
+    )
+    return center_deg + range_deg * math.sin(phase)
+
+
+def _render_warm_undulating(
+    text_obj: Text,
+    content: str,
+    indent_width: int,
+    wrap_width: int | None,
+    *,
+    cycle_s: float,
+    center_deg: float,
+    range_deg: float,
+    per_char_phase_offset: float,
+    phase_offset_rad: float,
+    direction: float,
+    base_sat: float,
+    base_val: float,
+    luminance_correction_strength: float,
+    char_offset: int = 0,
+    freeze_age_s: float | None = None,
+    frozen_sat_mul: float = 1.0,
+    frozen_val_mul: float = 1.0,
+    freeze_fade_s: float | None = None,
+    shimmer_cycle_s: float | None = None,
+    shimmer_width: int = _SHIMMER_WIDTH,
+    shimmer_v_boost: float = 0.08,
+    shimmer_s_drop: float = 0.40,
+    bold_active_head: bool = False,
+) -> Text:
+    """Render a per-character undulating band with an optional shimmer crest."""
+    if not content:
+        return text_obj
+
+    now = time.monotonic()
+    cycle = shimmer_cycle_s if shimmer_cycle_s is not None else _SHIMMER_RECENT_CYCLE_S
+    shimmer_phase = (now % cycle) / cycle
+    if wrap_width is not None and wrap_width > shimmer_width:
+        shimmer_head = (
+            shimmer_phase * (wrap_width + shimmer_width) - shimmer_width
+        )
+    else:
+        shimmer_head = (
+            shimmer_phase * (len(content) + shimmer_width) - shimmer_width
+        )
+
+    if freeze_age_s is None or freeze_fade_s is None:
+        sat_mul = 1.0
+        val_mul = 1.0
+    else:
+        fade = max(0.0, min(1.0, freeze_age_s / freeze_fade_s))
+        sat_mul = 1.0 - fade * (1.0 - frozen_sat_mul)
+        val_mul = 1.0 - fade * (1.0 - frozen_val_mul)
+
+    s_for_ref = base_sat * sat_mul
+    ref_r, ref_g, ref_b = _hsv_to_rgb(center_deg, s_for_ref, 1.0)
+    ref_luminance = 0.2126 * ref_r + 0.7152 * ref_g + 0.0722 * ref_b
+
+    for i, ch in enumerate(content):
+        global_i = char_offset + i
+        h = _undulation_hue_deg(
+            now,
+            global_i,
+            cycle_s=cycle_s,
+            center_deg=center_deg,
+            range_deg=range_deg,
+            per_char_phase_offset=per_char_phase_offset,
+            phase_offset_rad=phase_offset_rad,
+            direction=direction,
+        )
+        s = base_sat * sat_mul
+        v = base_val * val_mul
+
+        test_r, test_g, test_b = _hsv_to_rgb(h, s, 1.0)
+        test_luminance = (
+            0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
+        )
+        if test_luminance > 1:
+            raw_correction = ref_luminance / test_luminance
+            correction = 1.0 + (
+                raw_correction - 1.0
+            ) * luminance_correction_strength
+            v = max(0.0, min(1.0, v * correction))
+
+        if wrap_width is not None and wrap_width > shimmer_width:
+            visual_col = (indent_width + i) % wrap_width
+            distance = shimmer_head - visual_col
+        else:
+            distance = shimmer_head - i
+
+        bold_head = False
+        if 0 <= distance < shimmer_width:
+            shimmer_intensity = 1.0 - (distance / shimmer_width)
+            v = min(1.0, v + shimmer_v_boost * shimmer_intensity)
+            s = max(0.0, s - shimmer_s_drop * shimmer_intensity)
+            if -0.5 <= distance < 1.5:
+                bold_head = bold_active_head
+
+        r, g, b = _hsv_to_rgb(h, s, v)
+        style = f"#{r:02x}{g:02x}{b:02x}"
+        if bold_head:
+            style = f"bold {style}"
+        text_obj.append(ch, style=style)
+
+    return text_obj
+
+
 def _render_live_undulating(
     text_obj: Text,
     content: str,
     indent_width: int,
     wrap_width: int | None,
     is_active: bool,
+    palette_variant: str = "cool",
     char_offset: int = 0,
     freeze_age_s: float | None = None,
 ) -> Text:
-    """Render the live line with per-character undulating warm colors
-    (yellow / orange / red) AND a shimmer overlay on top.
+    """Render the live line with per-character undulating color washes.
 
-    Each character has its own hue computed from time + char position,
-    so adjacent characters land at slightly different points in the
-    palette and the whole field undulates over a slow cycle. The
-    shimmer head brightens characters near it and pushes their
-    saturation down (toward white) for a heat-flicker feel.
+    The live lane alternates between a cooler aqua/green/bone wash and
+    a softened pastel warm wash on accepted thought lines. Adjacent
+    characters still land at slightly different points in the palette
+    and the whole field undulates over a slow cycle. The shimmer head
+    brightens characters near it and pushes their saturation down
+    (toward white) for a heat-flicker feel.
 
     char_offset: number of characters that were tail-truncated off
     the front of `content` before passing in. Used to keep the
@@ -488,14 +958,58 @@ def _render_live_undulating(
     if not content:
         return text_obj
 
-    now = time.monotonic()
-    undulation_phase_base = now * (2 * math.pi / _LIVE_UNDULATION_CYCLE_S)
+    if palette_variant == "warm":
+        center_deg = _LIVE_WARM_HUE_CENTER_DEG
+        range_deg = _LIVE_WARM_HUE_RANGE_DEG
+        base_sat = _LIVE_WARM_BASE_SAT
+        base_val = _LIVE_WARM_BASE_VAL
+        luminance_correction_strength = _LIVE_WARM_LUMINANCE_CORRECTION_STRENGTH
+    else:
+        center_deg = _LIVE_HUE_CENTER_DEG
+        range_deg = _LIVE_HUE_RANGE_DEG
+        base_sat = _LIVE_BASE_SAT
+        base_val = _LIVE_BASE_VAL
+        luminance_correction_strength = _LIVE_LUMINANCE_CORRECTION_STRENGTH
 
-    # Shimmer head — uses the recent cycle so the live field moves
-    # at the same pace as the most recent line in history (the
-    # other "live-feeling" element).
-    cycle = _SHIMMER_RECENT_CYCLE_S
-    shimmer_phase = (now % cycle) / cycle
+    return _render_warm_undulating(
+        text_obj,
+        content,
+        indent_width,
+        wrap_width,
+        cycle_s=_LIVE_UNDULATION_CYCLE_S,
+        center_deg=center_deg,
+        range_deg=range_deg,
+        per_char_phase_offset=_LIVE_PER_CHAR_PHASE_OFFSET,
+        phase_offset_rad=_LIVE_PHASE_OFFSET_RAD,
+        direction=_LIVE_UNDULATION_DIRECTION,
+        base_sat=base_sat,
+        base_val=base_val,
+        luminance_correction_strength=luminance_correction_strength,
+        char_offset=char_offset,
+        freeze_age_s=None if is_active else freeze_age_s,
+        frozen_sat_mul=_LIVE_FROZEN_SAT_MUL,
+        frozen_val_mul=_LIVE_FROZEN_VAL_MUL,
+        freeze_fade_s=_LIVE_FREEZE_FADE_S,
+        shimmer_cycle_s=_SHIMMER_RECENT_CYCLE_S,
+        shimmer_width=_SHIMMER_WIDTH,
+        shimmer_v_boost=0.08,
+        shimmer_s_drop=0.40,
+        bold_active_head=is_active,
+    )
+
+
+def _render_status_undulating(
+    text_obj: Text,
+    content: str,
+    indent_width: int,
+    wrap_width: int | None,
+) -> Text:
+    """Render the sticky status rail as ember heat with cooler ash glints."""
+    if not content:
+        return text_obj
+
+    now = time.monotonic()
+    shimmer_phase = (now % _SHIMMER_DEFAULT_CYCLE_S) / _SHIMMER_DEFAULT_CYCLE_S
     if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
         shimmer_head = (
             shimmer_phase * (wrap_width + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
@@ -505,76 +1019,75 @@ def _render_live_undulating(
             shimmer_phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
         )
 
-    # Sat/val multipliers fade smoothly from active brightness toward
-    # the settled past-tense state over _LIVE_FREEZE_FADE_S after the
-    # streaming dispatch finishes. While streaming, both stay at 1.0.
-    if is_active or freeze_age_s is None:
-        sat_mul = 1.0
-        val_mul = 1.0
-    else:
-        fade = max(0.0, min(1.0, freeze_age_s / _LIVE_FREEZE_FADE_S))
-        sat_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_SAT_MUL)
-        val_mul = 1.0 - fade * (1.0 - _LIVE_FROZEN_VAL_MUL)
-
-    # Reference luminance: the BT.709 perceived brightness at the hue
-    # CENTER, computed at the current saturation. Used as the target
-    # that all per-char luminances are scaled toward, so the hue
-    # undulation no longer reads as a brightness flicker. Computed
-    # once per frame outside the per-char loop.
-    s_for_ref = _LIVE_BASE_SAT * sat_mul
-    ref_r, ref_g, ref_b = _hsv_to_rgb(_LIVE_HUE_CENTER_DEG, s_for_ref, 1.0)
+    ref_r, ref_g, ref_b = _hsv_to_rgb(_STATUS_HUE_CENTER_DEG, _STATUS_BASE_SAT, 1.0)
     ref_luminance = 0.2126 * ref_r + 0.7152 * ref_g + 0.0722 * ref_b
 
     for i, ch in enumerate(content):
-        # Per-character undulating hue. Use the GLOBAL position
-        # (visible index + char_offset) so the phase pattern stays
-        # stable across truncation — characters don't change color
-        # as the front of the buffer falls off.
-        global_i = char_offset + i
-        char_phase = (
-            undulation_phase_base + global_i * _LIVE_PER_CHAR_PHASE_OFFSET
+        h = _undulation_hue_deg(
+            now,
+            i,
+            cycle_s=_STATUS_UNDULATION_CYCLE_S,
+            center_deg=_STATUS_HUE_CENTER_DEG,
+            range_deg=_STATUS_HUE_RANGE_DEG,
+            per_char_phase_offset=_STATUS_PER_CHAR_PHASE_OFFSET,
+            phase_offset_rad=_STATUS_PHASE_OFFSET_RAD,
+            direction=_STATUS_UNDULATION_DIRECTION,
         )
-        h = _LIVE_HUE_CENTER_DEG + _LIVE_HUE_RANGE_DEG * math.sin(char_phase)
-        s = _LIVE_BASE_SAT * sat_mul
-        v = _LIVE_BASE_VAL * val_mul
+        s = _STATUS_BASE_SAT
+        v = _STATUS_BASE_VAL
 
-        # Per-hue luminance compensation. At constant V, BT.709 weights
-        # mean amber/yellow chars are perceived ~3-4× brighter than
-        # red chars, which makes the hue undulation read as a luminance
-        # flicker that resists passive reading. Scale V inversely with
-        # the per-char perceived luminance, blended toward neutral by
-        # _LIVE_LUMINANCE_CORRECTION_STRENGTH. The result is the same
-        # hue motion at roughly the same perceived brightness.
         test_r, test_g, test_b = _hsv_to_rgb(h, s, 1.0)
-        test_luminance = (
-            0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
-        )
+        test_luminance = 0.2126 * test_r + 0.7152 * test_g + 0.0722 * test_b
         if test_luminance > 1:
             raw_correction = ref_luminance / test_luminance
-            correction = 1.0 + (raw_correction - 1.0) * _LIVE_LUMINANCE_CORRECTION_STRENGTH
+            correction = 1.0 + (
+                raw_correction - 1.0
+            ) * _STATUS_LUMINANCE_CORRECTION_STRENGTH
             v = max(0.0, min(1.0, v * correction))
 
-        # Shimmer overlay: brighten and de-saturate at the head
         if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
             visual_col = (indent_width + i) % wrap_width
             distance = shimmer_head - visual_col
         else:
             distance = shimmer_head - i
 
-        bold_head = False
         if 0 <= distance < _SHIMMER_WIDTH:
             shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
-            # Push toward white-hot at the head (boost V, drop S)
-            v = min(1.0, v + 0.08 * shimmer_intensity)
-            s = max(0.0, s - 0.40 * shimmer_intensity)
-            if -0.5 <= distance < 1.5:
-                bold_head = is_active
+            v = min(1.0, v + 0.09 * shimmer_intensity)
+            s = max(0.0, s - 0.18 * shimmer_intensity)
 
-        r, g, b = _hsv_to_rgb(h, s, v)
-        style = f"#{r:02x}{g:02x}{b:02x}"
-        if bold_head:
-            style = f"bold {style}"
-        text_obj.append(ch, style=style)
+        rgb = _hsv_to_rgb(h, s, v)
+        cool_glint = max(
+            0.0,
+            math.sin(
+                -now * (2 * math.pi / _STATUS_COOL_GLINT_CYCLE_S)
+                + _STATUS_COOL_GLINT_PHASE_OFFSET_RAD
+                + i * (_STATUS_PER_CHAR_PHASE_OFFSET * 0.72)
+            ),
+        )
+        bone_glint = max(
+            0.0,
+            math.sin(
+                now * (2 * math.pi / _STATUS_BONE_GLINT_CYCLE_S)
+                + _STATUS_BONE_GLINT_PHASE_OFFSET_RAD
+                + i * (_STATUS_PER_CHAR_PHASE_OFFSET * 0.46)
+            ),
+        )
+        cool_weight = (cool_glint ** 1.35) * _STATUS_COOL_GLINT_STRENGTH
+        bone_weight = (bone_glint ** 2.6) * _STATUS_BONE_GLINT_STRENGTH
+
+        if 0 <= distance < _SHIMMER_WIDTH:
+            shimmer_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
+            cool_weight *= 1.0 - (0.35 * shimmer_intensity)
+            bone_weight += 0.10 * shimmer_intensity
+
+        rgb = _blend_rgb(rgb, _STATUS_COOL_GLINT_RGB, cool_weight)
+        rgb = _blend_rgb(
+            rgb,
+            _STATUS_BONE_GLINT_RGB,
+            bone_weight * (1.0 - 0.45 * cool_weight),
+        )
+        text_obj.append(ch, style=_rgb_to_hex(rgb))
 
     return text_obj
 
@@ -605,217 +1118,6 @@ def _append_shimmer_char(
     text_obj.append(ch, style=style)
 
 
-class HistoryViewport:
-    """Pure-logic scroll viewport for the Paint Dry history pane.
-
-    Carries the entries the renderer should draw plus a scroll offset
-    that is anchored to the *newest* visual row. Offset 0 means "the
-    bottom of the visible window sits at the newest visual row" — the
-    live edge. A positive offset means "the bottom of the window is
-    `scroll_offset` visual rows above the newest visual row," which is
-    what happens when the operator scrolls upward.
-
-    Accounting is done in **visual rows**, not logical entries, so a
-    wrapped long entry occupies its true on-screen footprint. Partial
-    entries are never returned: if the remaining budget cannot contain
-    a whole entry, the entry is dropped rather than sliced.
-
-    Auto-follow semantics:
-
-    * While `at_live_edge` (offset == 0), appending new history keeps
-      the window pinned to newest — the operator always sees fresh
-      rows.
-    * While scrolled up (offset > 0), appending new history does NOT
-      reset the offset. The viewport's offset is re-anchored relative
-      to the new newest row so the same earlier slice stays visible.
-
-    This class is intentionally free of Rich / terminal / input
-    dependencies. Renderer wiring and raw key handling live elsewhere.
-    """
-
-    def __init__(self, visible_rows: int, wrap_width: int):
-        if visible_rows <= 0:
-            raise ValueError("visible_rows must be > 0")
-        if wrap_width <= 0:
-            raise ValueError("wrap_width must be > 0")
-        self._visible_rows = visible_rows
-        self._wrap_width = wrap_width
-        self._entries: list[tuple[str, str, int | None]] = []
-        # scroll_offset counts *visual rows above the newest visual row*.
-        self._scroll_offset = 0
-
-    # -- Visual row accounting --------------------------------------
-
-    def _entry_visual_rows(self, entry: tuple[str, str, int | None]) -> int:
-        text = entry[1] if len(entry) > 1 else ""
-        if not text:
-            return 1
-        # Ceiling division so a 25-char line at wrap_width=10 is 3 rows.
-        return max(1, (len(text) + self._wrap_width - 1) // self._wrap_width)
-
-    def _total_visual_rows(self) -> int:
-        return sum(self._entry_visual_rows(e) for e in self._entries)
-
-    # -- Public state ------------------------------------------------
-
-    @property
-    def scroll_offset(self) -> int:
-        return self._scroll_offset
-
-    @property
-    def at_live_edge(self) -> bool:
-        return self._scroll_offset == 0
-
-    def entries_snapshot(self) -> list[tuple[str, str, int | None]]:
-        """Return a shallow copy of the entries currently held by the
-        viewport in natural (oldest -> newest) order. Used by the
-        sync layer to detect prefix divergence without touching
-        private state."""
-        return list(self._entries)
-
-    # -- Mutation ----------------------------------------------------
-
-    def append(self, entry: tuple[str, str, int | None]) -> None:
-        """Add a new entry. If the viewport is at the live edge, the
-        window auto-follows newest. If scrolled up, the offset is
-        re-anchored so the same earlier slice stays visible.
-        """
-        self._entries.append(entry)
-        if self._scroll_offset == 0:
-            return
-        # Scrolled up: re-anchor the offset so the same earlier content
-        # remains on screen. Offset is "rows above newest visual row",
-        # and a new entry added `k` visual rows to the bottom of the
-        # stream pushes the previously-anchored slice up by `k`, so the
-        # offset must grow by `k` to keep tracking the same slice.
-        self._scroll_offset += self._entry_visual_rows(entry)
-        self._clamp_offset()
-
-    def scroll_up(self, n: int = 1) -> None:
-        if n <= 0:
-            return
-        self._scroll_offset += n
-        self._clamp_offset()
-
-    def scroll_down(self, n: int = 1) -> None:
-        if n <= 0:
-            return
-        self._scroll_offset = max(0, self._scroll_offset - n)
-
-    def scroll_to_live_edge(self) -> None:
-        self._scroll_offset = 0
-
-    def _clamp_offset(self) -> None:
-        # Maximum meaningful offset: push the bottom of the window all
-        # the way up to the top of the oldest visual row. Beyond that
-        # there is nothing more to reveal.
-        total = self._total_visual_rows()
-        max_offset = max(0, total - 1)
-        if self._scroll_offset > max_offset:
-            self._scroll_offset = max_offset
-
-    # -- Windowing ---------------------------------------------------
-
-    def visible_entries(self) -> list[tuple[str, str, int | None]]:
-        """Return the entries whose visual rows fall inside the current
-        window, in natural (oldest -> newest) order. Partial entries
-        are never returned.
-        """
-        if not self._entries:
-            return []
-
-        # Compute the [bottom, top) visual-row window relative to the
-        # newest visual row. Bottom row of the window is at visual-row
-        # index `scroll_offset` from the newest; top row is
-        # `scroll_offset + visible_rows`.
-        rows_per_entry = [self._entry_visual_rows(e) for e in self._entries]
-        total_rows = sum(rows_per_entry)
-
-        # Walk entries from newest backwards, tracking how many visual
-        # rows sit at-or-below the top of each entry, measured from the
-        # newest visual row.
-        # `rows_from_newest_top` = visual rows from the top of this
-        # entry down to (and including) the newest visual row.
-        bottom = self._scroll_offset
-        top = self._scroll_offset + self._visible_rows
-
-        # Build (entry, entry_bottom_from_newest, entry_top_from_newest)
-        # where entry_bottom_from_newest is the visual-row distance from
-        # the *bottom* (newest row) of the stream up to the bottom row
-        # of this entry, and entry_top_from_newest is that distance to
-        # the top row of the entry.
-        spans: list[tuple[tuple[str, str, int | None], int, int]] = []
-        cursor = 0  # rows accumulated from newest so far
-        for entry, rows in zip(reversed(self._entries), reversed(rows_per_entry)):
-            entry_bottom = cursor
-            entry_top = cursor + rows
-            spans.append((entry, entry_bottom, entry_top))
-            cursor += rows
-        # `spans` is newest -> oldest. Reverse back to natural order.
-        spans.reverse()
-
-        selected: list[tuple[str, str, int | None]] = []
-        for entry, eb, et in spans:
-            # Entry is fully inside the window iff its span [eb, et) is
-            # contained in [bottom, top).
-            if eb >= bottom and et <= top:
-                selected.append(entry)
-        # Guard: if total content is smaller than the visible budget,
-        # selected already contains everything that fits. If nothing
-        # fits (e.g. a single entry taller than the window), return
-        # whatever empty slice the window currently sees — the caller
-        # must tolerate an empty return rather than get a partial entry.
-        _ = total_rows
-        return selected
-
-
-_SCROLL_PAGE_ROWS = 10
-
-
-class HistoryScrollController:
-    """Maps single keystrokes to PaintDryDisplay scroll actions.
-
-    Pure logic: the live reader installs one of these and feeds it a
-    character at a time from a cbreak-mode stdin reader thread. Key
-    bindings are intentionally single-byte so the controller does not
-    have to parse escape sequences for arrow keys — that's a future
-    slice if vim-style `hjkl` + `0` proves insufficient.
-    """
-
-    def __init__(self, display: "PaintDryDisplay"):
-        self._display = display
-
-    def bindings(self) -> dict[str, str]:
-        return {
-            "k": "scroll history up one row",
-            "j": "scroll history down one row",
-            "u": f"scroll history up {_SCROLL_PAGE_ROWS} rows (page up)",
-            "d": f"scroll history down {_SCROLL_PAGE_ROWS} rows (page down)",
-            "0": "return to live edge (newest history)",
-        }
-
-    def handle_key(self, key: str) -> bool:
-        """Route `key` to a scroll action. Returns True if the key
-        was bound and an action was taken, False if the key is
-        unbound (caller may swallow or forward it)."""
-        if key == "k":
-            self._display.scroll_history_up(1)
-            return True
-        if key == "j":
-            self._display.scroll_history_down(1)
-            return True
-        if key == "u":
-            self._display.scroll_history_up(_SCROLL_PAGE_ROWS)
-            return True
-        if key == "d":
-            self._display.scroll_history_down(_SCROLL_PAGE_ROWS)
-            return True
-        if key == "0":
-            self._display.scroll_history_to_live_edge()
-            return True
-        return False
-
-
 class PaintDryDisplay:
     """Maintains the live + history state and renders via rich."""
 
@@ -823,15 +1125,26 @@ class PaintDryDisplay:
         self._console = console
         self.title = "PROJECT PAINT DRY · sumi-e"
         self.subtitle = "bonsai narrator · live"
+        self.current_model: str = ""
+        self.current_set_label: str = ""
+        self.current_subset_count: int | None = None
+        self.current_item_bug: str = ""
+        self.score_on_target_points = 0.0
+        self.score_points_possible = 0.0
+        self.score_left_on_table_points = 0.0
+        self.score_left_on_table_potential = 0.0
+        self.score_bad_call_points = 0.0
+        self.score_bad_call_potential = 0.0
 
-        # Sticky live: two buffers. streaming_line is the in-progress
-        # bonsai dispatch (the typewriter source). frozen_line is the
-        # most recent committed bonsai line, which keeps showing in the
-        # live panel until the next dispatch starts streaming new
-        # content. Live panel shows streaming if non-empty, else frozen,
-        # else just the cursor glyph.
+        # Sticky live: the thought lane has a streaming buffer plus a
+        # frozen committed line. The status rail has its own separate
+        # streaming buffer so status updates typewriter in-place without
+        # stealing the live thought lane during a status refresh.
+        self.status_line: str = ""
+        self.status_streaming_line: str = ""
         self.streaming_line: str = ""
         self.frozen_line: str = ""
+        self._frozen_line_parity: int = 0
         # Timestamp at which the most recent dispatch finished streaming.
         # Used to drive the slow fade from "just-arrived bright" to
         # "settled past tense" colors over _LIVE_FREEZE_FADE_S seconds
@@ -840,7 +1153,7 @@ class PaintDryDisplay:
         self._freeze_started_at: float | None = None
 
         # History entries are 3-tuples (kind, text, parity):
-        #   kind in {"line", "header", "topic"}
+        #   kind in {"line", "header", "topic", "checkpoint"}
         #   parity is 0 or 1 for "line" entries (alternation), None for others
         # Drops live in their own deque, rendered in a separate panel
         # below post-game so they don't clutter the narrative thread.
@@ -860,7 +1173,7 @@ class PaintDryDisplay:
         # per render() call. The most-recently-committed entry uses
         # the legacy fast cycle and bypasses this state.
         self._shimmer_phases = ShimmerPhaseState(
-            num_layers=_VISIBLE_HISTORY_LINES,
+            num_layers=_VISIBLE_HISTORY_ROWS,
             base_cycle_s=_SHIMMER_DEFAULT_CYCLE_S,
             layer_offset=_SHIMMER_LAYER_OFFSET,
         )
@@ -879,226 +1192,285 @@ class PaintDryDisplay:
         # and working on the wrap-up rather than hung.
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
-        # When True, render() shows the post-session footer (scroll
-        # keys remain live via HistoryScrollController). The animation
-        # thread keeps running so the shimmer plays on while the
-        # operator inspects the final state.
+        self.focus_preview_png: bytes | None = None
+        self.focus_preview_pixels: list[list[tuple[int, int, int]]] | None = None
+        self.focus_preview_renderable: Group | None = None
+        self.focus_preview_label: str = ""
+        self.focus_preview_source: str = ""
+        self.focus_preview_pending: bool = False
+        self.focus_preview_pending_started: float | None = None
+        self._focus_preview_pending_bucket: int | None = None
+        self._focus_preview_pending_renderable: Group | None = None
+        # Inline-image renderer state. When the terminal supports
+        # iTerm2 inline images (WezTerm, iTerm2), we skip the half-
+        # block renderer and let the terminal rasterize the crop PNG
+        # directly — strictly better legibility at no grain cost.
+        # Capability detection runs once at construction from
+        # $TERM_PROGRAM. The cached renderable carries the escape
+        # sequence + padding so Rich's layout reserves the right
+        # vertical space.
+        self.focus_preview_inline_renderable: FocusPreviewInlineImage | None = None
+        self._inline_images_supported: bool = _supports_inline_images(
+            os.environ.get("TERM_PROGRAM")
+        )
+        # Kitty graphics protocol state. Preferred over the iTerm2
+        # OSC 1337 path when available because it supports
+        # upload-once + reference-by-ID, which eliminates the
+        # per-frame PNG re-parse that causes flicker on the iTerm2
+        # path. The transmit happens outside Rich's render cycle
+        # (directly to stdout from on_focus_preview on the narrator
+        # event thread), then the renderable below yields only the
+        # tiny place command on each frame.
+        self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
+        self._focus_preview_texture_counter: int = 0
+        self._kitty_graphics_supported: bool = _supports_kitty_graphics(
+            os.environ.get("TERM_PROGRAM")
+        )
+        # Query the terminal for its real cell pixel dimensions once
+        # at init. Used by the Kitty renderer to compute correct
+        # cell boxes for images — hardcoding this is brittle across
+        # different fonts, terminal window sizes, and HiDPI settings,
+        # and a bad value produces visible letterbox. If the query
+        # fails (not a tty, terminal doesn't support CSI 16t,
+        # timeout), fall back to a sane default constant.
+        queried_aspect = _query_terminal_cell_aspect()
+        self._terminal_cell_aspect: float = (
+            queried_aspect
+            if queried_aspect is not None
+            else _DEFAULT_TERMINAL_CELL_ASPECT
+        )
+        # When True, render() shows a "press Enter to close" footer and
+        # the final frame stays static while waiting for Enter.
         self.session_ended: bool = False
-
-        # In-pane history scroll viewport. Persistent across frames so
-        # that `HistoryViewport.append()`'s re-anchoring logic carries
-        # scroll state correctly when new history arrives while the
-        # operator is scrolled up. Rebuilt only when the wrap width
-        # changes (terminal resize) — scroll offset is preserved
-        # across rebuilds. The viewport consumes a separately computed
-        # flat list with essentials-first priority applied, so current
-        # live-edge semantics are preserved (see
-        # `_flat_display_entries`).
-        self._viewport: HistoryViewport | None = None
-        self._viewport_wrap_width: int | None = None
-        # Number of flat entries already appended into `_viewport`, so
-        # lazy sync can feed only the delta on each access.
-        self._viewport_synced_len: int = 0
-        # Optional explicit wrap width override for tests and for the
-        # public viewport accessor when no console is attached. The
-        # renderer still prefers `_compute_wrap_width()` from the live
-        # console when present.
-        self._wrap_width_override: int | None = None
-        # Lock protecting viewport state. Three threads touch this:
-        # the animation thread (render → _viewport_display_entries →
-        # _sync_viewport), the scroll thread (scroll_history_* →
-        # _sync_viewport), and the main message-pump thread (mutates
-        # self.history which _flat_display_entries reads). Without
-        # this lock, concurrent rebuild/append/scroll operations on
-        # the viewport produce corrupted entry lists. (F1 fix from
-        # Crispy Drips anaphora 2026-04-12.)
-        self._viewport_lock = threading.Lock()
+        self._session_ended_at: float | None = None
+        self._session_started_at: float | None = None
+        self._turn_started_at: float | None = None
 
     def __rich__(self) -> Group:
         return self.render()
 
-    # -- History viewport (Crispy Drips) --------------------------------
+    @staticmethod
+    def _format_scorebug_points(value: float) -> str:
+        return f"{value:.1f}"
 
-    def _flat_display_entries(
+    @staticmethod
+    def _append_scorebug_cell(
+        row: Text,
+        label: str,
+        value: str,
+        *,
+        label_style: str,
+        value_style: str,
+        label_pad: int = 1,
+        value_pad: int = 1,
+    ) -> None:
+        if row.plain:
+            row.append("  ", style="dim")
+        row.append(f"{' ' * label_pad}{label}{' ' * label_pad}", style=label_style)
+        row.append(f"{' ' * value_pad}{value}{' ' * value_pad}", style=value_style)
+
+    @staticmethod
+    def _append_scorebug_big_value_cell(
+        label_row: Text,
+        value_top_row: Text,
+        value_middle_row: Text,
+        value_bottom_row: Text,
+        label: str,
+        value: str,
+        *,
+        label_style: str,
+        value_style: str,
+        value_mid_style: str,
+        label_pad: int = 3,
+        value_pad: int = 1,
+    ) -> None:
+        if label_row.plain:
+            label_row.append("  ", style="dim")
+            value_top_row.append("  ", style="dim")
+            value_middle_row.append("  ", style="dim")
+            value_bottom_row.append("  ", style="dim")
+        top, middle, bottom = _scorebug_big_value_rows(value)
+        cell_width = len(f"{' ' * value_pad}{top}{' ' * value_pad}")
+        label_lead = ""
+        label_trail_width = max(0, cell_width - len(label_lead) - len(label))
+        label_row.append(
+            f"{label_lead}{label}{' ' * label_trail_width}",
+            style=label_style,
+        )
+        _append_scorebug_value_row(
+            value_top_row,
+            f"{' ' * value_pad}{top}{' ' * value_pad}",
+            strong_style=value_style,
+            mid_style=value_mid_style,
+        )
+        _append_scorebug_value_row(
+            value_middle_row,
+            f"{' ' * value_pad}{middle}{' ' * value_pad}",
+            strong_style=value_style,
+            mid_style=value_mid_style,
+        )
+        _append_scorebug_value_row(
+            value_bottom_row,
+            f"{' ' * value_pad}{bottom}{' ' * value_pad}",
+            strong_style=value_style,
+            mid_style=value_mid_style,
+        )
+
+    def should_animate(self, now: float | None = None) -> bool:
+        """Return whether the UI should keep driving the shimmer loop.
+
+        Project Paint Dry is not a static log viewer. Even when no new
+        tokens are arriving, the active session still has ongoing shimmer
+        across the status rail, live field, and history stack. The only
+        time we intentionally stop repainting is after the session has
+        ended and the final frame is meant to stay still while waiting
+        for Enter.
+        """
+        if not self.session_ended:
+            return True
+        if self._session_ended_at is None:
+            return False
+        now = time.monotonic() if now is None else now
+        return now < (self._session_ended_at + _SESSION_END_ANIMATION_LINGER_S)
+
+    @staticmethod
+    def _entry_visual_rows(entry: tuple, wrap_width: int | None) -> int:
+        """Estimate how many visual rows an entry will consume when wrapped."""
+        if wrap_width is None or wrap_width <= 0:
+            return 1
+
+        kind = entry[0]
+        text = entry[1]
+        if kind == "header":
+            prefix_width = len("─ ")
+        elif kind == "topic":
+            prefix_width = len("  · ")
+        else:
+            prefix_width = len("    ")
+
+        visual_cols = max(1, prefix_width + len(text))
+        return max(1, math.ceil(visual_cols / wrap_width))
+
+    def _build_display_entries(
         self,
-    ) -> list[tuple[tuple[str, str, int | None], bool]]:
-        """Return the full history deque as a flat list in natural
-        chronological (oldest -> newest) order, with a boolean
-        marking the most-recently-committed entry.
+        wrap_width: int | None = None,
+    ) -> list[tuple[tuple, bool, int]]:
+        """Group history into items, reverse so newest item is first,
+        and within each group keep entries in chronological order so
+        the header sits ABOVE its narrator lines and topic.
 
-        No priority filtering is applied here — the viewport sees
-        every entry the deque holds (capped at `_MAX_HISTORY_LINES`
-        by the deque's own maxlen). Windowing to the visible budget
-        is the viewport's responsibility, which means scrolling up
-        can reach the oldest surviving entry, not just the newest N.
+        Then fill the visible budget by priority:
+          1. All headers and topics (ESSENTIAL — structural anchors).
+             These never get dropped while the deque has them.
+          2. Narrator lines, newest first (OPTIONAL — disposable middle).
+             Filled into whatever budget is left after essentials.
+
+        This means a long-thinking item with 30+ narrator lines doesn't
+        push older items' headers and topics off the display — only
+        narrator lines drop. The user can always see "this is the item,
+        here's the verdict" for every visible item; the play-by-play
+        between them is the part that compresses.
+
+        Returns a list of (entry, is_most_recent, group_depth) tuples
+        in display order. group_depth is the per-item depth that resets
+        at each header, so visual fading can restart from every item
+        heading instead of running as one global downhill wash.
+        is_most_recent is True for exactly the entry at the back of the
+        deque (the most-recently-committed thing).
         """
         history_list = list(self.history)
         if not history_list:
             return []
         most_recent_idx = len(history_list) - 1
-        return [
-            (entry, idx == most_recent_idx)
-            for idx, entry in enumerate(history_list)
-        ]
 
-    def _resolve_wrap_width(self) -> int:
-        wrap = self._compute_wrap_width()
-        if wrap is None:
-            wrap = self._wrap_width_override or 80
-        return wrap
-
-    def _sync_viewport(self) -> HistoryViewport:
-        """Ensure `self._viewport` reflects current history + wrap width.
-
-        * Rebuild from scratch on first call, when the wrap width
-          changes (terminal resize), or when the priority-filtered
-          flat list diverges from what the viewport already contains.
-        * Otherwise append only the delta so
-          `HistoryViewport.append()`'s re-anchoring logic carries
-          scroll state across new commits.
-        """
-        wrap_width = self._resolve_wrap_width()
-        flat = self._flat_display_entries()
-        flat_entries = [entry for entry, _ in flat]
-
-        rebuild = (
-            self._viewport is None
-            or self._viewport_wrap_width != wrap_width
-        )
-
-        if not rebuild and self._viewport is not None:
-            # Verify the prefix the viewport already holds still
-            # matches the current priority-filtered flat list. If an
-            # entry was filtered out (e.g. a narrator line dropped by
-            # priority because newer lines took its budget slot), the
-            # prefix diverges and we have to rebuild.
-            current = self._viewport.entries_snapshot()
-            prefix_len = min(len(current), len(flat_entries))
-            if current[:prefix_len] != flat_entries[:prefix_len]:
-                rebuild = True
-            elif len(current) > len(flat_entries):
-                rebuild = True
-
-        if rebuild:
-            held_offset = (
-                self._viewport.scroll_offset if self._viewport is not None else 0
-            )
-            self._viewport = HistoryViewport(
-                visible_rows=_VIEWPORT_VISIBLE_ROWS,
-                wrap_width=wrap_width,
-            )
-            self._viewport_wrap_width = wrap_width
-            for entry in flat_entries:
-                self._viewport.append(entry)
-            self._viewport_synced_len = len(flat_entries)
-            if held_offset > 0:
-                self._viewport.scroll_up(held_offset)
-        else:
-            assert self._viewport is not None
-            # Feed only the new entries so append()'s re-anchoring
-            # logic carries scroll state forward.
-            new_entries = flat_entries[self._viewport_synced_len :]
-            for entry in new_entries:
-                self._viewport.append(entry)
-            self._viewport_synced_len = len(flat_entries)
-        return self._viewport
-
-    def history_viewport(self) -> HistoryViewport:
-        """Public accessor: returns the synced viewport. Used by the
-        render path and by the interactive input loop (slice 3)."""
-        with self._viewport_lock:
-            return self._sync_viewport()
-
-    def _viewport_display_entries(
-        self,
-    ) -> list[tuple[tuple[str, str, int | None], bool]]:
-        """Return the render-facing display entries for the history
-        pane: the viewport's currently visible slice, reverse-grouped
-        so the newest item's group sits at the top (natural Paint Dry
-        layout), with entries within each group kept in chronological
-        order so a header sits above its own narrator lines.
-        """
-        with self._viewport_lock:
-            vp = self._sync_viewport()
-            at_live_edge = vp.at_live_edge
-            visible = vp.visible_entries()
-        if not visible:
-            return []
-
-        # At the live edge, apply essentials-first priority so a
-        # chatty item's 40 narrator lines can't push older items'
-        # headers/topics off the pane. When scrolled up, skip the
-        # filter — the operator explicitly asked to see earlier
-        # content and all entries should be reachable.
-        if at_live_edge:
-            visible = self._priority_filter(visible)
-
-        # Identify the most-recently-committed entry by matching
-        # against the last element of `self.history` (if any). This
-        # preserves the fast-cycle shimmer for the newest entry even
-        # when we're scrolled up and it's not in the visible slice.
-        history_list = list(self.history)
-        most_recent_entry = history_list[-1] if history_list else None
-
-        # Group the visible entries at header boundaries.
-        groups: list[list[tuple[str, str, int | None]]] = []
-        current_group: list[tuple[str, str, int | None]] = []
-        for entry in visible:
+        # Forward-iterate, grouping at header boundaries, tracking
+        # original deque indices.
+        groups: list[list[tuple[tuple, int]]] = []
+        current_group: list[tuple[tuple, int]] = []
+        for idx, entry in enumerate(history_list):
             if entry[0] == "header":
                 if current_group:
                     groups.append(current_group)
-                current_group = [entry]
+                current_group = [(entry, idx)]
             else:
-                current_group.append(entry)
+                current_group.append((entry, idx))
         if current_group:
             groups.append(current_group)
 
-        # Newest group on top.
+        # Newest item on top. Within each group, keep the header first,
+        # move the verdict/topic line directly underneath it for quick
+        # scanning, then flip narrator lines so the freshest thought
+        # sits closest to the decision and older thoughts descend.
         groups.reverse()
-        out: list[tuple[tuple[str, str, int | None], bool]] = []
+
+        # Flat list of (entry, deque_idx) in display order (top-down)
+        flat: list[tuple[tuple, int]] = []
         for group in groups:
-            for entry in group:
-                is_recent = entry is most_recent_entry
-                out.append((entry, is_recent))
-        return out
+            header = [pair for pair in group if pair[0][0] == "header"]
+            lines = [pair for pair in group if pair[0][0] == "line"]
+            rest = [pair for pair in group if pair[0][0] not in ("header", "line")]
+            rest.sort(
+                key=lambda pair: {
+                    "topic": 0,
+                    "checkpoint": 1,
+                }.get(pair[0][0], 2)
+            )
+            flat.extend(header)
+            flat.extend(rest)
+            flat.extend(reversed(lines))
 
-    @staticmethod
-    def _priority_filter(
-        entries: list[tuple[str, str, int | None]],
-    ) -> list[tuple[str, str, int | None]]:
-        """Essentials-first priority filter for the live-edge window.
+        # Two-pass priority fill:
+        #   1. Essentials (headers + topics) — keep newest-first up to budget
+        #   2. Narrator lines — keep newest-first to fill what's left
+        budget = _VISIBLE_HISTORY_ROWS
+        keep_positions: set[int] = set()
+        used_rows = 0
 
-        Given a list of entries in chronological order, keep all
-        headers and topics first, then fill the remaining budget
-        with narrator lines newest-first. This prevents a chatty
-        item from pushing older items' structural anchors off screen.
-        Only applied at the live edge — scrolled-up views bypass this.
-        """
-        budget = _PRIORITY_FILL_ENTRY_BUDGET
-        essentials = [e for e in entries if e[0] in ("header", "topic")]
-        optionals = [e for e in entries if e[0] not in ("header", "topic")]
-        # If essentials alone exceed the budget, keep newest-first.
-        if len(essentials) > budget:
-            essentials = essentials[-budget:]
-        remaining = budget - len(essentials)
-        # Newest narrator lines first.
-        kept_optionals = optionals[-remaining:] if remaining > 0 else []
-        # Rebuild in original order.
-        essential_set = set(id(e) for e in essentials)
-        optional_set = set(id(e) for e in kept_optionals)
-        return [e for e in entries if id(e) in essential_set or id(e) in optional_set]
+        # Pass 1: essentials in display order (newest items first since
+        # we already reversed groups). If we'd overflow, oldest items'
+        # essentials drop first — but the deque cap should make this
+        # rare in practice.
+        for pos, (entry, _idx) in enumerate(flat):
+            if entry[0] in ("header", "topic", "checkpoint"):
+                row_cost = self._entry_visual_rows(entry, wrap_width)
+                if used_rows >= budget:
+                    break
+                if used_rows > 0 and used_rows + row_cost > budget:
+                    break
+                keep_positions.add(pos)
+                used_rows += row_cost
 
-    def scroll_history_up(self, rows: int = 1) -> None:
-        with self._viewport_lock:
-            self._sync_viewport().scroll_up(rows)
+        # Pass 2: narrator lines, sorted by RECENCY (highest deque idx
+        # first), to fill the remaining budget. This drops oldest
+        # narrator lines first when an item produces more lines than
+        # the budget can hold.
+        optionals = [
+            (pos, entry, idx)
+            for pos, (entry, idx) in enumerate(flat)
+            if entry[0] not in ("header", "topic", "checkpoint")
+        ]
+        optionals.sort(key=lambda t: -t[2])  # newest first
 
-    def scroll_history_down(self, rows: int = 1) -> None:
-        with self._viewport_lock:
-            self._sync_viewport().scroll_down(rows)
+        for pos, _entry, _idx in optionals:
+            row_cost = self._entry_visual_rows(_entry, wrap_width)
+            if used_rows >= budget:
+                break
+            if used_rows > 0 and used_rows + row_cost > budget:
+                continue
+            keep_positions.add(pos)
+            used_rows += row_cost
 
-    def scroll_history_to_live_edge(self) -> None:
-        with self._viewport_lock:
-            self._sync_viewport().scroll_to_live_edge()
+        # Build the final list in original (top-to-bottom) display order
+        display: list[tuple[tuple, bool, int]] = []
+        group_depth = -1
+        for pos, (entry, idx) in enumerate(flat):
+            if pos in keep_positions:
+                if entry[0] == "header":
+                    group_depth = 0
+                else:
+                    group_depth = max(0, group_depth + 1)
+                display.append((entry, idx == most_recent_idx, group_depth))
+        return display
 
     def _compute_wrap_width(self) -> int | None:
         """Approximate visual width at which the history panel wraps.
@@ -1152,6 +1524,26 @@ class PaintDryDisplay:
         header_text.append("   ", style="dim")
         header_text.append(self.subtitle, style="#5a73b4")
         header_text.append("   ", style="dim")
+        total_elapsed_s = (
+            int(max(0.0, now - self._session_started_at))
+            if self._session_started_at is not None
+            else 0
+        )
+        turn_elapsed_s = (
+            int(max(0.0, now - self._turn_started_at))
+            if self._turn_started_at is not None
+            else None
+        )
+        header_text.append(
+            f"total={total_elapsed_s}s",
+            style="#7f95cf" if self._session_started_at is not None else "grey50",
+        )
+        header_text.append("  ", style="dim")
+        header_text.append(
+            f"turn={turn_elapsed_s}s" if turn_elapsed_s is not None else "turn=--",
+            style=_rgb_to_hex(_EMBER_ACCENT_RGB) if turn_elapsed_s is not None else "grey50",
+        )
+        header_text.append("  ", style="dim")
         header_text.append(
             f"emitted={self.stat_emitted}",
             style="green4" if self.stat_emitted > 0 else "grey50",
@@ -1172,19 +1564,154 @@ class PaintDryDisplay:
             padding=(0, 1),
         )
 
-        # Live line — sticky two-buffer model. Show streaming_line if
-        # it's non-empty (active dispatch), otherwise show frozen_line
-        # (the last committed line, waiting for the next dispatch to
-        # start). Cursor glyph is bright cyan when actively streaming,
-        # grey50 when only the frozen line is showing — subtle visual
-        # cue that the field is settled vs. live.
-        #
-        # The displayed text gets a subtle yellow/orange shimmer
-        # overlay (via _apply_shimmer with kind="live") so the live
-        # field feels alive even between deltas. Subtle amplitude,
-        # vivid peak (orange-amber).
+        scorebug_panel = None
+        if self.current_model or self.current_item_bug or self.current_set_label:
+            scorebug_top = Text()
+            self._append_scorebug_cell(
+                scorebug_top,
+                "CURRENT MODEL",
+                self.current_model or "—",
+                label_style="bold #eaf2ff on #405a93",
+                value_style="bold #d8e5ff on #27344f",
+            )
+            if self.current_set_label:
+                set_value = self.current_set_label
+                self._append_scorebug_cell(
+                    scorebug_top,
+                    "SET",
+                    set_value,
+                    label_style="bold #eef6ff on #32506e",
+                    value_style="bold #d7e8ff on #1d3147",
+                )
+            if self.current_item_bug:
+                self._append_scorebug_cell(
+                    scorebug_top,
+                    "ITEM",
+                    self.current_item_bug,
+                    label_style="bold #fff1e6 on #7d4a2e",
+                    value_style=f"bold #fff6ef on {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
+
+            scorebug_gap = Text(" ", style="grey35")
+            scorebug_rows: list[Text] = [scorebug_top, scorebug_gap]
+            if self.score_points_possible > 0:
+                scorebug_labels = Text()
+                scorebug_values_top = Text()
+                scorebug_values_middle = Text()
+                scorebug_values_bottom = Text()
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "ON TARGET",
+                    (
+                        f"{self._format_scorebug_points(self.score_on_target_points)}"
+                        f"/{self._format_scorebug_points(self.score_points_possible)}"
+                    ),
+                    label_style="bold #eef3ff on #32578e",
+                    value_style="bold #dce9ff on #1c2d47",
+                    value_mid_style="bold #8ea5cb on #1c2d47",
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "LEFT ON TABLE",
+                    (
+                        f"{self._format_scorebug_points(self.score_left_on_table_points)}"
+                        f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
+                    ),
+                    label_style="bold #fff1d6 on #6b5028",
+                    value_style="bold #ffefcf on #3e2f1b",
+                    value_mid_style="bold #a18f66 on #3e2f1b",
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "BAD CALLS",
+                    (
+                        f"{self._format_scorebug_points(self.score_bad_call_points)}"
+                        f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
+                    ),
+                    label_style="bold #ffe5dd on #7a392f",
+                    value_style="bold #ffe3d8 on #47211d",
+                    value_mid_style="bold #a57e76 on #47211d",
+                )
+                scorebug_rows.extend(
+                    [
+                        scorebug_labels,
+                        scorebug_values_top,
+                        scorebug_values_middle,
+                        scorebug_values_bottom,
+                    ]
+                )
+            else:
+                scorebug_labels = Text()
+                scorebug_values_top = Text()
+                scorebug_values_middle = Text()
+                scorebug_values_bottom = Text()
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "ON TARGET",
+                    "0.0/0.0",
+                    label_style="bold #eef3ff on #32578e",
+                    value_style="bold #dce9ff on #1c2d47",
+                    value_mid_style="bold #8ea5cb on #1c2d47",
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "LEFT ON TABLE",
+                    "0.0/0.0",
+                    label_style="bold #fff1d6 on #6b5028",
+                    value_style="bold #ffefcf on #3e2f1b",
+                    value_mid_style="bold #a18f66 on #3e2f1b",
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "BAD CALLS",
+                    "0.0/0.0",
+                    label_style="bold #ffe5dd on #7a392f",
+                    value_style="bold #ffe3d8 on #47211d",
+                    value_mid_style="bold #a57e76 on #47211d",
+                )
+                scorebug_rows.extend(
+                    [
+                        scorebug_labels,
+                        scorebug_values_top,
+                        scorebug_values_middle,
+                        scorebug_values_bottom,
+                    ]
+                )
+
+            scorebug_panel = Panel(
+                Align.left(Group(*scorebug_rows)),
+                border_style="#3d4458",
+                padding=(0, 1),
+            )
+
+        # Top panel — cool sticky status rail above the warmer live line.
+        # Status is persistent and structural, so it gets the calmer
+        # indigo-steel shimmer. The live first-person line below it is
+        # the more volatile surface, so it carries the warmer active
+        # treatment without overwriting the sticky status.
         displayed_live = self.streaming_line or self.frozen_line
         is_active = bool(self.streaming_line)
+        live_palette_variant = "warm" if (
+            self._line_parity if is_active else self._frozen_line_parity
+        ) else "cool"
 
         # Tail-truncate the live content so it always fits in
         # _LIVE_PANEL_CONTENT_LINES of visual rows. The panel itself
@@ -1209,45 +1736,143 @@ class PaintDryDisplay:
 
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
-            cursor_style = "bright_cyan" if is_active else "grey50"
+            cursor_style = _rgb_to_hex(_EMBER_ACCENT_RGB) if is_active else "grey50"
             live_text.append("▌ ", style=cursor_style)
-            # Compute freeze age for the renderer's fade. Only meaningful
-            # when not actively streaming and we have a recorded freeze
-            # timestamp; otherwise the renderer treats sat/val as fully
-            # bright.
             freeze_age_s = None
             if not is_active and self._freeze_started_at is not None:
                 freeze_age_s = time.monotonic() - self._freeze_started_at
             _render_live_undulating(
-                live_text, displayed_live,
-                indent_width=2,  # cursor glyph "▌ "
+                live_text,
+                displayed_live,
+                indent_width=2,
                 wrap_width=wrap_width,
                 is_active=is_active,
+                palette_variant=live_palette_variant,
                 char_offset=live_char_offset,
                 freeze_age_s=freeze_age_s,
             )
         else:
-            live_text = Text("▌ ", style="grey39", overflow="fold")
+            live_text = Text(no_wrap=False, overflow="fold")
+            live_text.append("▌ ", style="grey39")
+            _render_live_undulating(
+                live_text,
+                _live_placeholder(now),
+                indent_width=2,
+                wrap_width=wrap_width,
+                is_active=False,
+                palette_variant=live_palette_variant,
+                char_offset=0,
+                freeze_age_s=None,
+            )
+
+        status_text = Text(no_wrap=False, overflow="fold")
+        displayed_status = self.status_streaming_line or self.status_line
+        if displayed_status:
+            displayed_status = displayed_status.upper()
+            status_gutter_rgb = _interp_rgb(
+                _BASE_RGB["status"],
+                _SHIMMER_KIND_PEAK_RGB["status"],
+                0.28,
+            )
+            status_text.append("▌ ", style=_rgb_to_hex(status_gutter_rgb))
+            _render_status_undulating(
+                status_text,
+                displayed_status,
+                indent_width=2,
+                wrap_width=wrap_width,
+            )
+        else:
+            status_text.append("▌ ", style="grey39")
+            status_text.append("AWAITING STATUS", style="grey50")
+
         live_panel = Panel(
-            live_text,
+            Group(status_text, live_text),
             border_style="#3d4458",
             padding=(0, 1),
-            title="[grey50]live[/grey50]",
+            title="[grey50]status + live[/grey50]",
             title_align="left",
             # Fixed height: top border + content + bottom border.
             # Locks the live panel's vertical footprint so the layout
             # doesn't jitter when bonsai produces a long line.
-            height=_LIVE_PANEL_CONTENT_LINES + 2,
+            height=_TOP_PANEL_CONTENT_LINES + 2,
         )
 
+        # Default: show the loading placeholder band so the focus
+        # preview slot is occupied even before any focus_preview
+        # event fires. This keeps the layout continuous through the
+        # transition into the first real preview.
+        focus_preview_panel = FocusPreviewLoadingBand(title="focus preview")
+        have_kitty = self.focus_preview_kitty_renderable is not None
+        have_inline = self.focus_preview_inline_renderable is not None
+        have_fallback = self.focus_preview_renderable is not None
+        if have_kitty and not self.focus_preview_pending:
+            # Kitty graphics, steady state: use the place-by-ID
+            # renderable DIRECTLY (not wrapped in a Panel, same
+            # reasoning as FocusPreviewInlineImage). The PNG was
+            # transmitted to the terminal on the event thread
+            # inside on_focus_preview, so by the time this render
+            # fires the cache is typically ready. The place
+            # command is tiny and flicker-free.
+            focus_preview_panel = self.focus_preview_kitty_renderable
+        elif have_inline and not self.focus_preview_pending:
+            # Inline image, steady state: use the custom renderable
+            # DIRECTLY, not wrapped in a Panel. Panel's Padding layer
+            # writes literal spaces to the cells on either side of
+            # the content, which lands on exactly the cells WezTerm
+            # just painted image pixels into, overwriting the image.
+            # The renderable draws its own border + title and uses
+            # cursor-forward escapes (not spaces) to advance past
+            # the image cells without touching them.
+            focus_preview_panel = self.focus_preview_inline_renderable
+        elif have_kitty or have_inline or have_fallback:
+            preview_title = "[grey50]focus preview"
+            if self.focus_preview_pending:
+                preview_title += " · pending"
+            if self.focus_preview_label:
+                preview_title += f" · {self.focus_preview_label}"
+            preview_title += "[/grey50]"
+            # Pending or fallback path: use the half-block renderer
+            # wrapped in a Panel. During the pending transition the
+            # inline image path falls through to the half-block
+            # animation because the inline path is static; if no
+            # fallback pixels are available (because the inline path
+            # was active and replaced them), we show an empty panel
+            # with the title, which is still informative.
+            if self.focus_preview_pending and have_fallback and self.focus_preview_pixels is not None:
+                pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                if (
+                    self._focus_preview_pending_renderable is None
+                    or self._focus_preview_pending_bucket != pending_bucket
+                ):
+                    self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                        self.focus_preview_pixels,
+                        now=now,
+                        pending=True,
+                    )
+                    self._focus_preview_pending_bucket = pending_bucket
+                preview_renderable = self._focus_preview_pending_renderable
+            elif have_fallback:
+                preview_renderable = self.focus_preview_renderable
+            else:
+                # Have inline pending but no fallback — just show a
+                # blank placeholder, the next focus_preview event
+                # will swap it for the real inline image.
+                preview_renderable = Text(
+                    "(preview loading…)", style="grey50 italic"
+                )
+            focus_preview_panel = Panel(
+                Align.center(preview_renderable),
+                border_style="#3d4458",
+                padding=(0, 1),
+                title=preview_title,
+                title_align="left",
+            )
+
         # History panel — items grouped by header. Each item is a
-        # group: header at the top, then narrator lines in chronological
-        # order beneath it, then the topic at the bottom. Groups are
+        # group: header at the top, decision/topic directly below it,
+        # then narrator lines newest-first beneath that. Groups are
         # rendered newest-first, so the current item sits at the top
         # of the panel and older items sink below as new items start.
-        #
-        # Within each group entries are in their natural (commit) order,
-        # so the header always sits ABOVE its own narrator lines.
         #
         # Layer index for shimmer is visual position (0 = topmost),
         # so the current item's header gets the brightest shimmer and
@@ -1257,12 +1882,19 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._viewport_display_entries()
+        display_entries = self._build_display_entries(wrap_width=wrap_width)
         history_text = Text(no_wrap=False, overflow="fold")
-        for i, (entry, is_most_recent) in enumerate(display_entries):
+        global_history_phase = self._shimmer_phases.phase(0)
+        current_group_index = -1
+        current_group_base_phase = 0.0
+        for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
             text = entry[1]
             parity = entry[2] if len(entry) > 2 else None
+            if kind == "header":
+                current_group_index += 1
+                current_group_base_phase = self._shimmer_phases.phase(current_group_index)
+            render_layer = _render_layer_index(kind, group_depth)
             if i > 0:
                 history_text.append("\n")
 
@@ -1274,13 +1906,14 @@ class PaintDryDisplay:
                 else _SHIMMER_DEFAULT_CYCLE_S
             )
 
-            # Coupled phase state is for the default-cycle stack only.
-            # The most-recent entry uses the legacy fast-cycle phase
-            # (computed inside _apply_shimmer from time.monotonic()).
-            phase_override = (
-                None
-                if is_most_recent
-                else self._shimmer_phases.phase(i)
+            # Keep a coherent local shimmer field within an item, but
+            # terrace headers forward a little and rake reasoning back
+            # more aggressively inside that item.
+            phase_override = _history_entry_phase(
+                current_group_base_phase,
+                global_history_phase,
+                current_group_index,
+                group_depth,
             )
 
             if kind == "header":
@@ -1292,7 +1925,7 @@ class PaintDryDisplay:
                 # width is 0 here because the dash IS the leading edge.
                 _apply_shimmer(
                     history_text, indent, "header_dash",
-                    layer_index=i,
+                    layer_index=render_layer,
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
@@ -1311,7 +1944,7 @@ class PaintDryDisplay:
                     rest_part = m.group(2)
                     _apply_shimmer(
                         history_text, index_part, "header_index",
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1320,7 +1953,7 @@ class PaintDryDisplay:
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
                         history_text, rest_part, "header",
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent) + len(index_part) + 1,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1329,7 +1962,7 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, "header",
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1341,9 +1974,9 @@ class PaintDryDisplay:
                 # Pick the topic color variant based on the stored
                 # verdict (third tuple slot, named "parity" for line
                 # entries but reused as the verdict string for topic
-                # entries). Cool sage for matches, warm coral for
-                # grader-overshot, warm amber for grader-undershot,
-                # plain plum fallback when verdict is unknown.
+                # entries). Deep indigo for matches, warm vermilion
+                # for grader-overshot, warm ochre for grader-undershot,
+                # bone fallback when verdict is unknown.
                 topic_kind = {
                     "match": "topic_match",
                     "overshoot": "topic_overshoot",
@@ -1356,12 +1989,15 @@ class PaintDryDisplay:
                 m = _TIME_PREFIX_RE.match(text)
                 if m:
                     time_prefix, rest = m.group(1), m.group(2)
-                    history_text.append(time_prefix, style="bold #d86324")
+                    history_text.append(
+                        time_prefix,
+                        style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    )
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _apply_shimmer(
                         history_text, rest, topic_kind,
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
@@ -1370,12 +2006,31 @@ class PaintDryDisplay:
                 else:
                     _apply_shimmer(
                         history_text, text, topic_kind,
-                        layer_index=i,
+                        layer_index=render_layer,
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                     )
+            elif kind == "checkpoint":
+                indent = "  ≈ "
+                _apply_shimmer(
+                    history_text, indent, "checkpoint_mark",
+                    layer_index=render_layer,
+                    indent_width=0,
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
+                checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
+                _apply_shimmer(
+                    history_text, text, checkpoint_kind,
+                    layer_index=render_layer,
+                    indent_width=len(indent),
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
             else:
                 indent = "    "
                 history_text.append(indent, style="dim")
@@ -1386,7 +2041,7 @@ class PaintDryDisplay:
                 line_kind = "line_alt" if parity == 1 else "line"
                 _apply_shimmer(
                     history_text, text, line_kind,
-                    layer_index=i,
+                    layer_index=render_layer,
                     indent_width=len(indent),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
@@ -1411,7 +2066,7 @@ class PaintDryDisplay:
         drops_panel = None
         if self.drops:
             drops_text = Text(no_wrap=False, overflow="fold")
-            visible_drops = list(self.drops)[-_VISIBLE_HISTORY_LINES:]
+            visible_drops = list(self.drops)[-_VISIBLE_DROP_LINES:]
             for i, (reason, label) in enumerate(visible_drops):
                 if i > 0:
                     drops_text.append("\n")
@@ -1463,15 +2118,25 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: header, live, history, post-game, drops, [footer]
-        panels = [header, live_panel, history_panel]
+        # Order: scorebug, header, live, history, post-game, drops, [footer]
+        # The big tally cells are the most glanceable session-state
+        # surface, so they lead the stack. The project header drops
+        # below them as show identity rather than primary telemetry.
+        panels = []
+        if scorebug_panel is not None:
+            panels.append(scorebug_panel)
+        panels.append(header)
+        panels.append(live_panel)
+        if focus_preview_panel is not None:
+            panels.append(focus_preview_panel)
+        panels.append(history_panel)
         if wrap_panel is not None:
             panels.append(wrap_panel)
         if drops_panel is not None:
             panels.append(drops_panel)
         if self.session_ended:
             footer = Text(
-                "  ▌ session ended — k/j scroll, u/d page, 0 live edge, any other key closes ▐",
+                "  ▌ session ended — press Enter to close ▐",
                 style="grey50 italic",
             )
             panels.append(footer)
@@ -1483,27 +2148,76 @@ class PaintDryDisplay:
         # Header goes into the history. Doesn't touch the live buffers
         # — frozen_line keeps showing the previous committed dispatch
         # until the next bonsai dispatch starts streaming.
+        header_now = time.monotonic()
+        if self._session_started_at is None:
+            self._session_started_at = header_now
+        self._turn_started_at = header_now
+        self.status_line = ""
+        self.status_streaming_line = ""
+        self.streaming_line = ""
+        self.frozen_line = ""
+        self._frozen_line_parity = self._line_parity
+        self._freeze_started_at = None
+        if (
+            self.focus_preview_renderable is not None
+            or self.focus_preview_inline_renderable is not None
+            or self.focus_preview_kitty_renderable is not None
+        ):
+            self.focus_preview_pending = True
+            self.focus_preview_pending_started = header_now
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
+        else:
+            self.focus_preview_png = None
+            self.focus_preview_pixels = None
+            self.focus_preview_renderable = None
+            self.focus_preview_inline_renderable = None
+            self.focus_preview_kitty_renderable = None
+            self.focus_preview_label = ""
+            self.focus_preview_source = ""
+            self.focus_preview_pending = False
+            self.focus_preview_pending_started = None
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
+        m = _HEADER_INDEX_RE.match(text)
+        if m:
+            self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
         self.history.append(("header", text, None))
 
-    def on_delta(self, text: str) -> None:
-        self.streaming_line += text
+    def on_session_meta(
+        self,
+        *,
+        model: str | None = None,
+        set_label: str | None = None,
+        subset_count: int | None = None,
+    ) -> None:
+        if model:
+            self.current_model = model
+        if set_label:
+            self.current_set_label = set_label
+        if subset_count is not None:
+            self.current_subset_count = subset_count
 
-    def on_commit(self) -> None:
-        # Push the just-finished streaming line into history (preserves
-        # chronological order, so any subsequent topic/header lands
-        # AFTER it), then promote it to frozen_line so it keeps showing
-        # in the live panel until the next dispatch starts streaming.
-        if self.streaming_line:
-            self.history.append(
-                ("line", self.streaming_line, self._line_parity)
-            )
+    def on_delta(self, text: str, mode: str = "thought") -> None:
+        if mode == "status":
+            self.status_streaming_line += text
+        else:
+            self.streaming_line += text
+
+    def on_commit(self, mode: str = "thought") -> None:
+        # Thought commits now stay in the sticky live lane only.
+        # Durable history is carried by headers, topic lines, and
+        # checkpoints. Status commits update only the sticky status rail.
+        if self.status_streaming_line and mode == "status":
+            self.status_line = self.status_streaming_line
+            self.status_streaming_line = ""
+        elif self.streaming_line:
+            committed_parity = self._line_parity
+            self._frozen_line_parity = committed_parity
             self._line_parity = 1 - self._line_parity
             self.stat_emitted += 1
-            # Mark the start of the freeze fade — only when there was
-            # actual content to freeze. Empty commits don't restart
-            # the fade clock.
             self._freeze_started_at = time.monotonic()
-        self.frozen_line = self.streaming_line
+            self.frozen_line = self.streaming_line
         self.streaming_line = ""
 
     def on_drop(self, reason: str, text: str) -> None:
@@ -1513,7 +2227,7 @@ class PaintDryDisplay:
         # rollback_live already cleared the streaming_line.
         label = text[:120] if text else f"<{reason}>"
         self.drops.append((reason, label))
-        if reason == "dedup":
+        if reason.startswith("dedup"):
             self.stat_dropped_dedup += 1
         elif reason == "empty":
             self.stat_dropped_empty += 1
@@ -1526,6 +2240,7 @@ class PaintDryDisplay:
         in the live panel, so the user sees a clean snap-back to the
         last accepted line instead of an empty live field."""
         self.streaming_line = ""
+        self.status_streaming_line = ""
 
     def on_wrap_up_pending(self) -> None:
         """Wrap-up generation has started — show placeholder until the
@@ -1539,13 +2254,160 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
-    def on_topic(self, text: str, verdict: str | None = None) -> None:
+    def on_focus_preview(
+        self,
+        png_bytes: bytes,
+        *,
+        label: str = "",
+        source: str = "",
+    ) -> None:
+        term_width = None
+        if self._console is not None:
+            try:
+                term_width = self._console.size.width
+            except Exception:
+                term_width = None
+        self.focus_preview_png = png_bytes
+        self.focus_preview_label = label
+        self.focus_preview_source = source
+        self.focus_preview_pending = False
+        self.focus_preview_pending_started = None
+        self._focus_preview_pending_bucket = None
+        self._focus_preview_pending_renderable = None
+
+        # Kitty graphics protocol path: preferred on WezTerm/kitty.
+        # Upload the PNG chunks directly to stdout NOW, on the
+        # narrator event thread, so WezTerm starts decoding the
+        # image in the background before Rich's next refresh fires.
+        # Then build a FocusPreviewKittyImage renderable that
+        # computes its cell box at RENDER time from the current
+        # console dimensions — so the image resizes correctly
+        # across terminal window resizes without requiring a
+        # fresh focus_preview event.
+        if self._kitty_graphics_supported:
+            try:
+                pix = fitz.Pixmap(png_bytes)
+                title = f"focus preview · {label}" if label else "focus preview"
+                # Transmit the PNG chunks directly to the console
+                # output stream. Bypasses Rich entirely and runs
+                # on the event thread, so the decode has a head
+                # start on the next Rich refresh.
+                transmit_stream = (
+                    self._console.file if self._console is not None else sys.stdout
+                )
+                chunks = _build_kitty_transmit_chunks(png_bytes, _KITTY_IMAGE_ID)
+                for chunk in chunks:
+                    transmit_stream.write(chunk)
+                transmit_stream.flush()
+                self._focus_preview_texture_counter += 1
+                self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
+                    image_id=_KITTY_IMAGE_ID,
+                    texture_seed=self._focus_preview_texture_counter,
+                    image_pixel_width=pix.width,
+                    image_pixel_height=pix.height,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
+                    title=title,
+                )
+                # No need to build the iTerm2 or half-block paths —
+                # the Kitty path owns the panel when it's available.
+                self.focus_preview_inline_renderable = None
+                self.focus_preview_pixels = None
+                self.focus_preview_renderable = None
+                return
+            except Exception:
+                # If anything in the Kitty path fails (fitz quirk,
+                # stdout write error, etc.), fall through to the
+                # iTerm2 OSC 1337 path so the operator still sees
+                # something.
+                self.focus_preview_kitty_renderable = None
+
+        # iTerm2 OSC 1337 path: fallback for terminals that don't
+        # support Kitty graphics, or when the Kitty path failed to
+        # build. Known flicker issue (see FocusPreviewInlineImage
+        # docstring) but better than nothing.
+        if self._inline_images_supported:
+            try:
+                pix = fitz.Pixmap(png_bytes)
+                cell_width, cell_height = _compute_inline_image_cell_dimensions(
+                    pix.width,
+                    pix.height,
+                    max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                    max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
+                )
+                title = f"focus preview · {label}" if label else "focus preview"
+                self.focus_preview_inline_renderable = FocusPreviewInlineImage(
+                    png_bytes=png_bytes,
+                    cell_width=cell_width,
+                    cell_height=cell_height,
+                    title=title,
+                )
+                self.focus_preview_kitty_renderable = None
+                self.focus_preview_pixels = None
+                self.focus_preview_renderable = None
+                return
+            except Exception:
+                self.focus_preview_inline_renderable = None
+
+        # Half-block fallback path: for terminals that don't support
+        # inline images at all. Sample at 2× vertical density so the
+        # steady-state renderer can pack a top/bottom half-pixel
+        # pair into each terminal row via half-block (▀) cells.
+        budget_width, budget_height = _focus_preview_budget(term_width)
+        self.focus_preview_pixels = _build_focus_preview_pixels(
+            png_bytes,
+            max_width_chars=budget_width,
+            max_height_rows=budget_height * 2,
+        )
+        self.focus_preview_renderable = _render_focus_preview_pixels(
+            self.focus_preview_pixels
+        )
+        self.focus_preview_inline_renderable = None
+        self.focus_preview_kitty_renderable = None
+
+    def on_topic(
+        self,
+        text: str,
+        verdict: str | None = None,
+        *,
+        grader_score: float | None = None,
+        truth_score: float | None = None,
+        max_points: float | None = None,
+    ) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
         # buffers — frozen_line keeps showing the last bonsai line.
         # The verdict ("match" / "overshoot" / "undershoot" / None)
         # is stored in the third tuple slot so the renderer can pick
         # the right color variant for the topic line.
         self.history.append(("topic", text, verdict))
+        if (
+            grader_score is None
+            or truth_score is None
+            or max_points is None
+        ):
+            return
+        self.score_points_possible += max_points
+        if abs(grader_score - truth_score) < 1e-9:
+            self.score_on_target_points += truth_score
+            return
+        if grader_score < truth_score:
+            self.score_left_on_table_points += truth_score - grader_score
+            self.score_left_on_table_potential += truth_score
+            return
+        if grader_score > truth_score:
+            self.score_bad_call_points += grader_score - truth_score
+            self.score_bad_call_potential += max(0.0, max_points - truth_score)
+
+    def on_checkpoint(self, text: str) -> None:
+        checkpoint_parity = next(
+            (
+                parity
+                for kind, _text, parity in reversed(self.history)
+                if kind == "line" and parity is not None
+            ),
+            self._line_parity,
+        )
+        self.history.append(("checkpoint", text, checkpoint_parity))
 
 
 def main() -> int:
@@ -1574,22 +2436,6 @@ def main() -> int:
     fd = os.open(str(fifo_path), os.O_RDONLY)
     fifo = os.fdopen(fd, "r", buffering=1)
 
-    # Install cbreak mode on stdin so the interactive scroll loop can
-    # read one byte at a time without waiting for Enter. Best-effort:
-    # if stdin is not a TTY (e.g. the reader is smoke-tested from a
-    # pipe), skip the terminal plumbing and the scroll thread below.
-    # Raw-mode state is restored in the `finally` block so the user's
-    # shell is never left in a broken state on exit.
-    stdin_fd: int | None = None
-    saved_termios = None
-    try:
-        stdin_fd = sys.stdin.fileno()
-        saved_termios = termios.tcgetattr(stdin_fd)
-        tty.setcbreak(stdin_fd)
-    except (termios.error, OSError, ValueError):
-        stdin_fd = None
-        saved_termios = None
-
     try:
         # auto_refresh=False — we drive the render manually from a
         # background timer thread. Tried auto_refresh=True with
@@ -1599,35 +2445,49 @@ def main() -> int:
         # per-character styles changed). Manual update + force
         # refresh works reliably.
         animation_stop = threading.Event()
-        session_exit = threading.Event()
-        scroll_controller = HistoryScrollController(display)
 
-        # screen=False — stay in the terminal's main screen buffer.
-        # Alt-screen (screen=True) was tried and reverted: the focus-
-        # preview image panel can push the total rendered height past
-        # the terminal's row count, and alt-screen has no scrollback
-        # to absorb the overflow — the result is doubled/garbled
-        # panels. screen=False lets the terminal scroll naturally.
-        # Trade-off: Rich's in-place redraw leaves prior frames in
-        # the terminal's native scrollback (ghost header trails when
-        # scrolling the terminal up). That is accepted until a fixed-
-        # height layout or Rich transient mode can eliminate it.
         with Live(
             display.render(),
             console=console,
-            refresh_per_second=30,
+            refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
             screen=False,
             auto_refresh=False,
         ) as live:
+            def _wait_for_manual_close() -> int:
+                while True:
+                    if not display.should_animate():
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            pass
+                    try:
+                        ready, _, _ = select.select([sys.stdin], [], [], _IDLE_POLL_S)
+                    except Exception:
+                        time.sleep(_IDLE_POLL_S)
+                        continue
+                    if not ready:
+                        continue
+                    try:
+                        line = sys.stdin.readline()
+                    except Exception:
+                        line = ""
+                    if line:
+                        animation_stop.set()
+                        anim_thread.join(timeout=0.5)
+                        return 0
+
             def _animation_tick():
                 while not animation_stop.is_set():
-                    try:
-                        live.update(display.render(), refresh=True)
-                    except Exception:
-                        # Transient race with the message loop mutating
-                        # display state — next tick will recover.
-                        pass
-                    time.sleep(1.0 / 30)
+                    if display.should_animate():
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            # Transient race with the message loop mutating
+                            # display state — next tick will recover.
+                            pass
+                        time.sleep(1.0 / _ACTIVE_ANIMATION_FPS)
+                    else:
+                        time.sleep(_IDLE_POLL_S)
 
             anim_thread = threading.Thread(
                 target=_animation_tick,
@@ -1635,36 +2495,6 @@ def main() -> int:
                 daemon=True,
             )
             anim_thread.start()
-
-            # Interactive scroll input. Runs only when stdin is a
-            # real TTY in cbreak mode. Reads one byte at a time and
-            # forwards it to the scroll controller. Before session
-            # end, unbound keys are swallowed (to avoid accidental
-            # exits). After session end, unbound keys trigger the
-            # session exit signal — any keystroke closes the reader.
-            scroll_stop = threading.Event()
-
-            def _scroll_tick():
-                while not scroll_stop.is_set():
-                    try:
-                        ch = sys.stdin.read(1)
-                    except Exception:
-                        return
-                    if not ch:
-                        return
-                    handled = scroll_controller.handle_key(ch)
-                    if not handled and display.session_ended:
-                        session_exit.set()
-                        return
-
-            scroll_thread: threading.Thread | None = None
-            if stdin_fd is not None:
-                scroll_thread = threading.Thread(
-                    target=_scroll_tick,
-                    name="paint-dry-scroll",
-                    daemon=True,
-                )
-                scroll_thread.start()
 
             buffer = ""
             while True:
@@ -1686,17 +2516,44 @@ def main() -> int:
                     msg_type = msg.get("type")
                     if msg_type == "header":
                         display.on_header(msg.get("text", ""))
+                    elif msg_type == "session_meta":
+                        display.on_session_meta(
+                            model=msg.get("model"),
+                            set_label=msg.get("set_label"),
+                            subset_count=msg.get("subset_count"),
+                        )
+                    elif msg_type == "focus_preview":
+                        try:
+                            png_bytes = base64.b64decode(
+                                msg.get("png_base64", ""),
+                            )
+                        except Exception:
+                            png_bytes = b""
+                        if png_bytes:
+                            display.on_focus_preview(
+                                png_bytes,
+                                label=msg.get("label", ""),
+                                source=msg.get("source", ""),
+                            )
                     elif msg_type == "delta":
-                        display.on_delta(msg.get("text", ""))
+                        display.on_delta(
+                            msg.get("text", ""),
+                            mode=msg.get("mode", "thought"),
+                        )
                     elif msg_type == "commit":
-                        display.on_commit()
+                        display.on_commit(msg.get("mode", "thought"))
                     elif msg_type == "rollback_live":
                         display.on_rollback_live()
                     elif msg_type == "topic":
                         display.on_topic(
                             msg.get("text", ""),
                             verdict=msg.get("verdict"),
+                            grader_score=msg.get("grader_score"),
+                            truth_score=msg.get("truth_score"),
+                            max_points=msg.get("max_points"),
                         )
+                    elif msg_type == "checkpoint":
+                        display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":
                         display.on_drop(
                             msg.get("reason", "unknown"),
@@ -1707,40 +2564,22 @@ def main() -> int:
                     elif msg_type == "wrap_up":
                         display.on_wrap_up(msg.get("text", ""))
                     elif msg_type == "end":
-                        # Flag the display so render() shows a
-                        # "press any key to close" footer. Keep
-                        # the animation thread running so the
-                        # shimmer continues to play while the
-                        # user reads the final state. The scroll
-                        # thread stays alive so the operator can
-                        # still scroll the history pane after
-                        # session end — any non-scroll key will
-                        # fire `session_exit` and close the reader.
                         display.session_ended = True
-                        if stdin_fd is None:
-                            # No interactive input available
-                            # (non-TTY stdin); exit immediately.
-                            session_exit.set()
-                        session_exit.wait()
-                        animation_stop.set()
-                        scroll_stop.set()
-                        anim_thread.join(timeout=0.5)
-                        return 0
+                        display._session_ended_at = time.monotonic()
+                        live.update(display.render(), refresh=True)
+                        return _wait_for_manual_close()
+
+                    if _message_requires_immediate_refresh(msg_type):
+                        try:
+                            live.update(display.render(), refresh=True)
+                        except Exception:
+                            pass
     finally:
         animation_stop.set()
-        try:
-            scroll_stop.set()  # type: ignore[name-defined]
-        except NameError:
-            pass
         try:
             fifo.close()
         except Exception:
             pass
-        if stdin_fd is not None and saved_termios is not None:
-            try:
-                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_termios)
-            except Exception:
-                pass
 
     return 0
 
