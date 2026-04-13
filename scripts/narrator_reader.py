@@ -53,6 +53,61 @@ if str(_REPO_ROOT) not in sys.path:
 
 from auto_grader.shimmer_phases import ShimmerPhaseState  # noqa: E402
 
+from scripts.focus_preview_renderer import (  # noqa: E402
+    FocusPreviewInlineImage,
+    FocusPreviewKittyImage,
+    FocusPreviewLoadingBand,
+    _build_focus_preview_pixels,
+    _build_iterm2_inline_image_sequence,
+    _build_kitty_place_sequence,
+    _build_kitty_transmit_chunks,
+    _compute_inline_image_cell_dimensions,
+    _emit_band_border_row,
+    _emit_band_texture_only_row,
+    _emit_band_texture_span,
+    _focus_preview_budget,
+    _otsu_threshold,
+    _query_terminal_cell_aspect,
+    _render_focus_preview_pending,
+    _render_focus_preview_pixels,
+    _render_focus_preview_steady,
+    _sample_preview_rgb,
+    _scaled_preview_size,
+    _supports_inline_images,
+    _supports_kitty_graphics,
+    _texture_cell,
+    _BAND_EXTRA_ROWS,
+    _BRAILLE_BASE,
+    _BRAILLE_LEFT_COL,
+    _BRAILLE_RIGHT_COL,
+    _DEFAULT_TERMINAL_CELL_ASPECT,
+    _FOCUS_PREVIEW_BG_RGB,
+    _FOCUS_PREVIEW_COMPANION_SCALE,
+    _FOCUS_PREVIEW_HARD_INK_RGB,
+    _FOCUS_PREVIEW_HARD_PAPER_RGB,
+    _FOCUS_PREVIEW_MAX_HEIGHT_ROWS,
+    _FOCUS_PREVIEW_MAX_WIDTH_CHARS,
+    _FOCUS_PREVIEW_MIN_HEIGHT_ROWS,
+    _FOCUS_PREVIEW_MIN_WIDTH_CHARS,
+    _FOCUS_PREVIEW_OVERLAY_CHARS,
+    _FOCUS_PREVIEW_OVERLAY_RGBS,
+    _FOCUS_PREVIEW_PAPER_RGB,
+    _FOCUS_PREVIEW_PENDING_FPS,
+    _INLINE_IMAGE_CELL_HEIGHT,
+    _INLINE_IMAGE_MAX_CELL_WIDTH,
+    _KITTY_CHUNK_SIZE,
+    _KITTY_IMAGE_ID,
+    _SOLID_COLUMNS,
+    _TEXTURE_ACCENT_RGB,
+    _TEXTURE_BG_RGB,
+    _TEXTURE_EDGE_FLOOR,
+)
+# Re-export focus_preview_renderer utilities that were originally defined here.
+# The _lerp_rgb, _clamp, _pixel_luma functions are now only in the renderer module.
+from scripts.focus_preview_renderer import _clamp  # noqa: E402, F401
+from scripts.focus_preview_renderer import _lerp_rgb  # noqa: E402, F401
+from scripts.focus_preview_renderer import _pixel_luma  # noqa: E402, F401
+
 
 # Matches the elapsed-time prefix on after-action topic lines:
 #   "47s · Grader: 2/2 (matched). Prof: 2/2. · Even the kid called this."
@@ -84,6 +139,12 @@ _VISIBLE_HISTORY_LINES = 30  # how many to actually render
 # viewport can display all entries the priority filter retains.
 _PRIORITY_FILL_ENTRY_BUDGET = _VISIBLE_HISTORY_LINES
 _VIEWPORT_VISIBLE_ROWS = _VISIBLE_HISTORY_LINES * 2  # headroom for wrapping
+
+_HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
+                                   # descending deeper into the stack before
+                                   # it settles at the floor.
+_HISTORY_TIER_DIM_EASE_POWER = 1.72  # fast initial drop, then a slower tail
+                                     # instead of a purely linear ramp.
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
@@ -322,6 +383,170 @@ def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
 
+def _blend_rgb(
+    base: tuple[int, int, int],
+    target: tuple[int, int, int],
+    weight: float,
+) -> tuple[int, int, int]:
+    """Blend base toward target by weight in [0, 1]."""
+    weight = max(0.0, min(1.0, weight))
+    return tuple(
+        max(
+            0,
+            min(
+                255,
+                int(round(channel + (target_channel - channel) * weight)),
+            ),
+        )
+        for channel, target_channel in zip(base, target, strict=True)
+    )
+
+
+def _history_group_phase(
+    base_phase: float,
+    secondary_phase: float,
+    group_index: int,
+) -> float:
+    """Set back each visible item group and add a subtle parity field.
+
+    The history stack should feel coherent within an item, but item
+    boundaries should not all lie on the exact same shimmer plane.
+    This helper keeps one local field per item, sets lower headers
+    slightly back from the one above them, and layers in a faint
+    alternating parity field so neighboring groups do not ride the
+    same exact shimmer geometry.
+    """
+    parity_direction = -1.0 if group_index % 2 else 1.0
+    alternating_offset = (
+        math.sin(
+            2
+            * math.pi
+            * ((secondary_phase - 0.25) * _HISTORY_GROUP_ALT_RATE)
+        )
+        * _HISTORY_GROUP_ALT_FIELD
+        * parity_direction
+    )
+    return (
+        base_phase
+        - (group_index * _HISTORY_GROUP_SETBACK)
+        + alternating_offset
+    ) % 1.0
+
+
+def _history_entry_phase(
+    base_phase: float,
+    secondary_phase: float,
+    group_index: int,
+    group_depth: int,
+) -> float:
+    """Phase for one visible history entry.
+
+    Item headers sit slightly behind the one above them, but entries
+    within an item still rake back enough to read as a local field.
+    A faint alternating parity field reinforces the item boundaries
+    without making the geometry feel mechanically terraced.
+    """
+    group_phase = _history_group_phase(base_phase, secondary_phase, group_index)
+    return (group_phase - (group_depth * _HISTORY_GROUP_RAKE)) % 1.0
+
+
+def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
+    top_parts: list[str] = []
+    middle_parts: list[str] = []
+    bottom_parts: list[str] = []
+    for ch in value:
+        top, middle, bottom = _SCOREBUG_BIG_DIGITS.get(
+            ch,
+            ("   ", f" {ch} ", "   "),
+        )
+        top_parts.append(top)
+        middle_parts.append(middle)
+        bottom_parts.append(bottom)
+    return (
+        "".join(top_parts),
+        "".join(middle_parts),
+        "".join(bottom_parts),
+    )
+
+
+def _append_scorebug_value_row(
+    row: Text,
+    content: str,
+    *,
+    strong_style: str,
+    mid_style: str,
+) -> None:
+    """Append one scoreboard value row with weighted two-tone strokes."""
+    strong_chars = {"╔", "╗", "╚", "╝", "║", "╠", "╣", "╩", "═", "▪"}
+    mid_chars = {"╱", " "}
+    for ch in content:
+        if ch in strong_chars:
+            row.append(ch, style=strong_style)
+        elif ch in mid_chars:
+            row.append(ch, style=mid_style)
+        else:
+            row.append(ch, style=strong_style)
+
+
+def _live_placeholder(now_s: float) -> str:
+    idx = int(now_s // _LIVE_PLACEHOLDER_ROTATE_S) % len(_LIVE_PLACEHOLDER_OPTIONS)
+    return _LIVE_PLACEHOLDER_OPTIONS[idx]
+
+
+def _scale_rgb(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+    """Scale an RGB triple by factor, preserving channel bounds."""
+    factor = max(0.0, factor)
+    return tuple(
+        max(0, min(255, int(round(channel * factor))))
+        for channel in rgb
+    )
+
+
+def _history_tier_dim_factor(layer_index: int) -> float:
+    """Return the brightness factor for a line within an item group.
+
+    This is intentionally local to the current header block, not the
+    whole viewport. Each step down within an item should be visibly
+    dimmer, then clamp at the floor so deep blocks don't disappear.
+    """
+    if layer_index <= 0:
+        return 1.0
+    if layer_index >= _HISTORY_TIER_DIM_FLOOR_DEPTH:
+        return _HISTORY_TIER_DIM_MIN
+    t = layer_index / _HISTORY_TIER_DIM_FLOOR_DEPTH
+    eased = (1.0 - t) ** _HISTORY_TIER_DIM_EASE_POWER
+    return _HISTORY_TIER_DIM_MIN + ((1.0 - _HISTORY_TIER_DIM_MIN) * eased)
+
+
+def _render_layer_index(kind: str, group_depth: int) -> int:
+    """Return the effective fade layer for a history entry.
+
+    Only narrator thought lines should sink within an item block.
+    Structural lines such as headers and resolution/topic lines stay
+    at full strength so the eye can keep finding the question/result
+    anchors quickly.
+    """
+    return group_depth if kind == "line" else 0
+
+
+def _message_requires_immediate_refresh(msg_type: str) -> bool:
+    """Return whether a FIFO event should bypass the normal animation cadence.
+
+    Regular stream events should let the animation loop own repaint timing so
+    idle and active motion feel consistent. Only boundary moments that would
+    feel laggy at 12 FPS get an immediate forced refresh.
+    """
+    return msg_type in {"session_meta", "focus_preview", "wrap_up", "end"}
+
+
+
+# _focus_preview_budget moved to scripts/focus_preview_renderer.py
+
+
+
+# Inline image, Kitty graphics, band texture code, and all focus
+# preview rendering functions/classes moved to
+# scripts/focus_preview_renderer.py and re-imported above.
 def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     """Convert HSV (h in degrees, s/v in [0, 1]) to 8-bit RGB."""
     h = h % 360
