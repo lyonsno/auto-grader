@@ -30,6 +30,7 @@ _ALWAYS_ON_SUITES = (
     "tests.test_paper_calibration_packet_contract",
     "tests.test_paper_threshold_packet_contract",
     "tests.test_generated_exam_demo_contract",
+    "tests.test_mc_workflow_gui_contract",
     "test_unittest_discovery_contract",
 )
 _POSTGRES_SUITES = (
