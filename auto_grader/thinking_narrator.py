@@ -792,11 +792,89 @@ class ThinkingNarrator:
         with self._lock:
             self._prior_checkpoints.append(checkpoint_text)
 
+    def _build_consolidation_checkpoint_user_content(
+        self,
+        chunk: str,
+        accepted_line: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+        prior_checkpoints: list[str],
+        dropped_thought: str,
+        dropped_status: str | None,
+    ) -> str:
+        blocks = [
+            self._build_checkpoint_user_content(
+                chunk,
+                accepted_line,
+                prior_thoughts,
+                prior_statuses,
+                prior_checkpoints,
+            )
+        ]
+        blocks.append(f"Dropped thought retry:\n- {dropped_thought}")
+        if dropped_status:
+            blocks.append(f"Dropped status retry:\n- {dropped_status}")
+        blocks.append(
+            "The retries above kept circling the same basin. "
+            "Use them to collapse that recurring issue into one canonical durable checkpoint."
+        )
+        return "\n\n".join(blocks)
+
+    def _emit_consolidation_checkpoint_from_dedupe(
+        self,
+        chunk: str,
+        accepted_line: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+        prior_checkpoints: list[str],
+        dropped_thought: str,
+        dropped_status: str | None,
+    ) -> None:
+        checkpoint_user_content = self._build_consolidation_checkpoint_user_content(
+            chunk,
+            accepted_line,
+            prior_thoughts,
+            prior_statuses,
+            prior_checkpoints,
+            dropped_thought,
+            dropped_status,
+        )
+        checkpoint_messages = [
+            {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
+            {"role": "user", "content": checkpoint_user_content},
+        ]
+        checkpoint_text = self._chat_completion(
+            checkpoint_messages,
+            temperature=_CHECKPOINT_TEMPERATURE,
+            repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
+            presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
+        ).strip()
+        if not checkpoint_text:
+            return
+        if _checkpoint_line_breaks_contract(checkpoint_text):
+            self._sink.write_drop("contract-checkpoint", checkpoint_text)
+            return
+        if any(
+            self._checkpoint_lines_share_basin(
+                checkpoint_text,
+                prev,
+            )
+            for prev in prior_checkpoints
+        ):
+            self._sink.write_drop("dedup-checkpoint", checkpoint_text)
+            return
+        self._sink.write_checkpoint(checkpoint_text)
+        with self._lock:
+            self._prior_checkpoints.append(checkpoint_text)
+
     def _maybe_groom_after_repeated_dedup(
         self,
         chunk: str,
         prior_thoughts: list[str],
         prior_statuses: list[str],
+        *,
+        dropped_thought: str,
+        dropped_status: str | None,
     ) -> None:
         with self._lock:
             if self._dedupe_streak < _DEDUP_GROOMING_THRESHOLD:
@@ -812,12 +890,14 @@ class ThinkingNarrator:
             prior_checkpoints = list(self._prior_checkpoints)
         if not accepted_line:
             return
-        self._emit_checkpoint_from_context(
+        self._emit_consolidation_checkpoint_from_dedupe(
             chunk,
             accepted_line,
             prior_thoughts,
             prior_statuses,
             prior_checkpoints,
+            dropped_thought,
+            dropped_status,
         )
 
     def _retry_duplicate_as_status(
@@ -1647,6 +1727,12 @@ class ThinkingNarrator:
                         chunk,
                         prior_thoughts,
                         prior_statuses,
+                        dropped_thought=full,
+                        dropped_status=(
+                            status_drop
+                            if status_drop_reason == "dedup-status"
+                            else None
+                        ),
                     )
                     return
                 full = status_full
