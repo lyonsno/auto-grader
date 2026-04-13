@@ -1261,6 +1261,19 @@ class ThinkingNarrator:
         if grooming_count <= 0 and (dedup_count + status_dedup_count) < _DEDUP_GROOMING_THRESHOLD:
             return None
 
+        texts = [
+            self._item_header or "",
+            current_status,
+            getattr(prediction, "model_read", ""),
+            getattr(prediction, "score_basis", ""),
+            getattr(prediction, "model_reasoning", ""),
+            *prior_statuses[-_STATUS_CONTEXT_LIMIT:],
+            *thoughts_since_status[-_THOUGHT_CONTEXT_LIMIT:],
+            *prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:],
+        ]
+        if not any(_LIVE_AMBIGUITY_SIGNAL_RE.search(text) for text in texts if text):
+            return None
+
         status_block = "\n".join(f"- {status}" for status in prior_statuses[-_STATUS_CONTEXT_LIMIT:]) or "- (none)"
         thought_block = "\n".join(f"- {thought}" for thought in thoughts_since_status[-_THOUGHT_CONTEXT_LIMIT:]) or "- (none)"
         checkpoint_block = "\n".join(f"- {checkpoint}" for checkpoint in prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:]) or "- (none)"
@@ -1301,6 +1314,7 @@ class ThinkingNarrator:
         prediction: Any,
         item: Any,
         *,
+        turbulence_is_high: bool,
         ambiguity_needed: bool,
         review_needed: str | None,
         professor_mismatch: str | None,
@@ -1308,7 +1322,7 @@ class ThinkingNarrator:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
         if not score_basis:
             return False
-        if ambiguity_needed or review_needed or professor_mismatch:
+        if ambiguity_needed or review_needed or professor_mismatch or turbulence_is_high:
             return True
         if prediction.model_score < item.max_points:
             return True
@@ -1338,6 +1352,11 @@ class ThinkingNarrator:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
         with self._lock:
             live_ambiguity_queued = self._item_live_ambiguity_queued
+            turbulence_is_high = (
+                self._item_turbulence_grooming_count > 0
+                or (self._item_turbulence_dedup_count + self._item_turbulence_status_dedup_count)
+                >= _DEDUP_GROOMING_THRESHOLD
+            )
         ambiguity_prompt = None if live_ambiguity_queued else self._ambiguity_prompt_from_turbulence(prediction, item)
         review_needed = self._review_needed_text(prediction)
         professor_mismatch = self._professor_mismatch_text(item)
@@ -1345,6 +1364,7 @@ class ThinkingNarrator:
         if self._should_emit_basis_row(
             prediction,
             item,
+            turbulence_is_high=turbulence_is_high,
             ambiguity_needed=ambiguity_prompt is not None,
             review_needed=review_needed,
             professor_mismatch=professor_mismatch,

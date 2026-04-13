@@ -950,6 +950,48 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(sink.deduction_rows, [])
         self.assertEqual(narrator._legibility_jobs, [])
 
+    def test_after_action_emits_basis_row_for_clean_match_when_turbulence_is_high(self):
+        sink = _DummySink()
+        narrator = _QueuedLegibilityNarrator(
+            sink,
+            responses=[
+                "Grader: 3/3 (correct ground-state configuration). Prof: 3/3 (same).",
+            ],
+        )
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-11a",
+            answer_type="electron_config",
+            page=1,
+            professor_score=3.0,
+            max_points=3.0,
+            professor_mark="3/3",
+            student_answer="[Ne] 3s^2 3p^5 with correct orbital boxes",
+            notes="full credit",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-11a",
+            model_score=3.0,
+            model_confidence=0.98,
+            model_reasoning="Correct noble gas core and valence orbital box notation.",
+            model_read="[Ne] 3s^2 3p^5",
+            score_basis="Correct noble gas core and valence orbital box notation (3s^2 3p^5).",
+        )
+        narrator._item_turbulence_dedup_count = 1
+        narrator._item_turbulence_status_dedup_count = 1
+        narrator._item_turbulence_grooming_count = 1
+
+        narrator._produce_after_action(55.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            sink.basis_rows,
+            ["Correct noble gas core and valence orbital box notation (3s^2 3p^5)."],
+        )
+        self.assertEqual(sink.review_markers, [])
+        self.assertEqual(sink.professor_mismatches, [])
+        self.assertEqual(narrator._legibility_jobs, [])
+
     def test_after_action_emits_professor_mismatch_immediately_without_idle_queue(self):
         sink = _DummySink()
         narrator = _QueuedLegibilityNarrator(
