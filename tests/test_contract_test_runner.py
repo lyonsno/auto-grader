@@ -166,13 +166,14 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.test_mc_scan_db_contract",
                 "tests.test_mc_review_resolution_db_contract",
                 "tests.test_mc_final_results_db_contract",
+                "tests.test_mc_db_round_trip_contract",
                 "tests.test_mc_results_demo_export_contract",
             ],
             "Setting TEST_DATABASE_URL should cause the repo-local runner to "
             "run the fail-fast schema smoke suite, the one-command bootstrap "
             "script smoke suite, and then the full authoritative schema, scan "
             "DB persistence, review-resolution DB, current-final-results DB, "
-            "and MC demo-export DB contract suites "
+            "DB-backed MC round-trip, and MC demo-export DB contract suites "
             "alongside the always-on guardrail suites.",
         )
 

@@ -331,9 +331,22 @@ Current implementation status on this review surface:
   MC truth surface for one exam instance, combining the latest persisted scan
   session with any persisted review resolutions while keeping unresolved
   review-required questions explicit
+- `auto_grader.mc_db_round_trip` now composes the landed DB primitives into
+  one thin workflow seam that persists a scan manifest, optionally persists
+  human review resolutions by scan, and returns the authoritative current-final
+  MC truth without redefining read-model semantics
 - `auto_grader.mc_results_demo_export` now turns that DB-backed current truth
   into a compact demo/export bundle for one exam instance, with a small text
   summary that is suitable for same-day operator/demo use without a GUI
+
+Example same-day DB-backed round-trip invocation:
+
+```bash
+python scripts/run_mc_db_round_trip.py \
+  --manifest-json /tmp/mc-session/manifest.json \
+  --exam-instance-id 123 \
+  --output-dir /tmp/mc-db-round-trip
+```
 
 Example same-day export invocation:
 
