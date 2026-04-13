@@ -121,6 +121,13 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     simple_resolutions = json.loads(
         resolutions_path.read_text(encoding="utf-8")
     )
+    if not isinstance(simple_resolutions, dict):
+        print(
+            "Error: resolutions JSON must be an object mapping question_id "
+            'to bubble label or null. Example: {"mc-1": "B", "mc-3": null}',
+            file=sys.stderr,
+        )
+        return 1
 
     connection = _connect(args)
     try:

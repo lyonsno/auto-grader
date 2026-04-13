@@ -29,6 +29,10 @@ def build_review_resolutions_from_simple_map(
     scan_id, machine_status, and correct_bubble_label, then computes the
     final status and builds the override dict.
 
+    Any question_id may be resolved, not only review_required ones. This is
+    intentional: the professor may override any machine result (e.g. to
+    correct a machine misread on a question that wasn't flagged).
+
     Raises KeyError if a question_id is not found in current_results.
     """
     question_results = current_results["question_results"]
@@ -90,11 +94,16 @@ def resolve_and_persist(
     simple_resolutions: dict[str, str | None],
     connection: object,
 ) -> dict[str, Any]:
-    """Resolve flagged MC questions using a simple map and persist to DB.
+    """Resolve MC questions using a simple map and persist to DB.
 
     Reads the current truth to look up question context, builds the full
-    resolution dicts, persists them, then reads updated truth.
+    resolution dicts, persists them atomically across all scan pages, then
+    reads updated truth. Any question may be resolved, not only those with
+    review_required=True.
     """
+    if not isinstance(simple_resolutions, dict):
+        raise TypeError("simple_resolutions must be a dict mapping question_id to bubble label or null")
+
     current = read_current_final_mc_results_from_db(
         exam_instance_id=exam_instance_id,
         connection=connection,
@@ -109,16 +118,17 @@ def resolve_and_persist(
     created = 0
     updated = 0
     unchanged = 0
-    for scan_id, resolved_questions in resolutions_by_scan_id.items():
-        persisted = persist_mc_review_resolutions_to_db(
-            mc_scan_session_id=mc_scan_session_id,
-            scan_id=scan_id,
-            resolved_questions=resolved_questions,
-            connection=connection,
-        )
-        created += persisted["created"]
-        updated += persisted["updated"]
-        unchanged += persisted["unchanged"]
+    with connection.transaction():
+        for scan_id, resolved_questions in resolutions_by_scan_id.items():
+            persisted = persist_mc_review_resolutions_to_db(
+                mc_scan_session_id=mc_scan_session_id,
+                scan_id=scan_id,
+                resolved_questions=resolved_questions,
+                connection=connection,
+            )
+            created += persisted["created"]
+            updated += persisted["updated"]
+            unchanged += persisted["unchanged"]
 
     updated_results = read_current_final_mc_results_from_db(
         exam_instance_id=exam_instance_id,

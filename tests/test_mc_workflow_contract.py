@@ -199,7 +199,6 @@ class RenderResultsCsvTests(unittest.TestCase):
 
     def test_csv_has_expected_columns(self) -> None:
         render_csv = self._load()
-        from auto_grader.mc_results_demo_export import build_mc_results_demo_export
 
         # Build a synthetic export dict directly instead of going through the DB.
         # The render_results_csv function works on the export dict, not the DB.

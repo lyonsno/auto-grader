@@ -41,6 +41,7 @@ _POSTGRES_SUITES = (
     "tests.test_mc_final_results_db_contract",
     "tests.test_mc_db_round_trip_contract",
     "tests.test_mc_results_demo_export_contract",
+    "tests.test_mc_workflow_contract",
 )
 
 
