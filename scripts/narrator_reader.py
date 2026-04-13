@@ -4686,6 +4686,27 @@ def main() -> int:
         # rendered height could exceed the terminal's row count, but
         # render() now caps the history panel via a height budget so
         # the total output never exceeds console.size.height.
+        # Track terminal size so we can detect resizes and clear the
+        # alt-screen before Rich repaints.  Rich's alt-screen path
+        # sends Control.home() (cursor to 0,0) but does NOT clear
+        # the screen, so stale content from the previous frame
+        # persists below the new content when the terminal shrinks or
+        # panels reflow to a different height.
+        _prev_term_size: tuple[int, int] | None = None
+
+        def _live_update(renderable):
+            """Update the Live display, clearing the alt-screen first
+            if the terminal size changed since the last frame."""
+            nonlocal _prev_term_size
+            cur = (console.size.width, console.size.height)
+            if _prev_term_size is not None and cur != _prev_term_size:
+                # Terminal resized — clear the entire alt-screen so
+                # Rich doesn't paint over stale ghost content.
+                sys.stdout.write("\033[2J")
+                sys.stdout.flush()
+            _prev_term_size = cur
+            live.update(renderable, refresh=True)
+
         with Live(
             display.render(),
             console=console,
@@ -4697,7 +4718,7 @@ def main() -> int:
                 while True:
                     if not display.should_animate():
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update(display.render())
                         except Exception:
                             pass
                     try:
@@ -4720,7 +4741,7 @@ def main() -> int:
                 while not animation_stop.is_set():
                     if display.should_animate():
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update(display.render())
                         except Exception:
                             # Transient race with the message loop mutating
                             # display state — next tick will recover.
@@ -4869,7 +4890,7 @@ def main() -> int:
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update(display.render())
                         except Exception:
                             pass
     finally:
