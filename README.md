@@ -295,6 +295,11 @@ Current implementation status on this grading surface:
   provenance, current resolved bubble or blank outcome, idempotent re-apply
   semantics for identical decisions, and audit-event history when a reviewer
   later changes the decision
+- database-backed current-final MC truth reads are implemented via
+  `auto_grader.mc_results_db`; callers can now ask for one authoritative
+  current result surface per `exam_instance_id`, with the latest scan session,
+  persisted machine outcomes, latest human review resolutions, and still-open
+  review-required questions composed together instead of reconstructed ad hoc
 
 ### 6. Review + Export
 
@@ -316,6 +321,10 @@ Current implementation status on this review surface:
   database spine without mutating away the underlying machine-scored outcome;
   the current row stores the latest reviewed answer while audit events preserve
   create/update history
+- `auto_grader.mc_results_db` now exposes the authoritative DB-backed current
+  MC truth surface for one exam instance, combining the latest persisted scan
+  session with any persisted review resolutions while keeping unresolved
+  review-required questions explicit
 
 ## Data model
 
