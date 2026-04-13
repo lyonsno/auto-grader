@@ -183,7 +183,9 @@ def initialize_schema(connection: object) -> None:
                 CHECK (
                     (status = 'matched' AND page_number IS NOT NULL AND page_number > 0)
                     OR (status != 'matched' AND page_number IS NULL)
-                )
+                ),
+            CONSTRAINT mc_scan_pages_id_session_unique
+                UNIQUE (id, mc_scan_session_id)
         );
 
         CREATE TABLE IF NOT EXISTS mc_question_outcomes (
@@ -341,6 +343,12 @@ def initialize_schema(connection: object) -> None:
         ALTER TABLE mc_question_outcomes
             ADD CONSTRAINT mc_question_outcomes_unique_per_session
                 UNIQUE (mc_scan_session_id, question_id);
+        ALTER TABLE mc_question_outcomes
+            DROP CONSTRAINT IF EXISTS mc_question_outcomes_page_session_consistent;
+        ALTER TABLE mc_question_outcomes
+            ADD CONSTRAINT mc_question_outcomes_page_session_consistent
+                FOREIGN KEY (mc_scan_page_id, mc_scan_session_id)
+                REFERENCES mc_scan_pages (id, mc_scan_session_id);
 
         CREATE UNIQUE INDEX IF NOT EXISTS grade_records_one_finalized_per_exam_instance
             ON grade_records (exam_instance_id)

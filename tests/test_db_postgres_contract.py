@@ -561,6 +561,100 @@ class PostgresDatabaseContractTests(unittest.TestCase):
                 payload_json='{"ok":true}',
             )
 
+    def test_mc_question_outcomes_rejects_session_id_that_disagrees_with_page_session(
+        self,
+    ) -> None:
+        self._require_tables(
+            "students",
+            "template_versions",
+            "exam_definitions",
+            "exam_instances",
+            "mc_scan_sessions",
+            "mc_scan_pages",
+            "mc_question_outcomes",
+        )
+
+        template_version_id = self._insert_template_version(
+            slug="session-match-template",
+            version=1,
+        )
+        exam_definition_id = self._insert_exam_definition(
+            slug="session-match-exam",
+            version=1,
+            template_version_id=template_version_id,
+            title="Session Match Exam",
+        )
+        student_id = self._insert_student("session-match-student")
+        exam_instance_id = self._insert_exam_instance_record(
+            exam_definition_id=exam_definition_id,
+            student_id=student_id,
+            attempt_number=1,
+            opaque_instance_code="SESSION-MATCH-001",
+        )
+
+        session_1_id = self.connection.execute(
+            """
+            INSERT INTO mc_scan_sessions
+                (exam_instance_id, manifest_fingerprint, session_ordinal, supersedes_session_id)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (exam_instance_id, self._sha256(8001), 1, None),
+        ).fetchone()["id"]
+        session_2_id = self.connection.execute(
+            """
+            INSERT INTO mc_scan_sessions
+                (exam_instance_id, manifest_fingerprint, session_ordinal, supersedes_session_id)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (exam_instance_id, self._sha256(8002), 2, session_1_id),
+        ).fetchone()["id"]
+
+        page_1_id = self.connection.execute(
+            """
+            INSERT INTO mc_scan_pages
+                (mc_scan_session_id, scan_id, checksum, status, failure_reason,
+                 page_number, fallback_page_code, divergence_detected)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                session_1_id,
+                "session-page-1.png",
+                self._sha256(8003),
+                "matched",
+                None,
+                1,
+                "SESSION-P1",
+                False,
+            ),
+        ).fetchone()["id"]
+
+        with self.assertRaises(errors.ForeignKeyViolation):
+            self.connection.execute(
+                """
+                INSERT INTO mc_question_outcomes
+                    (mc_scan_page_id, mc_scan_session_id, question_id, status, is_correct,
+                     review_required, marked_bubble_labels, resolved_bubble_labels,
+                     correct_bubble_label, correct_choice_key, marked_choice_keys)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb)
+                """,
+                (
+                    page_1_id,
+                    session_2_id,
+                    "session-mismatch-q1",
+                    "correct",
+                    True,
+                    False,
+                    '["B"]',
+                    '["B"]',
+                    "B",
+                    "choice-b",
+                    '["choice-b"]',
+                ),
+            )
+
     def test_students_require_unique_nonblank_student_keys(self) -> None:
         self._require_tables("students")
 
