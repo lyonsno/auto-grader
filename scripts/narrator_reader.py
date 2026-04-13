@@ -105,6 +105,18 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
+
+# -- Alt-screen height budget -----------------------------------------------
+# In alt-screen mode the total rendered height must never exceed the
+# terminal's row count.  The history panel is the flex element — it
+# absorbs whatever vertical space remains after the fixed-cost panels
+# (header, scorebug, live, focus preview, drops, wrap-up, footer).
+#
+# _HISTORY_MIN_HEIGHT is the smallest the history panel is allowed to
+# be (including its 2-row border).  If the terminal is too short even
+# for this minimum, we still honour it — the bottom will clip, but at
+# least the layout won't corrupt.
+_HISTORY_MIN_HEIGHT = 5  # 3 content rows + 2 border rows
 _FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
 _FOCUS_PREVIEW_MAX_WIDTH_CHARS = 116
 _FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
@@ -4263,10 +4275,63 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: header, scorebug, live, history, post-game, drops, [footer]
-        # The PROJECT PAINT DRY band is the primary scene-setter again;
-        # the scorebug stays immediately below it as the denser
-        # instrumentation slab.
+        # -- Alt-screen height budget ----------------------------------
+        # Tally the vertical cost of every non-history panel, then give
+        # the history panel whatever rows remain so the total never
+        # exceeds the terminal height.  Each estimate is conservative
+        # (may overcount by a row) — better to leave a blank row at the
+        # bottom than to overflow and corrupt.
+        term_height: int | None = None
+        try:
+            if self._console is not None:
+                term_height = self._console.size.height
+        except Exception:
+            pass
+
+        fixed_rows = 0
+        # header panel: 1 content + 2 border
+        fixed_rows += 3
+        # scorebug panel: meta row + gap + labels + 3 value rows + gap
+        # = 7 content + 2 border = 9.  Absent when no model/item set.
+        if scorebug_panel is not None:
+            fixed_rows += 9
+        # live panel: fixed height
+        fixed_rows += _TOP_PANEL_CONTENT_LINES + 2
+        # focus preview: cell_height + 4 (2 borders + 2 texture rows)
+        if focus_preview_panel is not None:
+            fixed_rows += _INLINE_IMAGE_CELL_HEIGHT + 4
+        # wrap-up panel (when present)
+        if wrap_panel is not None:
+            # Estimate: 3 content lines + 2 border = 5
+            fixed_rows += 5
+        # drops panel (when present)
+        if drops_panel is not None:
+            fixed_rows += _VISIBLE_DROP_LINES + 2
+        # footer line (when session ended)
+        if self.session_ended:
+            fixed_rows += 1
+
+        if term_height is not None and term_height > 0:
+            # Clamp to at least 3 (2 border + 1 content line) so the
+            # panel is always structurally valid, but don't force the
+            # _HISTORY_MIN_HEIGHT when the terminal genuinely has no
+            # room — that would guarantee overflow.
+            history_budget = max(3, term_height - fixed_rows)
+        else:
+            history_budget = None  # no cap — headless / piped
+
+        if history_budget is not None:
+            history_panel = Panel(
+                history_text,
+                border_style="#3d4458",
+                padding=(0, 1),
+                title="[grey50]history[/grey50]",
+                title_align="left",
+                height=history_budget,
+            )
+
+        # Order: header, scorebug, live, focus preview, history,
+        # post-game, drops, [footer].
         panels = []
         panels.append(header)
         if scorebug_panel is not None:
@@ -4614,21 +4679,18 @@ def main() -> int:
         session_exit = threading.Event()
         scroll_controller = HistoryScrollController(display)
 
-        # screen=False — stay in the terminal's main screen buffer.
-        # Alt-screen (screen=True) was tried and reverted: the focus-
-        # preview image panel can push the total rendered height past
-        # the terminal's row count, and alt-screen has no scrollback
-        # to absorb the overflow — the result is doubled/garbled
-        # panels. screen=False lets the terminal scroll naturally.
-        # Trade-off: Rich's in-place redraw leaves prior frames in
-        # the terminal's native scrollback (ghost header trails when
-        # scrolling the terminal up). That is accepted until a fixed-
-        # height layout or Rich transient mode can eliminate it.
+        # screen=True — use the terminal's alternate screen buffer.
+        # Alt-screen gives us clean resize handling: Rich redraws the
+        # full screen on every frame instead of trying to diff against
+        # reflowed main-buffer text. Previously reverted because the
+        # rendered height could exceed the terminal's row count, but
+        # render() now caps the history panel via a height budget so
+        # the total output never exceeds console.size.height.
         with Live(
             display.render(),
             console=console,
             refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
-            screen=False,
+            screen=True,
             auto_refresh=False,
         ) as live:
             def _wait_for_manual_close() -> int:

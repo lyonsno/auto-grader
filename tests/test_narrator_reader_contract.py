@@ -3210,5 +3210,85 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
 
+class AltScreenHeightBudgetContract(unittest.TestCase):
+    """render() must cap its total output to the terminal height.
+
+    Alt-screen mode requires this — the rendered Group cannot exceed
+    console.size.height rows or the terminal will clip / corrupt.
+    """
+
+    def _make_display(self, *, width: int = 100, height: int = 40) -> PaintDryDisplay:
+        console = Console(
+            width=width,
+            height=height,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        return PaintDryDisplay(console=console)
+
+    def _rendered_height(self, display: PaintDryDisplay) -> int:
+        """Render and count the total visual rows produced."""
+        group = display.render()
+        console = display._console
+        lines = console.render_lines(group, console.options, pad=False)
+        return len(lines)
+
+    def test_empty_display_fits_in_terminal(self):
+        """Bare display with no history fits within 50-row terminal."""
+        d = self._make_display(height=50)
+        h = self._rendered_height(d)
+        self.assertLessEqual(h, 50, f"empty display is {h} rows, must fit in 50")
+
+    def test_overflowing_history_capped_to_terminal_height(self):
+        """Flooding the history with entries must not exceed terminal rows."""
+        d = self._make_display(height=60)
+        # Pump enough history entries to overflow without capping.
+        for i in range(80):
+            d.on_header(f"[item {i+1}/80] grading fr-{i+1}")
+            d.on_checkpoint(f"The student wrote an answer for question {i+1}.")
+            d.on_checkpoint(f"Evaluating the response against the rubric now.")
+        h = self._rendered_height(d)
+        self.assertLessEqual(h, 60, f"flooded display is {h} rows, must fit in 60")
+
+    def test_height_budget_adapts_to_different_sizes(self):
+        """Render fits within terminal at typical operating heights."""
+        for term_h in (50, 60, 80):
+            with self.subTest(term_height=term_h):
+                d = self._make_display(height=term_h)
+                for i in range(30):
+                    d.on_header(f"[item {i+1}/30] grading fr-{i+1}")
+                    d.on_checkpoint(f"Answer analysis for question {i+1}.")
+                h = self._rendered_height(d)
+                self.assertLessEqual(
+                    h, term_h,
+                    f"display is {h} rows, must fit in {term_h}",
+                )
+
+    def test_history_panel_present_with_content(self):
+        """History entries appear in the rendered output."""
+        d = self._make_display(height=60)
+        d.on_header("[item 1/1] grading fr-1")
+        d.on_checkpoint("Some analysis.")
+        group = d.render()
+        plain = _extract_plain(group)
+        self.assertIn("grading fr-1", plain)
+
+    def test_history_gets_more_rows_on_taller_terminal(self):
+        """On a bigger terminal, the history panel is taller."""
+        d_small = self._make_display(height=50)
+        d_big = self._make_display(height=80)
+        for d in (d_small, d_big):
+            for i in range(40):
+                d.on_header(f"[item {i+1}/40] grading fr-{i+1}")
+                d.on_checkpoint(f"Line {i+1}.")
+        h_small = self._rendered_height(d_small)
+        h_big = self._rendered_height(d_big)
+        self.assertGreater(
+            h_big, h_small,
+            "taller terminal should produce more visible history rows",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
