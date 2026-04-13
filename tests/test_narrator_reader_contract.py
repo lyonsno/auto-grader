@@ -1717,5 +1717,108 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
 
+    # ------------------------------------------------------------------
+    # Renderer-side history hierarchy (Operation Paint Flakes)
+    # ------------------------------------------------------------------
+
+    def test_basis_row_renders_brighter_than_secondary_structured_rows(self):
+        """Basis: is the primary supporting tier — it should be visually
+        brighter (higher luminance) than secondary tiers like Deduction:
+        or Credit preserved for:.  Currently all structured rows share the
+        same checkpoint palette with no hierarchy."""
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] 15-blue/fr-5b (numeric, 2.0 pts)", None))
+        display.history.append(
+            ("topic", "42s · Grader: 1/2 (partial). Prof: 1/2 (same).", "match")
+        )
+        display.history.append(
+            ("basis", "Correct stoichiometric setup, lost credit for final species.", None)
+        )
+        display.history.append(
+            ("deduction", "Final answer awards NH3 credit to reactant-mole addition.", None)
+        )
+
+        history_text = display.render().renderables[-1].renderable
+
+        basis_style = self._style_for_substring(
+            history_text,
+            "Correct stoichiometric setup, lost credit for final species.",
+        )
+        deduction_style = self._style_for_substring(
+            history_text,
+            "Final answer awards NH3 credit to reactant-mole addition.",
+        )
+
+        self.assertGreater(
+            self._hex_luminance(basis_style),
+            self._hex_luminance(deduction_style),
+            "Basis: row body must render brighter than Deduction: row body — "
+            "the primary supporting tier should be visually more prominent "
+            "than secondary elaboration rows",
+        )
+
+    def test_review_marker_label_renders_in_alert_accent_not_ember(self):
+        """Review needed: is an alert row — its label should render in a
+        visually distinct accent (warmer/brighter) than the standard ember
+        used for explanation labels like Basis: and Deduction:."""
+        import scripts.narrator_reader as module
+
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] 15-blue/fr-5b (numeric, 2.0 pts)", None))
+        display.history.append(
+            ("topic", "42s · Grader: 1/2 (partial). Prof: 1/2 (same).", "match")
+        )
+        display.history.append(
+            ("basis", "Correct setup, lost credit for octet violation.", None)
+        )
+        display.history.append(
+            ("review_marker", "Human review warranted after bounded ambiguity pass.", None)
+        )
+
+        history_text = display.render().renderables[-1].renderable
+
+        # Find the "Review needed: " label style and the "Basis: " label style
+        basis_label_style = self._style_for_substring(history_text, "Basis: ")
+        review_label_style = self._style_for_substring(history_text, "Review needed: ")
+
+        # They should differ — review is an alert, not just another structured row
+        self.assertNotEqual(
+            basis_label_style.replace("bold ", ""),
+            review_label_style.replace("bold ", ""),
+            "Review needed: label should render in a distinct alert accent, "
+            "not the same ember as explanation labels",
+        )
+
+    def test_structured_rows_render_subordinate_to_topic_row(self):
+        """All structured rows (basis, deduction, etc.) should render
+        dimmer than the topic/verdict row above them.  The topic is the
+        primary structural anchor; supporting rows are subordinate."""
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] 15-blue/fr-5b (numeric, 2.0 pts)", None))
+        display.history.append(
+            ("topic", "42s · Grader: 1/2 (partial credit). Prof: 1/2 (same).", "undershoot")
+        )
+        display.history.append(
+            ("basis", "Correct stoichiometric setup, wrong final species.", None)
+        )
+
+        history_text = display.render().renderables[-1].renderable
+
+        topic_style = self._style_for_substring(
+            history_text,
+            "Grader: 1/2 (partial credit). Prof: 1/2 (same).",
+        )
+        basis_style = self._style_for_substring(
+            history_text,
+            "Correct stoichiometric setup, wrong final species.",
+        )
+
+        self.assertGreater(
+            self._hex_luminance(topic_style),
+            self._hex_luminance(basis_style),
+            "Structured rows must render dimmer than the verdict topic above them",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
