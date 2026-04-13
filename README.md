@@ -338,6 +338,13 @@ Current implementation status on this review surface:
 - `auto_grader.mc_results_demo_export` now turns that DB-backed current truth
   into a compact demo/export bundle for one exam instance, with a small text
   summary that is suitable for same-day operator/demo use without a GUI
+- `auto_grader.mc_workflow` now provides a professor-facing workflow surface
+  that composes the landed DB primitives into three operations: show the
+  review queue, resolve flagged questions using a simple `{question_id:
+  bubble_label}` map, and export final results as JSON/CSV/text
+- `scripts/mc_workflow.py` exposes those operations as CLI subcommands
+  (`review`, `resolve`, `export`) so the professor does not need to know
+  about internal module boundaries or prepare complex JSON
 
 Example same-day DB-backed round-trip invocation:
 
@@ -354,6 +361,28 @@ Example same-day export invocation:
 python scripts/export_mc_results_demo.py \
   --exam-instance-id 123 \
   --output-dir /tmp/mc-results-demo
+```
+
+Example professor-facing workflow (review + resolve + export):
+
+```bash
+# See what needs review
+python scripts/mc_workflow.py review \
+  --exam-instance-id 123 \
+  --output-dir /tmp/mc-review
+
+# Resolve flagged questions (simple JSON: question_id -> bubble label or null)
+echo '{"mc-1": "B", "mc-3": null}' > /tmp/resolutions.json
+python scripts/mc_workflow.py resolve \
+  --exam-instance-id 123 \
+  --resolutions-json /tmp/resolutions.json \
+  --output-dir /tmp/mc-resolve
+
+# Export final results as CSV
+python scripts/mc_workflow.py export \
+  --exam-instance-id 123 \
+  --format csv \
+  --output-dir /tmp/mc-export
 ```
 
 ## Data model
