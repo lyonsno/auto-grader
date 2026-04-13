@@ -62,6 +62,14 @@ class FocusPreviewSurfaceContract(unittest.TestCase):
             hasattr(reader, "_interp_rgb"),
             "preview substrate should not keep a duplicate color interpolation helper in narrator_reader",
         )
+        self.assertFalse(
+            hasattr(reader, "_HISTORY_TIER_DIM_FLOOR_DEPTH"),
+            "preview substrate should not reintroduce unused history dimming constants into narrator_reader",
+        )
+        self.assertFalse(
+            hasattr(reader, "_HISTORY_TIER_DIM_EASE_POWER"),
+            "preview substrate should not reintroduce unused history dimming constants into narrator_reader",
+        )
 
     def test_reader_exports_inline_preview_surface(self):
         reader = _load_module("narrator_reader", "scripts/narrator_reader.py")
@@ -105,6 +113,22 @@ class FocusPreviewSurfaceContract(unittest.TestCase):
             reader._pixel_luma.__module__,
             "scripts.focus_preview_renderer",
             "reader should re-export _pixel_luma from the extracted preview module",
+        )
+        self.assertEqual(
+            reader._rgb_to_hex.__module__,
+            "scripts.focus_preview_renderer",
+            "reader should re-export _rgb_to_hex from the extracted preview module",
+        )
+
+    def test_reader_source_marks_used_preview_imports_honestly(self):
+        source = (
+            Path(__file__).resolve().parent.parent / "scripts" / "narrator_reader.py"
+        ).read_text()
+
+        self.assertNotIn(
+            "_lerp_rgb  # noqa: E402, F401",
+            source,
+            "reader should not mark the actively used _lerp_rgb import as unused",
         )
 
 

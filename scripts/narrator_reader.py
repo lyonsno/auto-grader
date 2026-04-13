@@ -103,9 +103,11 @@ from scripts.focus_preview_renderer import (  # noqa: E402
     _TEXTURE_EDGE_FLOOR,
 )
 # Re-export focus_preview_renderer utilities that were originally defined here.
-# The _lerp_rgb, _clamp, _pixel_luma functions are now only in the renderer module.
+# The _rgb_to_hex, _lerp_rgb, _clamp, and _pixel_luma functions are now owned
+# by the renderer module; the reader just re-exports the seam.
+from scripts.focus_preview_renderer import _rgb_to_hex  # noqa: E402, F401
 from scripts.focus_preview_renderer import _clamp  # noqa: E402, F401
-from scripts.focus_preview_renderer import _lerp_rgb  # noqa: E402, F401
+from scripts.focus_preview_renderer import _lerp_rgb  # noqa: E402
 from scripts.focus_preview_renderer import _pixel_luma  # noqa: E402, F401
 
 
@@ -139,12 +141,6 @@ _VISIBLE_HISTORY_LINES = 30  # how many to actually render
 # viewport can display all entries the priority filter retains.
 _PRIORITY_FILL_ENTRY_BUDGET = _VISIBLE_HISTORY_LINES
 _VIEWPORT_VISIBLE_ROWS = _VISIBLE_HISTORY_LINES * 2  # headroom for wrapping
-
-_HISTORY_TIER_DIM_FLOOR_DEPTH = 9  # the within-item fade should keep
-                                   # descending deeper into the stack before
-                                   # it settles at the floor.
-_HISTORY_TIER_DIM_EASE_POWER = 1.72  # fast initial drop, then a slower tail
-                                     # instead of a purely linear ramp.
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
@@ -363,11 +359,6 @@ _LIVE_FROZEN_VAL_MUL = 0.85
 # stroke as the wash dries), so the wave reads as a quiet brightening
 # of the ink rather than a fire sweep.
 _SHIMMER_PEAK_RGB = (235, 215, 175)
-
-
-def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
-    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
-
 
 # Focus-preview rendering helpers live in scripts.focus_preview_renderer and
 # are re-imported above. The reader keeps only its non-preview display logic.
