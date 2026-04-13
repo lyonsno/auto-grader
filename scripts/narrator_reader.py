@@ -1390,15 +1390,20 @@ def _supports_kitty_graphics(term_program: str | None) -> bool:
     """Return True if the terminal supports the Kitty graphics
     protocol.
 
-    Known-good: WezTerm (since ~2022), kitty itself. iTerm2 supports
-    Kitty graphics in recent builds too, but we keep it on the OSC
-    1337 path for now since that's the path we have more empirical
-    coverage on. Everything else falls through to whatever other
-    paths are available.
+    We only trust the native kitty terminal on this live surface for
+    now. WezTerm also speaks the protocol in theory, but the current
+    Paint Dry smoke surface still corrupts once the first real preview
+    lands there; WezTerm should stay on the safer OSC 1337 inline-image
+    path until that specific live-path behavior is actually fixed.
+
+    iTerm2 also supports Kitty graphics in recent builds, but we keep
+    it on the OSC 1337 path because that's the path we have more
+    empirical coverage on. Everything else falls through to whatever
+    other paths are available.
     """
     if not term_program:
         return False
-    return term_program in {"WezTerm", "kitty"}
+    return term_program == "kitty"
 
 
 def _supports_inline_images(term_program: str | None) -> bool:
