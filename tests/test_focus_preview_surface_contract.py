@@ -100,24 +100,14 @@ class FocusPreviewSurfaceContract(unittest.TestCase):
             "reader should reuse inline-image capability detection from the extracted module",
         )
         self.assertEqual(
-            reader._clamp.__module__,
-            "scripts.focus_preview_renderer",
-            "reader should re-export _clamp from the extracted preview module",
-        )
-        self.assertEqual(
             reader._lerp_rgb.__module__,
-            "scripts.focus_preview_renderer",
-            "reader should re-export _lerp_rgb from the extracted preview module",
-        )
-        self.assertEqual(
-            reader._pixel_luma.__module__,
-            "scripts.focus_preview_renderer",
-            "reader should re-export _pixel_luma from the extracted preview module",
+            "narrator_reader",
+            "reader should keep its general shimmer interpolation helper local",
         )
         self.assertEqual(
             reader._rgb_to_hex.__module__,
-            "scripts.focus_preview_renderer",
-            "reader should re-export _rgb_to_hex from the extracted preview module",
+            "narrator_reader",
+            "reader should keep its general style-formatting helper local",
         )
 
     def test_reader_source_marks_used_preview_imports_honestly(self):
@@ -126,24 +116,24 @@ class FocusPreviewSurfaceContract(unittest.TestCase):
         ).read_text()
 
         self.assertNotIn(
-            "_rgb_to_hex  # noqa: E402, F401",
+            "from scripts.focus_preview_renderer import _rgb_to_hex",
             source,
-            "reader should not mark the re-exported _rgb_to_hex seam as unused",
+            "reader should not pull generic style-formatting helpers in from the preview renderer",
         )
         self.assertNotIn(
-            "_clamp  # noqa: E402, F401",
+            "from scripts.focus_preview_renderer import _clamp",
             source,
-            "reader should not mark the re-exported _clamp seam as unused",
+            "reader should not import generic clamp helpers from the preview renderer",
         )
         self.assertNotIn(
-            "_lerp_rgb  # noqa: E402, F401",
+            "from scripts.focus_preview_renderer import _lerp_rgb",
             source,
-            "reader should not mark the actively used _lerp_rgb import as unused",
+            "reader should not couple general shimmer interpolation to the preview renderer",
         )
         self.assertNotIn(
-            "_pixel_luma  # noqa: E402, F401",
+            "from scripts.focus_preview_renderer import _pixel_luma",
             source,
-            "reader should not mark the re-exported _pixel_luma seam as unused",
+            "reader should not import generic luminance helpers from the preview renderer",
         )
 
 
