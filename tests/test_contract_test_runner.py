@@ -164,11 +164,13 @@ class ContractTestRunnerTests(unittest.TestCase):
                 "tests.postgres_contract_bootstrap_script_smoke_contract",
                 "tests.test_db_postgres_contract",
                 "tests.test_mc_scan_db_contract",
+                "tests.test_mc_review_resolution_db_contract",
             ],
             "Setting TEST_DATABASE_URL should cause the repo-local runner to "
             "run the fail-fast schema smoke suite, the one-command bootstrap "
-            "script smoke suite, and then the full authoritative schema "
-            "contract suite, alongside the always-on guardrail suites.",
+            "script smoke suite, and then the full authoritative schema, scan "
+            "DB persistence, and review-resolution DB contract suites "
+            "alongside the always-on guardrail suites.",
         )
 
     def test_runner_require_postgres_fails_without_database_url(self) -> None:
