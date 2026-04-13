@@ -2,6 +2,7 @@
 """Professor-facing MC workflow CLI.
 
 Subcommands:
+    ingest   Ingest scan images into the DB-backed MC/OpenCV workflow.
     review   Show which MC questions need human review after scan ingestion.
     resolve  Submit review resolutions for flagged questions.
     export   Export current-final MC results as JSON, CSV, or text summary.
@@ -19,6 +20,7 @@ from auto_grader.db import create_connection
 from auto_grader.mc_workflow import (
     export_results,
     get_review_queue,
+    ingest_and_persist_from_scan_dir,
     render_results_csv,
     resolve_and_persist,
 )
@@ -105,6 +107,54 @@ def cmd_review(args: argparse.Namespace) -> int:
     summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     print(queue_path)
+    print(summary_path)
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    connection = _connect(args)
+    try:
+        result = ingest_and_persist_from_scan_dir(
+            artifact_json_path=args.artifact_json,
+            scan_dir=args.scan_dir,
+            exam_instance_id=args.exam_instance_id,
+            output_dir=output_dir,
+            connection=connection,
+        )
+    finally:
+        connection.close()
+
+    ingest_result_path = output_dir / "ingest-result.json"
+    review_queue_path = output_dir / "review-queue.json"
+    summary_path = output_dir / "review-summary.txt"
+
+    _write_json(ingest_result_path, result)
+    _write_json(review_queue_path, result["review_queue"])
+
+    lines = [
+        f"exam_instance_id: {result['exam_instance_id']}",
+        f"mc_scan_session_id: {result['mc_scan_session_id']}",
+        f"manifest_path: {result['manifest_path']}",
+        f"unresolved_review_required: {result['summary'].get('unresolved_review_required', 0)}",
+        "",
+    ]
+    if not result["review_queue"]:
+        lines.append("No questions require review.")
+    else:
+        lines.append("Questions requiring review:")
+        for item in result["review_queue"]:
+            lines.append(
+                f"  {item['question_id']} ({item['machine_status']}) "
+                f"on {item['scan_id']} page {item['page_number']} "
+                f"marked: {item.get('marked_bubble_labels', [])}"
+            )
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    print(ingest_result_path)
+    print(review_queue_path)
     print(summary_path)
     return 0
 
@@ -226,6 +276,23 @@ def main() -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # ingest
+    ingest_parser = subparsers.add_parser(
+        "ingest",
+        help="Ingest a directory of scan images into the DB-backed MC/OpenCV workflow.",
+    )
+    _add_common_args(ingest_parser)
+    ingest_parser.add_argument(
+        "--artifact-json",
+        required=True,
+        help="Path to the exam artifact JSON used to interpret the scans.",
+    )
+    ingest_parser.add_argument(
+        "--scan-dir",
+        required=True,
+        help="Directory containing scan images (.png, .jpg, .jpeg).",
+    )
+
     # review
     review_parser = subparsers.add_parser(
         "review", help="Show which MC questions need human review.",
@@ -257,6 +324,7 @@ def main() -> int:
 
     args = parser.parse_args()
     commands = {
+        "ingest": cmd_ingest,
         "review": cmd_review,
         "resolve": cmd_resolve,
         "export": cmd_export,

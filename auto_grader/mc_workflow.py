@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+from pathlib import Path
 from typing import Any
 
+import cv2
+
+from auto_grader.mc_db_round_trip import run_mc_db_round_trip
 from auto_grader.mc_results_db import read_current_final_mc_results_from_db
 from auto_grader.mc_results_demo_export import build_mc_results_demo_export
 from auto_grader.mc_review_db import persist_mc_review_resolutions_to_db
+from auto_grader.mc_scan_session import persist_scan_session
 
 
 def build_review_resolutions_from_simple_map(
@@ -85,6 +91,54 @@ def get_review_queue(
         "mc_scan_session_id": export["mc_scan_session_id"],
         "review_queue": export["review_queue"],
         "summary": export["summary"],
+    }
+
+
+def ingest_and_persist_from_scan_dir(
+    *,
+    artifact_json_path: str | Path,
+    scan_dir: str | Path,
+    exam_instance_id: int,
+    output_dir: str | Path,
+    connection: object,
+) -> dict[str, Any]:
+    """Ingest a directory of scan images and persist the DB-backed workflow result.
+
+    This is the professor-facing bridge from "scan directory + artifact" to the
+    landed MC/OpenCV and DB-backed workflow primitives.
+    """
+    artifact_path = _require_existing_file(artifact_json_path, "artifact_json_path")
+    scan_directory = _require_existing_dir(scan_dir, "scan_dir")
+    output_directory = Path(output_dir)
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    scan_images = _load_scan_images(scan_directory)
+    session = persist_scan_session(
+        scan_images=scan_images,
+        artifact=artifact,
+        output_dir=str(output_directory),
+    )
+    manifest = json.loads(Path(session["manifest_path"]).read_text(encoding="utf-8"))
+    round_trip = run_mc_db_round_trip(
+        manifest=manifest,
+        exam_instance_id=exam_instance_id,
+        connection=connection,
+    )
+    queue = get_review_queue(
+        exam_instance_id=exam_instance_id,
+        connection=connection,
+    )
+    return {
+        "exam_instance_id": exam_instance_id,
+        "artifact_json_path": str(artifact_path),
+        "scan_dir": str(scan_directory),
+        "output_dir": str(output_directory),
+        "manifest_path": str(session["manifest_path"]),
+        "mc_scan_session_id": round_trip["mc_scan_session_id"],
+        "machine_persist": round_trip["machine_persist"],
+        "summary": queue["summary"],
+        "review_queue": queue["review_queue"],
     }
 
 
@@ -184,3 +238,31 @@ def render_results_csv(export: dict[str, Any]) -> str:
     for question in export["questions"]:
         writer.writerow(question)
     return output.getvalue()
+
+
+def _load_scan_images(scan_dir: Path) -> dict[str, Any]:
+    scans: dict[str, Any] = {}
+    for path in sorted(scan_dir.iterdir()):
+        if path.suffix.lower() not in {".png", ".jpg", ".jpeg"} or not path.is_file():
+            continue
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError(f"Failed to load scan image {path}")
+        scans[path.name] = image
+    if not scans:
+        raise ValueError(f"No scan images found in {scan_dir}")
+    return scans
+
+
+def _require_existing_dir(path_value: str | Path, label: str) -> Path:
+    path = Path(path_value)
+    if not path.is_dir():
+        raise FileNotFoundError(f"{label} must point to an existing directory")
+    return path
+
+
+def _require_existing_file(path_value: str | Path, label: str) -> Path:
+    path = Path(path_value)
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} must point to an existing file")
+    return path

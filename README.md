@@ -339,12 +339,14 @@ Current implementation status on this review surface:
   into a compact demo/export bundle for one exam instance, with a small text
   summary that is suitable for same-day operator/demo use without a GUI
 - `auto_grader.mc_workflow` now provides a professor-facing workflow surface
-  that composes the landed DB primitives into three operations: show the
-  review queue, resolve flagged questions using a simple `{question_id:
-  bubble_label}` map, and export final results as JSON/CSV/text
+  that composes the landed MC/OpenCV and DB-backed primitives into four
+  operations: ingest a directory of scan images into the DB-backed workflow,
+  show the review queue, resolve flagged questions using a simple
+  `{question_id: bubble_label}` map, and export final results as
+  JSON/CSV/text
 - `scripts/mc_workflow.py` exposes those operations as CLI subcommands
-  (`review`, `resolve`, `export`) so the professor does not need to know
-  about internal module boundaries or prepare complex JSON
+  (`ingest`, `review`, `resolve`, `export`) so the professor does not need to
+  know about internal module boundaries or prepare complex JSON
 
 Example same-day DB-backed round-trip invocation:
 
@@ -363,9 +365,16 @@ python scripts/export_mc_results_demo.py \
   --output-dir /tmp/mc-results-demo
 ```
 
-Example professor-facing workflow (review + resolve + export):
+Example professor-facing workflow (ingest + review + resolve + export):
 
 ```bash
+# Ingest scans from a directory into the DB-backed MC/OpenCV workflow
+python scripts/mc_workflow.py ingest \
+  --exam-instance-id 123 \
+  --artifact-json /tmp/mc-generated-exam-demo-artifact.json \
+  --scan-dir /tmp/mc-scans \
+  --output-dir /tmp/mc-ingest
+
 # See what needs review
 python scripts/mc_workflow.py review \
   --exam-instance-id 123 \

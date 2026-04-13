@@ -17,6 +17,8 @@ import tempfile
 import unittest
 import uuid
 
+import cv2
+
 try:
     import psycopg
     from psycopg import sql
@@ -28,6 +30,8 @@ except ModuleNotFoundError:
 
 from auto_grader import db as db_module
 from auto_grader.db import initialize_schema
+from auto_grader.paper_calibration_packet import build_mc_paper_calibration_packet
+from tests.test_mc_page_extraction_contract import _perspective_distort, _render_marked_page
 
 
 def _postgres_test_database_url() -> str | None:
@@ -620,6 +624,112 @@ class McWorkflowDbTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             question_ids = {row["question_id"] for row in rows}
             self.assertEqual(question_ids, {"mc-1", "mc-2"})
+
+    def test_ingest_and_persist_from_scan_dir_runs_opencv_and_db_round_trip(self) -> None:
+        try:
+            from auto_grader.mc_workflow import ingest_and_persist_from_scan_dir
+        except (ImportError, AttributeError):
+            self.fail(
+                "Add `auto_grader.mc_workflow.ingest_and_persist_from_scan_dir(...)` so the "
+                "professor-facing workflow can ingest a directory of scan images into the "
+                "landed DB-backed MC/OpenCV path without making the professor chain lower-level scripts."
+            )
+
+        packet = build_mc_paper_calibration_packet()
+        artifact = packet["artifact"]
+        page = artifact["pages"][0]
+        marked_scan = _perspective_distort(
+            _render_marked_page(page, marked_labels={"cal-01": ["A", "B"]})
+        )
+
+        with tempfile.TemporaryDirectory(prefix="mc-workflow-ingest-") as tempdir:
+            temp_path = Path(tempdir)
+            artifact_path = temp_path / "artifact.json"
+            scans_dir = temp_path / "scans"
+            output_dir = temp_path / "output"
+            scans_dir.mkdir()
+
+            artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+            cv2.imwrite(str(scans_dir / "page-1.png"), marked_scan)
+
+            result = ingest_and_persist_from_scan_dir(
+                artifact_json_path=artifact_path,
+                scan_dir=scans_dir,
+                exam_instance_id=self.exam_instance_id,
+                output_dir=output_dir,
+                connection=self.connection,
+            )
+
+            self.assertEqual(result["exam_instance_id"], self.exam_instance_id)
+            self.assertIn("mc_scan_session_id", result)
+            self.assertEqual(result["machine_persist"]["created"], True)
+            self.assertEqual(result["summary"]["matched"], 1)
+            self.assertEqual(result["summary"]["unresolved_review_required"], 1)
+            self.assertEqual(len(result["review_queue"]), 1)
+            self.assertEqual(result["review_queue"][0]["question_id"], "cal-01")
+            self.assertTrue((output_dir / "session_manifest.json").exists())
+            self.assertTrue((output_dir / "normalized_images" / "page-1.png").exists())
+
+    def test_workflow_script_ingest_subcommand(self) -> None:
+        packet = build_mc_paper_calibration_packet()
+        artifact = packet["artifact"]
+        page = artifact["pages"][0]
+        marked_scan = _perspective_distort(
+            _render_marked_page(page, marked_labels={"cal-01": ["A", "B"]})
+        )
+
+        script_path = Path("scripts/mc_workflow.py")
+
+        with tempfile.TemporaryDirectory(prefix="mc-workflow-ingest-script-") as tempdir:
+            temp_path = Path(tempdir)
+            artifact_path = temp_path / "artifact.json"
+            scans_dir = temp_path / "scans"
+            output_dir = temp_path / "output"
+            scans_dir.mkdir()
+
+            artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+            cv2.imwrite(str(scans_dir / "page-1.png"), marked_scan)
+
+            result = subprocess.run(
+                [
+                    str(Path(".venv/bin/python")),
+                    str(script_path),
+                    "ingest",
+                    "--exam-instance-id",
+                    str(self.exam_instance_id),
+                    "--artifact-json",
+                    str(artifact_path),
+                    "--scan-dir",
+                    str(scans_dir),
+                    "--database-url",
+                    self.database_url,
+                    "--schema-name",
+                    self.schema_name,
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"ingest subcommand failed. stderr: {result.stderr}",
+            )
+
+            ingest_result = json.loads(
+                (output_dir / "ingest-result.json").read_text(encoding="utf-8")
+            )
+            review_queue = json.loads(
+                (output_dir / "review-queue.json").read_text(encoding="utf-8")
+            )
+            summary_text = (output_dir / "review-summary.txt").read_text(encoding="utf-8")
+
+            self.assertEqual(ingest_result["summary"]["matched"], 1)
+            self.assertEqual(ingest_result["summary"]["unresolved_review_required"], 1)
+            self.assertEqual(len(review_queue), 1)
+            self.assertIn("Questions requiring review:", summary_text)
 
 
 if __name__ == "__main__":
