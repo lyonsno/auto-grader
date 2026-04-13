@@ -86,6 +86,34 @@ def _page_with_degraded_header_qrs() -> np.ndarray:
     return np.clip(noisy, 0, 255).astype(np.uint8)
 
 
+def _page_with_scale_sensitive_qrs() -> np.ndarray:
+    """Synthesize a page where the QR codes fail at native resolution but
+    succeed when the image is rescaled — the exact failure mode produced by
+    scanner PDF rasterization at an unlucky DPI.
+
+    Recipe: render small-module QRs on a large canvas, then downsample with
+    INTER_AREA to an intermediate size that lands in OpenCV's QR detector
+    blind spot for this module pitch.  The full three-tier pipeline
+    (detectAndDecodeMulti → detectAndDecode → tiled fallback) fails on the
+    resulting image at 1× but succeeds when the image is rescaled to ≥1.5×.
+    """
+    qr = qrcode.QRCode(
+        border=4,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=3,
+    )
+    qr.add_data("inst_scale-p1")
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+
+    canvas = Image.new("RGB", (2400, 1600), "white")
+    canvas.paste(qr_img, (80, 80))
+    canvas.paste(qr_img, (1800, 80))
+    full = np.array(canvas)
+
+    return cv2.resize(full, (1464, 976), interpolation=cv2.INTER_AREA)
+
+
 class ScanReadbackContractTests(unittest.TestCase):
     def test_readback_rejects_page_with_no_detectable_qr(self) -> None:
         read_page_identity_qr_payload = _load_readback_module(self)
@@ -134,6 +162,26 @@ class ScanReadbackContractTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Ambiguous"):
             read_page_identity_qr_payload(_synthetic_page("inst_test-p1", "inst_test-p2"))
+
+    def test_readback_recovers_qr_at_alternate_scale_when_native_resolution_fails(self) -> None:
+        """The real-world failure: scanner PDF pages rasterize QR codes at a
+        pixel pitch that falls in OpenCV's QR detector blind spot.  The same
+        QR decodes fine at a different scale.  The readback contract must
+        try alternate scales automatically rather than reporting 'no QR found'.
+        """
+        read_page_identity_qr_payload = _load_readback_module(self)
+
+        image = _page_with_scale_sensitive_qrs()
+
+        payload = read_page_identity_qr_payload(image)
+
+        self.assertEqual(
+            payload,
+            "inst_scale-p1",
+            "QR readback should retry at alternate image scales when native-resolution "
+            "detection fails, recovering page identity from scanner-rasterized PDFs "
+            "that land at an unlucky DPI.",
+        )
 
 
 if __name__ == "__main__":
