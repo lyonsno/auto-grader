@@ -73,18 +73,20 @@ class LiveAltScreenContract(unittest.TestCase):
             "decision is visible at the call site and cannot silently "
             "revert to Rich's default",
         )
-        # The live reader owns its own in-pane history surface now,
-        # and oversized preview payloads are capped before they ever
-        # reach the terminal. That means the old "stay in the main
-        # buffer and tolerate scrollback ghosts" compromise is stale.
-        # Running in the alternate screen is the clean contract: the
-        # live UI should not leak prior redraw frames into native
-        # terminal scrollback when the operator nudges the terminal.
+        # screen=False is deliberate: the focus-preview image panel
+        # can push the total rendered height past the terminal's row
+        # count, and Rich alt-screen (screen=True) has no scrollback
+        # to absorb the overflow — the result is doubled/garbled
+        # panels. screen=False lets the terminal scroll naturally.
+        # The ghost-frame-in-scrollback trade-off is documented and
+        # accepted until a fixed-height layout or Rich transient mode
+        # can eliminate it without alt-screen.
         self.assertIsInstance(screen_value, ast.Constant)
         self.assertIs(
-            screen_value.value, True,
-            "Live() must run with screen=True so native terminal "
-            "scrollback cannot reveal ghosted Paint Dry redraw frames",
+            screen_value.value, False,
+            "Live() must run with screen=False — the focus-preview "
+            "image panel can exceed the terminal's alt-screen height, "
+            "producing doubled/garbled panels with screen=True",
         )
 
     def test_live_block_still_drives_manual_refresh(self):
