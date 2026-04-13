@@ -58,6 +58,10 @@ class FocusPreviewSurfaceContract(unittest.TestCase):
             hasattr(reader, "_message_requires_immediate_refresh"),
             "preview substrate should not reintroduce message refresh policy into narrator_reader",
         )
+        self.assertFalse(
+            hasattr(reader, "_interp_rgb"),
+            "preview substrate should not keep a duplicate color interpolation helper in narrator_reader",
+        )
 
     def test_reader_exports_inline_preview_surface(self):
         reader = _load_module("narrator_reader", "scripts/narrator_reader.py")
