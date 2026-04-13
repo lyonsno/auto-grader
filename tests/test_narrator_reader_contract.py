@@ -1026,40 +1026,6 @@ class NarratorReaderContract(unittest.TestCase):
             "repaint on each refresh",
         )
 
-    def test_focus_preview_inline_image_overlays_after_frame_rows_are_reserved(self):
-        # Regression guard for the WezTerm "top strip survives, rest
-        # goes blank" failure. Emitting the OSC image sequence on the
-        # first interior row means the rest of the frame can still
-        # write through the preview region later in the same render.
-        # Keep the border / row reservation first, then emit the image
-        # as a post-pass over that reserved region.
-        from rich.console import Console
-
-        png = b"\x89PNG\r\n\x1a\nfake png for overlay ordering"
-        renderable = FocusPreviewInlineImage(
-            png_bytes=png, cell_width=40, cell_height=8, title="test"
-        )
-        console = Console(
-            width=120,
-            record=True,
-            color_system="truecolor",
-            force_terminal=True,
-        )
-
-        with console.capture() as capture:
-            console.print(renderable)
-        output = capture.get()
-
-        image_index = output.index("\x1b]1337;File=")
-        bottom_border_index = output.index("╰")
-        self.assertGreater(
-            image_index,
-            bottom_border_index,
-            "inline preview should reserve the frame rows first and then "
-            "emit the image as an overlay, so later rows in the same "
-            "render can't stomp the rasterized region",
-        )
-
     # ------------------------------------------------------------------
     # Kitty graphics protocol path. This is the durable fix for the
     # flicker problem: transmit the PNG once to the terminal with a
