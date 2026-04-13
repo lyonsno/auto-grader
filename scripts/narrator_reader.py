@@ -102,13 +102,8 @@ from scripts.focus_preview_renderer import (  # noqa: E402
     _TEXTURE_BG_RGB,
     _TEXTURE_EDGE_FLOOR,
 )
-# Re-export focus_preview_renderer utilities that were originally defined here.
-# The _rgb_to_hex, _lerp_rgb, _clamp, and _pixel_luma functions are now owned
-# by the renderer module; the reader just re-exports the seam.
-from scripts.focus_preview_renderer import _rgb_to_hex  # noqa: E402
-from scripts.focus_preview_renderer import _clamp  # noqa: E402
-from scripts.focus_preview_renderer import _lerp_rgb  # noqa: E402
-from scripts.focus_preview_renderer import _pixel_luma  # noqa: E402
+# Preview-specific rendering helpers live in scripts.focus_preview_renderer and
+# are re-imported above. The reader keeps its general display helpers local.
 
 
 # Matches the elapsed-time prefix on after-action topic lines:
@@ -359,6 +354,24 @@ _LIVE_FROZEN_VAL_MUL = 0.85
 # stroke as the wash dries), so the wave reads as a quiet brightening
 # of the ink rather than a fire sweep.
 _SHIMMER_PEAK_RGB = (235, 215, 175)
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+def _lerp_rgb(
+    a: tuple[int, int, int],
+    b: tuple[int, int, int],
+    t: float,
+) -> tuple[int, int, int]:
+    """Linear interpolation between two RGB tuples."""
+    t = max(0.0, min(1.0, t))
+    return (
+        int(round(a[0] + (b[0] - a[0]) * t)),
+        int(round(a[1] + (b[1] - a[1]) * t)),
+        int(round(a[2] + (b[2] - a[2]) * t)),
+    )
+
 
 # Focus-preview rendering helpers live in scripts.focus_preview_renderer and
 # are re-imported above. The reader keeps only its non-preview display logic.
