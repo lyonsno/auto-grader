@@ -289,8 +289,17 @@ Current implementation status on this grading surface:
   idempotent re-run semantics, append-only supersession for re-scans, and
   divergence detection when overlapping scans carry different outcomes across
   sessions
-- durable review-resolution storage in the database is still the next slice
-  beyond the current in-memory override surface
+- database-backed MC review-resolution persistence is implemented via
+  `auto_grader.mc_review_db`; human override decisions are now recorded
+  durably against persisted machine question outcomes with original-status
+  provenance, current resolved bubble or blank outcome, idempotent re-apply
+  semantics for identical decisions, and audit-event history when a reviewer
+  later changes the decision
+- database-backed current-final MC truth reads are implemented via
+  `auto_grader.mc_results_db`; callers can now ask for one authoritative
+  current result surface per `exam_instance_id`, with the latest scan session,
+  persisted machine outcomes, latest human review resolutions, and still-open
+  review-required questions composed together instead of reconstructed ad hoc
 
 ### 6. Review + Export
 
@@ -308,9 +317,14 @@ Current implementation status on this review surface:
 
 - `auto_grader.mc_review_override` now provides the first explicit human
   resolution seam for flagged MC questions
-- that surface is intentionally narrow and still in-memory: it corrects scored
-  question records with provenance, but it does not yet persist those review
-  resolutions into the database spine
+- `auto_grader.mc_review_db` now persists those review resolutions into the
+  database spine without mutating away the underlying machine-scored outcome;
+  the current row stores the latest reviewed answer while audit events preserve
+  create/update history
+- `auto_grader.mc_results_db` now exposes the authoritative DB-backed current
+  MC truth surface for one exam instance, combining the latest persisted scan
+  session with any persisted review resolutions while keeping unresolved
+  review-required questions explicit
 
 ## Data model
 
@@ -331,6 +345,7 @@ v0 names are:
 - `mc_scan_sessions`
 - `mc_scan_pages`
 - `mc_question_outcomes`
+- `mc_review_resolutions`
 
 Those names are not meant as an irreversible architectural claim, but they are the
 default names the first schema/tests will target.

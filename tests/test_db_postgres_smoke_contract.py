@@ -26,6 +26,7 @@ _EXPECTED_WORKFLOW_TABLES = {
     "scan_artifacts",
     "grade_records",
     "audit_events",
+    "mc_review_resolutions",
 }
 
 

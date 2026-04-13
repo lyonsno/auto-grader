@@ -37,6 +37,8 @@ _POSTGRES_SUITES = (
     "tests.postgres_contract_bootstrap_script_smoke_contract",
     "tests.test_db_postgres_contract",
     "tests.test_mc_scan_db_contract",
+    "tests.test_mc_review_resolution_db_contract",
+    "tests.test_mc_final_results_db_contract",
 )
 
 
