@@ -2877,8 +2877,14 @@ class PaintDryDisplay:
         # sequence + padding so Rich's layout reserves the right
         # vertical space.
         self.focus_preview_inline_renderable: FocusPreviewInlineImage | None = None
-        self._inline_images_supported: bool = _supports_inline_images(
-            os.environ.get("TERM_PROGRAM")
+        # PAINT_DRY_NO_INLINE_IMAGES=1 forces the half-block fallback
+        # renderer, bypassing both Kitty and iTerm2 inline image paths.
+        # Diagnostic tool for isolating resize corruption caused by
+        # the terminal's image compositing layer.
+        _force_no_inline = os.environ.get("PAINT_DRY_NO_INLINE_IMAGES") == "1"
+        self._inline_images_supported: bool = (
+            not _force_no_inline
+            and _supports_inline_images(os.environ.get("TERM_PROGRAM"))
         )
         # Kitty graphics protocol state. Preferred over the iTerm2
         # OSC 1337 path when available because it supports
@@ -2889,8 +2895,9 @@ class PaintDryDisplay:
         # event thread), then the renderable below yields only the
         # tiny place command on each frame.
         self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
-        self._kitty_graphics_supported: bool = _supports_kitty_graphics(
-            os.environ.get("TERM_PROGRAM")
+        self._kitty_graphics_supported: bool = (
+            not _force_no_inline
+            and _supports_kitty_graphics(os.environ.get("TERM_PROGRAM"))
         )
         # Query the terminal for its real cell pixel dimensions once
         # at init. Used by the Kitty renderer to compute correct

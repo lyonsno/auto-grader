@@ -473,10 +473,17 @@ class NarratorSink:
         diagnostics_dir.mkdir(parents=True, exist_ok=True)
         reader_stderr = diagnostics_dir / "reader.stderr"
         reader_exit = diagnostics_dir / "reader.exit"
+        # Forward PAINT_DRY_NO_INLINE_IMAGES if set — diagnostic flag
+        # to force the half-block preview fallback in the reader.
+        _no_inline_export = ""
+        if os.environ.get("PAINT_DRY_NO_INLINE_IMAGES") == "1":
+            _no_inline_export = "export PAINT_DRY_NO_INLINE_IMAGES=1\n"
+
         runner.write_text(
             "#!/bin/bash\n"
             "set -u\n"
             f"cd {project_root}\n"
+            f"{_no_inline_export}"
             f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
             f"2>\"{reader_stderr}\"\n"
             "status=$?\n"
