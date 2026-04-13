@@ -36,13 +36,8 @@ def _interp_rgb(
     peak: tuple[int, int, int],
     t: float,
 ) -> tuple[int, int, int]:
-    """Linear interpolate from base toward peak by t in [0, 1]."""
-    t = max(0.0, min(1.0, t))
-    return (
-        int(base[0] + (peak[0] - base[0]) * t),
-        int(base[1] + (peak[1] - base[1]) * t),
-        int(base[2] + (peak[2] - base[2]) * t),
-    )
+    """Backward-compatible alias for the module's rounded RGB interpolation."""
+    return _lerp_rgb(base, peak, t)
 
 
 def _clamp(value: float, low: float, high: float) -> float:

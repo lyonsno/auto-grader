@@ -15,6 +15,15 @@ def _load_module(module_name: str, relative_path: str):
 
 
 class FocusPreviewSurfaceContract(unittest.TestCase):
+    def test_preview_renderer_does_not_split_rgb_interpolation_policy(self):
+        renderer = _load_module("focus_preview_renderer", "scripts/focus_preview_renderer.py")
+
+        self.assertEqual(
+            renderer._interp_rgb((13, 13, 13), (10, 10, 10), 0.5),
+            renderer._lerp_rgb((13, 13, 13), (10, 10, 10), 0.5),
+            "preview renderer should not keep truncating and rounding RGB interpolation as separate policies",
+        )
+
     def test_reader_surface_stays_preview_scoped(self):
         reader = _load_module("narrator_reader", "scripts/narrator_reader.py")
 
