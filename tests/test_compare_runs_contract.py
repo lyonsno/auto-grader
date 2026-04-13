@@ -145,6 +145,8 @@ class CompareRunsContract(unittest.TestCase):
                                 "model_reasoning": "bar",
                                 "raw_assistant": "{}",
                                 "raw_reasoning": "abcdef",
+                                "is_obviously_fully_correct": True,
+                                "is_obviously_wrong": False,
                                 "upstream_dependency": "none",
                                 "if_dependent_then_consistent": None,
                             }
@@ -234,6 +236,8 @@ class CompareRunsContract(unittest.TestCase):
                                     "model_reasoning": "bar",
                                     "raw_assistant": "{}",
                                     "raw_reasoning": "abc",
+                                    "is_obviously_fully_correct": False,
+                                    "is_obviously_wrong": True,
                                     "upstream_dependency": "none",
                                     "if_dependent_then_consistent": None,
                                 }
