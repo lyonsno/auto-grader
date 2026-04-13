@@ -126,9 +126,24 @@ class FocusPreviewSurfaceContract(unittest.TestCase):
         ).read_text()
 
         self.assertNotIn(
+            "_rgb_to_hex  # noqa: E402, F401",
+            source,
+            "reader should not mark the re-exported _rgb_to_hex seam as unused",
+        )
+        self.assertNotIn(
+            "_clamp  # noqa: E402, F401",
+            source,
+            "reader should not mark the re-exported _clamp seam as unused",
+        )
+        self.assertNotIn(
             "_lerp_rgb  # noqa: E402, F401",
             source,
             "reader should not mark the actively used _lerp_rgb import as unused",
+        )
+        self.assertNotIn(
+            "_pixel_luma  # noqa: E402, F401",
+            source,
+            "reader should not mark the re-exported _pixel_luma seam as unused",
         )
 
 

@@ -105,10 +105,10 @@ from scripts.focus_preview_renderer import (  # noqa: E402
 # Re-export focus_preview_renderer utilities that were originally defined here.
 # The _rgb_to_hex, _lerp_rgb, _clamp, and _pixel_luma functions are now owned
 # by the renderer module; the reader just re-exports the seam.
-from scripts.focus_preview_renderer import _rgb_to_hex  # noqa: E402, F401
-from scripts.focus_preview_renderer import _clamp  # noqa: E402, F401
+from scripts.focus_preview_renderer import _rgb_to_hex  # noqa: E402
+from scripts.focus_preview_renderer import _clamp  # noqa: E402
 from scripts.focus_preview_renderer import _lerp_rgb  # noqa: E402
-from scripts.focus_preview_renderer import _pixel_luma  # noqa: E402, F401
+from scripts.focus_preview_renderer import _pixel_luma  # noqa: E402
 
 
 # Matches the elapsed-time prefix on after-action topic lines:
