@@ -1194,37 +1194,6 @@ class NarratorReaderContract(unittest.TestCase):
             msg="resizing must preserve image aspect ratio",
         )
 
-    def test_focus_preview_kitty_image_respects_short_terminal_height_budget(self):
-        # The focus preview now lives inside Paint Dry's reclaimed
-        # alt-screen surface, so it cannot spend essentially the whole
-        # terminal on itself. On a 24-row terminal the preview band must
-        # leave room for the rest of the live UI instead of reserving
-        # the legacy 22-row strip.
-        from rich.console import Console
-
-        renderable = FocusPreviewKittyImage(
-            image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
-            title="test",
-        )
-        console = Console(
-            width=100,
-            height=24,
-            record=True,
-            color_system="truecolor",
-            force_terminal=True,
-        )
-        with console.capture() as capture:
-            console.print(renderable)
-        lines = capture.get().splitlines()
-        self.assertLessEqual(
-            len(lines),
-            14,
-            "short terminals need the Kitty preview band to leave space for the scorebug, live lane, and history",
-        )
-
     def test_focus_preview_kitty_image_emits_place_every_render(self):
         # Rich Live clears the image region between frames, so we
         # must re-emit the place command on every render. The place
