@@ -1410,19 +1410,13 @@ def _supports_inline_images(term_program: str | None) -> bool:
     """Return True if the terminal identified by ``$TERM_PROGRAM``
     supports the iTerm2 inline image protocol.
 
-    Only iTerm.app is treated as supported on the live smoke surface
-    right now. WezTerm can render OSC 1337 inline images in theory,
-    but the live Paint Dry surface flickers and degrades badly there
-    once the first real preview lands, so WezTerm should stay on the
-    stable half-block fallback until that is actually fixed.
-
-    Everything else — xterm, Apple_Terminal, tmux, unset — is treated
-    as unsupported and falls through to the half-block fallback
-    renderer.
+    Known-good: WezTerm, iTerm.app (iTerm2). Everything else — xterm,
+    Apple_Terminal, tmux, unset — is treated as unsupported and falls
+    through to the half-block fallback renderer.
     """
     if not term_program:
         return False
-    return term_program == "iTerm.app"
+    return term_program in {"WezTerm", "iTerm.app"}
 
 
 class FocusPreviewInlineImage:

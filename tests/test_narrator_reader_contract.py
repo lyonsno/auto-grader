@@ -875,8 +875,8 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertGreater(cw, 0)
         self.assertGreater(ch, 0)
 
-    def test_supports_inline_images_rejects_wezterm_for_now(self):
-        self.assertFalse(_supports_inline_images("WezTerm"))
+    def test_supports_inline_images_recognizes_wezterm(self):
+        self.assertTrue(_supports_inline_images("WezTerm"))
 
     def test_supports_inline_images_recognizes_iterm2(self):
         self.assertTrue(_supports_inline_images("iTerm.app"))
@@ -886,26 +886,6 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertFalse(_supports_inline_images("Apple_Terminal"))
         self.assertFalse(_supports_inline_images(None))
         self.assertFalse(_supports_inline_images(""))
-
-    def test_wezterm_falls_back_to_half_block_preview_path(self):
-        with mock.patch.dict("os.environ", {"TERM_PROGRAM": "WezTerm"}):
-            display = PaintDryDisplay(
-                console=Console(
-                    width=100,
-                    record=True,
-                    color_system="truecolor",
-                    force_terminal=True,
-                )
-            )
-
-        self.assertFalse(
-            display._inline_images_supported,
-            "WezTerm should avoid the flickery OSC 1337 path on the live smoke surface",
-        )
-        self.assertFalse(
-            display._kitty_graphics_supported,
-            "WezTerm should also stay off the Kitty path until that live preview path is actually stable",
-        )
 
     def test_focus_preview_inline_image_escape_sequence_survives_panel_line_fitting(self):
         # Regression guard against the "Rich truncates the escape
@@ -1049,7 +1029,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertFalse(_supports_kitty_graphics(None))
         self.assertFalse(_supports_kitty_graphics(""))
 
-    def test_wezterm_avoids_both_live_image_protocol_paths_for_now(self):
+    def test_wezterm_prefers_inline_focus_preview_over_kitty_path(self):
         with mock.patch.dict("os.environ", {"TERM_PROGRAM": "WezTerm"}):
             display = PaintDryDisplay(
                 console=Console(
@@ -1060,10 +1040,10 @@ class NarratorReaderContract(unittest.TestCase):
                 )
             )
 
-        self.assertFalse(display._inline_images_supported)
+        self.assertTrue(display._inline_images_supported)
         self.assertFalse(
             display._kitty_graphics_supported,
-            "WezTerm should stay off the Kitty path until the live preview surface is actually stable",
+            "WezTerm should stay on the inline-image path until the live Kitty path stops corrupting Paint Dry",
         )
 
     def test_build_kitty_transmit_chunks_wraps_in_apc_envelope(self):
