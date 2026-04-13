@@ -4721,26 +4721,40 @@ def main() -> int:
         signal.signal(signal.SIGWINCH, _on_sigwinch)
 
         def _live_update(renderable):
-            """Clear the alt-screen then update the Live display.
+            """Clear + home then update the Live display.
 
             If a SIGWINCH arrived since the renderable was built, the
             layout was computed at the old terminal size — discard it
             and re-render at the current size.  All stdout writes
-            (clear + paint) happen here on one thread, never from the
+            happen here on the animation thread, never from the
             signal handler, so there is no interleaving.
+
+            We manage alt-screen ourselves (entered before Live,
+            exited after).  Each frame: clear entire screen, home
+            cursor, then let Rich paint.  This avoids Rich's Screen
+            wrapper whose height-padding relies on options.size being
+            perfectly synchronized with the physical terminal —
+            which it isn't during rapid resize.
             """
             if _resize_pending.is_set():
                 _resize_pending.clear()
                 renderable = display.render()
-            sys.stdout.write("\033[2J")
+            sys.stdout.write("\033[2J\033[H")
             sys.stdout.flush()
             live.update(renderable, refresh=True)
+
+        # Enter alt-screen manually.  We use screen=False on Live so
+        # Rich doesn't wrap our renderable in Screen (which pads to a
+        # height that can be stale during resize).  Our _live_update
+        # does its own clear + cursor-home on every frame.
+        sys.stdout.write("\033[?1049h")
+        sys.stdout.flush()
 
         with Live(
             display.render(),
             console=console,
             refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
-            screen=True,
+            screen=False,
             auto_refresh=False,
         ) as live:
             def _wait_for_manual_close() -> int:
@@ -4932,6 +4946,12 @@ def main() -> int:
             pass
         try:
             fifo.close()
+        except Exception:
+            pass
+        # Exit alt-screen (return to main buffer).
+        try:
+            sys.stdout.write("\033[?1049l")
+            sys.stdout.flush()
         except Exception:
             pass
         # Restore SIGWINCH handler.
