@@ -3025,10 +3025,10 @@ class PaintDryDisplay:
         value_pad: int = 1,
     ) -> None:
         if label_row.plain:
-            label_row.append("  ", style=separator_styles[0])
-            value_top_row.append("  ", style=separator_styles[1])
-            value_middle_row.append("  ", style=separator_styles[2])
-            value_bottom_row.append("  ", style=separator_styles[3])
+            label_row.append("· ", style=separator_styles[0])
+            value_top_row.append("· ", style=separator_styles[1])
+            value_middle_row.append("· ", style=separator_styles[2])
+            value_bottom_row.append("· ", style=separator_styles[3])
         top, middle, bottom = _scorebug_big_value_rows(value)
         cell_width = len(f"{' ' * value_pad}{top}{' ' * value_pad}")
         label_lead = ""
@@ -3549,18 +3549,18 @@ class PaintDryDisplay:
         # timer promotion is actually legible as dial-shape scoreboard
         # instrumentation rather than being lost in the top header
         # chrome.
-        _emitted_idle_label = "bold #ddefd1 on #2a5523"
-        _emitted_idle_value = "bold #cadac0 on #173115"
-        _emitted_label = "bold #f1ffe8 on #3a7d30"
-        _emitted_value = "bold #e5ffd8 on #1d4618"
-        _dedup_idle_label = "bold #edf2c5 on #55611d"
-        _dedup_idle_value = "bold #dce2b0 on #343b13"
-        _dedup_label = "bold #f7ffd0 on #6b7822"
-        _dedup_value = "bold #edf4b6 on #414915"
-        _empty_idle_label = "bold #f1d1c8 on #632720"
-        _empty_idle_value = "bold #e0b7ae on #3d1613"
-        _empty_label = "bold #ffe0d9 on #863126"
-        _empty_value = "bold #ffc7bd on #4d1913"
+        _emitted_idle_label = "bold #e7f8db on #306525"
+        _emitted_idle_value = "bold #d9eecd on #1a3915"
+        _emitted_label = "bold #f4ffea on #4a9838"
+        _emitted_value = "bold #eaffdf on #23561a"
+        _dedup_idle_label = "bold #f2f8cc on #627121"
+        _dedup_idle_value = "bold #e2eeb7 on #3b4514"
+        _dedup_label = "bold #fbffd7 on #809326"
+        _dedup_value = "bold #f1f7bf on #4c5718"
+        _empty_idle_label = "bold #f6d9d0 on #753025"
+        _empty_idle_value = "bold #e8c1b8 on #491a15"
+        _empty_label = "bold #ffe4dc on #a13f2f"
+        _empty_value = "bold #ffd1c7 on #5f2019"
         self._append_scorebug_cell(
             header_text,
             "EMITTED",
@@ -3610,30 +3610,30 @@ class PaintDryDisplay:
 
         scorebug_panel = None
         if self.current_model or self.current_item_bug or self.current_set_label:
-            meta_bg = "#383530"
-            meta_separator_style = "bold #585149 on #383530"
-            tally_label_bg = "#36342f"
-            tally_label_separator_style = "bold #575149 on #36342f"
-            tally_top_separator_style = "bold #545048 on #35332f"
-            tally_mid_separator_style = "bold #514c45 on #33312d"
-            tally_bottom_separator_style = "bold #4c4741 on #302e2b"
-            tally_top_bg = "#34322f"
-            tally_mid_bg = "#322f2d"
-            tally_bottom_bg = "#302d2b"
+            meta_bg = "#3a362d"
+            meta_separator_style = "bold #7a725f on #3a362d"
+            tally_label_bg = "#3b382e"
+            tally_label_separator_style = "bold #877d62"
+            tally_top_separator_style = "bold #7f765d"
+            tally_mid_separator_style = "bold #766d56"
+            tally_bottom_separator_style = "bold #6e654f"
+            tally_top_bg = "#363328"
+            tally_mid_bg = "#322f25"
+            tally_bottom_bg = "#2f2b22"
             tally_value_strong_styles = (
-                "bold #f0ece5",
-                "bold #e7e1d8",
-                "bold #ddd7cd",
+                "bold #f3ebd8",
+                "bold #e9dfca",
+                "bold #dfd4be",
             )
             tally_value_mid_styles = (
-                "bold #bdb4a8",
-                "bold #b2a898",
-                "bold #a69c8d",
+                "bold #c1b79d",
+                "bold #b6ab91",
+                "bold #ab9f85",
             )
             tally_value_texture_styles = (
-                "#6a645b",
-                "#655f57",
-                "#605a52",
+                "#7e7b5f",
+                "#77735a",
+                "#706c54",
             )
             scorebug_top = Text()
             self._append_scorebug_cell(
@@ -3676,37 +3676,37 @@ class PaintDryDisplay:
             # LEFT ON TABLE's yellow-bronze and BAD CALLS' red-brown,
             # and carries the "currently on the clock" weight that
             # matches the ember ITEM tag above.
-            _total_label_style = f"bold #b7c5dc on {tally_label_bg}"
+            _total_label_style = f"bold #c0d4d8 on {tally_label_bg}"
             _total_value_row_styles = (
-                "bold #d8dfec",
-                "bold #ced5e3",
-                "bold #c4cbd9",
+                "bold #dde9e6",
+                "bold #d1e0dd",
+                "bold #c6d6d3",
             )
             _total_value_mid_row_styles = (
-                "bold #8e98ab",
-                "bold #8690a3",
-                "bold #7d8699",
+                "bold #97aaa6",
+                "bold #8ea19c",
+                "bold #849691",
             )
             _total_value_texture_styles = (
-                "#667181",
-                "#5d6675",
-                "#535b69",
+                "#748984",
+                "#6a7d79",
+                "#60726e",
             )
             _turn_label_style = f"bold #dfb57d on {tally_label_bg}"
             _turn_value_row_styles = (
-                "bold #efcf9d",
-                "bold #e3c18e",
-                "bold #d6b27e",
+                "bold #f1d5a2",
+                "bold #e5c792",
+                "bold #d9b983",
             )
             _turn_value_mid_row_styles = (
-                "bold #a68763",
-                "bold #9c7d5a",
-                "bold #8f704e",
+                "bold #b19168",
+                "bold #a5845f",
+                "bold #987751",
             )
             _turn_value_texture_styles = (
-                "#78644a",
-                "#6d5b44",
-                "#62513d",
+                "#846e50",
+                "#796449",
+                "#6d5a42",
             )
             _total_value_str = f"{total_elapsed_s}"
             _turn_value_str = (

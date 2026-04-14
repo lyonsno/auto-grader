@@ -2021,6 +2021,20 @@ class NarratorReaderContract(unittest.TestCase):
             on_target_start + (2 * cell_width) + (2 * separator_width),
             "BAD CALLS label should start at the left edge of its score cell",
         )
+        self.assertIn(
+            "·",
+            tally_text_obj.plain,
+            "the big-value strip should use a sparse visible separator cue instead of relying entirely on blocky shaded gutters between regions",
+        )
+        self.assertIn(
+            "·",
+            tally_value_top.plain,
+            "the top value row should also carry the sparse separator cue so the region split reads elegantly across the strip",
+        )
+        self.assertIsNone(
+            self._background_hex(self._style_for_substring(tally_text_obj, "·")),
+            "scorebug separator dots should read as light ink marks, not as another filled slab",
+        )
         on_target_styles = self._styles_in_range(
             tally_value_top,
             on_target_start,
@@ -2650,32 +2664,32 @@ class NarratorReaderContract(unittest.TestCase):
         empty_style = self._style_for_substring(header_text_obj, "EMPTY")
         self.assertEqual(
             self._background_hex(emitted_style),
-            "#3a7d30",
+            "#4a9838",
             "EMITTED should keep the restored green family but with a hotter, more saturated board",
         )
         self.assertEqual(
             self._foreground_hex(emitted_style),
-            "#f1ffe8",
+            "#f4ffea",
             "EMITTED label ink should get a slightly hotter green-white accent to match the stronger board",
         )
         self.assertEqual(
             self._background_hex(dedup_style),
-            "#6b7822",
+            "#809326",
             "DEDUP should read as a hotter yellow/chartreuse board rather than the browner muted pass",
         )
         self.assertEqual(
             self._foreground_hex(dedup_style),
-            "#f7ffd0",
+            "#fbffd7",
             "DEDUP label ink should stay in the bright yellow-chartreuse family with slightly more intensity",
         )
         self.assertEqual(
             self._background_hex(empty_style),
-            "#863126",
+            "#a13f2f",
             "EMPTY should keep the restored red family but at a stronger saturation than the earlier pass",
         )
         self.assertEqual(
             self._foreground_hex(empty_style),
-            "#ffe0d9",
+            "#ffe4dc",
             "EMPTY label ink should stay bright red-white with a slightly stronger signal edge",
         )
 
