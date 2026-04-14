@@ -197,6 +197,29 @@ class SmokeVlmContract(unittest.TestCase):
             self.assertRegex(manifest["prompt_version"], r"^\d{4}-\d{2}-\d{2}-")
             self.assertRegex(manifest["prompt_content_hash"], r"^[0-9a-f]{64}$")
 
+    def test_smoke_vlm_supports_tricky_plus_plus_subset(self):
+        module = _load_smoke_vlm()
+        parser = module._build_arg_parser()
+
+        args = parser.parse_args(
+            ["--model", "qwen3p5-35B-A3B", "--tricky-plus-plus"]
+        )
+
+        meta = module._scorebug_session_meta(
+            args=args,
+            model=args.model,
+            subset_count=15,
+        )
+
+        self.assertEqual(
+            meta,
+            {
+                "model": "qwen3p5-35B-A3B",
+                "set_label": "TRICKY++",
+                "subset_count": 15,
+            },
+        )
+
     def test_main_respects_explicit_run_dir_override(self):
         module = _load_smoke_vlm()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -406,6 +429,7 @@ class SmokeVlmContract(unittest.TestCase):
             question_id="fr-5b",
             model_score=0.0,
             model_confidence=0.9,
+            score_basis="Wrong stoichiometric method, so no credit.",
             model_reasoning="caught the methodology error",
             model_read="14.2031 moles",
             raw_assistant='{"model_score": 0}',
@@ -449,6 +473,11 @@ class SmokeVlmContract(unittest.TestCase):
                 "correction_reason",
                 record,
                 "prediction record must carry correction_reason alongside corrected_score",
+            )
+            self.assertEqual(
+                record["score_basis"],
+                "Wrong stoichiometric method, so no credit.",
+                "prediction record must persist score_basis for downstream analysis",
             )
             self.assertIn(
                 "methodology",

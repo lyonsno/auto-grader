@@ -14,13 +14,21 @@ just routes events to its outputs. JSON line protocol over the fifo:
     {"type": "delta",  "text": "Reading"}
     {"type": "delta",  "text": " the"}
     ...
-    {"type": "commit"}
+    {"type": "commit", "mode": "thought"}
     {"type": "topic",  "text": "Thought for 47s · density calc"}
+    {"type": "basis", "text": "Correct setup, lost credit for units."}
+    {"type": "ambiguity", "text": "Coefficient could read as 2 or 7."}
+    {"type": "credit_preserved", "text": "Correct setup and carry-forward."}
+    {"type": "deduction", "text": "Lost credit for missing net ionic form."}
+    {"type": "review_marker", "text": "Human review warranted."}
+    {"type": "professor_mismatch", "text": "Historical professor awarded 2/4; corrected truth is 4/4."}
     {"type": "end"}
 """
 
 from __future__ import annotations
 
+import base64
+import errno
 import json
 import os
 import shutil
@@ -40,9 +48,14 @@ class SinkConfig:
     spawn_terminal: bool = False
     log_dir: Path | None = None  # if set, JSONL + .txt are written here
     fallback_stream: IO[str] | None = None  # used when no terminal
+    session_meta: dict | None = None  # one-shot session metadata for the reader
 
 
 class NarratorSink:
+    _FIFO_CONNECT_TIMEOUT_S = 5.0
+    _FIFO_CONNECT_POLL_S = 0.05
+    _WEZTERM_SPAWN_TIMEOUT_S = 5.0
+
     """Fan-out destination for narrator events.
 
     Use as a context manager:
@@ -53,6 +66,7 @@ class NarratorSink:
             sink.write_delta(" the")
             sink.commit_live()
             sink.write_topic("Thought for 47s · density calc")
+            sink.write_basis("Correct setup, lost credit for units.")
     """
 
     def __init__(self, config: SinkConfig | None = None):
@@ -66,6 +80,7 @@ class NarratorSink:
         self._live_buffer = ""  # accumulator for the txt transcript only
         self._lock = threading.Lock()
         self._started = False
+        self._fifo_failure_path: Path | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -94,13 +109,15 @@ class NarratorSink:
                 f"# Project Paint Dry transcript\n"
                 f"# Started: {datetime.now().isoformat(timespec='seconds')}\n\n"
             )
+            self._fifo_failure_path = self.config.log_dir / "fifo_writer_failure.txt"
 
         if self.config.spawn_terminal:
             self._fifo_path = self._make_fifo()
             self._spawn_terminal_window(self._fifo_path)
-            # Open the fifo for writing — blocks until reader connects.
-            # Use line buffering so messages flush on \n.
-            self._fifo_writer = open(self._fifo_path, "w", buffering=1)
+            self._fifo_writer = self._open_fifo_writer_with_timeout(self._fifo_path)
+
+        if self.config.session_meta:
+            self._emit({"type": "session_meta", **self.config.session_meta})
 
     def close(self) -> None:
         if not self._started:
@@ -147,21 +164,21 @@ class NarratorSink:
                 self._fallback.write(f"\n{text}\n")
                 self._fallback.flush()
 
-    def write_delta(self, text: str) -> None:
+    def write_delta(self, text: str, *, mode: str = "thought") -> None:
         """Append a token delta to the live line."""
         if not text:
             return
         with self._lock:
-            self._emit({"type": "delta", "text": text})
+            self._emit({"type": "delta", "text": text, "mode": mode})
             self._live_buffer += text
             if not self.config.spawn_terminal:
                 self._fallback.write(text)
                 self._fallback.flush()
 
-    def commit_live(self) -> None:
+    def commit_live(self, *, mode: str = "thought") -> None:
         """Finalize the current live line and push it into the history."""
         with self._lock:
-            self._emit({"type": "commit"})
+            self._emit({"type": "commit", "mode": mode})
             if self._txt_file is not None and self._live_buffer:
                 self._txt_file.write(f"  {self._live_buffer}\n")
             if not self.config.spawn_terminal:
@@ -169,24 +186,72 @@ class NarratorSink:
                 self._fallback.flush()
             self._live_buffer = ""
 
-    def write_topic(self, text: str, verdict: str | None = None) -> None:
+    def write_topic(
+        self,
+        text: str,
+        verdict: str | None = None,
+        *,
+        grader_score: float | None = None,
+        truth_score: float | None = None,
+        max_points: float | None = None,
+    ) -> None:
         """Write the per-item collapsed 'Thought for Xs · topic' line.
 
         verdict is one of "match", "overshoot", "undershoot", or None
         (when unknown). The reader uses it to color the topic line —
         cool sage for match, warm coral for overshoot, warm amber for
-        undershoot, dusty plum for unknown.
+        undershoot, dusty plum for unknown. Optional structured scoring
+        metadata lets the reader maintain a running scoreboard without
+        reverse-engineering numbers back out of the prose after-action line.
         """
         with self._lock:
             msg = {"type": "topic", "text": text}
             if verdict is not None:
                 msg["verdict"] = verdict
+            if grader_score is not None:
+                msg["grader_score"] = grader_score
+            if truth_score is not None:
+                msg["truth_score"] = truth_score
+            if max_points is not None:
+                msg["max_points"] = max_points
             self._emit(msg)
             if self._txt_file is not None:
                 self._txt_file.write(f"  -> {text}\n")
             if not self.config.spawn_terminal:
                 self._fallback.write(f"  -> {text}\n")
                 self._fallback.flush()
+
+    def write_checkpoint(self, text: str) -> None:
+        """Write a compact history checkpoint without touching the live row."""
+        with self._lock:
+            self._emit({"type": "checkpoint", "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"  ≈ {text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  ≈ {text}\n")
+                self._fallback.flush()
+
+    def write_basis(self, text: str) -> None:
+        self._write_structured_row("basis", "Basis", text)
+
+    def write_ambiguity(self, text: str) -> None:
+        self._write_structured_row("ambiguity", "Ambiguity", text)
+
+    def write_credit_preserved(self, text: str) -> None:
+        self._write_structured_row(
+            "credit_preserved", "Credit preserved for", text
+        )
+
+    def write_deduction(self, text: str) -> None:
+        self._write_structured_row("deduction", "Deduction", text)
+
+    def write_review_marker(self, text: str) -> None:
+        self._write_structured_row("review_marker", "Review needed", text)
+
+    def write_professor_mismatch(self, text: str) -> None:
+        self._write_structured_row(
+            "professor_mismatch", "Professor mismatch", text
+        )
 
     def write_drop(self, reason: str, text: str) -> None:
         """Record a dropped summary (dedup, empty, etc.) for observability.
@@ -201,6 +266,32 @@ class NarratorSink:
             if not self.config.spawn_terminal:
                 self._fallback.write(f"  [drop:{reason}] {text}\n")
                 self._fallback.flush()
+
+    def write_focus_preview(
+        self,
+        png_bytes: bytes,
+        *,
+        label: str | None = None,
+        source: str | None = None,
+    ) -> None:
+        """Emit a terminal-preview image for the current item.
+
+        Preview images are JSONL/fifo-only. They intentionally do not
+        go into the plain-text transcript because the transcript is the
+        accepted textual narrator feed, not an image log.
+        """
+        if not png_bytes:
+            return
+        with self._lock:
+            msg = {
+                "type": "focus_preview",
+                "png_base64": base64.b64encode(png_bytes).decode("ascii"),
+            }
+            if label:
+                msg["label"] = label
+            if source:
+                msg["source"] = source
+            self._emit(msg)
 
     def rollback_live(self) -> None:
         """Discard the in-flight live line without committing it to history.
@@ -252,9 +343,40 @@ class NarratorSink:
             try:
                 self._fifo_writer.write(line)
                 self._fifo_writer.flush()
-            except (BrokenPipeError, OSError):
+            except (BrokenPipeError, OSError) as exc:
+                self._record_fifo_writer_failure(msg.get("type"), exc)
                 # Reader closed — we'll keep logging to disk only
                 self._fifo_writer = None
+
+    def _record_fifo_writer_failure(self, event_type: str | None, exc: BaseException) -> None:
+        detail = (
+            f"{datetime.now().isoformat(timespec='seconds')} "
+            f"event={event_type or 'unknown'} "
+            f"error={type(exc).__name__}: {exc}\n"
+        )
+        try:
+            self._fallback.write(f"[narrator fifo lost] {detail}")
+            self._fallback.flush()
+        except Exception:
+            pass
+        if self._fifo_failure_path is not None:
+            try:
+                with open(self._fifo_failure_path, "a", buffering=1) as fh:
+                    fh.write(detail)
+            except Exception:
+                pass
+
+    def _write_structured_row(self, event_type: str, label: str, text: str) -> None:
+        """Write one structured legibility row under the current item."""
+        if not text:
+            return
+        with self._lock:
+            self._emit({"type": event_type, "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"  {label}: {text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  {label}: {text}\n")
+                self._fallback.flush()
 
     @staticmethod
     def _make_fifo() -> Path:
@@ -262,6 +384,36 @@ class NarratorSink:
         fifo = tmp / "narrator.fifo"
         os.mkfifo(fifo)
         return fifo
+
+    def _open_fifo_writer_with_timeout(self, fifo: Path) -> IO[str]:
+        """Open the writer side of the narrator FIFO without wedging forever.
+
+        A plain blocking open() can hang the whole smoke run indefinitely
+        if the reader window fails to boot or exits before connecting.
+        Retry a non-blocking open for a short bounded window, then fail
+        loudly so the operator gets a real startup error instead of a
+        silent stall at 'Run dir:'.
+        """
+        deadline = time.monotonic() + self._FIFO_CONNECT_TIMEOUT_S
+        last_err: OSError | None = None
+        while time.monotonic() < deadline:
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                os.set_blocking(fd, True)
+                return os.fdopen(fd, "w", buffering=1)
+            except OSError as exc:
+                last_err = exc
+                if exc.errno not in {errno.ENXIO, errno.ENOENT}:
+                    raise RuntimeError(
+                        f"Could not open narrator FIFO writer at {fifo}: {exc}"
+                    ) from exc
+                time.sleep(self._FIFO_CONNECT_POLL_S)
+
+        detail = f"{last_err}" if last_err is not None else "reader never attached"
+        raise RuntimeError(
+            "Narrator reader did not connect to the FIFO within "
+            f"{self._FIFO_CONNECT_TIMEOUT_S:.1f}s: {detail}"
+        )
 
     @staticmethod
     def _resolve_wezterm_executable() -> str:
@@ -306,14 +458,42 @@ class NarratorSink:
                 f"narrator_reader.py not found at {reader_script}"
             )
 
+        self._reap_existing_viewers(reader_script)
+
         # Project root for uv run
         project_root = Path(__file__).resolve().parent.parent
+        project_python = project_root / ".venv" / "bin" / "python"
+        if not project_python.exists():
+            raise RuntimeError(
+                f"project python not found at {project_python}"
+            )
 
         runner = fifo.parent / "run.sh"
+        diagnostics_dir = self.config.log_dir or fifo.parent
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        reader_stderr = diagnostics_dir / "reader.stderr"
+        reader_exit = diagnostics_dir / "reader.exit"
         runner.write_text(
             "#!/bin/bash\n"
+            "set -u\n"
             f"cd {project_root}\n"
-            f"exec uv run python {reader_script} {fifo}\n"
+            f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
+            f"2>\"{reader_stderr}\"\n"
+            "status=$?\n"
+            f"printf '%s\\n' \"$status\" >\"{reader_exit}\"\n"
+            "if [ \"$status\" -ne 0 ]; then\n"
+            "  echo \"Project Paint Dry reader exited with status $status\"\n"
+            f"  echo \"stderr log: {reader_stderr}\"\n"
+            f"  echo \"exit log: {reader_exit}\"\n"
+            "  if [ -s "
+            f"\"{reader_stderr}\""
+            " ]; then\n"
+            f"    tail -n 80 \"{reader_stderr}\"\n"
+            "  fi\n"
+            "  echo \"Press Enter to close\"\n"
+            "  read -r _\n"
+            "fi\n"
+            "exit \"$status\"\n"
         )
         runner.chmod(0o755)
         self._owns_tmpdir = fifo.parent
@@ -328,7 +508,13 @@ class NarratorSink:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=self._WEZTERM_SPAWN_TIMEOUT_S,
             )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                "Timed out spawning WezTerm window for narrator after "
+                f"{self._WEZTERM_SPAWN_TIMEOUT_S:.1f}s: {e}"
+            ) from e
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             stderr = getattr(e, "stderr", "") or ""
             raise RuntimeError(
@@ -336,3 +522,19 @@ class NarratorSink:
                 f"stderr: {stderr}\n"
                 "(requires WezTerm installed and a running WezTerm instance)"
             )
+
+    @staticmethod
+    def _reap_existing_viewers(reader_script: Path) -> None:
+        """Kill stale narrator readers before spawning a new viewer.
+
+        The reader runs a 30 FPS truecolor refresh loop, so letting old
+        windows accumulate can turn into a real CPU problem for WezTerm.
+        Reap by the concrete script path so we only target Paint Dry
+        readers from this checkout lineage.
+        """
+        subprocess.run(
+            ["pkill", "-f", str(reader_script)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )

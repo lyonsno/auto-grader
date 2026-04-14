@@ -56,6 +56,23 @@ _TRICKY_PICKS = [
     ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
 ]
 _TRICKY_TEST_SET_ID = "tricky-v1"
+_TRICKY_PLUS_PICKS = [
+    ("27-blue-2023", "fr-3"),   # clean correct net ionic
+    ("27-blue-2023", "fr-5b"),  # clean correct stoichiometry numeric
+    ("27-blue-2023", "fr-12a"), # clean correct Lewis structure
+    ("39-blue-redacted", "fr-10a"),  # clean correct frequency numeric
+    ("34-blue", "fr-8"),        # partial numeric with confused work
+    ("34-blue", "fr-12a"),      # Lewis partial with setup credit
+    *_TRICKY_PICKS,
+]
+_TRICKY_PLUS_TEST_SET_ID = "tricky-plus-v1"
+_TRICKY_PLUS_PLUS_PICKS = [
+    ("15-blue", "fr-10b"),   # FOLLOW-ON: tiny numeric continuation after partial fr-10a
+    ("15-blue", "fr-11c"),   # EXACTNESS: small orbital-box count / visual exact-match
+    ("15-blue", "fr-12b"),   # RESONANCE: Lewis follow-on beyond basic structure
+    *_TRICKY_PLUS_PICKS,
+]
+_TRICKY_PLUS_PLUS_TEST_SET_ID = "tricky-plus-plus-v1"
 
 
 def _is_openrouter_base_url(base_url: str) -> bool:
@@ -189,6 +206,7 @@ class _PredictionWriter:
                 "model_confidence": pred.model_confidence,
                 "truncated": pred.truncated,
                 "model_read": pred.model_read,
+                "score_basis": pred.score_basis,
                 "model_reasoning": pred.model_reasoning,
                 "upstream_dependency": pred.upstream_dependency,
                 "if_dependent_then_consistent": pred.if_dependent_then_consistent,
@@ -291,6 +309,143 @@ def _run_identity(model: str, run_dir_override: str | None) -> tuple[str, Path]:
     return run_id, run_dir
 
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default="qwen3p5-35B-A3B")
+    parser.add_argument(
+        "--model-family",
+        choices=known_model_families(),
+        default=None,
+        help=(
+            "Explicit sampling family override for unregistered models. "
+            "Required when --model does not match a known family prefix."
+        ),
+    )
+    parser.add_argument(
+        "--items",
+        type=int,
+        default=8,
+        help="Number of items to grade (from first exam)",
+    )
+    parser.add_argument(
+        "--base-url",
+        default="http://macbook-pro-2.local:8001",
+        help=(
+            "OpenAI-compatible grader server. Defaults to mDNS so it "
+            "follows the M4 Max's current LAN IP across DHCP renewals "
+            "instead of pinning a stale dotted-quad."
+        ),
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Grade all items (overrides --items)",
+    )
+    parser.add_argument(
+        "--pick",
+        default=None,
+        help=(
+            "Comma-separated <exam_id>:<question_id> pairs to grade "
+            "(e.g. 15-blue:fr-1,15-blue:fr-5b). Overrides --items/--all."
+        ),
+    )
+    parser.add_argument(
+        "--tricky",
+        action="store_true",
+        help=(
+            "Grade a curated set of known-tricky items: easy warmup + "
+            "consistent-with-wrong-premise charity test + fractional "
+            "partial credit + Lewis structure partial. Overrides --items."
+        ),
+    )
+    parser.add_argument(
+        "--tricky-plus",
+        action="store_true",
+        help=(
+            "Grade TRICKY plus six more mixed-exam expansion items. "
+            "Overrides --items."
+        ),
+    )
+    parser.add_argument(
+        "--tricky-plus-plus",
+        action="store_true",
+        help=(
+            "Grade TRICKY+ plus three more 15-blue stress items up front "
+            "for a denser 15-blue-heavy smoke. Overrides --items."
+        ),
+    )
+    parser.add_argument(
+        "--describe-only",
+        action="store_true",
+        help=(
+            "Run a bare perception smoke against the selected pages instead "
+            "of the grading pipeline. Writes probe.jsonl in the run dir."
+        ),
+    )
+    parser.add_argument(
+        "--narrate",
+        action="store_true",
+        help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)",
+    )
+    parser.add_argument(
+        "--narrate-stderr",
+        action="store_true",
+        help="Plain-text narrator output to stderr (no Terminal window) — for dev",
+    )
+    parser.add_argument(
+        "--narrator-url",
+        default="http://localhost:8001",
+        help="Bonsai narrator OMLX server URL",
+    )
+    parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
+    parser.add_argument(
+        "--wrap-up-url",
+        default=None,
+        help=(
+            "OpenAI-compatible server for the end-of-run wrap-up. "
+            "Defaults to --base-url (the grader server) since the grader "
+            "model is free by the time wrap-up fires and produces a more "
+            "grounded post-game read than the small narrator model."
+        ),
+    )
+    parser.add_argument(
+        "--wrap-up-model",
+        default=None,
+        help="Model name for the wrap-up call. Defaults to --model.",
+    )
+    parser.add_argument(
+        "--run-dir",
+        default=None,
+        help="Directory to write run artifacts (default: ~/dev/auto-grader-runs/<ts>-<model>/)",
+    )
+    return parser
+
+
+def _scorebug_session_meta(
+    *,
+    args: argparse.Namespace,
+    model: str,
+    subset_count: int,
+) -> dict[str, object]:
+    if args.tricky:
+        set_label = "TRICKY"
+    elif getattr(args, "tricky_plus", False):
+        set_label = "TRICKY+"
+    elif getattr(args, "tricky_plus_plus", False):
+        set_label = "TRICKY++"
+    elif args.all:
+        set_label = "ALL"
+    elif args.pick:
+        set_label = "PICK"
+    else:
+        set_label = f"FIRST {subset_count}"
+    return {
+        "model": model,
+        "set_label": set_label,
+        "subset_count": subset_count,
+    }
+
+
 def _select_subset(
     args: argparse.Namespace,
     ground_truth: list[EvalItem],
@@ -327,6 +482,22 @@ def _select_subset(
         }
         subset = [gt_index[k] for k in _TRICKY_PICKS if k in gt_index]
         return subset, _TRICKY_TEST_SET_ID
+
+    if getattr(args, "tricky_plus", False):
+        gt_index = {
+            (item.exam_id, item.question_id): item for item in ground_truth
+        }
+        subset = [gt_index[k] for k in _TRICKY_PLUS_PICKS if k in gt_index]
+        return subset, _TRICKY_PLUS_TEST_SET_ID
+
+    if getattr(args, "tricky_plus_plus", False):
+        gt_index = {
+            (item.exam_id, item.question_id): item for item in ground_truth
+        }
+        subset = [
+            gt_index[k] for k in _TRICKY_PLUS_PLUS_PICKS if k in gt_index
+        ]
+        return subset, _TRICKY_PLUS_PLUS_TEST_SET_ID
 
     if args.all:
         return ground_truth, "all-v1"
@@ -501,79 +672,7 @@ def run_describe_only_mode(
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="qwen3p5-35B-A3B")
-    parser.add_argument(
-        "--model-family",
-        choices=known_model_families(),
-        default=None,
-        help=(
-            "Explicit sampling family override for unregistered models. "
-            "Required when --model does not match a known family prefix."
-        ),
-    )
-    parser.add_argument("--items", type=int, default=8,
-                        help="Number of items to grade (from first exam)")
-    parser.add_argument(
-        "--base-url",
-        default="http://macbook-pro-2.local:8001",
-        help=(
-            "OpenAI-compatible grader server. Defaults to mDNS so it "
-            "follows the M4 Max's current LAN IP across DHCP renewals "
-            "instead of pinning a stale dotted-quad."
-        ),
-    )
-    parser.add_argument("--all", action="store_true",
-                        help="Grade all items (overrides --items)")
-    parser.add_argument(
-        "--pick",
-        default=None,
-        help=(
-            "Comma-separated <exam_id>:<question_id> pairs to grade "
-            "(e.g. 15-blue:fr-1,15-blue:fr-5b). Overrides --items/--all."
-        ),
-    )
-    parser.add_argument(
-        "--tricky",
-        action="store_true",
-        help=(
-            "Grade a curated set of known-tricky items: easy warmup + "
-            "consistent-with-wrong-premise charity test + fractional "
-            "partial credit + Lewis structure partial. Overrides --items."
-        ),
-    )
-    parser.add_argument(
-        "--describe-only",
-        action="store_true",
-        help=(
-            "Run a bare perception smoke against the selected pages instead "
-            "of the grading pipeline. Writes probe.jsonl in the run dir."
-        ),
-    )
-    parser.add_argument("--narrate", action="store_true",
-                        help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
-    parser.add_argument("--narrate-stderr", action="store_true",
-                        help="Plain-text narrator output to stderr (no Terminal window) — for dev")
-    parser.add_argument("--narrator-url", default="http://localhost:8001",
-                        help="Bonsai narrator OMLX server URL")
-    parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
-    parser.add_argument(
-        "--wrap-up-url",
-        default=None,
-        help=(
-            "OpenAI-compatible server for the end-of-run wrap-up. "
-            "Defaults to --base-url (the grader server) since the grader "
-            "model is free by the time wrap-up fires and produces a more "
-            "grounded post-game read than the small narrator model."
-        ),
-    )
-    parser.add_argument(
-        "--wrap-up-model",
-        default=None,
-        help="Model name for the wrap-up call. Defaults to --model.",
-    )
-    parser.add_argument("--run-dir", default=None,
-                        help="Directory to write run artifacts (default: ~/dev/auto-grader-runs/<ts>-<model>/)")
+    parser = _build_arg_parser()
     args = parser.parse_args()
 
     gt = load_ground_truth(_GROUND_TRUTH)
