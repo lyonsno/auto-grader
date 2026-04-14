@@ -2031,10 +2031,9 @@ class NarratorReaderContract(unittest.TestCase):
             2,
             "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
         )
-        on_target_top_bg = self._background_hex(
-            self._style_for_normalized_scorebug_substring(
-                tally_value_top, expected_on_target[0].strip()
-            )
+        on_target_top_style = self._style_for_normalized_scorebug_substring(
+            tally_value_top,
+            expected_on_target[0].strip(),
         )
         left_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
@@ -2044,12 +2043,14 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_top,
             expected_bad[0].strip(),
         )
-        left_top_bg = self._background_hex(left_top_style)
-        bad_top_bg = self._background_hex(bad_top_style)
         self.assertEqual(
-            {on_target_top_bg, left_top_bg, bad_top_bg},
-            {on_target_top_bg},
-            "the scorebug should go back to one unified field treatment instead of three tinted slabs",
+            {
+                self._background_hex(on_target_top_style),
+                self._background_hex(left_top_style),
+                self._background_hex(bad_top_style),
+            },
+            {None},
+            "scorebug value strokes should no longer carry filled backgrounds; the plate should read through sparse texture and border ink instead",
         )
         self.assertTrue(
             any(ch in tally_value_top.plain for ch in "░▒·┈╎"),
@@ -2083,30 +2084,31 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_mid.plain + tally_value_top.plain + tally_value_bottom.plain,
             "scorebug texture should avoid thin vertical artifact glyphs that read like accidental banding",
         )
-        on_target_mid_bg = self._background_hex(
-            self._style_for_normalized_scorebug_substring(
-                tally_value_mid, expected_on_target[1].strip()
-            )
+        on_target_mid_style = self._style_for_normalized_scorebug_substring(
+            tally_value_mid,
+            expected_on_target[1].strip(),
         )
-        on_target_bottom_bg = self._background_hex(
-            self._style_for_normalized_scorebug_substring(
-                tally_value_bottom, expected_on_target[2].strip()
-            )
+        on_target_bottom_style = self._style_for_normalized_scorebug_substring(
+            tally_value_bottom,
+            expected_on_target[2].strip(),
         )
-        bg_lumas = [
-            self._hex_luminance(on_target_top_bg),
-            self._hex_luminance(on_target_mid_bg),
-            self._hex_luminance(on_target_bottom_bg),
+        self.assertEqual(
+            {
+                self._background_hex(on_target_mid_style),
+                self._background_hex(on_target_bottom_style),
+            },
+            {None},
+            "middle and bottom numeral strokes should also stay foreground-only once the scorebug drops its filled slabs",
+        )
+        fg_lumas = [
+            self._hex_luminance(self._foreground_hex(on_target_top_style)),
+            self._hex_luminance(self._foreground_hex(on_target_mid_style)),
+            self._hex_luminance(self._foreground_hex(on_target_bottom_style)),
         ]
-        self.assertLess(
-            max(bg_lumas) - min(bg_lumas),
-            24,
-            "the score field should read as a flatter low-contrast texture, not a strong descending row gradient",
-        )
         self.assertGreater(
-            max(bg_lumas) - min(bg_lumas),
-            6,
-            "the score field should still have some subtle tonal breathing room instead of collapsing to one dead flat slab",
+            max(fg_lumas) - min(fg_lumas),
+            18,
+            "the scorebug should still keep some row-to-row tonal drift in the numeral ink after the fill is removed",
         )
         # Find the first two strong-stroke spans inside the ON TARGET
         # cell by walking the tally_value_top spans from on_target_start
@@ -2127,14 +2129,10 @@ class NarratorReaderContract(unittest.TestCase):
             "ON TARGET value cell should carry multiple styled spans",
         )
         on_target_top_strong = on_target_spans[1].style
-        on_target_bottom_style = self._style_for_normalized_scorebug_substring(
-            tally_value_bottom,
-            expected_on_target[2].strip(),
-        )
         self.assertNotEqual(
             on_target_top_strong,
             on_target_bottom_style,
-            "scorebug value rows should now drift tonally across the board instead of sitting on one flat background",
+            "scorebug value rows should still drift tonally across the glyph ink instead of collapsing to one dead flat outline",
         )
         left_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,

@@ -3621,19 +3621,19 @@ class PaintDryDisplay:
             tally_mid_bg = "#322f2d"
             tally_bottom_bg = "#302d2b"
             tally_value_strong_styles = (
-                f"bold #f0ece5 on {tally_top_bg}",
-                f"bold #e7e1d8 on {tally_mid_bg}",
-                f"bold #ddd7cd on {tally_bottom_bg}",
+                "bold #f0ece5",
+                "bold #e7e1d8",
+                "bold #ddd7cd",
             )
             tally_value_mid_styles = (
-                f"bold #bdb4a8 on {tally_top_bg}",
-                f"bold #b2a898 on {tally_mid_bg}",
-                f"bold #a69c8d on {tally_bottom_bg}",
+                "bold #bdb4a8",
+                "bold #b2a898",
+                "bold #a69c8d",
             )
             tally_value_texture_styles = (
-                f"#5b5750 on {tally_top_bg}",
-                f"#57524c on {tally_mid_bg}",
-                f"#534e48 on {tally_bottom_bg}",
+                "#6a645b",
+                "#655f57",
+                "#605a52",
             )
             scorebug_top = Text()
             self._append_scorebug_cell(
@@ -3678,35 +3678,35 @@ class PaintDryDisplay:
             # matches the ember ITEM tag above.
             _total_label_style = f"bold #b7c5dc on {tally_label_bg}"
             _total_value_row_styles = (
-                f"bold #d8dfec on {tally_top_bg}",
-                f"bold #ced5e3 on {tally_mid_bg}",
-                f"bold #c4cbd9 on {tally_bottom_bg}",
+                "bold #d8dfec",
+                "bold #ced5e3",
+                "bold #c4cbd9",
             )
             _total_value_mid_row_styles = (
-                f"bold #8e98ab on {tally_top_bg}",
-                f"bold #8690a3 on {tally_mid_bg}",
-                f"bold #7d8699 on {tally_bottom_bg}",
+                "bold #8e98ab",
+                "bold #8690a3",
+                "bold #7d8699",
             )
             _total_value_texture_styles = (
-                f"#586171 on {tally_top_bg}",
-                f"#515967 on {tally_mid_bg}",
-                f"#49515e on {tally_bottom_bg}",
+                "#667181",
+                "#5d6675",
+                "#535b69",
             )
             _turn_label_style = f"bold #dfb57d on {tally_label_bg}"
             _turn_value_row_styles = (
-                f"bold #efcf9d on {tally_top_bg}",
-                f"bold #e3c18e on {tally_mid_bg}",
-                f"bold #d6b27e on {tally_bottom_bg}",
+                "bold #efcf9d",
+                "bold #e3c18e",
+                "bold #d6b27e",
             )
             _turn_value_mid_row_styles = (
-                f"bold #a68763 on {tally_top_bg}",
-                f"bold #9c7d5a on {tally_mid_bg}",
-                f"bold #8f704e on {tally_bottom_bg}",
+                "bold #a68763",
+                "bold #9c7d5a",
+                "bold #8f704e",
             )
             _turn_value_texture_styles = (
-                f"#6a5840 on {tally_top_bg}",
-                f"#61503a on {tally_mid_bg}",
-                f"#574733 on {tally_bottom_bg}",
+                "#78644a",
+                "#6d5b44",
+                "#62513d",
             )
             _total_value_str = f"{total_elapsed_s}"
             _turn_value_str = (
