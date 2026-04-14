@@ -620,6 +620,24 @@ def render_page(state: GuiState) -> str:
           </select>
         </label>
         <h3 class="section-title">Multiple-Choice Questions</h3>
+        <details style="margin-bottom: 16px; border: 1px solid var(--mist); border-radius: 10px; padding: 12px; background: linear-gradient(180deg, #fffdfa 0%, #f8f2e8 100%);">
+          <summary style="cursor: pointer; font-weight: 600; color: #4b433a; font-size: 0.92rem;">Example: computed-distractor question</summary>
+          <div style="margin-top: 10px; font-size: 0.88rem; line-height: 1.6; color: #4b433a;">
+            <p style="margin: 0 0 8px;">A computed-distractor question lets the system generate different numbers for each student. You write the prompt with variable placeholders, declare the variables, give the correct answer as an expression, and list wrong-answer expressions as distractors.</p>
+            <div style="background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-family: ui-monospace, monospace; font-size: 0.82rem; line-height: 1.7;">
+              <div><strong>Prompt:</strong> Mercury has a density of {{{{density}}}} g/cm\u00b3. What is the volume of {{{{mass}}}} g of Hg?</div>
+              <div style="margin-top: 6px;"><strong>Variables (YAML):</strong></div>
+              <div style="padding-left: 12px;">mass: {{type: float, min: 50.0, max: 150.0, step: 1.0}}</div>
+              <div style="padding-left: 12px;">density: {{type: float, min: 10.0, max: 16.0, step: 0.1}}</div>
+              <div style="margin-top: 6px;"><strong>Answer expression:</strong> mass / density</div>
+              <div style="margin-top: 6px;"><strong>Distractors:</strong></div>
+              <div style="padding-left: 12px;">1. density / mass <span style="color: #9a8e82;">\u2014 inverted division</span></div>
+              <div style="padding-left: 12px;">2. mass * density <span style="color: #9a8e82;">\u2014 wrong operation</span></div>
+              <div style="padding-left: 12px;">3. mass + density <span style="color: #9a8e82;">\u2014 nonsensical sum</span></div>
+            </div>
+            <p style="margin: 8px 0 0; color: #7a6f63;">Each student gets different values for <code>mass</code> and <code>density</code>, so both the correct answer and every distractor are unique per exam. Set the mode to <strong>Computed Distractors</strong> on any question below to use this shape.</p>
+          </div>
+        </details>
         {authoring_questions}
         <div style="margin-top: 16px;">
           <button type="submit">Save Assessment</button>
