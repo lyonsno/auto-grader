@@ -3290,6 +3290,24 @@ class NarratorReaderContract(unittest.TestCase):
             "steady kitty-image preview should also run below the normal animation cadence so the terminal image layer is not churned continuously",
         )
 
+    def test_live_update_gates_global_clear_on_geometry_change(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        live_update = source.split("def _live_update():", 1)[1].split(
+            "with Live(",
+            1,
+        )[0]
+
+        self.assertIn(
+            "_live_frame_requires_full_clear(",
+            source,
+            "steady preview mode should decide explicitly when a global alt-screen clear is necessary instead of hard-clearing every frame",
+        )
+        self.assertIn(
+            "if _live_frame_requires_full_clear(",
+            live_update,
+            "the live paint loop should only send ESC[2J when the frame geometry changed or the first paint still needs a clean slate",
+        )
+
     def test_session_end_stops_animation(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")

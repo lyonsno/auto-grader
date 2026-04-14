@@ -456,6 +456,23 @@ _LIVE_PLACEHOLDER_OPTIONS = (
     "waiting on the next chain-of-thought...",
     "running the numbers upstairs...",
 )
+
+
+def _live_frame_requires_full_clear(
+    last_paint_size: tuple[int, int] | None,
+    current_size: tuple[int, int],
+) -> bool:
+    """Return whether the next live paint needs a global alt-screen clear.
+
+    The expensive full-screen clear is only necessary when there is no
+    previous frame yet or when terminal geometry changed. Stable same-size
+    repaints can cursor-home and let Rich redraw in place, which keeps the
+    lively surface moving without hauling the whole alternate screen through
+    ESC[2J on every tick.
+    """
+    return last_paint_size is None or current_size != last_paint_size
+
+
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
@@ -4793,18 +4810,12 @@ def main() -> int:
         # rendered height could exceed the terminal's row count, but
         # render() now caps the history panel via a height budget so
         # the total output never exceeds console.size.height.
-        # Clear the alt-screen before every repaint.  Rich's alt-screen
-        # Live path sends Control.home() (cursor to 0,0) then overwrites
-        # from the top, but does NOT clear the screen.  When the terminal
-        # resizes, the previous frame may occupy more or fewer rows than
-        # the new frame, leaving stale ghost content visible.
-        #
-        # Clearing every frame (not just on resize) is safe in alt-screen
-        # mode: WezTerm and other modern terminals double-buffer the
-        # alternate screen, so the clear + repaint happens atomically
-        # from the user's perspective — no visible flicker.  The cost is
-        # a handful of extra bytes per frame (ESC[2J = 4 bytes at ~8 FPS
-        # = 32 B/s, negligible).
+        # Only clear the alt-screen when geometry changed or the very
+        # first frame still needs a clean slate. Rich redraws from the
+        # top on each paint, so stable same-size frames can just cursor-
+        # home and repaint in place. That preserves the resize safety we
+        # want without paying the global ESC[2J tax on every animation
+        # tick while a steady preview is already settled.
         # Resize coordination.  SIGWINCH fires on the main thread
         # (signal delivery) while the animation thread is writing to
         # stdout via live.update().  Writing \033[2J from the signal
@@ -4850,9 +4861,10 @@ def main() -> int:
             _resize_pending.clear()
 
             cur_size = (console.size.width, console.size.height)
-            resized = _last_paint_size is not None and cur_size != _last_paint_size
-
-            if resized:
+            if (
+                _live_frame_requires_full_clear(_last_paint_size, cur_size)
+                and _last_paint_size is not None
+            ):
                 display.retransmit_kitty_image()
 
             renderable = None
@@ -4863,10 +4875,14 @@ def main() -> int:
                 if size_before == size_after:
                     break  # geometry stable — safe to paint
 
-            sys.stdout.write("\033[2J\033[H")
+            paint_size = (console.size.width, console.size.height)
+            if _live_frame_requires_full_clear(_last_paint_size, paint_size):
+                sys.stdout.write("\033[2J\033[H")
+            else:
+                sys.stdout.write("\033[H")
             sys.stdout.flush()
             live.update(renderable, refresh=True)
-            _last_paint_size = (console.size.width, console.size.height)
+            _last_paint_size = paint_size
 
         # Enter alt-screen manually.  We use screen=False on Live so
         # Rich doesn't wrap our renderable in Screen (which pads to a
