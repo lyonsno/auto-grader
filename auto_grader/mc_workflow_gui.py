@@ -38,6 +38,9 @@ _CONFIG_FIELDS = (
     "output_dir",
 )
 _RESOLUTION_CHOICES = ("", "__BLANK__", "A", "B", "C", "D", "E", "F")
+_ASSESSMENT_KINDS = ("exam", "quiz")
+_CHOICE_LABELS = ("A", "B", "C", "D", "E")
+_INITIAL_QUESTION_COUNT = 5
 
 
 @dataclass
@@ -51,6 +54,7 @@ class GuiState:
     export_paths: dict[str, str] = field(default_factory=dict)
     grading_targets: list[dict[str, Any]] = field(default_factory=list)
     assessment_definitions: list[dict[str, Any]] = field(default_factory=list)
+    authoring_message: str | None = None
 
 
 class McWorkflowGuiApp:
@@ -79,6 +83,8 @@ class McWorkflowGuiApp:
                     self._handle_open_path(form, reveal=False)
                 elif path == "/reveal-path":
                     self._handle_open_path(form, reveal=True)
+                elif path == "/author":
+                    self._handle_author(form)
                 else:
                     raise ValueError(f"Unknown action path: {path}")
                 self._refresh_catalog()
@@ -229,6 +235,48 @@ class McWorkflowGuiApp:
         self.state.config["exam_instance_id"] = str(created["exam_instance_id"])
         self.state.message = "Created exam target."
 
+    def _handle_author(self, form: dict[str, str]) -> None:
+        title = form.get("authoring_title", "").strip()
+        slug = form.get("authoring_slug", "").strip()
+        kind = form.get("authoring_kind", "exam").strip()
+
+        if not title:
+            raise ValueError("Title is required.")
+        if not slug:
+            slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        if kind not in _ASSESSMENT_KINDS:
+            raise ValueError(f"Unsupported assessment kind: {kind}")
+
+        questions = _extract_authored_questions(form)
+        if not questions:
+            raise ValueError("At least one question with a prompt is required.")
+
+        source_yaml = _build_template_yaml(slug=slug, title=title, kind=kind, questions=questions)
+
+        db_url = form.get("database_url", "").strip()
+        schema_name = form.get("schema_name", "").strip()
+        connection = _connect(
+            database_url=db_url or None,
+            schema_name=schema_name or None,
+        )
+        try:
+            tv_id = connection.execute(
+                "INSERT INTO template_versions (slug, version, source_yaml) "
+                "VALUES (%s, 1, %s) RETURNING id",
+                (slug, source_yaml),
+            ).fetchone()[0]
+            connection.execute(
+                "INSERT INTO exam_definitions (slug, version, title, template_version_id) "
+                "VALUES (%s, 1, %s, %s) RETURNING id",
+                (slug, title, tv_id),
+            ).fetchone()
+            connection.commit()
+        finally:
+            connection.close()
+
+        self.state.authoring_message = f"Saved assessment \u201c{title}\u201d ({kind}, {len(questions)} questions)."
+        self.state.error = None
+
     def _require_config(self, *keys: str) -> dict[str, str]:
         missing = [key for key in keys if self.state.config.get(key, "").strip() == ""]
         if missing:
@@ -293,6 +341,11 @@ def render_page(state: GuiState) -> str:
     )
     stat_cards = _render_stat_cards(state.summary)
     detail_rows = _render_summary_detail_rows(state.summary)
+
+    authoring_msg = ""
+    if state.authoring_message:
+        authoring_msg = f'<div class="message ok">{escape(state.authoring_message)}</div>'
+    authoring_questions = _render_authoring_question_fields()
 
     return f"""<!doctype html>
 <html lang="en">
@@ -463,6 +516,30 @@ def render_page(state: GuiState) -> str:
         </table>
         <div style="margin-top: 12px;">
           <button type="submit">Persist Selected Resolutions</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card wide">
+      <h2>Author Assessment</h2>
+      <p class="support-copy">Create a new exam or quiz definition. The authored assessment is saved to the database so it can be used as a grading target.</p>
+      {authoring_msg}
+      <form method="post" action="/author" data-busy-label="Saving assessment...">
+        {_render_hidden_config(config)}
+        <div class="grid" style="margin-bottom: 16px;">
+          <label>Title<input type="text" name="authoring_title" placeholder="e.g. CHM 141 Quiz 3"></label>
+          <label>Slug<input type="text" name="authoring_slug" placeholder="auto-derived from title if blank"></label>
+        </div>
+        <label style="margin-bottom: 16px;">Assessment Kind
+          <select name="authoring_kind">
+            <option value="exam">Exam</option>
+            <option value="quiz">Quiz</option>
+          </select>
+        </label>
+        <h3 class="section-title">Multiple-Choice Questions</h3>
+        {authoring_questions}
+        <div style="margin-top: 16px;">
+          <button type="submit">Save Assessment</button>
         </div>
       </form>
     </section>
@@ -649,6 +726,88 @@ def _require_schema_identifier(value: str) -> str:
             "(letters, digits, underscore; not starting with a digit)"
         )
     return value
+
+
+def _render_authoring_question_fields() -> str:
+    """Render the initial set of MC question input blocks for the authoring form."""
+    blocks: list[str] = []
+    for idx in range(1, _INITIAL_QUESTION_COUNT + 1):
+        choice_inputs = "".join(
+            f'<label>{label}<input type="text" name="q_{idx}_choice_{label}" placeholder="Choice {label}"></label>'
+            for label in _CHOICE_LABELS
+        )
+        correct_options = "".join(
+            f'<option value="{label}">{label}</option>' for label in _CHOICE_LABELS
+        )
+        blocks.append(
+            f'<div class="card" style="margin-bottom: 12px;">'
+            f"<h4 style=\"margin: 0 0 8px;\">Question {idx}</h4>"
+            f'<label>Prompt<input type="text" name="q_{idx}_prompt" placeholder="Question text"></label>'
+            f"{choice_inputs}"
+            f'<label>Correct Answer<select name="q_{idx}_correct"><option value="">—</option>{correct_options}</select></label>'
+            f"</div>"
+        )
+    return "".join(blocks)
+
+
+def _extract_authored_questions(form: dict[str, str]) -> list[dict[str, Any]]:
+    """Parse numbered MC question fields from the form into a list of question dicts."""
+    questions: list[dict[str, Any]] = []
+    idx = 1
+    while True:
+        prompt = form.get(f"q_{idx}_prompt", "").strip()
+        if not prompt:
+            # Stop at the first missing prompt — questions are sequential.
+            break
+        choices: dict[str, str] = {}
+        for label in _CHOICE_LABELS:
+            text = form.get(f"q_{idx}_choice_{label}", "").strip()
+            if text:
+                choices[label] = text
+        correct = form.get(f"q_{idx}_correct", "").strip()
+        questions.append({
+            "id": f"mc-{idx}",
+            "prompt": prompt,
+            "choices": choices,
+            "correct": correct,
+        })
+        idx += 1
+    return questions
+
+
+def _build_template_yaml(
+    *,
+    slug: str,
+    title: str,
+    kind: str,
+    questions: list[dict[str, Any]],
+) -> str:
+    """Build a minimal valid YAML template string from authored question data."""
+    import yaml
+
+    template: dict[str, Any] = {
+        "slug": slug,
+        "title": title,
+        "kind": kind,
+        "sections": [
+            {
+                "id": "mc",
+                "title": "Multiple Choice",
+                "questions": [
+                    {
+                        "id": q["id"],
+                        "points": 2,
+                        "answer_type": "multiple_choice",
+                        "prompt": q["prompt"],
+                        "choices": q["choices"],
+                        "correct": q["correct"],
+                    }
+                    for q in questions
+                ],
+            }
+        ],
+    }
+    return yaml.dump(template, default_flow_style=False, sort_keys=False)
 
 
 def _render_summary_text(exported: dict[str, Any]) -> str:
