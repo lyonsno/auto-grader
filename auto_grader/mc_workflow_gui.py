@@ -438,6 +438,12 @@ def render_page(state: GuiState) -> str:
     .workflow-spinner {{ width: 16px; height: 16px; border-radius: 999px; border: 2px solid #b5cfd5; border-top-color: var(--accent); animation: workflow-spin 0.8s linear infinite; }}
     body.busy .busy-banner {{ display: flex; }}
     @keyframes workflow-spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
+    .tab-bar {{ display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid var(--line); }}
+    .tab-bar button {{ background: none; border: none; border-bottom: 3px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 1rem; font-weight: 600; color: #7a6f63; cursor: pointer; transition: color 120ms ease, border-color 120ms ease; width: auto; border-radius: 0; }}
+    .tab-bar button:hover {{ color: var(--accent); }}
+    .tab-bar button.active {{ color: var(--accent); border-bottom-color: var(--accent); }}
+    .tab-panel {{ display: none; }}
+    .tab-panel.active {{ display: block; }}
   </style>
   <script>
     document.addEventListener("DOMContentLoaded", () => {{
@@ -450,9 +456,19 @@ def render_page(state: GuiState) -> str:
             const label = form.getAttribute("data-busy-label") || "Working...";
             banner.querySelector("[data-busy-text]").textContent = label;
           }}
-          for (const button of document.querySelectorAll("button")) {{
+          for (const button of document.querySelectorAll("button:not(.tab-bar button)")) {{
             button.disabled = true;
           }}
+        }});
+      }}
+      for (const btn of document.querySelectorAll(".tab-bar button")) {{
+        btn.addEventListener("click", () => {{
+          const target = btn.getAttribute("data-tab");
+          for (const b of document.querySelectorAll(".tab-bar button")) b.classList.remove("active");
+          for (const p of document.querySelectorAll(".tab-panel")) p.classList.remove("active");
+          btn.classList.add("active");
+          const panel = document.getElementById("tab-" + target);
+          if (panel) panel.classList.add("active");
         }});
       }}
     }});
@@ -461,12 +477,16 @@ def render_page(state: GuiState) -> str:
 <body>
 <main>
   <h1>Professor MC Workflow</h1>
-  <p>Thin local GUI over the landed ingest, review, resolve, and export workflow.</p>
   {_render_message_blocks(state)}
   <div class="busy-banner" id="busy-banner" aria-live="polite">
     <span class="workflow-spinner" id="workflow-spinner" aria-hidden="true"></span>
     <span data-busy-text>Working...</span>
   </div>
+  <div class="tab-bar">
+    <button class="active" data-tab="grade">Grade</button>
+    <button data-tab="author">Author</button>
+  </div>
+  <div id="tab-grade" class="tab-panel active">
   <div class="grid">
     <section class="card">
       <h2>Configuration</h2>
@@ -541,7 +561,9 @@ def render_page(state: GuiState) -> str:
         </div>
       </form>
     </section>
-
+  </div>
+  </div>
+  <div id="tab-author" class="tab-panel">
     <section class="card wide">
       <h2>Author Assessment</h2>
       <p class="support-copy">Create a new exam or quiz definition. The authored assessment is saved to the database so it can be used as a grading target.</p>

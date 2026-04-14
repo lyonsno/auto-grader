@@ -34,6 +34,17 @@ class AssessmentAuthoringGuiRenderTests(unittest.TestCase):
         self.assertIn("Author Assessment", html)
         self.assertIn('action="/author"', html)
 
+    def test_render_page_uses_tab_navigation(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(config={"database_url": "postgresql:///postgres"})
+        html = gui.render_page(state)
+
+        self.assertIn("tab-bar", html)
+        self.assertIn('data-tab="grade"', html)
+        self.assertIn('data-tab="author"', html)
+        self.assertIn('id="tab-grade"', html)
+        self.assertIn('id="tab-author"', html)
+
     def test_authoring_section_has_title_and_slug_fields(self) -> None:
         gui = _load_gui_module(self)
         state = gui.GuiState(config={"database_url": "postgresql:///postgres"})
