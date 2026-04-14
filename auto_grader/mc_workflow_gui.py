@@ -39,6 +39,9 @@ _CONFIG_FIELDS = (
 )
 _RESOLUTION_CHOICES = ("", "__BLANK__", "A", "B", "C", "D", "E", "F")
 _ASSESSMENT_KINDS = ("exam", "quiz")
+# A–E only: the professor's exams and quizzes use 5-choice MC.
+# _RESOLUTION_CHOICES includes F for grading externally-created assessments;
+# the authoring surface intentionally does not offer F.
 _CHOICE_LABELS = ("A", "B", "C", "D", "E")
 _INITIAL_QUESTION_COUNT = 5
 
@@ -806,7 +809,7 @@ def _build_template_yaml(
     questions: list[dict[str, Any]],
 ) -> str:
     """Build a minimal valid YAML template string from authored question data."""
-    import yaml
+    import yaml  # PyYAML — declared repo dependency, used throughout template_schema.py
 
     template: dict[str, Any] = {
         "slug": slug,
