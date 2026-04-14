@@ -1718,16 +1718,19 @@ class FocusPreviewKittyImage:
         box = self._compute_box(term_width)
         cache_key = (term_width, box)
 
-        should_place = self._last_box != box
-        if should_place:
-            place_sequence = _build_kitty_place_sequence(
-                self._image_id,
-                cell_width=box[0],
-                cell_height=box[1],
-            )
-            self._last_box = box
-        else:
-            place_sequence = None
+        # Always re-issue the Kitty place command on every frame.
+        # The command is tiny (~30 bytes) and idempotent — Kitty
+        # re-places the already-cached image at the cursor position.
+        # This is necessary because Rich's Live repainter erases each
+        # line (CSI 2K) before redrawing, which wipes the terminal
+        # cells the image was painted into. Without a fresh a=p on
+        # every frame, the image disappears after the first render.
+        place_sequence = _build_kitty_place_sequence(
+            self._image_id,
+            cell_width=box[0],
+            cell_height=box[1],
+        )
+        self._last_box = box
 
         # Build or reuse the cached band segments.
         if self._cached_band_key != cache_key:
@@ -1736,18 +1739,16 @@ class FocusPreviewKittyImage:
             )
             self._cached_band_key = cache_key
 
-        place_segment = (
-            Segment(place_sequence, None, [(ControlType.BELL,)])
-            if place_sequence is not None
-            else None
+        place_segment = Segment(
+            place_sequence, None, [(ControlType.BELL,)]
         )
 
         for seg in self._cached_band_segments:
             if seg is None:
-                # Place slot: emit the Kitty place command on the
-                # first render at this geometry, skip on steady frames.
-                if place_segment is not None:
-                    yield place_segment
+                # Place slot: emit the Kitty place command so the
+                # terminal re-places the cached image after Rich's
+                # line erase.
+                yield place_segment
             else:
                 yield seg
 
