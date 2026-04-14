@@ -477,6 +477,7 @@ class NarratorSink:
             "#!/bin/bash\n"
             "set -u\n"
             f"cd {project_root}\n"
+            "unset PAINT_DRY_NO_INLINE_IMAGES\n"
             f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
             f"2>\"{reader_stderr}\"\n"
             "status=$?\n"

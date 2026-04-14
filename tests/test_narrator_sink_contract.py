@@ -69,6 +69,29 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertIn(".venv/bin/python", script)
         self.assertNotIn("uv run python", script)
 
+    def test_spawn_runner_clears_inline_preview_diagnostic_flag(self):
+        sink = NarratorSink()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fifo = Path(tmpdir) / "narrator.fifo"
+            fifo.touch()
+
+            with mock.patch.object(
+                sink,
+                "_resolve_wezterm_executable",
+                return_value="/Applications/WezTerm.app/Contents/MacOS/wezterm",
+            ), mock.patch("subprocess.run"):
+                sink._spawn_terminal_window(fifo)
+
+            runner = fifo.parent / "run.sh"
+            script = runner.read_text()
+
+        self.assertIn(
+            "unset PAINT_DRY_NO_INLINE_IMAGES",
+            script,
+            "spawned Paint Dry windows must not inherit the shell-level "
+            "diagnostic flag that forces the old half-block fallback",
+        )
+
     def test_spawn_raises_if_wezterm_cli_hangs(self):
         sink = NarratorSink()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -112,7 +135,9 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertIn("reader.stderr", script)
         self.assertIn("Press Enter to close", script)
         self.assertNotIn("reader.stdout", script)
-        launch_line = script.splitlines()[3]
+        launch_line = next(
+            line for line in script.splitlines() if "narrator_reader.py" in line
+        )
         self.assertNotRegex(launch_line, r"(^|\s)(?:1>|>)")
         self.assertNotIn(" 1>", launch_line)
         self.assertIn("2>", launch_line)
