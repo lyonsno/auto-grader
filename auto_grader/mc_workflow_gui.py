@@ -58,6 +58,8 @@ class GuiState:
     grading_targets: list[dict[str, Any]] = field(default_factory=list)
     assessment_definitions: list[dict[str, Any]] = field(default_factory=list)
     authoring_message: str | None = None
+    active_tab: str = "grade"
+    authoring_form: dict[str, str] = field(default_factory=dict)
 
 
 class McWorkflowGuiApp:
@@ -71,6 +73,14 @@ class McWorkflowGuiApp:
         if method == "POST":
             form = _parse_post_body(environ)
             self._update_config(form)
+            if path == "/author":
+                self.state.active_tab = "author"
+                self.state.authoring_form = {
+                    k: v for k, v in form.items()
+                    if k.startswith(("authoring_", "q_"))
+                }
+            else:
+                self.state.active_tab = "grade"
             try:
                 if path == "/ingest":
                     self._handle_ingest()
@@ -93,6 +103,8 @@ class McWorkflowGuiApp:
                 self._refresh_catalog()
                 if path != "/author":
                     self.state.authoring_message = None
+                if path == "/author":
+                    self.state.authoring_form = {}
                 self.state.error = None
             except Exception as exc:
                 self.state.error = str(exc)
@@ -378,7 +390,15 @@ def render_page(state: GuiState) -> str:
     authoring_msg = ""
     if state.authoring_message:
         authoring_msg = f'<div class="message ok">{escape(state.authoring_message)}</div>'
-    authoring_questions = _render_authoring_question_fields()
+    af = state.authoring_form
+    authoring_questions = _render_authoring_question_fields(af)
+    grade_active = "active" if state.active_tab != "author" else ""
+    author_active = "active" if state.active_tab == "author" else ""
+    a_title = escape(af.get("authoring_title", ""))
+    a_slug = escape(af.get("authoring_slug", ""))
+    a_kind = af.get("authoring_kind", "exam")
+    a_kind_exam_sel = " selected" if a_kind != "quiz" else ""
+    a_kind_quiz_sel = " selected" if a_kind == "quiz" else ""
 
     return f"""<!doctype html>
 <html lang="en">
@@ -449,6 +469,7 @@ def render_page(state: GuiState) -> str:
     .workflow-spinner {{ width: 16px; height: 16px; border-radius: 999px; border: 2px solid #b5cfd5; border-top-color: var(--accent); animation: workflow-spin 0.8s linear infinite; }}
     body.busy .busy-banner {{ display: flex; }}
     @keyframes workflow-spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
+    .field-hint {{ display: block; font-size: 0.78rem; color: #9a8e82; font-weight: 400; margin-top: 2px; margin-bottom: 2px; font-family: ui-monospace, monospace; }}
     .tab-bar {{ display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid var(--line); }}
     .tab-bar button {{ all: unset; border-bottom: 3px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 1rem; font-weight: 600; color: #7a6f63; cursor: pointer; transition: color 120ms ease, border-color 120ms ease; }}
     .tab-bar button:hover {{ color: var(--accent); }}
@@ -501,10 +522,10 @@ def render_page(state: GuiState) -> str:
     <span data-busy-text>Working...</span>
   </div>
   <div class="tab-bar">
-    <button class="active" data-tab="grade">Grade</button>
-    <button data-tab="author">Author</button>
+    <button class="{grade_active}" data-tab="grade">Grade</button>
+    <button class="{author_active}" data-tab="author">Author</button>
   </div>
-  <div id="tab-grade" class="tab-panel active">
+  <div id="tab-grade" class="tab-panel {grade_active}">
   <div class="grid">
     <section class="card">
       <h2>Configuration</h2>
@@ -581,7 +602,7 @@ def render_page(state: GuiState) -> str:
     </section>
   </div>
   </div>
-  <div id="tab-author" class="tab-panel">
+  <div id="tab-author" class="tab-panel {author_active}">
     <section class="card wide">
       <h2>Author Assessment</h2>
       <p class="support-copy">Create a new exam or quiz definition. The authored assessment is saved to the database so it can be used as a grading target.</p>
@@ -589,13 +610,13 @@ def render_page(state: GuiState) -> str:
       <form method="post" action="/author" data-busy-label="Saving assessment...">
         {_render_hidden_config(config)}
         <div class="grid" style="margin-bottom: 16px;">
-          <label>Title<input type="text" name="authoring_title" placeholder="e.g. CHM 141 Quiz 3"></label>
-          <label>Slug<input type="text" name="authoring_slug" placeholder="auto-derived from title if blank"></label>
+          <label>Title<span class="field-hint">e.g. CHM 141 Quiz 3</span><input type="text" name="authoring_title" value="{a_title}"></label>
+          <label>Slug<span class="field-hint">auto-derived from title if blank</span><input type="text" name="authoring_slug" value="{a_slug}"></label>
         </div>
         <label style="margin-bottom: 16px;">Assessment Kind
           <select name="authoring_kind">
-            <option value="exam">Exam</option>
-            <option value="quiz">Quiz</option>
+            <option value="exam"{a_kind_exam_sel}>Exam</option>
+            <option value="quiz"{a_kind_quiz_sel}>Quiz</option>
           </select>
         </label>
         <h3 class="section-title">Multiple-Choice Questions</h3>
@@ -793,36 +814,59 @@ def _require_schema_identifier(value: str) -> str:
 _DISTRACTOR_SLOT_COUNT = 4
 
 
-def _render_authoring_question_fields() -> str:
-    """Render the initial set of MC question input blocks for the authoring form."""
+def _render_authoring_question_fields(saved: dict[str, str] | None = None) -> str:
+    """Render the initial set of MC question input blocks for the authoring form.
+
+    If *saved* is provided (from a failed POST round-trip), field values
+    are restored so the professor does not lose their work.
+    """
+    saved = saved or {}
     blocks: list[str] = []
     for idx in range(1, _INITIAL_QUESTION_COUNT + 1):
+        def _v(name: str) -> str:
+            return escape(saved.get(name, ""))
+
+        mode = saved.get(f"q_{idx}_mode", "static")
+        is_computed = mode == "computed"
+        static_display = "none" if is_computed else ""
+        computed_display = "" if is_computed else "none"
+
         choice_inputs = "".join(
-            f'<label>{label}<input type="text" name="q_{idx}_choice_{label}" placeholder="Choice {label}"></label>'
+            f'<label>{label}<input type="text" name="q_{idx}_choice_{label}" value="{_v(f"q_{idx}_choice_{label}")}" placeholder="Choice {label}"></label>'
             for label in _CHOICE_LABELS
         )
+        correct_val = saved.get(f"q_{idx}_correct", "")
         correct_options = "".join(
-            f'<option value="{label}">{label}</option>' for label in _CHOICE_LABELS
+            f'<option value="{label}"{" selected" if label == correct_val else ""}>{label}</option>'
+            for label in _CHOICE_LABELS
         )
         distractor_inputs = "".join(
-            f'<label>Distractor {di}<input type="text" name="q_{idx}_distractor_{di}" placeholder="e.g. density / mass"></label>'
+            f'<label>Distractor {di}'
+            f'<span class="field-hint">e.g. density / mass</span>'
+            f'<input type="text" name="q_{idx}_distractor_{di}" value="{_v(f"q_{idx}_distractor_{di}")}"></label>'
             for di in range(1, _DISTRACTOR_SLOT_COUNT + 1)
         )
         blocks.append(
             f'<div class="card" style="margin-bottom: 12px;">'
             f"<h4 style=\"margin: 0 0 8px;\">Question {idx}</h4>"
-            f'<label>Prompt<input type="text" name="q_{idx}_prompt" placeholder="Question text (use {{{{var}}}} for variable placeholders)"></label>'
+            f'<label>Prompt'
+            f'<span class="field-hint">Use {{{{var}}}} for variable placeholders</span>'
+            f'<input type="text" name="q_{idx}_prompt" value="{_v(f"q_{idx}_prompt")}"></label>'
             f'<label>Mode<select name="q_{idx}_mode" onchange="toggleQuestionMode(this, {idx})">'
-            f'<option value="static">Static Choices</option>'
-            f'<option value="computed">Computed Distractors</option>'
+            f'<option value="static"{"" if is_computed else " selected"}>Static Choices</option>'
+            f'<option value="computed"{" selected" if is_computed else ""}>Computed Distractors</option>'
             f"</select></label>"
-            f'<div id="q_{idx}_static_panel">'
+            f'<div id="q_{idx}_static_panel" style="display:{static_display};">'
             f"{choice_inputs}"
             f'<label>Correct Answer<select name="q_{idx}_correct"><option value="">—</option>{correct_options}</select></label>'
             f"</div>"
-            f'<div id="q_{idx}_computed_panel" style="display:none;">'
-            f'<label>Variables (YAML)<textarea name="q_{idx}_variables" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.88rem;" placeholder="mass: {{type: float, min: 10.0, max: 99.0, step: 0.1}}"></textarea></label>'
-            f'<label>Answer Expression<input type="text" name="q_{idx}_answer_expr" placeholder="e.g. mass / density"></label>'
+            f'<div id="q_{idx}_computed_panel" style="display:{computed_display};">'
+            f'<label>Variables (YAML)'
+            f'<span class="field-hint">mass: {{type: float, min: 10.0, max: 99.0, step: 0.1}}</span>'
+            f'<textarea name="q_{idx}_variables" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.88rem;">{_v(f"q_{idx}_variables")}</textarea></label>'
+            f'<label>Answer Expression'
+            f'<span class="field-hint">e.g. mass / density</span>'
+            f'<input type="text" name="q_{idx}_answer_expr" value="{_v(f"q_{idx}_answer_expr")}"></label>'
             f"{distractor_inputs}"
             f"</div>"
             f"</div>"
