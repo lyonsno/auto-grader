@@ -257,9 +257,17 @@ class McWorkflowGuiApp:
         if not questions:
             raise ValueError("At least one question with a prompt is required.")
 
+        has_computed = False
         for q in questions:
-            if q["correct"] not in _CHOICE_LABELS:
-                raise ValueError(f"Question {q['form_slot']}: correct answer must be one of {', '.join(_CHOICE_LABELS)}.")
+            if q["mode"] == "static":
+                if q["correct"] not in _CHOICE_LABELS:
+                    raise ValueError(f"Question {q['form_slot']}: correct answer must be one of {', '.join(_CHOICE_LABELS)}.")
+            elif q["mode"] == "computed":
+                has_computed = True
+                if not q.get("answer_expr"):
+                    raise ValueError(f"Question {q['form_slot']}: answer expression is required for computed distractors.")
+                if not q.get("distractor_exprs"):
+                    raise ValueError(f"Question {q['form_slot']}: at least one distractor expression is required.")
 
         source_yaml = _build_template_yaml(slug=slug, title=title, kind=kind, questions=questions)
 
@@ -296,7 +304,10 @@ class McWorkflowGuiApp:
         finally:
             connection.close()
 
-        self.state.authoring_message = f"Saved assessment \u201c{title}\u201d ({kind}, {len(questions)} questions)."
+        msg = f"Saved assessment \u201c{title}\u201d ({kind}, {len(questions)} questions)."
+        if has_computed:
+            msg += " Computed-distractor questions require the generation pipeline to produce printable answer sheets."
+        self.state.authoring_message = msg
         self.state.message = None
 
     def _require_config(self, *keys: str) -> dict[str, str]:
@@ -439,7 +450,7 @@ def render_page(state: GuiState) -> str:
     body.busy .busy-banner {{ display: flex; }}
     @keyframes workflow-spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     .tab-bar {{ display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid var(--line); }}
-    .tab-bar button {{ background: none; border: none; border-bottom: 3px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 1rem; font-weight: 600; color: #7a6f63; cursor: pointer; transition: color 120ms ease, border-color 120ms ease; width: auto; border-radius: 0; }}
+    .tab-bar button {{ all: unset; border-bottom: 3px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 1rem; font-weight: 600; color: #7a6f63; cursor: pointer; transition: color 120ms ease, border-color 120ms ease; }}
     .tab-bar button:hover {{ color: var(--accent); }}
     .tab-bar button.active {{ color: var(--accent); border-bottom-color: var(--accent); }}
     .tab-panel {{ display: none; }}
@@ -461,6 +472,13 @@ def render_page(state: GuiState) -> str:
           }}
         }});
       }}
+      window.toggleQuestionMode = (sel, idx) => {{
+        const isComputed = sel.value === "computed";
+        const sp = document.getElementById("q_" + idx + "_static_panel");
+        const cp = document.getElementById("q_" + idx + "_computed_panel");
+        if (sp) sp.style.display = isComputed ? "none" : "";
+        if (cp) cp.style.display = isComputed ? "" : "none";
+      }};
       for (const btn of document.querySelectorAll(".tab-bar button")) {{
         btn.addEventListener("click", () => {{
           const target = btn.getAttribute("data-tab");
@@ -772,6 +790,9 @@ def _require_schema_identifier(value: str) -> str:
     return value
 
 
+_DISTRACTOR_SLOT_COUNT = 4
+
+
 def _render_authoring_question_fields() -> str:
     """Render the initial set of MC question input blocks for the authoring form."""
     blocks: list[str] = []
@@ -783,12 +804,27 @@ def _render_authoring_question_fields() -> str:
         correct_options = "".join(
             f'<option value="{label}">{label}</option>' for label in _CHOICE_LABELS
         )
+        distractor_inputs = "".join(
+            f'<label>Distractor {di}<input type="text" name="q_{idx}_distractor_{di}" placeholder="e.g. density / mass"></label>'
+            for di in range(1, _DISTRACTOR_SLOT_COUNT + 1)
+        )
         blocks.append(
             f'<div class="card" style="margin-bottom: 12px;">'
             f"<h4 style=\"margin: 0 0 8px;\">Question {idx}</h4>"
-            f'<label>Prompt<input type="text" name="q_{idx}_prompt" placeholder="Question text"></label>'
+            f'<label>Prompt<input type="text" name="q_{idx}_prompt" placeholder="Question text (use {{{{var}}}} for variable placeholders)"></label>'
+            f'<label>Mode<select name="q_{idx}_mode" onchange="toggleQuestionMode(this, {idx})">'
+            f'<option value="static">Static Choices</option>'
+            f'<option value="computed">Computed Distractors</option>'
+            f"</select></label>"
+            f'<div id="q_{idx}_static_panel">'
             f"{choice_inputs}"
             f'<label>Correct Answer<select name="q_{idx}_correct"><option value="">—</option>{correct_options}</select></label>'
+            f"</div>"
+            f'<div id="q_{idx}_computed_panel" style="display:none;">'
+            f'<label>Variables (YAML)<textarea name="q_{idx}_variables" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.88rem;" placeholder="mass: {{type: float, min: 10.0, max: 99.0, step: 0.1}}"></textarea></label>'
+            f'<label>Answer Expression<input type="text" name="q_{idx}_answer_expr" placeholder="e.g. mass / density"></label>'
+            f"{distractor_inputs}"
+            f"</div>"
             f"</div>"
         )
     return "".join(blocks)
@@ -798,7 +834,9 @@ def _extract_authored_questions(form: dict[str, str]) -> list[dict[str, Any]]:
     """Parse numbered MC question fields from the form into a list of question dicts.
 
     Scans all slots up to _INITIAL_QUESTION_COUNT and collects every slot
-    that has a non-empty prompt, regardless of gaps between them.
+    that has a non-empty prompt, regardless of gaps between them. Each
+    question carries a ``mode`` field (``"static"`` or ``"computed"``)
+    that determines which fields are populated.
     """
     questions: list[dict[str, Any]] = []
     question_number = 0
@@ -807,19 +845,40 @@ def _extract_authored_questions(form: dict[str, str]) -> list[dict[str, Any]]:
         if not prompt:
             continue
         question_number += 1
-        choices: dict[str, str] = {}
-        for label in _CHOICE_LABELS:
-            text = form.get(f"q_{idx}_choice_{label}", "").strip()
-            if text:
-                choices[label] = text
-        correct = form.get(f"q_{idx}_correct", "").strip()
-        questions.append({
-            "id": f"mc-{question_number}",
-            "form_slot": idx,
-            "prompt": prompt,
-            "choices": choices,
-            "correct": correct,
-        })
+        mode = form.get(f"q_{idx}_mode", "static").strip()
+
+        if mode == "computed":
+            variables_yaml = form.get(f"q_{idx}_variables", "").strip()
+            answer_expr = form.get(f"q_{idx}_answer_expr", "").strip()
+            distractor_exprs: list[str] = []
+            for di in range(1, _DISTRACTOR_SLOT_COUNT + 1):
+                expr = form.get(f"q_{idx}_distractor_{di}", "").strip()
+                if expr:
+                    distractor_exprs.append(expr)
+            questions.append({
+                "id": f"mc-{question_number}",
+                "form_slot": idx,
+                "prompt": prompt,
+                "mode": "computed",
+                "variables_yaml": variables_yaml,
+                "answer_expr": answer_expr,
+                "distractor_exprs": distractor_exprs,
+            })
+        else:
+            choices: dict[str, str] = {}
+            for label in _CHOICE_LABELS:
+                text = form.get(f"q_{idx}_choice_{label}", "").strip()
+                if text:
+                    choices[label] = text
+            correct = form.get(f"q_{idx}_correct", "").strip()
+            questions.append({
+                "id": f"mc-{question_number}",
+                "form_slot": idx,
+                "prompt": prompt,
+                "mode": "static",
+                "choices": choices,
+                "correct": correct,
+            })
     return questions
 
 
@@ -833,6 +892,29 @@ def _build_template_yaml(
     """Build a minimal valid YAML template string from authored question data."""
     import yaml  # PyYAML — declared repo dependency, used throughout template_schema.py
 
+    built_questions: list[dict[str, Any]] = []
+    for q in questions:
+        base: dict[str, Any] = {
+            "id": q["id"],
+            "points": 2,
+            "answer_type": "multiple_choice",
+            "prompt": q["prompt"],
+        }
+        if q.get("mode") == "computed":
+            variables_raw = q.get("variables_yaml", "")
+            if variables_raw:
+                parsed_vars = yaml.safe_load(variables_raw)
+                if isinstance(parsed_vars, dict):
+                    base["variables"] = parsed_vars
+            base["answer"] = {"expr": q["answer_expr"]}
+            base["distractors"] = {
+                "common_errors": [{"expr": e} for e in q["distractor_exprs"]],
+            }
+        else:
+            base["choices"] = q["choices"]
+            base["correct"] = q["correct"]
+        built_questions.append(base)
+
     template: dict[str, Any] = {
         "slug": slug,
         "title": title,
@@ -841,17 +923,7 @@ def _build_template_yaml(
             {
                 "id": "mc",
                 "title": "Multiple Choice",
-                "questions": [
-                    {
-                        "id": q["id"],
-                        "points": 2,
-                        "answer_type": "multiple_choice",
-                        "prompt": q["prompt"],
-                        "choices": q["choices"],
-                        "correct": q["correct"],
-                    }
-                    for q in questions
-                ],
+                "questions": built_questions,
             }
         ],
     }

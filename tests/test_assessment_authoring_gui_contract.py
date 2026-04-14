@@ -375,5 +375,94 @@ class AssessmentAuthoringValidationTests(unittest.TestCase):
         self.assertIsNone(app.state.authoring_message)
 
 
+class ComputedDistractorTests(unittest.TestCase):
+    """Questions can use computed distractors instead of static choices."""
+
+    def _post_author(self, gui, app, form_body: str):
+        captured: dict[str, object] = {}
+
+        def start_response(status, headers):
+            captured["status"] = status
+
+        body_bytes = form_body.encode("utf-8")
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/author",
+            "CONTENT_LENGTH": str(len(body_bytes)),
+            "wsgi.input": io.BytesIO(body_bytes),
+        }
+        chunks = list(app(environ, start_response))
+        html = b"".join(chunks).decode("utf-8")
+        return captured["status"], html
+
+    def test_render_page_exposes_question_mode_toggle(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(config={"database_url": "postgresql:///postgres"})
+        html = gui.render_page(state)
+
+        # Each question block must have a mode selector
+        self.assertIn('name="q_1_mode"', html)
+        self.assertIn("static", html.lower())
+        self.assertIn("computed", html.lower())
+
+    def test_render_page_exposes_distractor_fields(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(config={"database_url": "postgresql:///postgres"})
+        html = gui.render_page(state)
+
+        self.assertIn('name="q_1_answer_expr"', html)
+        self.assertIn('name="q_1_distractor_1"', html)
+        self.assertIn('name="q_1_variables"', html)
+
+    def test_computed_distractor_question_persists_without_error(self) -> None:
+        gui = _load_gui_module(self)
+        app = gui.McWorkflowGuiApp()
+
+        fake_connection = mock.MagicMock()
+        fake_connection.execute.return_value.fetchone.return_value = (1,)
+
+        form_body = (
+            "database_url=postgresql%3A%2F%2F%2Fpostgres&"
+            "authoring_title=Computed+Quiz&"
+            "authoring_slug=computed-quiz&"
+            "authoring_kind=quiz&"
+            "q_1_prompt=What+is+mass+%2F+density%3F&"
+            "q_1_mode=computed&"
+            "q_1_variables=mass%3A+%7Btype%3A+float%2C+min%3A+10.0%2C+max%3A+99.0%2C+step%3A+0.1%7D%0Adensity%3A+%7Btype%3A+float%2C+min%3A+0.7%2C+max%3A+3.5%2C+step%3A+0.01%7D&"
+            "q_1_answer_expr=mass+%2F+density&"
+            "q_1_distractor_1=density+%2F+mass&"
+            "q_1_distractor_2=mass+*+density&"
+            "q_1_distractor_3=mass+%2B+density"
+        )
+
+        with mock.patch.object(gui, "_connect", return_value=fake_connection):
+            status, html = self._post_author(gui, app, form_body)
+
+        self.assertEqual(status, "200 OK")
+        self.assertIn("saved", html.lower())
+        # Should mention that distractor evaluation needs the generation pipeline
+        self.assertIn("distractor", html.lower())
+
+    def test_computed_distractor_question_builds_distractor_yaml(self) -> None:
+        """The YAML for a computed question must use the distractors schema, not choices."""
+        gui = _load_gui_module(self)
+
+        form = {
+            "q_1_prompt": "What is mass / density?",
+            "q_1_mode": "computed",
+            "q_1_variables": "mass: {type: float, min: 10.0, max: 99.0, step: 0.1}",
+            "q_1_answer_expr": "mass / density",
+            "q_1_distractor_1": "density / mass",
+            "q_1_distractor_2": "mass * density",
+        }
+        questions = gui._extract_authored_questions(form)
+        self.assertEqual(len(questions), 1)
+        q = questions[0]
+        self.assertEqual(q["mode"], "computed")
+        self.assertIn("answer_expr", q)
+        self.assertIn("distractor_exprs", q)
+        self.assertNotIn("choices", q)
+
+
 if __name__ == "__main__":
     unittest.main()
