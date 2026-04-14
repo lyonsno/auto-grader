@@ -32,6 +32,7 @@ import os
 import random
 import re
 import select
+import signal
 import sys
 import termios
 import threading
@@ -105,6 +106,18 @@ _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # depth, but count it coherently now that the
                             # scorebug and long wrapped lines exist.
 _VISIBLE_DROP_LINES = 4
+
+# -- Alt-screen height budget -----------------------------------------------
+# In alt-screen mode the total rendered height must never exceed the
+# terminal's row count.  The history panel is the flex element — it
+# absorbs whatever vertical space remains after the fixed-cost panels
+# (header, scorebug, live, focus preview, drops, wrap-up, footer).
+#
+# _HISTORY_MIN_HEIGHT is the smallest the history panel is allowed to
+# be (including its 2-row border).  If the terminal is too short even
+# for this minimum, we still honour it — the bottom will clip, but at
+# least the layout won't corrupt.
+_HISTORY_MIN_HEIGHT = 5  # 3 content rows + 2 border rows
 _FOCUS_PREVIEW_MIN_WIDTH_CHARS = 54
 _FOCUS_PREVIEW_MAX_WIDTH_CHARS = 116
 _FOCUS_PREVIEW_MIN_HEIGHT_ROWS = 18
@@ -219,11 +232,6 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
-    "topic_truncated": (104, 100, 92),    # dimmed ash-bone placeholder —
-                                          # fallback/truncated after-action
-                                          # lines should read as degraded
-                                          # verdict placeholders, not as
-                                          # full-strength match topics
     "checkpoint": (162, 152, 138),        # anchored warm bone checkpoint —
                                           # still a synthesis line, but
                                           # pulled down toward the body so
@@ -262,9 +270,6 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
-    "topic_truncated": 0.82,    # visibly dimmer than a real verdict line
-                                 # so fallback topics read as degraded
-                                 # placeholders, not normal topics
     "checkpoint": 0.92,
     "checkpoint_alt": 0.92,
     "checkpoint_mark": 0.96,
@@ -303,9 +308,6 @@ _SHIMMER_KIND_PEAK_RGB = {
     "line_alt": (168, 188, 178),  # lifted muted moss companion
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
-    "topic_truncated": (124, 118, 108), # lifted ash-bone crest — still
-                                        # alive, but clearly less assertive
-                                        # than a real verdict topic
     "checkpoint": (188, 178, 162),      # lifted warm-bone crest for
                                         # synthesis rows that should still
                                         # sit with the history body
@@ -338,7 +340,6 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header_dash",
     "topic",
     "topic_match",
-    "topic_truncated",
     "checkpoint",
     "checkpoint_alt",
     "checkpoint_mark",
@@ -917,6 +918,19 @@ def _compute_inline_image_cell_dimensions(
 #: ID, which overwrites the previous image in WezTerm's cache rather
 #: than accumulating. Bounded memory footprint on the terminal side.
 _KITTY_IMAGE_ID = 1
+
+
+def _kitty_delete_image(image_id: int, stream=None) -> None:
+    """Delete a Kitty graphics image from the terminal's cache.
+
+    Emits ``ESC _G a=d,d=I,i=<id> ESC \\`` which removes the image
+    with the given ID.  ``d=I`` means "delete by image ID" (as
+    opposed to other delete modes like "all images" or "by position").
+    """
+    if stream is None:
+        stream = sys.stdout
+    stream.write(f"\x1b_Ga=d,d=I,i={image_id}\x1b\\")
+    stream.flush()
 
 #: Base64 chunks must be at most this many characters. Kitty protocol
 #: spec: "chunk size of 4096 for the base64-encoded data".
@@ -2876,8 +2890,14 @@ class PaintDryDisplay:
         # sequence + padding so Rich's layout reserves the right
         # vertical space.
         self.focus_preview_inline_renderable: FocusPreviewInlineImage | None = None
-        self._inline_images_supported: bool = _supports_inline_images(
-            os.environ.get("TERM_PROGRAM")
+        # PAINT_DRY_NO_INLINE_IMAGES=1 forces the half-block fallback
+        # renderer, bypassing both Kitty and iTerm2 inline image paths.
+        # Diagnostic tool for isolating resize corruption caused by
+        # the terminal's image compositing layer.
+        _force_no_inline = os.environ.get("PAINT_DRY_NO_INLINE_IMAGES") == "1"
+        self._inline_images_supported: bool = (
+            not _force_no_inline
+            and _supports_inline_images(os.environ.get("TERM_PROGRAM"))
         )
         # Kitty graphics protocol state. Preferred over the iTerm2
         # OSC 1337 path when available because it supports
@@ -2888,8 +2908,9 @@ class PaintDryDisplay:
         # event thread), then the renderable below yields only the
         # tiny place command on each frame.
         self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
-        self._kitty_graphics_supported: bool = _supports_kitty_graphics(
-            os.environ.get("TERM_PROGRAM")
+        self._kitty_graphics_supported: bool = (
+            not _force_no_inline
+            and _supports_kitty_graphics(os.environ.get("TERM_PROGRAM"))
         )
         # Query the terminal for its real cell pixel dimensions once
         # at init. Used by the Kitty renderer to compute correct
@@ -3162,25 +3183,6 @@ class PaintDryDisplay:
             (entry, idx == most_recent_idx)
             for idx, entry in enumerate(history_list)
         ]
-
-    @staticmethod
-    def _trim_leading_orphan_entries(
-        display_entries: list[tuple[tuple, bool, int]],
-    ) -> list[tuple[tuple, bool, int]]:
-        """Drop any leading mid-item rows until the next visible header.
-
-        This is a defensive renderer guard: if a viewport slice or
-        budgeted history pass ever hands us a list that starts in the
-        middle of an item, the pane should not paint orphaned topic /
-        basis / checkpoint rows without their owning header.
-        """
-        first_header_idx = next(
-            (idx for idx, (entry, _recent, _depth) in enumerate(display_entries) if entry[0] == "header"),
-            None,
-        )
-        if first_header_idx in (None, 0):
-            return display_entries
-        return display_entries[first_header_idx:]
 
     @staticmethod
     def _history_groups_with_indices(
@@ -4027,9 +4029,7 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._trim_leading_orphan_entries(
-            self._viewport_display_entries()
-        )
+        display_entries = self._viewport_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
         current_group_index = -1
@@ -4137,12 +4137,6 @@ class PaintDryDisplay:
                     "overshoot": "topic_overshoot",
                     "undershoot": "topic_undershoot",
                 }.get(parity, "topic")
-                is_truncated_topic = (
-                    "(truncated)" in text.lower()
-                    or "(after-action unavailable)" in text.lower()
-                )
-                if is_truncated_topic:
-                    topic_kind = "topic_truncated"
                 # Pull out the elapsed-time prefix and color it as a
                 # punchy warm accent (bold orange3 — same warm as the
                 # post-game border and header base) so it pops out
@@ -4152,11 +4146,7 @@ class PaintDryDisplay:
                     time_prefix, rest = m.group(1), m.group(2)
                     history_text.append(
                         time_prefix,
-                        style=(
-                            f"{_rgb_to_hex(_BASE_RGB['status'])}"
-                            if is_truncated_topic
-                            else f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}"
-                        ),
+                        style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                     )
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
@@ -4306,10 +4296,63 @@ class PaintDryDisplay:
                 title_align="left",
             )
 
-        # Order: header, scorebug, live, history, post-game, drops, [footer]
-        # The PROJECT PAINT DRY band is the primary scene-setter again;
-        # the scorebug stays immediately below it as the denser
-        # instrumentation slab.
+        # -- Alt-screen height budget ----------------------------------
+        # Tally the vertical cost of every non-history panel, then give
+        # the history panel whatever rows remain so the total never
+        # exceeds the terminal height.  Each estimate is conservative
+        # (may overcount by a row) — better to leave a blank row at the
+        # bottom than to overflow and corrupt.
+        term_height: int | None = None
+        try:
+            if self._console is not None:
+                term_height = self._console.size.height
+        except Exception:
+            pass
+
+        fixed_rows = 0
+        # header panel: 1 content + 2 border
+        fixed_rows += 3
+        # scorebug panel: meta row + gap + labels + 3 value rows + gap
+        # = 7 content + 2 border = 9.  Absent when no model/item set.
+        if scorebug_panel is not None:
+            fixed_rows += 9
+        # live panel: fixed height
+        fixed_rows += _TOP_PANEL_CONTENT_LINES + 2
+        # focus preview: cell_height + 4 (2 borders + 2 texture rows)
+        if focus_preview_panel is not None:
+            fixed_rows += _INLINE_IMAGE_CELL_HEIGHT + 4
+        # wrap-up panel (when present)
+        if wrap_panel is not None:
+            # Estimate: 3 content lines + 2 border = 5
+            fixed_rows += 5
+        # drops panel (when present)
+        if drops_panel is not None:
+            fixed_rows += _VISIBLE_DROP_LINES + 2
+        # footer line (when session ended)
+        if self.session_ended:
+            fixed_rows += 1
+
+        if term_height is not None and term_height > 0:
+            # Clamp to at least 3 (2 border + 1 content line) so the
+            # panel is always structurally valid, but don't force the
+            # _HISTORY_MIN_HEIGHT when the terminal genuinely has no
+            # room — that would guarantee overflow.
+            history_budget = max(3, term_height - fixed_rows)
+        else:
+            history_budget = None  # no cap — headless / piped
+
+        if history_budget is not None:
+            history_panel = Panel(
+                history_text,
+                border_style="#3d4458",
+                padding=(0, 1),
+                title="[grey50]history[/grey50]",
+                title_align="left",
+                height=history_budget,
+            )
+
+        # Order: header, scorebug, live, focus preview, history,
+        # post-game, drops, [footer].
         panels = []
         panels.append(header)
         if scorebug_panel is not None:
@@ -4441,6 +4484,36 @@ class PaintDryDisplay:
         """Final post-game commentary from bonsai."""
         self.wrap_up_text = text
         self.wrap_up_pending = False
+
+    def retransmit_kitty_image(self) -> None:
+        """Delete and re-upload the Kitty graphics image.
+
+        Called on terminal resize to flush the terminal's image
+        compositing layer.  The terminal caches rendered image pixels
+        independently of the character cell grid — a screen clear
+        (ESC[2J) removes text but can leave image pixels behind.
+        Deleting and re-transmitting the image forces the terminal
+        to re-render the image at the correct geometry.
+        """
+        if not self._kitty_graphics_supported:
+            return
+        if self.focus_preview_png is None:
+            return
+        if self.focus_preview_kitty_renderable is None:
+            return
+        stream = self._console.file if self._console is not None else sys.stdout
+        # Delete the old image from the terminal cache.
+        _kitty_delete_image(_KITTY_IMAGE_ID, stream=stream)
+        # Re-transmit.
+        try:
+            chunks = _build_kitty_transmit_chunks(
+                self.focus_preview_png, _KITTY_IMAGE_ID
+            )
+            for chunk in chunks:
+                stream.write(chunk)
+            stream.flush()
+        except Exception:
+            pass  # Next focus_preview event will recover.
 
     def on_focus_preview(
         self,
@@ -4657,16 +4730,95 @@ def main() -> int:
         session_exit = threading.Event()
         scroll_controller = HistoryScrollController(display)
 
-        # screen=False — stay in the terminal's main screen buffer.
-        # Alt-screen (screen=True) was tried and reverted: the focus-
-        # preview image panel can push the total rendered height past
-        # the terminal's row count, and alt-screen has no scrollback
-        # to absorb the overflow — the result is doubled/garbled
-        # panels. screen=False lets the terminal scroll naturally.
-        # Trade-off: Rich's in-place redraw leaves prior frames in
-        # the terminal's native scrollback (ghost header trails when
-        # scrolling the terminal up). That is accepted until a fixed-
-        # height layout or Rich transient mode can eliminate it.
+        # screen=True — use the terminal's alternate screen buffer.
+        # Alt-screen gives us clean resize handling: Rich redraws the
+        # full screen on every frame instead of trying to diff against
+        # reflowed main-buffer text. Previously reverted because the
+        # rendered height could exceed the terminal's row count, but
+        # render() now caps the history panel via a height budget so
+        # the total output never exceeds console.size.height.
+        # Clear the alt-screen before every repaint.  Rich's alt-screen
+        # Live path sends Control.home() (cursor to 0,0) then overwrites
+        # from the top, but does NOT clear the screen.  When the terminal
+        # resizes, the previous frame may occupy more or fewer rows than
+        # the new frame, leaving stale ghost content visible.
+        #
+        # Clearing every frame (not just on resize) is safe in alt-screen
+        # mode: WezTerm and other modern terminals double-buffer the
+        # alternate screen, so the clear + repaint happens atomically
+        # from the user's perspective — no visible flicker.  The cost is
+        # a handful of extra bytes per frame (ESC[2J = 4 bytes at ~8 FPS
+        # = 32 B/s, negligible).
+        # Resize coordination.  SIGWINCH fires on the main thread
+        # (signal delivery) while the animation thread is writing to
+        # stdout via live.update().  Writing \033[2J from the signal
+        # handler interleaves with Rich's output and corrupts the
+        # frame.  Instead, the handler only sets a flag and wakes the
+        # animation thread; all stdout writes happen on one thread.
+        _resize_pending = threading.Event()
+        # Wakeup event: the animation thread sleeps on this instead
+        # of time.sleep() so SIGWINCH can cut the sleep short.
+        _animation_wake = threading.Event()
+
+        _prev_sigwinch = signal.getsignal(signal.SIGWINCH)
+
+        def _on_sigwinch(signum, frame):
+            _resize_pending.set()
+            _animation_wake.set()  # wake the animation thread NOW
+            if callable(_prev_sigwinch):
+                _prev_sigwinch(signum, frame)
+
+        signal.signal(signal.SIGWINCH, _on_sigwinch)
+
+        _last_paint_size: tuple[int, int] | None = None
+
+        def _live_update():
+            """Render, clear, and paint one frame.
+
+            Render and paint are size-checked: the terminal size is
+            snapshotted before render and verified again after.  If
+            the size changed during render (resize arrived mid-
+            layout), re-render at the new size.  Up to 3 retries to
+            converge during rapid resize; after that, paint whatever
+            we have (a briefly stale frame is better than dropping
+            a frame entirely).
+
+            On resize, Kitty graphics images are deleted and
+            re-transmitted so the terminal's image compositing layer
+            doesn't retain stale pixels from the previous geometry.
+
+            All stdout writes happen here on the animation thread,
+            never from the signal handler, so there is no interleaving.
+            """
+            nonlocal _last_paint_size
+            _resize_pending.clear()
+
+            cur_size = (console.size.width, console.size.height)
+            resized = _last_paint_size is not None and cur_size != _last_paint_size
+
+            if resized:
+                display.retransmit_kitty_image()
+
+            renderable = None
+            for _attempt in range(3):
+                size_before = (console.size.width, console.size.height)
+                renderable = display.render()
+                size_after = (console.size.width, console.size.height)
+                if size_before == size_after:
+                    break  # geometry stable — safe to paint
+
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.flush()
+            live.update(renderable, refresh=True)
+            _last_paint_size = (console.size.width, console.size.height)
+
+        # Enter alt-screen manually.  We use screen=False on Live so
+        # Rich doesn't wrap our renderable in Screen (which pads to a
+        # height that can be stale during resize).  Our _live_update
+        # does its own clear + cursor-home on every frame.
+        sys.stdout.write("\033[?1049h")
+        sys.stdout.flush()
+
         with Live(
             display.render(),
             console=console,
@@ -4678,7 +4830,7 @@ def main() -> int:
                 while True:
                     if not display.should_animate():
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update()
                         except Exception:
                             pass
                     try:
@@ -4699,16 +4851,18 @@ def main() -> int:
 
             def _animation_tick():
                 while not animation_stop.is_set():
-                    if display.should_animate():
+                    if display.should_animate() or _resize_pending.is_set():
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update()
                         except Exception:
                             # Transient race with the message loop mutating
                             # display state — next tick will recover.
                             pass
-                        time.sleep(1.0 / _ACTIVE_ANIMATION_FPS)
+                        _animation_wake.clear()
+                        _animation_wake.wait(timeout=1.0 / _ACTIVE_ANIMATION_FPS)
                     else:
-                        time.sleep(_IDLE_POLL_S)
+                        _animation_wake.clear()
+                        _animation_wake.wait(timeout=_IDLE_POLL_S)
 
             anim_thread = threading.Thread(
                 target=_animation_tick,
@@ -4850,7 +5004,7 @@ def main() -> int:
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update()
                         except Exception:
                             pass
     finally:
@@ -4861,6 +5015,17 @@ def main() -> int:
             pass
         try:
             fifo.close()
+        except Exception:
+            pass
+        # Exit alt-screen (return to main buffer).
+        try:
+            sys.stdout.write("\033[?1049l")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        # Restore SIGWINCH handler.
+        try:
+            signal.signal(signal.SIGWINCH, _prev_sigwinch)
         except Exception:
             pass
         if stdin_fd is not None and saved_termios is not None:
