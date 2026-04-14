@@ -1194,11 +1194,13 @@ class NarratorReaderContract(unittest.TestCase):
             msg="resizing must preserve image aspect ratio",
         )
 
-    def test_focus_preview_kitty_image_reuses_cached_placement_when_geometry_is_stable(self):
-        # Once the image has been placed at a given geometry, steady
-        # same-size renders should only cursor past the cached image
-        # instead of re-issuing a fresh Kitty place command on every
-        # animation tick.
+    def test_focus_preview_kitty_image_replaces_on_every_frame(self):
+        # The Kitty place command (a=p) must be re-issued on every
+        # frame, not just the first render. Rich's Live repainter
+        # erases each line (CSI 2K) before redrawing, which wipes the
+        # terminal cells the image was painted into. Without a fresh
+        # a=p on every frame the image disappears after the first
+        # render and shows as a blank dark rectangle.
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
@@ -1224,7 +1226,12 @@ class NarratorReaderContract(unittest.TestCase):
             for segment in renderable.__rich_console__(console, options)
         )
         self.assertEqual(first.count("\x1b_Ga=p"), 1)
-        self.assertEqual(second.count("\x1b_Ga=p"), 0)
+        self.assertEqual(
+            second.count("\x1b_Ga=p"),
+            1,
+            "Kitty place command must fire on every frame so the image "
+            "survives Rich's per-line erase between repaints",
+        )
 
     def test_focus_preview_kitty_image_reissues_place_after_geometry_change(self):
         from rich.console import Console
