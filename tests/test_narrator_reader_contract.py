@@ -1988,34 +1988,20 @@ class NarratorReaderContract(unittest.TestCase):
         left_label_bg = self._background_hex(left_label_style)
         bad_label_bg = self._background_hex(bad_label_style)
         self.assertEqual(
-            on_target_label_bg,
-            "#32578e",
-            "ON TARGET should recover its old steel-blue board in the top label row",
+            {on_target_label_bg, left_label_bg, bad_label_bg},
+            {on_target_label_bg},
+            "the tally labels should sit on one shared charcoal field instead of three color-coded boards",
         )
-        self.assertEqual(
-            left_label_bg,
-            "#6b5028",
-            "LEFT ON TABLE should recover its old yellow-bronze board in the top label row",
-        )
-        self.assertEqual(
-            bad_label_bg,
-            "#7a392f",
-            "BAD CALLS should recover its old red-brown board in the top label row",
-        )
-        self.assertEqual(
-            self._foreground_hex(on_target_label_style),
-            "#eef3ff",
-            "ON TARGET label ink should come back as the older pale blue-white",
-        )
-        self.assertEqual(
-            self._foreground_hex(left_label_style),
-            "#fff1d6",
-            "LEFT ON TABLE label ink should come back as the older wheat-white",
-        )
-        self.assertEqual(
-            self._foreground_hex(bad_label_style),
-            "#ffe5dd",
-            "BAD CALLS label ink should come back as the older rose-white",
+        self.assertGreaterEqual(
+            len(
+                {
+                    self._foreground_hex(on_target_label_style),
+                    self._foreground_hex(left_label_style),
+                    self._foreground_hex(bad_label_style),
+                }
+            ),
+            2,
+            "the labels can still carry restrained accent differences, but only in the foreground ink, not in separate slab backgrounds",
         )
         cell_width = len(f" {expected_on_target[0]} ")
         separator_width = 2
@@ -2660,6 +2646,40 @@ class NarratorReaderContract(unittest.TestCase):
         for label in ("EMITTED", "DEDUP", "EMPTY"):
             style = self._style_for_substring(header_text_obj, label)
             self.assertIn("on #", style)
+
+        emitted_style = self._style_for_substring(header_text_obj, "EMITTED")
+        dedup_style = self._style_for_substring(header_text_obj, "DEDUP")
+        empty_style = self._style_for_substring(header_text_obj, "EMPTY")
+        self.assertEqual(
+            self._background_hex(emitted_style),
+            "#2f5e2b",
+            "EMITTED should use the brighter green board from the older text-era telemetry family",
+        )
+        self.assertEqual(
+            self._foreground_hex(emitted_style),
+            "#ecffe8",
+            "EMITTED label ink should stay bright green-white, not the dimmer newer pass",
+        )
+        self.assertEqual(
+            self._background_hex(dedup_style),
+            "#56611f",
+            "DEDUP should read as bright yellow/chartreuse rather than the newer brown board",
+        )
+        self.assertEqual(
+            self._foreground_hex(dedup_style),
+            "#f4ffd2",
+            "DEDUP label ink should stay in the bright yellow-chartreuse family",
+        )
+        self.assertEqual(
+            self._background_hex(empty_style),
+            "#6a2a22",
+            "EMPTY should keep the bright red board from the older text-era telemetry family",
+        )
+        self.assertEqual(
+            self._foreground_hex(empty_style),
+            "#ffe1db",
+            "EMPTY label ink should stay bright red-white rather than the muted newer pass",
+        )
 
         drops_panel = group.renderables[-1]
         drops_title = drops_panel.title or ""

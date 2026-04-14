@@ -3498,15 +3498,21 @@ class PaintDryDisplay:
         # chrome.
         _dead_label = "bold #9aa0ac on #2a2d34"
         _dead_value = "bold #cdd1da on #1a1c22"
+        _emitted_label = "bold #ecffe8 on #2f5e2b"
+        _emitted_value = "bold #dcffd3 on #173515"
+        _dedup_label = "bold #f4ffd2 on #56611f"
+        _dedup_value = "bold #e5f3b8 on #333b12"
+        _empty_label = "bold #ffe1db on #6a2a22"
+        _empty_value = "bold #ffc3b8 on #411611"
         self._append_scorebug_cell(
             header_text,
             "EMITTED",
             f"{self.stat_emitted}",
             label_style=(
-                "bold #e0f5dc on #2b4e2a" if self.stat_emitted > 0 else _dead_label
+                _emitted_label if self.stat_emitted > 0 else _dead_label
             ),
             value_style=(
-                "bold #c7e6c0 on #1a3519" if self.stat_emitted > 0 else _dead_value
+                _emitted_value if self.stat_emitted > 0 else _dead_value
             ),
         )
         self._append_scorebug_cell(
@@ -3514,12 +3520,12 @@ class PaintDryDisplay:
             "DEDUP",
             f"{self.stat_dropped_dedup}",
             label_style=(
-                "bold #fff1cc on #5a4420"
+                _dedup_label
                 if self.stat_dropped_dedup > 0
                 else _dead_label
             ),
             value_style=(
-                "bold #f2dfa8 on #3d2d13"
+                _dedup_value
                 if self.stat_dropped_dedup > 0
                 else _dead_value
             ),
@@ -3529,12 +3535,12 @@ class PaintDryDisplay:
             "EMPTY",
             f"{self.stat_dropped_empty}",
             label_style=(
-                "bold #ffd6d0 on #5a2620"
+                _empty_label
                 if self.stat_dropped_empty > 0
                 else _dead_label
             ),
             value_style=(
-                "bold #f2b6ad on #3d1813"
+                _empty_value
                 if self.stat_dropped_empty > 0
                 else _dead_value
             ),
@@ -3645,14 +3651,6 @@ class PaintDryDisplay:
                 "#523f2b on #3f2b14",
                 "#493827 on #33220f",
             )
-            # Restore the older categorical label boards for the three
-            # grading plates while keeping the newer unified value
-            # field beneath them. The result keeps the calmer new
-            # scoreboard body but gives the eye back the older
-            # blue / bronze / red-brown wayfinding in the top row.
-            _on_target_label_style = "bold #eef3ff on #32578e"
-            _left_on_table_label_style = "bold #fff1d6 on #6b5028"
-            _bad_calls_label_style = "bold #ffe5dd on #7a392f"
             _total_value_str = f"{total_elapsed_s}"
             _turn_value_str = (
                 f"{turn_elapsed_s}" if turn_elapsed_s is not None else "--"
@@ -3697,7 +3695,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_on_target_points)}"
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
-                    label_style=_on_target_label_style,
+                    label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3718,7 +3716,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
-                    label_style=_left_on_table_label_style,
+                    label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3739,7 +3737,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
-                    label_style=_bad_calls_label_style,
+                    label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3795,7 +3793,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
-                    label_style=_on_target_label_style,
+                    label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3813,7 +3811,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
-                    label_style=_left_on_table_label_style,
+                    label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3831,7 +3829,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
-                    label_style=_bad_calls_label_style,
+                    label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
