@@ -1579,6 +1579,11 @@ class FocusPreviewKittyImage:
         self._terminal_cell_aspect = terminal_cell_aspect
         self._title = title
         self._last_box: tuple[int, int] | None = None
+        # Segment cache for the steady band (borders + texture).
+        # Keyed on (term_width, box) — when geometry is stable,
+        # return the cached segments instead of recomputing.
+        self._cached_band_key: tuple[int, tuple[int, int]] | None = None
+        self._cached_band_segments: list[Segment] | None = None
 
     def _compute_box(self, available_width: int) -> tuple[int, int]:
         """Compute (cell_width, cell_height) for the image at the
@@ -1594,6 +1599,83 @@ class FocusPreviewKittyImage:
             terminal_cell_aspect=self._terminal_cell_aspect,
         )
         return cw, ch
+
+    def _build_band_segments(
+        self,
+        term_width: int,
+        box: tuple[int, int],
+    ) -> list[Segment]:
+        """Build the full band segment list (borders + texture + cursor-
+        forward placeholders) for the given geometry. The Kitty place
+        command is NOT included — it is prepended separately on the
+        first render at a geometry so steady frames skip it.
+        """
+        cell_width, cell_height = box
+        image_left = max(0, (term_width - cell_width) // 2)
+        image_right = image_left + cell_width
+
+        segments: list[Segment] = []
+
+        # ─── Top border rule with inlined title ───
+        segments.extend(_emit_band_border_row(term_width, title=self._title))
+
+        # ─── Extra texture row above the image ───
+        segments.extend(_emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=0,
+            image_id=self._image_id,
+        ))
+
+        # ─── Image rows ───
+        forward_escape = f"\x1b[{cell_width}C"
+        for image_row in range(cell_height):
+            segments.extend(_emit_band_texture_span(
+                col_start=0,
+                col_end=image_left,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=self._image_id,
+            ))
+            # Placeholder index for the Kitty place command on row 0.
+            # On the first render this gets the place sequence prepended;
+            # on steady frames only the cursor-forward is emitted.
+            if image_row == 0:
+                # Sentinel: _BAND_PLACE_SLOT marks where the place
+                # command would go. The __rich_console__ method
+                # replaces this with the real command on the first
+                # render and skips it on steady frames.
+                segments.append(None)  # place slot
+            segments.append(
+                Segment(forward_escape, None, [(ControlType.BELL,)])
+            )
+            segments.extend(_emit_band_texture_span(
+                col_start=image_right,
+                col_end=term_width,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=self._image_id,
+            ))
+            segments.append(Segment.line())
+
+        # ─── Extra texture row below the image ───
+        segments.extend(_emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=1 + cell_height,
+            image_id=self._image_id,
+        ))
+
+        # ─── Bottom border rule ───
+        segments.extend(_emit_band_border_row(term_width, title=""))
+
+        return segments
 
     def __rich_console__(
         self,
@@ -1633,79 +1715,41 @@ class FocusPreviewKittyImage:
         to absolute terminal positions during resize.
         """
         term_width = max(1, options.max_width)
-        cell_width, cell_height = self._compute_box(term_width)
+        box = self._compute_box(term_width)
+        cache_key = (term_width, box)
 
-        # Center the image horizontally in the band.
-        image_left = max(0, (term_width - cell_width) // 2)
-        image_right = image_left + cell_width  # exclusive
-
-        box = (cell_width, cell_height)
         should_place = self._last_box != box
         if should_place:
             place_sequence = _build_kitty_place_sequence(
                 self._image_id,
-                cell_width=cell_width,
-                cell_height=cell_height,
+                cell_width=box[0],
+                cell_height=box[1],
             )
             self._last_box = box
         else:
             place_sequence = None
 
-        # ─── Top border rule with inlined title ───
-        yield from _emit_band_border_row(term_width, title=self._title)
+        # Build or reuse the cached band segments.
+        if self._cached_band_key != cache_key:
+            self._cached_band_segments = self._build_band_segments(
+                term_width, box,
+            )
+            self._cached_band_key = cache_key
 
-        # ─── Extra texture row above the image ───
-        yield from _emit_band_texture_only_row(
-            term_width,
-            image_left=image_left,
-            image_right=image_right,
-            row_seed_id=0,
-            image_id=self._image_id,
+        place_segment = (
+            Segment(place_sequence, None, [(ControlType.BELL,)])
+            if place_sequence is not None
+            else None
         )
 
-        # ─── Image rows ───
-        forward_escape = f"\x1b[{cell_width}C"
-        for image_row in range(cell_height):
-            # Left texture: columns 0 to image_left - 1.
-            yield from _emit_band_texture_span(
-                col_start=0,
-                col_end=image_left,
-                image_left=image_left,
-                image_right=image_right,
-                term_width=term_width,
-                row_seed_id=1 + image_row,
-                image_id=self._image_id,
-            )
-            # Middle: image placement on row 0, cursor-forward only
-            # on rows 1+.
-            if image_row == 0 and place_sequence is not None:
-                yield Segment(
-                    place_sequence, None, [(ControlType.BELL,)]
-                )
-            yield Segment(forward_escape, None, [(ControlType.BELL,)])
-            # Right texture: columns image_right to term_width - 1.
-            yield from _emit_band_texture_span(
-                col_start=image_right,
-                col_end=term_width,
-                image_left=image_left,
-                image_right=image_right,
-                term_width=term_width,
-                row_seed_id=1 + image_row,
-                image_id=self._image_id,
-            )
-            yield Segment.line()
-
-        # ─── Extra texture row below the image ───
-        yield from _emit_band_texture_only_row(
-            term_width,
-            image_left=image_left,
-            image_right=image_right,
-            row_seed_id=1 + cell_height,
-            image_id=self._image_id,
-        )
-
-        # ─── Bottom border rule ───
-        yield from _emit_band_border_row(term_width, title="")
+        for seg in self._cached_band_segments:
+            if seg is None:
+                # Place slot: emit the Kitty place command on the
+                # first render at this geometry, skip on steady frames.
+                if place_segment is not None:
+                    yield place_segment
+            else:
+                yield seg
 
 
 
