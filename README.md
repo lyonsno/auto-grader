@@ -394,6 +394,22 @@ python scripts/mc_workflow.py export \
   --output-dir /tmp/mc-export
 ```
 
+Example first-pass professor GUI:
+
+```bash
+python scripts/launch_mc_workflow_gui.py \
+  --open-browser \
+  --database-url postgresql:///postgres \
+  --exam-instance-id 123 \
+  --artifact-json /tmp/mc-generated-exam-demo-artifact.json \
+  --scan-dir /tmp/mc-scans \
+  --output-dir /tmp/mc-gui-output
+```
+
+The GUI is intentionally thin over the landed workflow: it lets an operator
+ingest scans, inspect the review queue, persist resolutions, and export final
+results without re-owning any of the underlying DB truth or MC/OpenCV logic.
+
 ## Data model
 
 This is high-level and intentionally does not commit to table names yet.

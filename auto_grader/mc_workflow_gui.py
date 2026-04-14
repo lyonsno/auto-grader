@@ -198,27 +198,24 @@ class McWorkflowGuiApp:
 def render_page(state: GuiState) -> str:
     config = {key: state.config.get(key, "") for key in _CONFIG_FIELDS}
     queue_rows = "".join(_render_review_row(item) for item in state.review_queue)
-    export_rows = "".join(
-        f"<li><strong>{escape(kind)}</strong>: {escape(path)}</li>"
-        for kind, path in sorted(state.export_paths.items())
+    export_rows = _render_key_value_rows(
+        (
+            (kind.upper(), path)
+            for kind, path in sorted(state.export_paths.items())
+        )
     )
-    summary_rows = ""
-    if state.summary:
-        summary_rows = "".join(
-            f"<li><strong>{escape(str(key))}</strong>: {escape(str(value))}</li>"
-            for key, value in sorted(state.summary.items())
+    summary_intro = _render_summary_intro(state.summary, config.get("scan_dir", ""))
+    ingest_rows = _render_key_value_rows(
+        (
+            ("Session ID", state.ingest_result.get("mc_scan_session_id")),
+            ("Manifest", state.ingest_result.get("manifest_path")),
+            ("Output", state.ingest_result.get("output_dir")),
         )
-    ingest_rows = ""
-    if state.ingest_result:
-        ingest_rows = "".join(
-            f"<li><strong>{escape(label)}</strong>: {escape(str(value))}</li>"
-            for label, value in (
-                ("mc_scan_session_id", state.ingest_result.get("mc_scan_session_id")),
-                ("manifest_path", state.ingest_result.get("manifest_path")),
-                ("output_dir", state.ingest_result.get("output_dir")),
-            )
-            if value is not None
-        )
+        if state.ingest_result
+        else ()
+    )
+    stat_cards = _render_stat_cards(state.summary)
+    detail_rows = _render_summary_detail_rows(state.summary)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -226,63 +223,137 @@ def render_page(state: GuiState) -> str:
   <meta charset="utf-8">
   <title>Professor MC Workflow</title>
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; background: #f6f3ee; color: #1f1a17; }}
+    :root {{
+      --ink: #1f1a17;
+      --paper: #f6f3ee;
+      --card: #fffdf9;
+      --line: #ddd3c5;
+      --mist: #e9e2d6;
+      --accent: #204e57;
+      --accent-soft: #2d6772;
+      --secondary: #7a5c37;
+      --ok-bg: #e6f4ea;
+      --ok-line: #b8d8bf;
+      --error-bg: #fdeceb;
+      --error-line: #efb8b4;
+    }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; background: var(--paper); color: var(--ink); }}
     main {{ max-width: 1100px; margin: 0 auto; padding: 24px; }}
     h1, h2 {{ margin-bottom: 0.4rem; }}
     .grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }}
-    .card {{ background: #fffdf9; border: 1px solid #ddd3c5; border-radius: 14px; padding: 16px; box-shadow: 0 4px 12px rgba(54, 42, 28, 0.06); }}
+    .card {{ background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; box-shadow: 0 4px 12px rgba(54, 42, 28, 0.06); }}
     label {{ display: block; font-size: 0.92rem; margin-bottom: 10px; }}
     input, select, button {{ width: 100%; padding: 10px 12px; margin-top: 4px; border-radius: 10px; border: 1px solid #c8bcae; box-sizing: border-box; }}
-    button {{ background: #204e57; color: white; font-weight: 600; cursor: pointer; }}
-    button.secondary {{ background: #7a5c37; }}
+    button {{ background: var(--accent); color: white; font-weight: 600; cursor: pointer; transition: opacity 120ms ease, transform 120ms ease; }}
+    button:hover {{ background: var(--accent-soft); }}
+    button.secondary {{ background: var(--secondary); }}
+    button[disabled] {{ opacity: 0.72; cursor: wait; transform: none; }}
     table {{ width: 100%; border-collapse: collapse; }}
     th, td {{ text-align: left; padding: 8px; border-bottom: 1px solid #eadfce; vertical-align: top; }}
+    th {{ font-size: 0.84rem; letter-spacing: 0.02em; color: #5b5148; }}
     .message {{ padding: 12px; border-radius: 10px; margin-bottom: 16px; }}
-    .ok {{ background: #e6f4ea; border: 1px solid #b8d8bf; }}
-    .error {{ background: #fdeceb; border: 1px solid #efb8b4; }}
+    .ok {{ background: var(--ok-bg); border: 1px solid var(--ok-line); }}
+    .error {{ background: var(--error-bg); border: 1px solid var(--error-line); }}
     .wide {{ grid-column: 1 / -1; }}
     code {{ font-family: ui-monospace, monospace; }}
+    .stat-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }}
+    .stat-card {{ background: linear-gradient(180deg, #fffdfa 0%, #f8f2e8 100%); border: 1px solid var(--mist); border-radius: 12px; padding: 12px; }}
+    .stat-label {{ display: block; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: #62574d; margin-bottom: 6px; }}
+    .stat-value {{ display: block; font-size: 1.8rem; font-weight: 700; line-height: 1; }}
+    .stacked-section + .stacked-section {{ margin-top: 16px; }}
+    .section-title {{ margin: 0 0 8px 0; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.04em; color: #62574d; }}
+    .support-copy {{ margin: 0 0 12px 0; color: #5d5349; line-height: 1.45; }}
+    .action-copy {{ margin: 0 0 8px 0; color: #5d5349; line-height: 1.4; font-size: 0.92rem; }}
+    .detail-list {{ list-style: none; margin: 0; padding: 0; }}
+    .detail-list li {{ display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid #efe6d9; }}
+    .detail-list li:last-child {{ border-bottom: none; }}
+    .detail-label {{ color: #5d5349; }}
+    .detail-value {{ font-weight: 600; text-align: right; overflow-wrap: anywhere; }}
+    details.settings {{ margin: 12px 0 14px; border-top: 1px solid #eadfce; padding-top: 14px; }}
+    details.settings summary {{ cursor: pointer; font-weight: 600; color: #4b433a; }}
+    details.settings[open] summary {{ margin-bottom: 12px; }}
+    .busy-banner {{ display: none; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 12px; border-radius: 10px; background: #edf5f6; border: 1px solid #c8dfe3; color: #234b55; font-weight: 600; }}
+    .workflow-spinner {{ width: 16px; height: 16px; border-radius: 999px; border: 2px solid #b5cfd5; border-top-color: var(--accent); animation: workflow-spin 0.8s linear infinite; }}
+    body.busy .busy-banner {{ display: flex; }}
+    @keyframes workflow-spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
   </style>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {{
+      const body = document.body;
+      for (const form of document.querySelectorAll("form[data-busy-label]")) {{
+        form.addEventListener("submit", () => {{
+          body.classList.add("busy");
+          const banner = document.getElementById("busy-banner");
+          if (banner) {{
+            const label = form.getAttribute("data-busy-label") || "Working...";
+            banner.querySelector("[data-busy-text]").textContent = label;
+          }}
+          for (const button of document.querySelectorAll("button")) {{
+            button.disabled = true;
+          }}
+        }});
+      }}
+    }});
+  </script>
 </head>
 <body>
 <main>
   <h1>Professor MC Workflow</h1>
   <p>Thin local GUI over the landed ingest, review, resolve, and export workflow.</p>
   {_render_message_blocks(state)}
+  <div class="busy-banner" id="busy-banner" aria-live="polite">
+    <span class="workflow-spinner" id="workflow-spinner" aria-hidden="true"></span>
+    <span data-busy-text>Working...</span>
+  </div>
   <div class="grid">
     <section class="card">
       <h2>Configuration</h2>
-      <form method="post" action="/ingest">
-        {_render_text_input("database_url", "Database URL", config["database_url"])}
-        {_render_text_input("schema_name", "Schema Name", config["schema_name"])}
+      <p class="support-copy">Choose the exam record and scanned pages you want to grade.</p>
+      <form method="post" action="/ingest" data-busy-label="Ingesting scans...">
         {_render_text_input("exam_instance_id", "Exam Instance ID", config["exam_instance_id"])}
-        {_render_text_input("artifact_json", "Artifact JSON", config["artifact_json"])}
         {_render_text_input("scan_dir", "Scan Directory", config["scan_dir"])}
-        {_render_text_input("output_dir", "Output Directory", config["output_dir"])}
+        <details class="settings">
+          <summary>Workflow Settings</summary>
+          {_render_text_input("database_url", "Database URL", config["database_url"])}
+          {_render_text_input("schema_name", "Schema Name", config["schema_name"])}
+          {_render_text_input("artifact_json", "Artifact JSON", config["artifact_json"])}
+          {_render_text_input("output_dir", "Output Directory", config["output_dir"])}
+        </details>
+        <p class="action-copy">When you're ready, ingest the scans to load results and any questions that need review.</p>
         <button type="submit">Ingest Scans</button>
       </form>
     </section>
 
     <section class="card">
       <h2>Current Summary</h2>
-      <ul>{summary_rows or '<li>No workflow result yet.</li>'}</ul>
-      <h3>Last Ingest</h3>
-      <ul>{ingest_rows or '<li>No ingest run yet.</li>'}</ul>
-      <form method="post" action="/review">
+      <p class="support-copy">{escape(summary_intro)}</p>
+      <div class="stat-grid">{stat_cards}</div>
+      <div class="stacked-section">
+        <h3 class="section-title">Result Details</h3>
+        <ul class="detail-list">{detail_rows or '<li><span class="detail-label">Status</span><span class="detail-value">No workflow result yet.</span></li>'}</ul>
+      </div>
+      <div class="stacked-section">
+        <h3 class="section-title">Workflow Artifacts</h3>
+        <ul class="detail-list">{ingest_rows or '<li><span class="detail-label">Ingest</span><span class="detail-value">No ingest run yet.</span></li>'}</ul>
+      </div>
+      <form method="post" action="/review" data-busy-label="Refreshing review queue...">
         {_render_hidden_config(config)}
         <button class="secondary" type="submit">Refresh Review Queue</button>
       </form>
-      <form method="post" action="/export" style="margin-top: 12px;">
+      <form method="post" action="/export" style="margin-top: 12px;" data-busy-label="Exporting final results...">
         {_render_hidden_config(config)}
         <button class="secondary" type="submit">Export Final Results</button>
       </form>
-      <h3>Last Export</h3>
-      <ul>{export_rows or '<li>No export run yet.</li>'}</ul>
+      <div class="stacked-section">
+        <h3 class="section-title">Export Files</h3>
+        <ul class="detail-list">{export_rows or '<li><span class="detail-label">Export</span><span class="detail-value">No export run yet.</span></li>'}</ul>
+      </div>
     </section>
 
     <section class="card wide">
       <h2>Review Queue</h2>
-      <form method="post" action="/resolve">
+      <p class="support-copy">Only questions that need a human decision appear here. Choose a resolution for each flagged question, then persist it to finalize the result.</p>
+      <form method="post" action="/resolve" data-busy-label="Persisting selected resolutions...">
         {_render_hidden_config(config)}
         <table>
           <thead>
@@ -429,3 +500,61 @@ def _render_summary_text(exported: dict[str, Any]) -> str:
     for key, value in sorted(exported["summary"].items()):
         lines.append(f"{key}: {value}")
     return "\n".join(lines) + "\n"
+
+
+def _render_summary_intro(summary: dict[str, Any] | None, scan_dir: str) -> str:
+    if not summary:
+        return "Ingest a set of scans to see the current grading summary."
+    scan_name = Path(scan_dir).name.strip() if scan_dir else ""
+    if scan_name:
+        return f"Showing results for scan set: {scan_name}."
+    return "Showing results for the current scan set."
+
+
+def _render_stat_cards(summary: dict[str, Any] | None) -> str:
+    stats = (
+        ("Matched Pages", summary.get("matched") if summary else None),
+        ("Questions Correct", summary.get("correct") if summary else None),
+        ("Questions Incorrect", summary.get("incorrect") if summary else None),
+        ("Questions Needing Review", summary.get("unresolved_review_required") if summary else None),
+    )
+    return "".join(
+        "<div class=\"stat-card\">"
+        f"<span class=\"stat-label\">{escape(label)}</span>"
+        f"<span class=\"stat-value\">{escape(str(value if value is not None else '—'))}</span>"
+        "</div>"
+        for label, value in stats
+    )
+
+
+def _render_summary_detail_rows(summary: dict[str, Any] | None) -> str:
+    if not summary:
+        return ""
+    ordered_keys = (
+        ("matched", "Matched Pages"),
+        ("unmatched", "Unmatched Scans"),
+        ("ambiguous", "Ambiguous Scans"),
+        ("question_count", "Questions"),
+        ("correct", "Questions Correct"),
+        ("incorrect", "Questions Incorrect"),
+        ("blank", "Blank"),
+        ("resolved_by_review", "Resolved by Review"),
+        ("unresolved_review_required", "Questions Needing Review"),
+    )
+    return _render_key_value_rows(
+        (label, summary[key]) for key, label in ordered_keys if key in summary
+    )
+
+
+def _render_key_value_rows(items: Any) -> str:
+    rows = []
+    for label, value in items:
+        if value is None:
+            continue
+        rows.append(
+            "<li>"
+            f"<span class=\"detail-label\">{escape(str(label))}</span>"
+            f"<span class=\"detail-value\">{escape(str(value))}</span>"
+            "</li>"
+        )
+    return "".join(rows)

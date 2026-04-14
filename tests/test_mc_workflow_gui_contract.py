@@ -50,6 +50,95 @@ class McWorkflowGuiContractTests(unittest.TestCase):
         self.assertIn("exam_instance_id", html)
         self.assertIn("artifact_json", html)
         self.assertIn("scan_dir", html)
+        self.assertIn("data-busy-label", html)
+        self.assertIn("workflow-spinner", html)
+        self.assertIn("<details", html)
+        self.assertIn("Workflow Settings", html)
+        self.assertIn("Choose the exam record and scanned pages you want to grade.", html)
+        self.assertIn("When you're ready, ingest the scans to load results and any questions that need review.", html)
+
+    def test_render_page_promotes_summary_into_stat_cards_and_result_sections(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(
+            config={
+                "database_url": "postgresql:///postgres",
+                "exam_instance_id": "123",
+                "artifact_json": "/tmp/artifact.json",
+                "scan_dir": "/tmp/scans",
+                "output_dir": "/tmp/out",
+            },
+            ingest_result={
+                "mc_scan_session_id": 44,
+                "manifest_path": "/tmp/out/session_manifest.json",
+                "output_dir": "/tmp/out",
+            },
+            summary={
+                "matched": 5,
+                "incorrect": 15,
+                "correct": 4,
+                "unresolved_review_required": 0,
+            },
+            export_paths={
+                "json": "/tmp/out/mc-results.json",
+                "csv": "/tmp/out/mc-results.csv",
+            },
+        )
+
+        html = gui.render_page(state)
+
+        self.assertIn("stat-card", html)
+        self.assertIn("Matched Pages", html)
+        self.assertIn("Questions Needing Review", html)
+        self.assertIn("Questions Correct", html)
+        self.assertIn("Questions Incorrect", html)
+        self.assertIn("Showing results for scan set: scans.", html)
+        self.assertIn("Result Details", html)
+        self.assertIn("Workflow Artifacts", html)
+        self.assertIn("Export Files", html)
+        self.assertNotIn(">Matched<", html)
+        self.assertNotIn(">Needs Review<", html)
+
+    def test_render_page_hides_operator_fields_inside_settings_disclosure(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(
+            config={
+                "database_url": "postgresql:///postgres",
+                "schema_name": "demo_schema",
+                "exam_instance_id": "123",
+                "artifact_json": "/tmp/artifact.json",
+                "scan_dir": "/tmp/scans",
+                "output_dir": "/tmp/out",
+            }
+        )
+
+        html = gui.render_page(state)
+
+        self.assertIn("Exam Instance ID", html)
+        self.assertIn("Scan Directory", html)
+        self.assertIn("Workflow Settings", html)
+        self.assertIn("Database URL", html)
+        self.assertIn("Schema Name", html)
+        self.assertIn("Artifact JSON", html)
+        self.assertIn("Output Directory", html)
+
+    def test_render_page_explains_empty_summary_and_review_queue(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(
+            config={
+                "database_url": "postgresql:///postgres",
+                "schema_name": "demo_schema",
+                "exam_instance_id": "123",
+                "artifact_json": "/tmp/artifact.json",
+                "scan_dir": "/tmp/scans",
+                "output_dir": "/tmp/out",
+            }
+        )
+
+        html = gui.render_page(state)
+
+        self.assertIn("Ingest a set of scans to see the current grading summary.", html)
+        self.assertIn("Only questions that need a human decision appear here.", html)
+        self.assertIn("Choose a resolution for each flagged question, then persist it to finalize the result.", html)
 
     def test_wsgi_app_ingest_action_surfaces_review_queue_without_redefining_backend(self) -> None:
         gui = _load_gui_module(self)
