@@ -1583,7 +1583,7 @@ class FocusPreviewKittyImage:
         # Keyed on (term_width, box) — when geometry is stable,
         # return the cached segments instead of recomputing.
         self._cached_band_key: tuple[int, tuple[int, int]] | None = None
-        self._cached_band_segments: list[Segment] | None = None
+        self._cached_band_segments: list[Segment | None] | None = None
 
     def _compute_box(self, available_width: int) -> tuple[int, int]:
         """Compute (cell_width, cell_height) for the image at the
@@ -1604,7 +1604,7 @@ class FocusPreviewKittyImage:
         self,
         term_width: int,
         box: tuple[int, int],
-    ) -> list[Segment]:
+    ) -> list[Segment | None]:
         """Build the full band segment list (borders + texture + cursor-
         forward placeholders) for the given geometry. The Kitty place
         command is NOT included — it is prepended separately on the
