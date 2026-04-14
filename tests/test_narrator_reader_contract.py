@@ -2686,6 +2686,66 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertNotIn("dedup=", drops_title)
         self.assertNotIn("empty=", drops_title)
 
+    def test_zero_run_counters_keep_semantic_hues_instead_of_dead_gray(self):
+        display = self._make_display()
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            group = display.render()
+
+        header_panel = group.renderables[0]
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+        header_text_obj = header_renderable
+        if isinstance(header_text_obj, Group):
+            header_text_obj = header_text_obj.renderables[0]
+
+        emitted_style = self._style_for_substring(header_text_obj, "EMITTED")
+        dedup_style = self._style_for_substring(header_text_obj, "DEDUP")
+        empty_style = self._style_for_substring(header_text_obj, "EMPTY")
+
+        self.assertNotEqual(
+            self._background_hex(emitted_style),
+            "#2a2d34",
+            "EMITTED should keep a dim green board at zero rather than collapsing to flat dead gray",
+        )
+        self.assertNotEqual(
+            self._background_hex(dedup_style),
+            "#2a2d34",
+            "DEDUP should keep a dim chartreuse board at zero rather than collapsing to flat dead gray",
+        )
+        self.assertNotEqual(
+            self._background_hex(empty_style),
+            "#2a2d34",
+            "EMPTY should keep a dim red board at zero rather than collapsing to flat dead gray",
+        )
+
+    def test_empty_status_lane_uses_ember_waiting_treatment_not_flat_gray(self):
+        display = self._make_display()
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            group = display.render()
+
+        live_panel = group.renderables[1]
+        status_group = live_panel.renderable
+        status_text = status_group.renderables[0]
+        awaiting_style = self._style_for_substring(status_text, "AWAITING STATUS")
+        gutter_style = self._style_for_substring(status_text, "▌")
+
+        awaiting_rgb = self._rgb_from_hex(awaiting_style.split()[0])
+        gutter_rgb = self._rgb_from_hex(gutter_style.split()[0])
+
+        self.assertGreater(
+            awaiting_rgb[0],
+            awaiting_rgb[1],
+            "waiting status copy should stay ember-led, not flatten to neutral gray",
+        )
+        self.assertGreater(
+            gutter_rgb[0],
+            gutter_rgb[1],
+            "empty status gutter should keep a warm ember accent instead of a gray placeholder rail",
+        )
+
     def test_timers_render_as_tall_scorebug_plates_not_small_capsules(self):
         """TOTAL and TURN must render as full three-row
         ``_append_scorebug_big_value_cell`` plates inside the scorebug

@@ -3496,12 +3496,16 @@ class PaintDryDisplay:
         # timer promotion is actually legible as dial-shape scoreboard
         # instrumentation rather than being lost in the top header
         # chrome.
-        _dead_label = "bold #9aa0ac on #2a2d34"
-        _dead_value = "bold #cdd1da on #1a1c22"
+        _emitted_idle_label = "bold #d4e8cd on #24411f"
+        _emitted_idle_value = "bold #bfd3b8 on #162712"
         _emitted_label = "bold #ecffe8 on #2f5e2b"
         _emitted_value = "bold #dcffd3 on #173515"
+        _dedup_idle_label = "bold #e8efc3 on #48531d"
+        _dedup_idle_value = "bold #d7e0b1 on #2e3512"
         _dedup_label = "bold #f4ffd2 on #56611f"
         _dedup_value = "bold #e5f3b8 on #333b12"
+        _empty_idle_label = "bold #efd0c7 on #58231d"
+        _empty_idle_value = "bold #ddb8b0 on #381612"
         _empty_label = "bold #ffe1db on #6a2a22"
         _empty_value = "bold #ffc3b8 on #411611"
         self._append_scorebug_cell(
@@ -3509,10 +3513,10 @@ class PaintDryDisplay:
             "EMITTED",
             f"{self.stat_emitted}",
             label_style=(
-                _emitted_label if self.stat_emitted > 0 else _dead_label
+                _emitted_label if self.stat_emitted > 0 else _emitted_idle_label
             ),
             value_style=(
-                _emitted_value if self.stat_emitted > 0 else _dead_value
+                _emitted_value if self.stat_emitted > 0 else _emitted_idle_value
             ),
         )
         self._append_scorebug_cell(
@@ -3522,12 +3526,12 @@ class PaintDryDisplay:
             label_style=(
                 _dedup_label
                 if self.stat_dropped_dedup > 0
-                else _dead_label
+                else _dedup_idle_label
             ),
             value_style=(
                 _dedup_value
                 if self.stat_dropped_dedup > 0
-                else _dead_value
+                else _dedup_idle_value
             ),
         )
         self._append_scorebug_cell(
@@ -3537,12 +3541,12 @@ class PaintDryDisplay:
             label_style=(
                 _empty_label
                 if self.stat_dropped_empty > 0
-                else _dead_label
+                else _empty_idle_label
             ),
             value_style=(
                 _empty_value
                 if self.stat_dropped_empty > 0
-                else _dead_value
+                else _empty_idle_value
             ),
         )
         header = Panel(
@@ -3936,8 +3940,18 @@ class PaintDryDisplay:
                 wrap_width=wrap_width,
             )
         else:
-            status_text.append("▌ ", style="grey39")
-            status_text.append("AWAITING STATUS", style="grey50")
+            waiting_gutter_rgb = _interp_rgb(
+                _BASE_RGB["status"],
+                _SHIMMER_KIND_PEAK_RGB["status"],
+                0.18,
+            )
+            waiting_text_rgb = _interp_rgb(
+                _BASE_RGB["status"],
+                _SHIMMER_KIND_PEAK_RGB["status"],
+                0.42,
+            )
+            status_text.append("▌ ", style=_rgb_to_hex(waiting_gutter_rgb))
+            status_text.append("AWAITING STATUS", style=_rgb_to_hex(waiting_text_rgb))
 
         live_panel = Panel(
             Group(status_text, live_text),
