@@ -1222,6 +1222,85 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(first.count("\x1b_Ga=p"), 1)
         self.assertEqual(second.count("\x1b_Ga=p"), 1)
 
+    def test_focus_preview_kitty_band_segments_cached_across_steady_frames(self):
+        # The ornate steady preview band (borders + texture spans flanking the
+        # image) is geometry-deterministic: same terminal width + same image
+        # box = identical Rich segments. When the geometry has not changed
+        # between frames, the renderable must return pre-cached segments
+        # instead of recomputing them, so the text shimmer path is not
+        # dragged by per-frame band rendering.
+        from rich.console import Console
+
+        renderable = FocusPreviewKittyImage(
+            image_id=1,
+            image_pixel_width=1600,
+            image_pixel_height=900,
+            terminal_cell_aspect=2.1,
+            title="test",
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        options = console.options.update(width=120)
+        # First render: populates the cache.
+        first_segments = list(
+            renderable.__rich_console__(console, options)
+        )
+        # Second render at same geometry: must return the same list object
+        # (identity check proves no recomputation happened).
+        second_segments = list(
+            renderable.__rich_console__(console, options)
+        )
+        # The segments from a cached steady frame must be identical objects,
+        # not freshly allocated copies. If this fails, the band is being
+        # recomputed on every animation tick.
+        self.assertIs(
+            first_segments[0],
+            second_segments[0],
+            "steady-frame band segments should be cached — got freshly "
+            "allocated segments on the second render at unchanged geometry",
+        )
+
+    def test_focus_preview_kitty_band_cache_invalidates_on_geometry_change(self):
+        # When the terminal width changes, the band cache must be
+        # invalidated so the texture/border segments are recomputed
+        # to fit the new geometry.
+        from rich.console import Console
+
+        renderable = FocusPreviewKittyImage(
+            image_id=1,
+            image_pixel_width=1600,
+            image_pixel_height=900,
+            terminal_cell_aspect=2.1,
+            title="test",
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        first_segments = list(
+            renderable.__rich_console__(
+                console, console.options.update(width=120)
+            )
+        )
+        resized_segments = list(
+            renderable.__rich_console__(
+                console, console.options.update(width=80)
+            )
+        )
+        # After a geometry change, the segments must be freshly computed
+        # (different objects), not stale cached segments from the old width.
+        self.assertIsNot(
+            first_segments[0],
+            resized_segments[0],
+            "band segments must be recomputed after a geometry change",
+        )
+
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies

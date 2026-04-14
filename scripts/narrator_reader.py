@@ -1238,114 +1238,213 @@ class FocusPreviewInlineImage:
 
 
 class FocusPreviewKittyImage:
-    """Rich Renderable that places a previously-transmitted Kitty
-    graphics image inside a self-drawn border frame.
+    """Rich Renderable that places a precomposed Kitty image covering
+    the full ornate preview band.
 
-    Unlike :class:`FocusPreviewInlineImage`, this class does NOT
-    carry the PNG data. The transmit (`_build_kitty_transmit_chunks`)
-    must be done out-of-band by the caller — typically directly to
-    stdout from ``PaintDryDisplay.on_focus_preview`` on the narrator
-    event thread, so WezTerm starts decoding in the background
-    before Rich's next refresh fires.
+    The composite PNG — which includes the exam crop, the textured
+    surround, and the border lines all baked into one image — is
+    transmitted once via Kitty ``a=t`` on the event thread. This
+    renderable's only job is to emit the tiny ``a=p`` place command
+    (~30 bytes) and cursor-forward escapes on every frame so the
+    terminal paints the cached composite at the right position.
 
-    Cell-box sizing is done at RENDER TIME, not at construction.
-    The renderable stores the image's pixel dimensions and the
-    terminal's cell aspect ratio; on every ``__rich_console__``
-    call, it reads the current ``ConsoleOptions.max_width`` and
-    recomputes the cell box to fit. This makes the preview
-    resize-safe — narrowing or widening the terminal window
-    causes the next render to produce a box that fits the new
-    width automatically, because Rich passes the updated
-    console options through on every refresh.
-
-    The image_id is reused across focus_preview events (see
-    ``_KITTY_IMAGE_ID``), so each transmit overwrites the
-    previous cached image rather than accumulating — bounded
-    memory footprint on the terminal side.
+    On terminal resize, the renderable detects that
+    ``options.max_width`` no longer matches the width the composite
+    was built for, rebuilds the composite at the new geometry, and
+    retransmits it via Kitty before placing. This keeps the preview
+    resize-safe without requiring a fresh ``on_focus_preview`` event.
     """
 
     def __init__(
         self,
         *,
         image_id: int,
-        image_pixel_width: int,
-        image_pixel_height: int,
-        terminal_cell_aspect: float,
+        band_cell_width: int,
+        band_cell_height: int,
         title: str = "",
+        crop_png_bytes: bytes = b"",
+        image_pixel_width: int = 0,
+        image_pixel_height: int = 0,
+        terminal_cell_aspect: float = _DEFAULT_TERMINAL_CELL_ASPECT,
     ) -> None:
         self._image_id = image_id
+        self._band_cell_width = band_cell_width
+        self._band_cell_height = band_cell_height
+        self._title = title
+        # Stored for resize rebuild.
+        self._crop_png_bytes = crop_png_bytes
         self._image_pixel_width = image_pixel_width
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
-        self._title = title
-
-    def _compute_box(self, available_width: int) -> tuple[int, int]:
-        """Compute (cell_width, cell_height) for the image at the
-        given available width budget. Leaves 2 cells for the
-        border so the usable interior is ``available_width - 2``.
-        """
-        inner_budget = max(1, available_width - 2)
-        cw, ch = _compute_inline_image_cell_dimensions(
-            self._image_pixel_width,
-            self._image_pixel_height,
-            max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
-            max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
-            terminal_cell_aspect=self._terminal_cell_aspect,
-        )
-        return cw, ch
 
     def __rich_console__(
         self,
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        border = Style.parse("#3d4458")
-        cell_width, cell_height = self._compute_box(options.max_width)
-        inner_width = cell_width
-        total_width = inner_width + 2
+        """Emit the Kitty place command and cursor-forward escapes.
+
+        No styled text segments — the entire band is a single placed
+        image. Rich sees cursor-forward control segments and newlines,
+        which cost ~30 bytes total per frame instead of ~12KB.
+
+        Always place at the dimensions the composite was built for.
+        On resize, ``retransmit_kitty_image`` rebuilds the composite
+        at the new geometry and updates ``_band_cell_width`` and
+        ``_band_cell_height`` before the next frame renders. Between
+        the resize and the rebuild there may be one frame where the
+        composite overflows or underflows the terminal width — that
+        is acceptable. Trying to rescale the placement to the current
+        terminal width here causes aspect-ratio warping because the
+        composite pixels don't match the recomputed cell dimensions.
+
+        The ``a=p`` placement fires on every frame. Rich's Live
+        erases each line (CSI 2K) between frames, which wipes the
+        terminal cells the image was painted into. Without a fresh
+        placement the image disappears. The placement command is
+        ~30 bytes and tells the terminal to re-place the already-
+        cached image — no PNG retransmission, just a cursor-position
+        reference. The earlier rapid flicker was caused by transmit
+        interleaving (now fixed via drain_pending_kitty_transmit),
+        not by the placement itself.
+        """
+        # Emit cursor-forwards + newlines FIRST so Rich's line-padding
+        # spaces get written to the terminal before the image placement.
+        # Then save cursor, return to the start of the band, place the
+        # image (which paints over the spaces in the compositor layer),
+        # and restore cursor so Rich continues below the band.
+        #
+        # Why this order: Rich pads each line to console width with
+        # spaces. If we place the image first, the padding spaces
+        # overwrite the image cells and the image goes black. By
+        # placing last, the image compositor layer wins.
+        save_cursor = "\x1b[s"
+        restore_cursor = "\x1b[u"
+        # Move up to the start of the band after walking past it.
+        move_up = f"\x1b[{self._band_cell_height}A"
+        carriage_return = "\r"
+
+        forward_escape = f"\x1b[{self._band_cell_width}C"
+        for row in range(self._band_cell_height):
+            yield Segment(forward_escape, None, [(ControlType.BELL,)])
+            yield Segment.line()
 
         place_sequence = _build_kitty_place_sequence(
             self._image_id,
-            cell_width=cell_width,
-            cell_height=cell_height,
+            cell_width=self._band_cell_width,
+            cell_height=self._band_cell_height,
+        )
+        # Save cursor (at bottom of band), move back to top-left of
+        # band, place image, restore cursor to bottom.
+        yield Segment(
+            save_cursor + move_up + carriage_return + place_sequence + restore_cursor,
+            None,
+            [(ControlType.BELL,)],
         )
 
-        # Top border with embedded title.
-        title_text = self._title
-        max_title = max(0, inner_width - 4)
-        if len(title_text) > max_title:
-            title_text = title_text[: max(0, max_title - 1)] + "…"
-        if title_text:
-            prefix = f"╭─ {title_text} "
-            filler_len = total_width - len(prefix) - 1
-            if filler_len < 0:
-                filler_len = 0
-            top_border = prefix + ("─" * filler_len) + "╮"
-        else:
-            top_border = "╭" + ("─" * (total_width - 2)) + "╮"
-        yield Segment(top_border, border)
-        yield Segment.line()
 
-        forward_escape = f"\x1b[{inner_width}C"
+class FocusPreviewLoadingBand:
+    """Placeholder renderable shown before any focus_preview event
+    fires, or between items while a new preview is loading. Same
+    band structure as :class:`FocusPreviewKittyImage` but with a
+    short ``(preview loading…)`` text string where the image
+    would be, so the layout slot looks continuous across the
+    transition into the first real preview.
+    """
 
-        # First interior row: emit the Kitty place-by-ID command.
-        yield Segment("│", border)
-        yield Segment(place_sequence, None, [(ControlType.BELL,)])
-        yield Segment(forward_escape, None, [(ControlType.BELL,)])
-        yield Segment("│", border)
-        yield Segment.line()
+    def __init__(self, *, title: str = "focus preview") -> None:
+        self._title = title
 
-        # Remaining interior rows: border + cursor-forward + border.
-        for _ in range(cell_height - 1):
-            yield Segment("│", border)
-            yield Segment(forward_escape, None, [(ControlType.BELL,)])
-            yield Segment("│", border)
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        term_width = max(1, options.max_width)
+
+        # Scale with the terminal like the real Kitty renderer does.
+        # Use a ~4:3 exam crop aspect ratio as the stand-in so the
+        # placeholder box matches what the first real preview will
+        # look like. The real renderer leaves 2 cells for borders
+        # and caps at _INLINE_IMAGE_MAX_CELL_WIDTH.
+        inner_budget = max(1, term_width - 2)
+        cell_width = min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget)
+        cell_height = _INLINE_IMAGE_CELL_HEIGHT
+        image_left = max(0, (term_width - cell_width) // 2)
+        image_right = image_left + cell_width
+
+        placeholder_text = "(preview loading…)"
+        # Loading band has no image id — use a stable sentinel so the
+        # seeded per-cell texture noise is deterministic across frames
+        # without colliding with real image ids.
+        image_id = 0
+
+        # Top border
+        yield from _emit_band_border_row(term_width, title=self._title)
+
+        # Extra texture row above.
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=0,
+            image_id=image_id,
+        )
+
+        # Image rows — instead of a Kitty place, emit the
+        # placeholder text centered in the middle of the image
+        # region on the middle image row, empty on the others.
+        middle_row = cell_height // 2
+        text_col = image_left + max(
+            0, (cell_width - len(placeholder_text)) // 2
+        )
+        dim_style = Style.parse(_rgb_to_hex(_TEXTURE_ACCENT_RGB) + " dim")
+        bg_style = Style.parse("on " + _rgb_to_hex(_TEXTURE_BG_RGB))
+
+        for image_row in range(cell_height):
+            # Left texture
+            yield from _emit_band_texture_span(
+                col_start=0,
+                col_end=image_left,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=image_id,
+            )
+            # Middle: placeholder text on middle row, empty on others.
+            if image_row == middle_row:
+                pad_left = max(0, text_col - image_left)
+                pad_right = max(
+                    0, cell_width - pad_left - len(placeholder_text)
+                )
+                yield Segment(" " * pad_left, bg_style)
+                yield Segment(placeholder_text, dim_style)
+                yield Segment(" " * pad_right, bg_style)
+            else:
+                yield Segment(" " * cell_width, bg_style)
+            # Right texture
+            yield from _emit_band_texture_span(
+                col_start=image_right,
+                col_end=term_width,
+                image_left=image_left,
+                image_right=image_right,
+                term_width=term_width,
+                row_seed_id=1 + image_row,
+                image_id=image_id,
+            )
             yield Segment.line()
 
-        # Bottom border.
-        bottom_border = "╰" + ("─" * (total_width - 2)) + "╯"
-        yield Segment(bottom_border, border)
-        yield Segment.line()
+        # Extra texture row below.
+        yield from _emit_band_texture_only_row(
+            term_width,
+            image_left=image_left,
+            image_right=image_right,
+            row_seed_id=1 + cell_height,
+            image_id=image_id,
+        )
+        # Bottom border rule.
+        yield from _emit_band_border_row(term_width, title="")
 
 
 def _otsu_threshold(luminances) -> float:
