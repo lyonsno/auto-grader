@@ -1988,20 +1988,34 @@ class NarratorReaderContract(unittest.TestCase):
         left_label_bg = self._background_hex(left_label_style)
         bad_label_bg = self._background_hex(bad_label_style)
         self.assertEqual(
-            {on_target_label_bg, left_label_bg, bad_label_bg},
-            {on_target_label_bg},
-            "the tally labels should sit on one shared charcoal field instead of three color-coded boards",
+            on_target_label_bg,
+            "#32578e",
+            "ON TARGET should recover its old steel-blue board in the top label row",
         )
-        self.assertGreaterEqual(
-            len(
-                {
-                    self._foreground_hex(on_target_label_style),
-                    self._foreground_hex(left_label_style),
-                    self._foreground_hex(bad_label_style),
-                }
-            ),
-            2,
-            "the labels can still carry restrained accent differences, but only in the foreground ink, not in separate slab backgrounds",
+        self.assertEqual(
+            left_label_bg,
+            "#6b5028",
+            "LEFT ON TABLE should recover its old yellow-bronze board in the top label row",
+        )
+        self.assertEqual(
+            bad_label_bg,
+            "#7a392f",
+            "BAD CALLS should recover its old red-brown board in the top label row",
+        )
+        self.assertEqual(
+            self._foreground_hex(on_target_label_style),
+            "#eef3ff",
+            "ON TARGET label ink should come back as the older pale blue-white",
+        )
+        self.assertEqual(
+            self._foreground_hex(left_label_style),
+            "#fff1d6",
+            "LEFT ON TABLE label ink should come back as the older wheat-white",
+        )
+        self.assertEqual(
+            self._foreground_hex(bad_label_style),
+            "#ffe5dd",
+            "BAD CALLS label ink should come back as the older rose-white",
         )
         cell_width = len(f" {expected_on_target[0]} ")
         separator_width = 2

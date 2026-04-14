@@ -3645,6 +3645,14 @@ class PaintDryDisplay:
                 "#523f2b on #3f2b14",
                 "#493827 on #33220f",
             )
+            # Restore the older categorical label boards for the three
+            # grading plates while keeping the newer unified value
+            # field beneath them. The result keeps the calmer new
+            # scoreboard body but gives the eye back the older
+            # blue / bronze / red-brown wayfinding in the top row.
+            _on_target_label_style = "bold #eef3ff on #32578e"
+            _left_on_table_label_style = "bold #fff1d6 on #6b5028"
+            _bad_calls_label_style = "bold #ffe5dd on #7a392f"
             _total_value_str = f"{total_elapsed_s}"
             _turn_value_str = (
                 f"{turn_elapsed_s}" if turn_elapsed_s is not None else "--"
@@ -3689,7 +3697,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_on_target_points)}"
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
-                    label_style=f"bold #a8b8bb on {tally_label_bg}",
+                    label_style=_on_target_label_style,
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3710,7 +3718,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
-                    label_style=f"bold #c0aa83 on {tally_label_bg}",
+                    label_style=_left_on_table_label_style,
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3731,7 +3739,7 @@ class PaintDryDisplay:
                         f"{self._format_scorebug_points(self.score_bad_call_points)}"
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
-                    label_style=f"bold #bc9589 on {tally_label_bg}",
+                    label_style=_bad_calls_label_style,
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3787,7 +3795,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "ON TARGET",
                     "0.0/0.0",
-                    label_style=f"bold #a8b8bb on {tally_label_bg}",
+                    label_style=_on_target_label_style,
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3805,7 +3813,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "LEFT ON TABLE",
                     "0.0/0.0",
-                    label_style=f"bold #c0aa83 on {tally_label_bg}",
+                    label_style=_left_on_table_label_style,
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
@@ -3823,7 +3831,7 @@ class PaintDryDisplay:
                     scorebug_values_bottom,
                     "BAD CALLS",
                     "0.0/0.0",
-                    label_style=f"bold #bc9589 on {tally_label_bg}",
+                    label_style=_bad_calls_label_style,
                     value_row_styles=tally_value_strong_styles,
                     value_mid_row_styles=tally_value_mid_styles,
                     value_texture_styles=tally_value_texture_styles,
