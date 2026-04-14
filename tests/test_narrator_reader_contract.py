@@ -3166,7 +3166,7 @@ class NarratorReaderContract(unittest.TestCase):
         for msg_type in ("wrap_up", "basis", "review_marker", "end"):
             self.assertTrue(_message_requires_immediate_refresh(msg_type))
 
-    def test_inline_focus_preview_switches_to_event_driven_refresh(self):
+    def test_inline_focus_preview_uses_reduced_animation_cadence(self):
         display = self._make_display()
         display._inline_images_supported = True
         display._kitty_graphics_supported = False
@@ -3176,9 +3176,14 @@ class NarratorReaderContract(unittest.TestCase):
             source="mock_tricky",
         )
 
-        self.assertFalse(
+        self.assertTrue(
             display.should_animate(),
-            "steady inline-image preview should stop the background shimmer loop so the image surface does not flicker under constant clears",
+            "steady inline-image preview should still animate, just at a calmer cadence so the surface does not feel frozen",
+        )
+        self.assertLess(
+            display.target_animation_fps(),
+            _ACTIVE_ANIMATION_FPS,
+            "steady inline-image preview should run below the normal animation cadence so the image surface is not thrashed",
         )
         self.assertFalse(
             display.should_refresh_on_event("delta"),
@@ -3265,7 +3270,7 @@ class NarratorReaderContract(unittest.TestCase):
             )
         )
 
-    def test_kitty_focus_preview_also_stops_background_animation(self) -> None:
+    def test_kitty_focus_preview_also_uses_reduced_animation_cadence(self) -> None:
         display = self._make_display()
         display._kitty_graphics_supported = True
         display._inline_images_supported = False
@@ -3275,9 +3280,14 @@ class NarratorReaderContract(unittest.TestCase):
             source="mock_tricky",
         )
 
-        self.assertFalse(
+        self.assertTrue(
             display.should_animate(),
-            "steady kitty-image preview should also stop the background repaint loop so the terminal image layer is not churned continuously",
+            "steady kitty-image preview should still animate, just at a calmer cadence so the surface does not feel frozen",
+        )
+        self.assertLess(
+            display.target_animation_fps(),
+            _ACTIVE_ANIMATION_FPS,
+            "steady kitty-image preview should also run below the normal animation cadence so the terminal image layer is not churned continuously",
         )
 
     def test_session_end_stops_animation(self) -> None:

@@ -439,6 +439,9 @@ _LIVE_FROZEN_VAL_MUL = 0.85
 _ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
                               # the slower animation families above are eased
                               # back to keep the overall feel restrained
+_PREVIEW_ANIMATION_FPS = 6.0  # steady image previews should keep some life,
+                              # but at a calmer repaint cadence than the
+                              # fully text-driven surface.
 _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
                               # messages quickly, but doesn't need redraw spam
 _SESSION_END_ANIMATION_LINGER_S = 120.0  # keep the finished painting alive
@@ -3052,14 +3055,17 @@ class PaintDryDisplay:
         ended and the final frame is meant to stay still while waiting
         for Enter.
         """
-        if self._has_steady_image_preview():
-            return False
         if not self.session_ended:
             return True
         if self._session_ended_at is None:
             return False
         now = time.monotonic() if now is None else now
         return now < (self._session_ended_at + _SESSION_END_ANIMATION_LINGER_S)
+
+    def target_animation_fps(self) -> float:
+        if self._has_steady_image_preview():
+            return _PREVIEW_ANIMATION_FPS
+        return _ACTIVE_ANIMATION_FPS
 
     def _has_steady_image_preview(self) -> bool:
         return (
@@ -4909,7 +4915,9 @@ def main() -> int:
                             # display state — next tick will recover.
                             pass
                         _animation_wake.clear()
-                        _animation_wake.wait(timeout=1.0 / _ACTIVE_ANIMATION_FPS)
+                        _animation_wake.wait(
+                            timeout=1.0 / display.target_animation_fps()
+                        )
                     else:
                         _animation_wake.clear()
                         _animation_wake.wait(timeout=_IDLE_POLL_S)
