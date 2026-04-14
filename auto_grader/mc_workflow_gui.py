@@ -254,9 +254,9 @@ class McWorkflowGuiApp:
         if not questions:
             raise ValueError("At least one question with a prompt is required.")
 
-        for i, q in enumerate(questions, 1):
+        for q in questions:
             if q["correct"] not in _CHOICE_LABELS:
-                raise ValueError(f"Question {i}: correct answer must be one of {', '.join(_CHOICE_LABELS)}.")
+                raise ValueError(f"Question {q['form_slot']}: correct answer must be one of {', '.join(_CHOICE_LABELS)}.")
 
         source_yaml = _build_template_yaml(slug=slug, title=title, kind=kind, questions=questions)
 
@@ -265,6 +265,11 @@ class McWorkflowGuiApp:
             database_url=config["database_url"] or None,
             schema_name=config.get("schema_name") or None,
         )
+        # Intentionally write-once: version is always 1. The schema enforces
+        # UNIQUE(slug, version), so a second authoring attempt with the same
+        # slug hits the duplicate-slug error below rather than silently
+        # creating version 2. Re-versioning is a future concern — for now
+        # the professor edits by creating a new slug or deleting the old one.
         try:
             with connection.transaction():
                 tv_id = connection.execute(
@@ -785,6 +790,7 @@ def _extract_authored_questions(form: dict[str, str]) -> list[dict[str, Any]]:
         correct = form.get(f"q_{idx}_correct", "").strip()
         questions.append({
             "id": f"mc-{question_number}",
+            "form_slot": idx,
             "prompt": prompt,
             "choices": choices,
             "correct": correct,

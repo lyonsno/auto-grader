@@ -142,7 +142,15 @@ class AssessmentAuthoringBackendTests(unittest.TestCase):
         self.assertIn("title is required", html.lower())
 
     def test_author_endpoint_builds_valid_yaml_template(self) -> None:
-        """The authored assessment must land as a valid template in the durable model."""
+        """The /author happy path completes without error.
+
+        This test exercises the full POST-to-DB path and verifies no error
+        is surfaced. It does not assert on the YAML content itself —
+        structural validation of authored templates is the responsibility
+        of validate_template() in template_schema.py, which has its own
+        contract test suite. This test's job is to confirm the GUI
+        authoring path reaches the DB without raising.
+        """
         gui = _load_gui_module(self)
 
         # Exercise the form-to-template conversion directly if exposed,
