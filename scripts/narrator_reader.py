@@ -25,6 +25,7 @@ below live), pushing older lines down.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -34,6 +35,8 @@ import termios
 import threading
 import time
 import tty
+
+import fitz
 from collections import deque
 from pathlib import Path
 from typing import Deque
@@ -932,6 +935,27 @@ class PaintDryDisplay:
         # and working on the wrap-up rather than hung.
         self.wrap_up_pending: bool = False
         self.wrap_up_pending_started: float = 0.0
+        # Focus preview state — the page crop PNG for the current item.
+        # Stores the raw bytes, the decoded pixel grid (for half-block
+        # fallback), and the renderable (one of Kitty / inline / half-block).
+        self.focus_preview_png: bytes | None = None
+        self.focus_preview_pixels: list[list[tuple[int, int, int]]] | None = None
+        self.focus_preview_renderable: Group | None = None
+        self.focus_preview_label: str = ""
+        self.focus_preview_source: str = ""
+        self.focus_preview_pending: bool = False
+        self.focus_preview_pending_started: float | None = None
+        self._focus_preview_pending_bucket: int | None = None
+        self._focus_preview_pending_renderable: Group | None = None
+        self.focus_preview_inline_renderable: FocusPreviewInlineImage | None = None
+        self._inline_images_supported: bool = _supports_inline_images(
+            os.environ.get("TERM_PROGRAM")
+        )
+        self.focus_preview_kitty_renderable: FocusPreviewKittyImage | None = None
+        self._kitty_graphics_supported: bool = _supports_kitty_graphics(
+            os.environ.get("TERM_PROGRAM")
+        )
+        self._terminal_cell_aspect: float = _query_terminal_cell_aspect()
         # When True, render() shows the post-session footer (scroll
         # keys remain live via HistoryScrollController). The animation
         # thread keeps running so the shimmer plays on while the
@@ -1293,6 +1317,51 @@ class PaintDryDisplay:
             height=_LIVE_PANEL_CONTENT_LINES + 2,
         )
 
+        # Focus preview panel — shows the page crop for the current item.
+        # Default: loading placeholder band so the layout slot is
+        # occupied even before any focus_preview event fires.
+        focus_preview_panel = FocusPreviewLoadingBand(title="focus preview")
+        have_kitty = self.focus_preview_kitty_renderable is not None
+        have_inline = self.focus_preview_inline_renderable is not None
+        have_fallback = self.focus_preview_renderable is not None
+        if have_kitty and not self.focus_preview_pending:
+            focus_preview_panel = self.focus_preview_kitty_renderable
+        elif have_inline and not self.focus_preview_pending:
+            focus_preview_panel = self.focus_preview_inline_renderable
+        elif have_kitty or have_inline or have_fallback:
+            preview_title = "[grey50]focus preview"
+            if self.focus_preview_pending:
+                preview_title += " · pending"
+            if self.focus_preview_label:
+                preview_title += f" · {self.focus_preview_label}"
+            preview_title += "[/grey50]"
+            if self.focus_preview_pending and have_fallback and self.focus_preview_pixels is not None:
+                pending_bucket = int(now * _FOCUS_PREVIEW_PENDING_FPS)
+                if (
+                    self._focus_preview_pending_renderable is None
+                    or self._focus_preview_pending_bucket != pending_bucket
+                ):
+                    self._focus_preview_pending_renderable = _render_focus_preview_pixels(
+                        self.focus_preview_pixels,
+                        now=now,
+                        pending=True,
+                    )
+                    self._focus_preview_pending_bucket = pending_bucket
+                preview_renderable = self._focus_preview_pending_renderable
+            elif have_fallback:
+                preview_renderable = self.focus_preview_renderable
+            else:
+                preview_renderable = Text(
+                    "(preview loading…)", style="grey50 italic"
+                )
+            focus_preview_panel = Panel(
+                Align.center(preview_renderable),
+                border_style="#3d4458",
+                padding=(0, 1),
+                title=preview_title,
+                title_align="left",
+            )
+
         # History panel — items grouped by header. Each item is a
         # group: header at the top, then narrator lines in chronological
         # order beneath it, then the topic at the bottom. Groups are
@@ -1517,7 +1586,10 @@ class PaintDryDisplay:
             )
 
         # Order: header, live, history, post-game, drops, [footer]
-        panels = [header, live_panel, history_panel]
+        panels = [header, live_panel]
+        if focus_preview_panel is not None:
+            panels.append(focus_preview_panel)
+        panels.append(history_panel)
         if wrap_panel is not None:
             panels.append(wrap_panel)
         if drops_panel is not None:
@@ -1536,6 +1608,32 @@ class PaintDryDisplay:
         # Header goes into the history. Doesn't touch the live buffers
         # — frozen_line keeps showing the previous committed dispatch
         # until the next bonsai dispatch starts streaming.
+        #
+        # Focus preview lifecycle: if a preview is currently showing,
+        # mark it pending (the old image stays visible with a shimmer
+        # until the next focus_preview event replaces it). If no
+        # preview has ever been shown, reset all state cleanly.
+        if (
+            self.focus_preview_renderable is not None
+            or self.focus_preview_inline_renderable is not None
+            or self.focus_preview_kitty_renderable is not None
+        ):
+            self.focus_preview_pending = True
+            self.focus_preview_pending_started = time.monotonic()
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
+        else:
+            self.focus_preview_png = None
+            self.focus_preview_pixels = None
+            self.focus_preview_renderable = None
+            self.focus_preview_inline_renderable = None
+            self.focus_preview_kitty_renderable = None
+            self.focus_preview_label = ""
+            self.focus_preview_source = ""
+            self.focus_preview_pending = False
+            self.focus_preview_pending_started = None
+            self._focus_preview_pending_bucket = None
+            self._focus_preview_pending_renderable = None
         self.history.append(("header", text, None))
 
     def on_delta(self, text: str) -> None:
@@ -1591,6 +1689,91 @@ class PaintDryDisplay:
         """Final post-game commentary from bonsai."""
         self.wrap_up_text = text
         self.wrap_up_pending = False
+
+    def on_focus_preview(
+        self,
+        png_bytes: bytes,
+        *,
+        label: str = "",
+        source: str = "",
+    ) -> None:
+        term_width = None
+        if self._console is not None:
+            try:
+                term_width = self._console.size.width
+            except Exception:
+                term_width = None
+        self.focus_preview_png = png_bytes
+        self.focus_preview_label = label
+        self.focus_preview_source = source
+        self.focus_preview_pending = False
+        self.focus_preview_pending_started = None
+        self._focus_preview_pending_bucket = None
+        self._focus_preview_pending_renderable = None
+
+        # Kitty graphics protocol path: preferred on WezTerm/kitty.
+        if self._kitty_graphics_supported:
+            try:
+                pix = fitz.Pixmap(png_bytes)
+                title = f"focus preview · {label}" if label else "focus preview"
+                transmit_stream = (
+                    self._console.file if self._console is not None else sys.stdout
+                )
+                chunks = _build_kitty_transmit_chunks(png_bytes, _KITTY_IMAGE_ID)
+                for chunk in chunks:
+                    transmit_stream.write(chunk)
+                transmit_stream.flush()
+                self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
+                    image_id=_KITTY_IMAGE_ID,
+                    image_pixel_width=pix.width,
+                    image_pixel_height=pix.height,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
+                    title=title,
+                )
+                self.focus_preview_inline_renderable = None
+                self.focus_preview_pixels = None
+                self.focus_preview_renderable = None
+                return
+            except Exception:
+                self.focus_preview_kitty_renderable = None
+
+        # iTerm2 OSC 1337 path: fallback for terminals without Kitty.
+        if self._inline_images_supported:
+            try:
+                pix = fitz.Pixmap(png_bytes)
+                cell_width, cell_height = _compute_inline_image_cell_dimensions(
+                    pix.width,
+                    pix.height,
+                    max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                    max_cell_width=_INLINE_IMAGE_MAX_CELL_WIDTH,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
+                )
+                title = f"focus preview · {label}" if label else "focus preview"
+                self.focus_preview_inline_renderable = FocusPreviewInlineImage(
+                    png_bytes=png_bytes,
+                    cell_width=cell_width,
+                    cell_height=cell_height,
+                    title=title,
+                )
+                self.focus_preview_kitty_renderable = None
+                self.focus_preview_pixels = None
+                self.focus_preview_renderable = None
+                return
+            except Exception:
+                self.focus_preview_inline_renderable = None
+
+        # Half-block fallback path.
+        budget_width, budget_height = _focus_preview_budget(term_width)
+        self.focus_preview_pixels = _build_focus_preview_pixels(
+            png_bytes,
+            max_width_chars=budget_width,
+            max_height_rows=budget_height * 2,
+        )
+        self.focus_preview_renderable = _render_focus_preview_pixels(
+            self.focus_preview_pixels
+        )
+        self.focus_preview_inline_renderable = None
+        self.focus_preview_kitty_renderable = None
 
     def on_topic(self, text: str, verdict: str | None = None) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
@@ -1739,6 +1922,19 @@ def main() -> int:
                     msg_type = msg.get("type")
                     if msg_type == "header":
                         display.on_header(msg.get("text", ""))
+                    elif msg_type == "focus_preview":
+                        try:
+                            png_bytes = base64.b64decode(
+                                msg.get("png_base64", ""),
+                            )
+                        except Exception:
+                            png_bytes = b""
+                        if png_bytes:
+                            display.on_focus_preview(
+                                png_bytes,
+                                label=msg.get("label", ""),
+                                source=msg.get("source", ""),
+                            )
                     elif msg_type == "delta":
                         display.on_delta(msg.get("text", ""))
                     elif msg_type == "commit":

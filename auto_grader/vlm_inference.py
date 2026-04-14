@@ -865,6 +865,11 @@ def grade_all_items(
             )
             narrator_context = "\n".join(narrator_context_parts)
             sink.write_header(header)
+            sink.write_focus_preview(
+                page_cache[cache_key],
+                label=f"{item.exam_id}/{item.question_id}",
+                source="page-cache",
+            )
             narrator.start(item_header=narrator_context)
             on_delta = narrator.feed
         else:
