@@ -2652,33 +2652,33 @@ class NarratorReaderContract(unittest.TestCase):
         empty_style = self._style_for_substring(header_text_obj, "EMPTY")
         self.assertEqual(
             self._background_hex(emitted_style),
-            "#2f5e2b",
-            "EMITTED should use the brighter green board from the older text-era telemetry family",
+            "#3a7d30",
+            "EMITTED should keep the restored green family but with a hotter, more saturated board",
         )
         self.assertEqual(
             self._foreground_hex(emitted_style),
-            "#ecffe8",
-            "EMITTED label ink should stay bright green-white, not the dimmer newer pass",
+            "#f1ffe8",
+            "EMITTED label ink should get a slightly hotter green-white accent to match the stronger board",
         )
         self.assertEqual(
             self._background_hex(dedup_style),
-            "#56611f",
-            "DEDUP should read as bright yellow/chartreuse rather than the newer brown board",
+            "#6b7822",
+            "DEDUP should read as a hotter yellow/chartreuse board rather than the browner muted pass",
         )
         self.assertEqual(
             self._foreground_hex(dedup_style),
-            "#f4ffd2",
-            "DEDUP label ink should stay in the bright yellow-chartreuse family",
+            "#f7ffd0",
+            "DEDUP label ink should stay in the bright yellow-chartreuse family with slightly more intensity",
         )
         self.assertEqual(
             self._background_hex(empty_style),
-            "#6a2a22",
-            "EMPTY should keep the bright red board from the older text-era telemetry family",
+            "#863126",
+            "EMPTY should keep the restored red family but at a stronger saturation than the earlier pass",
         )
         self.assertEqual(
             self._foreground_hex(empty_style),
-            "#ffe1db",
-            "EMPTY label ink should stay bright red-white rather than the muted newer pass",
+            "#ffe0d9",
+            "EMPTY label ink should stay bright red-white with a slightly stronger signal edge",
         )
 
         drops_panel = group.renderables[-1]
@@ -2880,6 +2880,15 @@ class NarratorReaderContract(unittest.TestCase):
                 f"cell (``fg on #bghex`` style), matching the existing "
                 f"ON TARGET / LEFT ON TABLE / BAD CALLS label cells",
             )
+
+        total_label_bg = self._background_hex(_label_style_in_scorebug("TOTAL"))
+        turn_label_bg = self._background_hex(_label_style_in_scorebug("TURN"))
+        on_target_label_bg = self._background_hex(_label_style_in_scorebug("ON TARGET"))
+        self.assertEqual(
+            {total_label_bg, turn_label_bg, on_target_label_bg},
+            {on_target_label_bg},
+            "TOTAL and TURN should share the same charcoal label field as the rest of the scorebug row rather than living on isolated blue/orange slabs",
+        )
 
         # Header panel no longer carries small TOTAL/TURN capsules —
         # the promotion replaces the top-band treatment rather than
@@ -3157,6 +3166,33 @@ class NarratorReaderContract(unittest.TestCase):
         for msg_type in ("wrap_up", "basis", "review_marker", "end"):
             self.assertTrue(_message_requires_immediate_refresh(msg_type))
 
+    def test_inline_focus_preview_switches_to_event_driven_refresh(self):
+        display = self._make_display()
+        display._inline_images_supported = True
+        display._kitty_graphics_supported = False
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-10b",
+            source="mock_tricky",
+        )
+
+        self.assertFalse(
+            display.should_animate(),
+            "steady inline-image preview should stop the background shimmer loop so the image surface does not flicker under constant clears",
+        )
+        self.assertFalse(
+            display.should_refresh_on_event("delta"),
+            "inline preview mode should not repaint on every streaming token",
+        )
+        self.assertTrue(
+            display.should_refresh_on_event("commit"),
+            "inline preview mode must still repaint on structural boundaries so the visible state keeps moving",
+        )
+        self.assertTrue(
+            display.should_refresh_on_event("focus_preview"),
+            "a newly arrived preview image still needs an immediate paint in event-driven mode",
+        )
+
     def test_lower_history_tiers_render_dimmer_than_top_tier(self) -> None:
         top_text = Text()
         _apply_shimmer(top_text, "ABC", "line", 0, phase_override=0.0)
@@ -3227,6 +3263,21 @@ class NarratorReaderContract(unittest.TestCase):
             display.should_animate(
                 now=display._freeze_started_at + _LIVE_FREEZE_FADE_S + 0.1
             )
+        )
+
+    def test_kitty_focus_preview_also_stops_background_animation(self) -> None:
+        display = self._make_display()
+        display._kitty_graphics_supported = True
+        display._inline_images_supported = False
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-10b",
+            source="mock_tricky",
+        )
+
+        self.assertFalse(
+            display.should_animate(),
+            "steady kitty-image preview should also stop the background repaint loop so the terminal image layer is not churned continuously",
         )
 
     def test_session_end_stops_animation(self) -> None:

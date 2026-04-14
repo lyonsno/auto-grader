@@ -3052,12 +3052,42 @@ class PaintDryDisplay:
         ended and the final frame is meant to stay still while waiting
         for Enter.
         """
+        if self._has_steady_image_preview():
+            return False
         if not self.session_ended:
             return True
         if self._session_ended_at is None:
             return False
         now = time.monotonic() if now is None else now
         return now < (self._session_ended_at + _SESSION_END_ANIMATION_LINGER_S)
+
+    def _has_steady_image_preview(self) -> bool:
+        return (
+            not self.focus_preview_pending
+            and (
+                self.focus_preview_inline_renderable is not None
+                or self.focus_preview_kitty_renderable is not None
+            )
+        )
+
+    def should_refresh_on_event(self, msg_type: str) -> bool:
+        if not self._has_steady_image_preview():
+            return _message_requires_immediate_refresh(msg_type)
+        return msg_type in {
+            "session_meta",
+            "header",
+            "focus_preview",
+            "commit",
+            "rollback_live",
+            "topic",
+            "basis",
+            "review_marker",
+            "checkpoint",
+            "drop",
+            "wrap_up_pending",
+            "wrap_up",
+            "end",
+        }
 
     @staticmethod
     def _entry_visual_rows(entry: tuple, wrap_width: int | None) -> int:
@@ -3496,18 +3526,18 @@ class PaintDryDisplay:
         # timer promotion is actually legible as dial-shape scoreboard
         # instrumentation rather than being lost in the top header
         # chrome.
-        _emitted_idle_label = "bold #d4e8cd on #24411f"
-        _emitted_idle_value = "bold #bfd3b8 on #162712"
-        _emitted_label = "bold #ecffe8 on #2f5e2b"
-        _emitted_value = "bold #dcffd3 on #173515"
-        _dedup_idle_label = "bold #e8efc3 on #48531d"
-        _dedup_idle_value = "bold #d7e0b1 on #2e3512"
-        _dedup_label = "bold #f4ffd2 on #56611f"
-        _dedup_value = "bold #e5f3b8 on #333b12"
-        _empty_idle_label = "bold #efd0c7 on #58231d"
-        _empty_idle_value = "bold #ddb8b0 on #381612"
-        _empty_label = "bold #ffe1db on #6a2a22"
-        _empty_value = "bold #ffc3b8 on #411611"
+        _emitted_idle_label = "bold #ddefd1 on #2a5523"
+        _emitted_idle_value = "bold #cadac0 on #173115"
+        _emitted_label = "bold #f1ffe8 on #3a7d30"
+        _emitted_value = "bold #e5ffd8 on #1d4618"
+        _dedup_idle_label = "bold #edf2c5 on #55611d"
+        _dedup_idle_value = "bold #dce2b0 on #343b13"
+        _dedup_label = "bold #f7ffd0 on #6b7822"
+        _dedup_value = "bold #edf4b6 on #414915"
+        _empty_idle_label = "bold #f1d1c8 on #632720"
+        _empty_idle_value = "bold #e0b7ae on #3d1613"
+        _empty_label = "bold #ffe0d9 on #863126"
+        _empty_value = "bold #ffc7bd on #4d1913"
         self._append_scorebug_cell(
             header_text,
             "EMITTED",
@@ -3623,37 +3653,37 @@ class PaintDryDisplay:
             # LEFT ON TABLE's yellow-bronze and BAD CALLS' red-brown,
             # and carries the "currently on the clock" weight that
             # matches the ember ITEM tag above.
-            _total_label_style = "bold #e8ecf5 on #3a4256"
+            _total_label_style = f"bold #b7c5dc on {tally_label_bg}"
             _total_value_row_styles = (
-                "bold #dde2f0 on #272c39",
-                "bold #d3d8e6 on #1f2430",
-                "bold #c9cedb on #181c27",
+                f"bold #d8dfec on {tally_top_bg}",
+                f"bold #ced5e3 on {tally_mid_bg}",
+                f"bold #c4cbd9 on {tally_bottom_bg}",
             )
             _total_value_mid_row_styles = (
-                "bold #8e94a3 on #272c39",
-                "bold #868ca0 on #1f2430",
-                "bold #7d8398 on #181c27",
+                f"bold #8e98ab on {tally_top_bg}",
+                f"bold #8690a3 on {tally_mid_bg}",
+                f"bold #7d8699 on {tally_bottom_bg}",
             )
             _total_value_texture_styles = (
-                "#4a515f on #272c39",
-                "#434957 on #1f2430",
-                "#3d434f on #181c27",
+                f"#586171 on {tally_top_bg}",
+                f"#515967 on {tally_mid_bg}",
+                f"#49515e on {tally_bottom_bg}",
             )
-            _turn_label_style = "bold #ffecd0 on #6b4a22"
+            _turn_label_style = f"bold #dfb57d on {tally_label_bg}"
             _turn_value_row_styles = (
-                "bold #ffe2b8 on #4d361a",
-                "bold #f8d6a8 on #3f2b14",
-                "bold #eac598 on #33220f",
+                f"bold #efcf9d on {tally_top_bg}",
+                f"bold #e3c18e on {tally_mid_bg}",
+                f"bold #d6b27e on {tally_bottom_bg}",
             )
             _turn_value_mid_row_styles = (
-                "bold #a78768 on #4d361a",
-                "bold #9e7e5f on #3f2b14",
-                "bold #8f7152 on #33220f",
+                f"bold #a68763 on {tally_top_bg}",
+                f"bold #9c7d5a on {tally_mid_bg}",
+                f"bold #8f704e on {tally_bottom_bg}",
             )
             _turn_value_texture_styles = (
-                "#5a4630 on #4d361a",
-                "#523f2b on #3f2b14",
-                "#493827 on #33220f",
+                f"#6a5840 on {tally_top_bg}",
+                f"#61503a on {tally_mid_bg}",
+                f"#574733 on {tally_bottom_bg}",
             )
             _total_value_str = f"{total_elapsed_s}"
             _turn_value_str = (
@@ -5022,7 +5052,7 @@ def main() -> int:
                         anim_thread.join(timeout=0.5)
                         return 0
 
-                    if _message_requires_immediate_refresh(msg_type):
+                    if display.should_refresh_on_event(msg_type):
                         try:
                             _live_update()
                         except Exception:
