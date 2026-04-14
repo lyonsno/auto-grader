@@ -89,7 +89,7 @@ class AssessmentAuthoringBackendTests(unittest.TestCase):
         gui = _load_gui_module(self)
         app = gui.McWorkflowGuiApp()
 
-        fake_connection = mock.Mock()
+        fake_connection = mock.MagicMock()
         # fetchone returns the inserted template_version id, then exam_definition id
         fake_connection.execute.return_value.fetchone.side_effect = [
             (1,),  # template_versions INSERT ... RETURNING id
@@ -150,7 +150,7 @@ class AssessmentAuthoringBackendTests(unittest.TestCase):
         app = gui.McWorkflowGuiApp()
 
         persisted_yaml = None
-        fake_connection = mock.Mock()
+        fake_connection = mock.MagicMock()
 
         def capture_execute(query, params=None):
             nonlocal persisted_yaml
@@ -194,7 +194,7 @@ class AssessmentKindTests(unittest.TestCase):
         gui = _load_gui_module(self)
         app = gui.McWorkflowGuiApp()
 
-        fake_connection = mock.Mock()
+        fake_connection = mock.MagicMock()
         fake_connection.execute.return_value.fetchone.return_value = (1,)
 
         form_body = (
@@ -276,7 +276,7 @@ class AssessmentAuthoringValidationTests(unittest.TestCase):
         gui = _load_gui_module(self)
         app = gui.McWorkflowGuiApp()
 
-        fake_connection = mock.Mock()
+        fake_connection = mock.MagicMock()
         fake_connection.execute.return_value.fetchone.return_value = (1,)
 
         form_body = (
@@ -305,9 +305,7 @@ class AssessmentAuthoringValidationTests(unittest.TestCase):
         gui = _load_gui_module(self)
         app = gui.McWorkflowGuiApp()
 
-        fake_connection = mock.Mock()
-        from psycopg import errors as pg_errors
-
+        fake_connection = mock.MagicMock()
         fake_connection.execute.side_effect = Exception(
             "duplicate key value violates unique constraint"
         )
@@ -337,9 +335,8 @@ class AssessmentAuthoringValidationTests(unittest.TestCase):
         )
         app = gui.McWorkflowGuiApp(initial_state=state)
 
-        # Trigger a /review POST (will fail because exam_instance_id etc.
-        # are not wired to a real DB, but the clearing should happen before
-        # the handler error).
+        # Trigger a successful /review POST via mocked backend; the
+        # authoring_message should be cleared on the success path.
         body = b"database_url=postgresql%3A%2F%2F%2Fpostgres&exam_instance_id=1"
         environ = {
             "REQUEST_METHOD": "POST",

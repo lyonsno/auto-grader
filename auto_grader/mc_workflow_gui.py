@@ -266,18 +266,18 @@ class McWorkflowGuiApp:
             schema_name=config.get("schema_name") or None,
         )
         try:
-            tv_id = connection.execute(
-                "INSERT INTO template_versions (slug, version, source_yaml) "
-                "VALUES (%s, 1, %s) RETURNING id",
-                (slug, source_yaml),
-            ).fetchone()[0]
-            connection.execute(
-                "INSERT INTO exam_definitions (slug, version, title, template_version_id) "
-                "VALUES (%s, 1, %s, %s) RETURNING id",
-                (slug, title, tv_id),
-            ).fetchone()
+            with connection.transaction():
+                tv_id = connection.execute(
+                    "INSERT INTO template_versions (slug, version, source_yaml) "
+                    "VALUES (%s, 1, %s) RETURNING id",
+                    (slug, source_yaml),
+                ).fetchone()[0]
+                connection.execute(
+                    "INSERT INTO exam_definitions (slug, version, title, template_version_id) "
+                    "VALUES (%s, 1, %s, %s) RETURNING id",
+                    (slug, title, tv_id),
+                ).fetchone()
         except Exception as exc:
-            connection.close()
             exc_str = str(exc)
             if "unique" in exc_str.lower() or "duplicate" in exc_str.lower():
                 raise ValueError(
