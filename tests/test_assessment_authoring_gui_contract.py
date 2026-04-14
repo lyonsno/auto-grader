@@ -230,5 +230,134 @@ class AssessmentKindTests(unittest.TestCase):
         self.assertIn("saved", html.lower())
 
 
+class AssessmentAuthoringValidationTests(unittest.TestCase):
+    """Panopticon-driven hardening: correct-answer validation, gap tolerance, slug conflicts."""
+
+    def _post_author(self, gui, app, form_body: str):
+        captured: dict[str, object] = {}
+
+        def start_response(status, headers):
+            captured["status"] = status
+
+        body_bytes = form_body.encode("utf-8")
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/author",
+            "CONTENT_LENGTH": str(len(body_bytes)),
+            "wsgi.input": io.BytesIO(body_bytes),
+        }
+        chunks = list(app(environ, start_response))
+        html = b"".join(chunks).decode("utf-8")
+        return captured["status"], html
+
+    def test_rejects_empty_correct_answer(self) -> None:
+        gui = _load_gui_module(self)
+        app = gui.McWorkflowGuiApp()
+
+        form_body = (
+            "database_url=postgresql%3A%2F%2F%2Fpostgres&"
+            "authoring_title=Quiz+1&"
+            "authoring_slug=quiz-1&"
+            "authoring_kind=quiz&"
+            "q_1_prompt=What+is+H2O%3F&"
+            "q_1_choice_A=Water&"
+            "q_1_choice_B=Salt&"
+            "q_1_correct="
+        )
+
+        with mock.patch.object(gui, "_connect", return_value=mock.Mock()):
+            status, html = self._post_author(gui, app, form_body)
+
+        self.assertEqual(status, "200 OK")
+        self.assertIn("correct answer", html.lower())
+
+    def test_gap_in_question_numbers_does_not_silently_drop(self) -> None:
+        """If q_1 and q_3 are filled but q_2 is blank, both should be collected."""
+        gui = _load_gui_module(self)
+        app = gui.McWorkflowGuiApp()
+
+        fake_connection = mock.Mock()
+        fake_connection.execute.return_value.fetchone.return_value = (1,)
+
+        form_body = (
+            "database_url=postgresql%3A%2F%2F%2Fpostgres&"
+            "authoring_title=Gap+Test&"
+            "authoring_slug=gap-test&"
+            "authoring_kind=exam&"
+            "q_1_prompt=First%3F&"
+            "q_1_choice_A=Yes&"
+            "q_1_choice_B=No&"
+            "q_1_correct=A&"
+            "q_2_prompt=&"
+            "q_3_prompt=Third%3F&"
+            "q_3_choice_A=Yes&"
+            "q_3_choice_B=No&"
+            "q_3_correct=B"
+        )
+
+        with mock.patch.object(gui, "_connect", return_value=fake_connection):
+            status, html = self._post_author(gui, app, form_body)
+
+        self.assertEqual(status, "200 OK")
+        self.assertIn("2 questions", html.lower())
+
+    def test_duplicate_slug_surfaces_user_friendly_error(self) -> None:
+        gui = _load_gui_module(self)
+        app = gui.McWorkflowGuiApp()
+
+        fake_connection = mock.Mock()
+        from psycopg import errors as pg_errors
+
+        fake_connection.execute.side_effect = Exception(
+            "duplicate key value violates unique constraint"
+        )
+
+        form_body = (
+            "database_url=postgresql%3A%2F%2F%2Fpostgres&"
+            "authoring_title=Quiz+1&"
+            "authoring_slug=quiz-1&"
+            "authoring_kind=quiz&"
+            "q_1_prompt=What%3F&"
+            "q_1_choice_A=A&"
+            "q_1_choice_B=B&"
+            "q_1_correct=A"
+        )
+
+        with mock.patch.object(gui, "_connect", return_value=fake_connection):
+            status, html = self._post_author(gui, app, form_body)
+
+        self.assertEqual(status, "200 OK")
+        self.assertIn("already exists", html.lower())
+
+    def test_authoring_message_clears_on_non_author_post(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(
+            config={"database_url": "postgresql:///postgres", "exam_instance_id": "1"},
+            authoring_message="Saved something earlier.",
+        )
+        app = gui.McWorkflowGuiApp(initial_state=state)
+
+        # Trigger a /review POST (will fail because exam_instance_id etc.
+        # are not wired to a real DB, but the clearing should happen before
+        # the handler error).
+        body = b"database_url=postgresql%3A%2F%2F%2Fpostgres&exam_instance_id=1"
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/review",
+            "CONTENT_LENGTH": str(len(body)),
+            "wsgi.input": io.BytesIO(body),
+        }
+
+        captured: dict[str, object] = {}
+        def start_response(status, headers):
+            captured["status"] = status
+
+        with mock.patch.object(gui, "_connect", return_value=mock.Mock()):
+            with mock.patch.object(gui, "get_review_queue", return_value={"review_queue": [], "summary": {}}):
+                list(app(environ, start_response))
+
+        self.assertIsNone(app.state.authoring_message)
+
+
 if __name__ == "__main__":
     unittest.main()

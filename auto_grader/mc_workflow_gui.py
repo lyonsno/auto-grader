@@ -88,10 +88,13 @@ class McWorkflowGuiApp:
                 else:
                     raise ValueError(f"Unknown action path: {path}")
                 self._refresh_catalog()
+                if path != "/author":
+                    self.state.authoring_message = None
                 self.state.error = None
             except Exception as exc:
                 self.state.error = str(exc)
                 self.state.message = None
+                self.state.authoring_message = None
         else:
             self._refresh_catalog_if_possible()
 
@@ -251,13 +254,16 @@ class McWorkflowGuiApp:
         if not questions:
             raise ValueError("At least one question with a prompt is required.")
 
+        for i, q in enumerate(questions, 1):
+            if q["correct"] not in _CHOICE_LABELS:
+                raise ValueError(f"Question {i}: correct answer must be one of {', '.join(_CHOICE_LABELS)}.")
+
         source_yaml = _build_template_yaml(slug=slug, title=title, kind=kind, questions=questions)
 
-        db_url = form.get("database_url", "").strip()
-        schema_name = form.get("schema_name", "").strip()
+        config = self._require_config("database_url")
         connection = _connect(
-            database_url=db_url or None,
-            schema_name=schema_name or None,
+            database_url=config["database_url"] or None,
+            schema_name=config.get("schema_name") or None,
         )
         try:
             tv_id = connection.execute(
@@ -270,12 +276,20 @@ class McWorkflowGuiApp:
                 "VALUES (%s, 1, %s, %s) RETURNING id",
                 (slug, title, tv_id),
             ).fetchone()
-            connection.commit()
+        except Exception as exc:
+            connection.close()
+            exc_str = str(exc)
+            if "unique" in exc_str.lower() or "duplicate" in exc_str.lower():
+                raise ValueError(
+                    f"An assessment with slug \u201c{slug}\u201d already exists. "
+                    "Choose a different title or slug."
+                ) from exc
+            raise
         finally:
             connection.close()
 
         self.state.authoring_message = f"Saved assessment \u201c{title}\u201d ({kind}, {len(questions)} questions)."
-        self.state.error = None
+        self.state.message = None
 
     def _require_config(self, *keys: str) -> dict[str, str]:
         missing = [key for key in keys if self.state.config.get(key, "").strip() == ""]
@@ -751,14 +765,18 @@ def _render_authoring_question_fields() -> str:
 
 
 def _extract_authored_questions(form: dict[str, str]) -> list[dict[str, Any]]:
-    """Parse numbered MC question fields from the form into a list of question dicts."""
+    """Parse numbered MC question fields from the form into a list of question dicts.
+
+    Scans all slots up to _INITIAL_QUESTION_COUNT and collects every slot
+    that has a non-empty prompt, regardless of gaps between them.
+    """
     questions: list[dict[str, Any]] = []
-    idx = 1
-    while True:
+    question_number = 0
+    for idx in range(1, _INITIAL_QUESTION_COUNT + 1):
         prompt = form.get(f"q_{idx}_prompt", "").strip()
         if not prompt:
-            # Stop at the first missing prompt — questions are sequential.
-            break
+            continue
+        question_number += 1
         choices: dict[str, str] = {}
         for label in _CHOICE_LABELS:
             text = form.get(f"q_{idx}_choice_{label}", "").strip()
@@ -766,12 +784,11 @@ def _extract_authored_questions(form: dict[str, str]) -> list[dict[str, Any]]:
                 choices[label] = text
         correct = form.get(f"q_{idx}_correct", "").strip()
         questions.append({
-            "id": f"mc-{idx}",
+            "id": f"mc-{question_number}",
             "prompt": prompt,
             "choices": choices,
             "correct": correct,
         })
-        idx += 1
     return questions
 
 
