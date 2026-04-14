@@ -439,9 +439,9 @@ _LIVE_FROZEN_VAL_MUL = 0.85
 _ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
                               # the slower animation families above are eased
                               # back to keep the overall feel restrained
-_PREVIEW_ANIMATION_FPS = 6.0  # steady image previews should keep some life,
-                              # but at a calmer repaint cadence than the
-                              # fully text-driven surface.
+_PREVIEW_ANIMATION_FPS = 10.0  # steady image previews should keep some life
+                               # without feeling sluggish once the preview
+                               # itself is no longer re-placed every tick.
 _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
                               # messages quickly, but doesn't need redraw spam
 _SESSION_END_ANIMATION_LINGER_S = 120.0  # keep the finished painting alive
@@ -1578,6 +1578,7 @@ class FocusPreviewKittyImage:
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
         self._title = title
+        self._last_box: tuple[int, int] | None = None
 
     def _compute_box(self, available_width: int) -> tuple[int, int]:
         """Compute (cell_width, cell_height) for the image at the
@@ -1638,11 +1639,17 @@ class FocusPreviewKittyImage:
         image_left = max(0, (term_width - cell_width) // 2)
         image_right = image_left + cell_width  # exclusive
 
-        place_sequence = _build_kitty_place_sequence(
-            self._image_id,
-            cell_width=cell_width,
-            cell_height=cell_height,
-        )
+        box = (cell_width, cell_height)
+        should_place = self._last_box != box
+        if should_place:
+            place_sequence = _build_kitty_place_sequence(
+                self._image_id,
+                cell_width=cell_width,
+                cell_height=cell_height,
+            )
+            self._last_box = box
+        else:
+            place_sequence = None
 
         # ─── Top border rule with inlined title ───
         yield from _emit_band_border_row(term_width, title=self._title)
@@ -1671,7 +1678,7 @@ class FocusPreviewKittyImage:
             )
             # Middle: image placement on row 0, cursor-forward only
             # on rows 1+.
-            if image_row == 0:
+            if image_row == 0 and place_sequence is not None:
                 yield Segment(
                     place_sequence, None, [(ControlType.BELL,)]
                 )

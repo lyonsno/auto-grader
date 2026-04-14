@@ -1194,11 +1194,11 @@ class NarratorReaderContract(unittest.TestCase):
             msg="resizing must preserve image aspect ratio",
         )
 
-    def test_focus_preview_kitty_image_emits_place_every_render(self):
-        # Rich Live clears the image region between frames, so we
-        # must re-emit the place command on every render. The place
-        # command is tiny and WezTerm doesn't re-parse anything, so
-        # this is cheap and flicker-free.
+    def test_focus_preview_kitty_image_reuses_cached_placement_when_geometry_is_stable(self):
+        # Once the image has been placed at a given geometry, steady
+        # same-size renders should only cursor past the cached image
+        # instead of re-issuing a fresh Kitty place command on every
+        # animation tick.
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
@@ -1214,14 +1214,54 @@ class NarratorReaderContract(unittest.TestCase):
             color_system="truecolor",
             force_terminal=True,
         )
-        with console.capture() as capture:
-            console.print(renderable)
-        first = capture.get()
-        with console.capture() as capture:
-            console.print(renderable)
-        second = capture.get()
+        options = console.options.update(width=120)
+        first = "".join(
+            segment.text
+            for segment in renderable.__rich_console__(console, options)
+        )
+        second = "".join(
+            segment.text
+            for segment in renderable.__rich_console__(console, options)
+        )
         self.assertEqual(first.count("\x1b_Ga=p"), 1)
-        self.assertEqual(second.count("\x1b_Ga=p"), 1)
+        self.assertEqual(second.count("\x1b_Ga=p"), 0)
+
+    def test_focus_preview_kitty_image_reissues_place_after_geometry_change(self):
+        from rich.console import Console
+
+        renderable = FocusPreviewKittyImage(
+            image_id=1,
+            image_pixel_width=1600,
+            image_pixel_height=900,
+            terminal_cell_aspect=2.1,
+            title="test",
+        )
+        console = Console(
+            width=120,
+            record=True,
+            color_system="truecolor",
+            force_terminal=True,
+        )
+        first = "".join(
+            segment.text
+            for segment in renderable.__rich_console__(
+                console,
+                console.options.update(width=120),
+            )
+        )
+        second = "".join(
+            segment.text
+            for segment in renderable.__rich_console__(
+                console,
+                console.options.update(width=50),
+            )
+        )
+        self.assertEqual(first.count("\x1b_Ga=p"), 1)
+        self.assertEqual(
+            second.count("\x1b_Ga=p"),
+            1,
+            "changing the width budget should invalidate the cached placement so the preview is re-placed at the new geometry",
+        )
 
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
