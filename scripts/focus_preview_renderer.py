@@ -996,6 +996,7 @@ class FocusPreviewKittyImage:
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
         self._title = title
+        self._last_box: tuple[int, int] | None = None
 
     def _compute_box(self, available_width: int) -> tuple[int, int]:
         """Compute (cell_width, cell_height) for the image."""
@@ -1021,11 +1022,17 @@ class FocusPreviewKittyImage:
         image_left = max(0, (term_width - cell_width) // 2)
         image_right = image_left + cell_width
 
-        place_sequence = _build_kitty_place_sequence(
-            self._image_id,
-            cell_width=cell_width,
-            cell_height=cell_height,
-        )
+        box = (cell_width, cell_height)
+        should_place = self._last_box != box
+        if should_place:
+            place_sequence = _build_kitty_place_sequence(
+                self._image_id,
+                cell_width=cell_width,
+                cell_height=cell_height,
+            )
+            self._last_box = box
+        else:
+            place_sequence = None
 
         # Top border rule with inlined title
         yield from _emit_band_border_row(term_width, title=self._title)
@@ -1051,7 +1058,7 @@ class FocusPreviewKittyImage:
                 row_seed_id=1 + image_row,
                 image_id=self._texture_seed,
             )
-            if image_row == 0:
+            if image_row == 0 and place_sequence is not None:
                 yield Segment(
                     place_sequence, None, [(ControlType.BELL,)]
                 )

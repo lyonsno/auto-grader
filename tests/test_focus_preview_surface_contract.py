@@ -145,6 +145,62 @@ class FocusPreviewSurfaceContract(unittest.TestCase):
             "reader should not import generic luminance helpers from the preview renderer",
         )
 
+    def test_reader_live_surface_uses_manual_alt_screen_not_main_buffer_scroll(self):
+        source = (
+            Path(__file__).resolve().parent.parent / "scripts" / "narrator_reader.py"
+        ).read_text()
+
+        self.assertIn(
+            '\\033[?1049h',
+            source,
+            "reader should enter alt-screen explicitly so live preview does not stack duplicate frames into the main buffer",
+        )
+        self.assertIn(
+            "def _live_update(",
+            source,
+            "reader should drive paints through a dedicated live-update path instead of a bare 30fps main-buffer redraw loop",
+        )
+        self.assertNotIn(
+            "screen=False — stay in the terminal's main screen buffer",
+            source,
+            "reader should not retain the legacy main-buffer redraw path that accepts stacked/garbled preview frames",
+        )
+
+    def test_kitty_preview_reuses_place_sequence_when_geometry_is_stable(self):
+        renderer = _load_module("focus_preview_renderer", "scripts/focus_preview_renderer.py")
+
+        renderable = renderer.FocusPreviewKittyImage(
+            image_id=99,
+            texture_seed=99,
+            image_pixel_width=320,
+            image_pixel_height=200,
+            terminal_cell_aspect=2.0,
+            title="focus preview · test",
+        )
+        console = renderer.Console(color_system="truecolor", force_terminal=True)
+        options = console.options.update(width=80, max_width=80)
+
+        first_segments = list(renderable.__rich_console__(console, options))
+        second_segments = list(renderable.__rich_console__(console, options))
+
+        def _count_place(segments):
+            return sum(
+                1
+                for segment in segments
+                if "a=p" in getattr(segment, "text", "")
+            )
+
+        self.assertEqual(
+            _count_place(first_segments),
+            1,
+            "first steady render should place the kitty image once",
+        )
+        self.assertEqual(
+            _count_place(second_segments),
+            0,
+            "same-size steady rerender should reuse the existing kitty placement instead of re-placing every frame",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

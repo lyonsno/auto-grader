@@ -30,6 +30,7 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 import termios
 import threading
@@ -130,6 +131,8 @@ _MAX_HISTORY_LINES = 500  # cap so we don't grow unbounded; raised from 90
                           # full exam run (~40 items × ~10 entries each) with
                           # headroom, and is trivially cheap in memory.
 _VISIBLE_HISTORY_LINES = 30  # how many to actually render
+_ACTIVE_ANIMATION_FPS = 24.0
+_PREVIEW_ANIMATION_FPS = 10.0
 
 # The priority-fill budget counts LOGICAL ENTRIES (headers, topics,
 # narrator lines). The viewport's visible-row budget counts VISUAL
@@ -139,6 +142,14 @@ _VISIBLE_HISTORY_LINES = 30  # how many to actually render
 # viewport can display all entries the priority filter retains.
 _PRIORITY_FILL_ENTRY_BUDGET = _VISIBLE_HISTORY_LINES
 _VIEWPORT_VISIBLE_ROWS = _VISIBLE_HISTORY_LINES * 2  # headroom for wrapping
+
+
+def _live_frame_requires_full_clear(
+    last_paint_size: tuple[int, int] | None,
+    current_size: tuple[int, int],
+) -> bool:
+    """Return whether the next live paint needs a global alt-screen clear."""
+    return last_paint_size is None or current_size != last_paint_size
 
 # Shimmer parameters — slow chyron sweep across the top N history lines.
 # Each layer has a fixed phase offset relative to the one above it (so
@@ -1783,6 +1794,20 @@ class PaintDryDisplay:
         # the right color variant for the topic line.
         self.history.append(("topic", text, verdict))
 
+    def _has_steady_image_preview(self) -> bool:
+        return (
+            not self.focus_preview_pending
+            and (
+                self.focus_preview_inline_renderable is not None
+                or self.focus_preview_kitty_renderable is not None
+            )
+        )
+
+    def target_animation_fps(self) -> float:
+        if self._has_steady_image_preview():
+            return _PREVIEW_ANIMATION_FPS
+        return _ACTIVE_ANIMATION_FPS
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -1838,32 +1863,66 @@ def main() -> int:
         session_exit = threading.Event()
         scroll_controller = HistoryScrollController(display)
 
-        # screen=False — stay in the terminal's main screen buffer.
-        # Alt-screen (screen=True) was tried and reverted: the focus-
-        # preview image panel can push the total rendered height past
-        # the terminal's row count, and alt-screen has no scrollback
-        # to absorb the overflow — the result is doubled/garbled
-        # panels. screen=False lets the terminal scroll naturally.
-        # Trade-off: Rich's in-place redraw leaves prior frames in
-        # the terminal's native scrollback (ghost header trails when
-        # scrolling the terminal up). That is accepted until a fixed-
-        # height layout or Rich transient mode can eliminate it.
+        # Enter alt-screen manually. Live still uses screen=False so
+        # Rich doesn't wrap the renderable in Screen, but the actual
+        # terminal surface is the alternate buffer. This avoids the
+        # main-buffer stacking/garbling the smoke exposed when focus
+        # preview repaints race through the scrollback.
+        _resize_pending = threading.Event()
+        _animation_wake = threading.Event()
+        _prev_sigwinch = signal.getsignal(signal.SIGWINCH)
+
+        def _on_sigwinch(signum, frame):
+            _resize_pending.set()
+            _animation_wake.set()
+            if callable(_prev_sigwinch):
+                _prev_sigwinch(signum, frame)
+
+        signal.signal(signal.SIGWINCH, _on_sigwinch)
+        _last_paint_size: tuple[int, int] | None = None
+
+        def _live_update():
+            nonlocal _last_paint_size
+            _resize_pending.clear()
+
+            renderable = None
+            for _attempt in range(3):
+                size_before = (console.size.width, console.size.height)
+                renderable = display.render()
+                size_after = (console.size.width, console.size.height)
+                if size_before == size_after:
+                    break
+
+            paint_size = (console.size.width, console.size.height)
+            if _live_frame_requires_full_clear(_last_paint_size, paint_size):
+                sys.stdout.write("\033[2J\033[H")
+            else:
+                sys.stdout.write("\033[H")
+            sys.stdout.flush()
+            live.update(renderable, refresh=True)
+            _last_paint_size = paint_size
+
+        sys.stdout.write("\033[?1049h")
+        sys.stdout.flush()
         with Live(
             display.render(),
             console=console,
-            refresh_per_second=30,
+            refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
             screen=False,
             auto_refresh=False,
         ) as live:
             def _animation_tick():
                 while not animation_stop.is_set():
                     try:
-                        live.update(display.render(), refresh=True)
+                        _live_update()
                     except Exception:
                         # Transient race with the message loop mutating
                         # display state — next tick will recover.
                         pass
-                    time.sleep(1.0 / 30)
+                    _animation_wake.clear()
+                    _animation_wake.wait(
+                        timeout=1.0 / display.target_animation_fps()
+                    )
 
             anim_thread = threading.Thread(
                 target=_animation_tick,
@@ -1983,6 +2042,15 @@ def main() -> int:
             pass
         try:
             fifo.close()
+        except Exception:
+            pass
+        try:
+            sys.stdout.write("\033[?1049l")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        try:
+            signal.signal(signal.SIGWINCH, _prev_sigwinch)  # type: ignore[name-defined]
         except Exception:
             pass
         if stdin_fd is not None and saved_termios is not None:
