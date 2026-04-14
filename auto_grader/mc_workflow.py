@@ -94,6 +94,108 @@ def get_review_queue(
     }
 
 
+def list_assessment_definitions(*, connection: object) -> list[dict[str, Any]]:
+    """Return authored assessment definitions in professor-facing label form."""
+    rows = connection.execute(
+        """
+        SELECT id, slug, version, title
+        FROM exam_definitions
+        ORDER BY title, version, id
+        """
+    ).fetchall()
+    return [
+        {
+            "exam_definition_id": row["id"],
+            "slug": row["slug"],
+            "version": row["version"],
+            "title": row["title"],
+            "label": row["title"] if row["version"] == 1 else f"{row['title']} (v{row['version']})",
+        }
+        for row in rows
+    ]
+
+
+def list_grading_targets(*, connection: object) -> list[dict[str, Any]]:
+    """Return saved grading targets with human-readable labels."""
+    rows = connection.execute(
+        """
+        SELECT
+            ei.id AS exam_instance_id,
+            ed.id AS exam_definition_id,
+            ed.title AS exam_title,
+            ei.opaque_instance_code AS target_name,
+            ei.attempt_number AS attempt_number,
+            s.student_key AS student_key
+        FROM exam_instances ei
+        JOIN exam_definitions ed ON ed.id = ei.exam_definition_id
+        JOIN students s ON s.id = ei.student_id
+        ORDER BY ei.id
+        """
+    ).fetchall()
+    return [
+        {
+            "exam_instance_id": row["exam_instance_id"],
+            "exam_definition_id": row["exam_definition_id"],
+            "exam_title": row["exam_title"],
+            "target_name": row["target_name"],
+            "attempt_number": row["attempt_number"],
+            "student_key": row["student_key"],
+            "label": f"{row['exam_title']} - {row['target_name']}",
+        }
+        for row in rows
+    ]
+
+
+def create_grading_target(
+    *,
+    exam_definition_id: int,
+    target_name: str,
+    connection: object,
+) -> dict[str, Any]:
+    """Create one professor-facing grading target in the durable model."""
+    if isinstance(exam_definition_id, bool) or not isinstance(exam_definition_id, int):
+        raise TypeError("exam_definition_id must be an integer")
+    if not isinstance(target_name, str) or target_name.strip() == "":
+        raise ValueError("target_name must be a non-empty string")
+
+    clean_name = target_name.strip()
+    exam_definition = connection.execute(
+        "SELECT id, title FROM exam_definitions WHERE id = %s",
+        (exam_definition_id,),
+    ).fetchone()
+    if exam_definition is None:
+        raise KeyError(f"Unknown exam_definition_id {exam_definition_id}")
+
+    final_target_name = _next_available_target_name(
+        base_name=clean_name,
+        connection=connection,
+    )
+    student_key = f"grading-target::{final_target_name}"
+
+    with connection.transaction():
+        student_row = connection.execute(
+            "INSERT INTO students (student_key) VALUES (%s) RETURNING id",
+            (student_key,),
+        ).fetchone()
+        exam_instance_row = connection.execute(
+            """
+            INSERT INTO exam_instances
+            (exam_definition_id, student_id, attempt_number, opaque_instance_code)
+            VALUES (%s, %s, 1, %s)
+            RETURNING id
+            """,
+            (exam_definition_id, student_row["id"], final_target_name),
+        ).fetchone()
+
+    return {
+        "exam_instance_id": exam_instance_row["id"],
+        "exam_definition_id": exam_definition_id,
+        "exam_title": exam_definition["title"],
+        "target_name": final_target_name,
+        "label": f"{exam_definition['title']} - {final_target_name}",
+    }
+
+
 def ingest_and_persist_from_scan_dir(
     *,
     artifact_json_path: str | Path,
@@ -259,6 +361,20 @@ def _require_existing_dir(path_value: str | Path, label: str) -> Path:
     if not path.is_dir():
         raise FileNotFoundError(f"{label} must point to an existing directory")
     return path
+
+
+def _next_available_target_name(*, base_name: str, connection: object) -> str:
+    candidate = base_name
+    suffix = 2
+    while True:
+        row = connection.execute(
+            "SELECT 1 FROM exam_instances WHERE opaque_instance_code = %s",
+            (candidate,),
+        ).fetchone()
+        if row is None:
+            return candidate
+        candidate = f"{base_name} ({suffix})"
+        suffix += 1
 
 
 def _require_existing_file(path_value: str | Path, label: str) -> Path:

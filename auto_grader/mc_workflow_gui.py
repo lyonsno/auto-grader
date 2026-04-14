@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import re
+import subprocess
 from typing import Any
 from urllib.parse import parse_qs
 import webbrowser
@@ -17,9 +18,12 @@ from psycopg import sql
 
 from auto_grader.db import create_connection
 from auto_grader.mc_workflow import (
+    create_grading_target,
     export_results,
     get_review_queue,
     ingest_and_persist_from_scan_dir,
+    list_assessment_definitions,
+    list_grading_targets,
     render_results_csv,
     resolve_and_persist,
 )
@@ -45,6 +49,8 @@ class GuiState:
     review_queue: list[dict[str, Any]] = field(default_factory=list)
     summary: dict[str, Any] | None = None
     export_paths: dict[str, str] = field(default_factory=dict)
+    grading_targets: list[dict[str, Any]] = field(default_factory=list)
+    assessment_definitions: list[dict[str, Any]] = field(default_factory=list)
 
 
 class McWorkflowGuiApp:
@@ -67,12 +73,21 @@ class McWorkflowGuiApp:
                     self._handle_resolve(form)
                 elif path == "/export":
                     self._handle_export()
+                elif path == "/create-target":
+                    self._handle_create_target(form)
+                elif path == "/open-path":
+                    self._handle_open_path(form, reveal=False)
+                elif path == "/reveal-path":
+                    self._handle_open_path(form, reveal=True)
                 else:
                     raise ValueError(f"Unknown action path: {path}")
+                self._refresh_catalog()
                 self.state.error = None
             except Exception as exc:
                 self.state.error = str(exc)
                 self.state.message = None
+        else:
+            self._refresh_catalog_if_possible()
 
         html = render_page(self.state).encode("utf-8")
         start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
@@ -188,11 +203,72 @@ class McWorkflowGuiApp:
         }
         self.state.message = "Export completed."
 
+    def _handle_create_target(self, form: dict[str, str]) -> None:
+        config = self._require_config("database_url")
+        exam_definition_id = _require_int(
+            form.get("new_exam_definition_id", ""),
+            "new_exam_definition_id",
+        )
+        target_name = form.get("new_target_name", "").strip()
+        if target_name == "":
+            raise ValueError("new_target_name must be provided")
+
+        connection = _connect(
+            database_url=config["database_url"] or None,
+            schema_name=config.get("schema_name") or None,
+        )
+        try:
+            created = create_grading_target(
+                exam_definition_id=exam_definition_id,
+                target_name=target_name,
+                connection=connection,
+            )
+        finally:
+            connection.close()
+
+        self.state.config["exam_instance_id"] = str(created["exam_instance_id"])
+        self.state.message = "Created exam target."
+
     def _require_config(self, *keys: str) -> dict[str, str]:
         missing = [key for key in keys if self.state.config.get(key, "").strip() == ""]
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(missing)}")
         return self.state.config
+
+    def _handle_open_path(self, form: dict[str, str], *, reveal: bool) -> None:
+        path = form.get("path", "").strip()
+        if path == "":
+            raise ValueError("No path was selected.")
+        if path not in _collect_openable_paths(self.state):
+            raise ValueError("Selected path is not available in the current workflow state.")
+
+        command = ["open", "-R", path] if reveal else ["open", path]
+        subprocess.run(command, check=True)
+        self.state.message = "Opened in Finder." if reveal else "Opened result."
+
+    def _refresh_catalog_if_possible(self) -> None:
+        if self.state.config.get("database_url", "").strip() == "":
+            return
+        try:
+            self._refresh_catalog()
+        except Exception:
+            pass
+
+    def _refresh_catalog(self) -> None:
+        if self.state.config.get("database_url", "").strip() == "":
+            self.state.grading_targets = []
+            self.state.assessment_definitions = []
+            return
+        config = self._require_config("database_url")
+        connection = _connect(
+            database_url=config["database_url"] or None,
+            schema_name=config.get("schema_name") or None,
+        )
+        try:
+            self.state.grading_targets = list_grading_targets(connection=connection)
+            self.state.assessment_definitions = list_assessment_definitions(connection=connection)
+        finally:
+            connection.close()
 
 
 def render_page(state: GuiState) -> str:
@@ -200,16 +276,15 @@ def render_page(state: GuiState) -> str:
     queue_rows = "".join(_render_review_row(item) for item in state.review_queue)
     export_rows = _render_key_value_rows(
         (
-            (kind.upper(), path)
+            (_export_label(kind), path)
             for kind, path in sorted(state.export_paths.items())
         )
     )
     summary_intro = _render_summary_intro(state.summary, config.get("scan_dir", ""))
     ingest_rows = _render_key_value_rows(
         (
-            ("Session ID", state.ingest_result.get("mc_scan_session_id")),
-            ("Manifest", state.ingest_result.get("manifest_path")),
-            ("Output", state.ingest_result.get("output_dir")),
+            ("Detailed Grading Record", state.ingest_result.get("manifest_path")),
+            ("Results Folder", state.ingest_result.get("output_dir")),
         )
         if state.ingest_result
         else ()
@@ -269,6 +344,11 @@ def render_page(state: GuiState) -> str:
     .detail-list li:last-child {{ border-bottom: none; }}
     .detail-label {{ color: #5d5349; }}
     .detail-value {{ font-weight: 600; text-align: right; overflow-wrap: anywhere; }}
+    .path-value {{ display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }}
+    .path-chip {{ display: inline-block; max-width: min(100%, 420px); padding: 6px 10px; border-radius: 999px; background: #f3eee6; border: 1px solid #e3d7c7; color: #3d342c; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: 0.86rem; line-height: 1.35; text-align: left; overflow-wrap: anywhere; }}
+    .path-actions {{ display: inline-flex; gap: 6px; flex-wrap: wrap; }}
+    .path-actions form {{ margin: 0; }}
+    .path-button {{ width: auto; min-width: 0; margin-top: 0; padding: 6px 10px; border-radius: 999px; font-size: 0.78rem; line-height: 1.1; }}
     details.settings {{ margin: 12px 0 14px; border-top: 1px solid #eadfce; padding-top: 14px; }}
     details.settings summary {{ cursor: pointer; font-weight: 600; color: #4b433a; }}
     details.settings[open] summary {{ margin-bottom: 12px; }}
@@ -308,9 +388,10 @@ def render_page(state: GuiState) -> str:
   <div class="grid">
     <section class="card">
       <h2>Configuration</h2>
-      <p class="support-copy">Choose the exam record and scanned pages you want to grade.</p>
+      <p class="support-copy">Choose the exam and scanned pages you want to grade.</p>
       <form method="post" action="/ingest" data-busy-label="Ingesting scans...">
-        {_render_text_input("exam_instance_id", "Exam Instance ID", config["exam_instance_id"])}
+        {_render_exam_selector(state, config)}
+        {_render_create_target_affordance(state, config)}
         {_render_text_input("scan_dir", "Scan Directory", config["scan_dir"])}
         <details class="settings">
           <summary>Workflow Settings</summary>
@@ -333,8 +414,9 @@ def render_page(state: GuiState) -> str:
         <ul class="detail-list">{detail_rows or '<li><span class="detail-label">Status</span><span class="detail-value">No workflow result yet.</span></li>'}</ul>
       </div>
       <div class="stacked-section">
-        <h3 class="section-title">Workflow Artifacts</h3>
-        <ul class="detail-list">{ingest_rows or '<li><span class="detail-label">Ingest</span><span class="detail-value">No ingest run yet.</span></li>'}</ul>
+        <h3 class="section-title">Saved Files</h3>
+        <p class="support-copy">These files keep the record and results from this grading run.</p>
+        <ul class="detail-list">{ingest_rows or '<li><span class="detail-label">Saved Files</span><span class="detail-value">No files are available yet.</span></li>'}</ul>
       </div>
       <form method="post" action="/review" data-busy-label="Refreshing review queue...">
         {_render_hidden_config(config)}
@@ -345,8 +427,8 @@ def render_page(state: GuiState) -> str:
         <button class="secondary" type="submit">Export Final Results</button>
       </form>
       <div class="stacked-section">
-        <h3 class="section-title">Export Files</h3>
-        <ul class="detail-list">{export_rows or '<li><span class="detail-label">Export</span><span class="detail-value">No export run yet.</span></li>'}</ul>
+        <h3 class="section-title">Saved Exports</h3>
+        <ul class="detail-list">{export_rows or '<li><span class="detail-label">Saved Exports</span><span class="detail-value">No exports are available yet.</span></li>'}</ul>
       </div>
     </section>
 
@@ -443,10 +525,77 @@ def _render_text_input(name: str, label: str, value: str) -> str:
     )
 
 
+def _render_select_input(name: str, label: str, value: str, options: list[tuple[str, str]]) -> str:
+    rendered_options = []
+    for option_value, option_label in options:
+        selected = ' selected' if option_value == value else ""
+        rendered_options.append(
+            f'<option value="{escape(option_value)}"{selected}>{escape(option_label)}</option>'
+        )
+    return (
+        f'<label>{escape(label)}'
+        f'<select name="{escape(name)}">{"".join(rendered_options)}</select></label>'
+    )
+
+
 def _render_hidden_config(config: dict[str, str]) -> str:
     return "".join(
         f'<input type="hidden" name="{escape(key)}" value="{escape(value)}">'
         for key, value in config.items()
+    )
+
+
+def _render_exam_selector(state: GuiState, config: dict[str, str]) -> str:
+    if state.grading_targets:
+        selected = config.get("exam_instance_id", "").strip()
+        if selected == "":
+            selected = str(state.grading_targets[0]["exam_instance_id"])
+            config["exam_instance_id"] = selected
+        options = [
+            (str(target["exam_instance_id"]), target["label"])
+            for target in state.grading_targets
+        ]
+        return _render_select_input("exam_instance_id", "Selected Exam", selected, options)
+    return _render_text_input("exam_instance_id", "Selected Exam", config["exam_instance_id"])
+
+
+def _render_create_target_form(state: GuiState, config: dict[str, str]) -> str:
+    if not state.assessment_definitions:
+        return (
+            '<p class="support-copy">No assessments are available yet. Add one in the authoring workflow before creating a grading target here.</p>'
+        )
+    definition_options = [
+        (str(definition["exam_definition_id"]), definition["label"])
+        for definition in state.assessment_definitions
+    ]
+    first_definition = definition_options[0][0]
+    return (
+        '<p class="support-copy">Create from assessment.</p>'
+        f'<form method="post" action="/create-target" data-busy-label="Creating exam...">{_render_hidden_config(config)}'
+        f'{_render_select_input("new_exam_definition_id", "Assessment Template", first_definition, definition_options)}'
+        f'{_render_text_input("new_target_name", "Exam Name", "")}'
+        '<button class="secondary" type="submit">Create Exam</button>'
+        "</form>"
+    )
+
+
+def _render_create_target_affordance(state: GuiState, config: dict[str, str]) -> str:
+    if state.grading_targets:
+        return (
+            '<div class="stacked-section">'
+            '<p class="support-copy">Need an exam that is not listed? Create a new one below.</p>'
+            '<details class="settings">'
+            '<summary>Create new exam</summary>'
+            f"{_render_create_target_form(state, config)}"
+            "</details>"
+            "</div>"
+        )
+    return (
+        '<div class="stacked-section">'
+        '<h3 class="section-title">Create New Exam</h3>'
+        '<p class="support-copy">No exams are available yet. Create one so new scans have somewhere to land.</p>'
+        f"{_render_create_target_form(state, config)}"
+        '</div>'
     )
 
 
@@ -551,10 +700,67 @@ def _render_key_value_rows(items: Any) -> str:
     for label, value in items:
         if value is None:
             continue
+        rendered_value = _render_detail_value(label, value)
         rows.append(
             "<li>"
             f"<span class=\"detail-label\">{escape(str(label))}</span>"
-            f"<span class=\"detail-value\">{escape(str(value))}</span>"
+            f"{rendered_value}"
             "</li>"
         )
     return "".join(rows)
+
+
+def _render_detail_value(label: Any, value: Any) -> str:
+    value_text = str(value)
+    if _looks_like_openable_path(value_text):
+        return (
+            '<span class="detail-value path-value">'
+            f'<span class="path-chip">{escape(value_text)}</span>'
+            '<span class="path-actions">'
+            f'{_render_path_action("/open-path", value_text, "Open")}'
+            f'{_render_path_action("/reveal-path", value_text, "Show in Finder")}'
+            "</span>"
+            "</span>"
+        )
+    return f'<span class="detail-value">{escape(value_text)}</span>'
+
+
+def _render_path_action(action: str, path: str, label: str) -> str:
+    return (
+        f'<form method="post" action="{escape(action)}" data-busy-label="{escape(label)}...">'
+        f'<input type="hidden" name="path" value="{escape(path)}">'
+        f'<button class="secondary path-button" type="submit">{escape(label)}</button>'
+        "</form>"
+    )
+
+
+def _looks_like_openable_path(value: str) -> bool:
+    return value.startswith("/")
+
+
+def _export_label(kind: str) -> str:
+    mapping = {
+        "csv": "Spreadsheet",
+        "json": "Detailed Results",
+        "txt": "Quick Summary",
+    }
+    return mapping.get(kind.lower(), kind.upper())
+
+
+def _collect_openable_paths(state: GuiState) -> set[str]:
+    paths: set[str] = set()
+    for collection in (
+        state.export_paths.values(),
+        (
+            state.ingest_result.get("manifest_path")
+            if state.ingest_result
+            else None,
+            state.ingest_result.get("output_dir")
+            if state.ingest_result
+            else None,
+        ),
+    ):
+        for value in collection:
+            if isinstance(value, str) and value.strip():
+                paths.add(value.strip())
+    return paths

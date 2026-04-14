@@ -416,6 +416,57 @@ class McWorkflowDbTests(unittest.TestCase):
         self.assertEqual(queue["review_queue"][0]["question_id"], "mc-1")
         self.assertEqual(queue["review_queue"][0]["machine_status"], "multiple_marked")
 
+    def test_list_grading_targets_returns_human_readable_labels(self) -> None:
+        try:
+            from auto_grader.mc_workflow import list_grading_targets
+        except (ImportError, AttributeError):
+            self.fail(
+                "Add `auto_grader.mc_workflow.list_grading_targets(...)` so the "
+                "professor-facing workflow can show saved grading targets by name "
+                "instead of making the professor type a raw exam_instance_id."
+            )
+
+        targets = list_grading_targets(connection=self.connection)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["exam_instance_id"], self.exam_instance_id)
+        self.assertEqual(targets[0]["exam_title"], "Test Exam")
+        self.assertEqual(targets[0]["target_name"], "TEST-INSTANCE-001")
+        self.assertEqual(targets[0]["label"], "Test Exam - TEST-INSTANCE-001")
+
+    def test_create_grading_target_creates_named_selectable_target(self) -> None:
+        try:
+            from auto_grader.mc_workflow import (
+                create_grading_target,
+                list_assessment_definitions,
+                list_grading_targets,
+            )
+        except (ImportError, AttributeError):
+            self.fail(
+                "Add professor-facing grading-target helpers to `auto_grader.mc_workflow` "
+                "so the workflow can create/select targets without pre-seeding them by hand."
+            )
+
+        definitions = list_assessment_definitions(connection=self.connection)
+        self.assertEqual(len(definitions), 1)
+
+        created = create_grading_target(
+            exam_definition_id=definitions[0]["exam_definition_id"],
+            target_name="Fall Quiz 2 - Noah",
+            connection=self.connection,
+        )
+
+        self.assertEqual(created["exam_title"], "Test Exam")
+        self.assertEqual(created["target_name"], "Fall Quiz 2 - Noah")
+        self.assertEqual(created["label"], "Test Exam - Fall Quiz 2 - Noah")
+
+        targets = list_grading_targets(connection=self.connection)
+        labels = [target["label"] for target in targets]
+        self.assertEqual(
+            labels,
+            ["Test Exam - TEST-INSTANCE-001", "Test Exam - Fall Quiz 2 - Noah"],
+        )
+
     def test_resolve_and_persist_updates_truth(self) -> None:
         from auto_grader.mc_db_round_trip import run_mc_db_round_trip
         from auto_grader.mc_workflow import resolve_and_persist
