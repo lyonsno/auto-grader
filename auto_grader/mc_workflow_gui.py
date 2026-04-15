@@ -242,6 +242,8 @@ class McWorkflowGuiApp:
         if path not in _collect_openable_paths(self.state):
             raise ValueError("Selected path is not available in the current workflow state.")
 
+        # This professor-facing GUI currently targets the local Mac workflow only, so
+        # Finder/open integration is intentional rather than an accidental dependency.
         command = ["open", "-R", path] if reveal else ["open", path]
         subprocess.run(command, check=True)
         self.state.message = "Opened in Finder." if reveal else "Opened result."
@@ -352,6 +354,11 @@ def render_page(state: GuiState) -> str:
     details.settings {{ margin: 12px 0 14px; border-top: 1px solid #eadfce; padding-top: 14px; }}
     details.settings summary {{ cursor: pointer; font-weight: 600; color: #4b433a; }}
     details.settings[open] summary {{ margin-bottom: 12px; }}
+    .flow-block {{ border: 1px solid #eadfce; border-radius: 12px; padding: 14px; background: #fdfaf5; }}
+    .flow-block + .flow-block {{ margin-top: 16px; }}
+    .flow-heading {{ margin: 0 0 8px 0; font-size: 1rem; font-weight: 700; color: #3f372f; }}
+    .flow-block details.settings {{ margin-bottom: 0; }}
+    .secondary-flow details.settings {{ margin: 0; border-top: none; padding-top: 0; }}
     .busy-banner {{ display: none; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 12px; border-radius: 10px; background: #edf5f6; border: 1px solid #c8dfe3; color: #234b55; font-weight: 600; }}
     .workflow-spinner {{ width: 16px; height: 16px; border-radius: 999px; border: 2px solid #b5cfd5; border-top-color: var(--accent); animation: workflow-spin 0.8s linear infinite; }}
     body.busy .busy-banner {{ display: flex; }}
@@ -388,21 +395,24 @@ def render_page(state: GuiState) -> str:
   <div class="grid">
     <section class="card">
       <h2>Configuration</h2>
-      <p class="support-copy">Choose the exam and scanned pages you want to grade.</p>
-      <form method="post" action="/ingest" data-busy-label="Ingesting scans...">
-        {_render_exam_selector(state, config)}
-        {_render_create_target_affordance(state, config)}
-        {_render_text_input("scan_dir", "Scan Directory", config["scan_dir"])}
-        <details class="settings">
-          <summary>Workflow Settings</summary>
-          {_render_text_input("database_url", "Database URL", config["database_url"])}
-          {_render_text_input("schema_name", "Schema Name", config["schema_name"])}
-          {_render_text_input("artifact_json", "Artifact JSON", config["artifact_json"])}
-          {_render_text_input("output_dir", "Output Directory", config["output_dir"])}
-        </details>
-        <p class="action-copy">When you're ready, ingest the scans to load results and any questions that need review.</p>
-        <button type="submit">Ingest Scans</button>
-      </form>
+      <div class="flow-block primary-flow">
+        <h3 class="flow-heading">Grade Scans</h3>
+        <p class="support-copy">Choose the exam and scanned pages you want to grade.</p>
+        <form method="post" action="/ingest" data-busy-label="Ingesting scans...">
+          {_render_exam_selector(state, config)}
+          {_render_text_input("scan_dir", "Scan Directory", config["scan_dir"])}
+          <details class="settings">
+            <summary>Workflow Settings</summary>
+            {_render_text_input("database_url", "Database URL", config["database_url"])}
+            {_render_text_input("schema_name", "Schema Name", config["schema_name"])}
+            {_render_text_input("artifact_json", "Artifact JSON", config["artifact_json"])}
+            {_render_text_input("output_dir", "Output Directory", config["output_dir"])}
+          </details>
+          <p class="action-copy">When you're ready, ingest the scans to load results and any questions that need review.</p>
+          <button type="submit">Ingest Scans</button>
+        </form>
+      </div>
+      {_render_create_target_affordance(state, config)}
     </section>
 
     <section class="card">
@@ -582,8 +592,9 @@ def _render_create_target_form(state: GuiState, config: dict[str, str]) -> str:
 def _render_create_target_affordance(state: GuiState, config: dict[str, str]) -> str:
     if state.grading_targets:
         return (
-            '<div class="stacked-section">'
-            '<p class="support-copy">Need an exam that is not listed? Create a new one below.</p>'
+            '<div class="flow-block secondary-flow">'
+            '<h3 class="flow-heading">Need a Different Exam?</h3>'
+            '<p class="support-copy">If the exam you want is not listed, create a new one here.</p>'
             '<details class="settings">'
             '<summary>Create new exam</summary>'
             f"{_render_create_target_form(state, config)}"
@@ -591,8 +602,8 @@ def _render_create_target_affordance(state: GuiState, config: dict[str, str]) ->
             "</div>"
         )
     return (
-        '<div class="stacked-section">'
-        '<h3 class="section-title">Create New Exam</h3>'
+        '<div class="flow-block secondary-flow">'
+        '<h3 class="flow-heading">Create New Exam</h3>'
         '<p class="support-copy">No exams are available yet. Create one so new scans have somewhere to land.</p>'
         f"{_render_create_target_form(state, config)}"
         '</div>'

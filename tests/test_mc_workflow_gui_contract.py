@@ -71,14 +71,20 @@ class McWorkflowGuiContractTests(unittest.TestCase):
         self.assertIn('<select name="exam_instance_id"', html)
         self.assertIn("Fall Quiz 2 - Noah", html)
         self.assertIn('action="/create-target"', html)
+        self.assertIn("Grade Scans", html)
+        self.assertIn("Need a Different Exam?", html)
         self.assertIn("Create new exam", html)
         self.assertIn("Create from assessment", html)
         self.assertIn("Assessment Template", html)
         self.assertIn("Chemistry Quiz 2", html)
         self.assertIn("Choose the exam and scanned pages you want to grade.", html)
-        self.assertIn("Need an exam that is not listed? Create a new one below.", html)
+        self.assertIn("If the exam you want is not listed, create a new one here.", html)
         self.assertIn("When you're ready, ingest the scans to load results and any questions that need review.", html)
         self.assertNotIn("exam record", html.lower())
+        ingest_start = html.index('<form method="post" action="/ingest"')
+        ingest_end = html.index("</form>", ingest_start)
+        create_start = html.index('<form method="post" action="/create-target"')
+        self.assertGreater(create_start, ingest_end)
 
     def test_render_page_promotes_summary_into_stat_cards_and_result_sections(self) -> None:
         gui = _load_gui_module(self)
@@ -184,7 +190,7 @@ class McWorkflowGuiContractTests(unittest.TestCase):
         self.assertIn("Create one so new scans have somewhere to land.", html)
         self.assertIn("Create from assessment", html)
         self.assertIn("Assessment Template", html)
-        self.assertNotIn("Need an exam that is not listed? Create a new one below.", html)
+        self.assertNotIn("Need a Different Exam?", html)
 
     def test_render_page_explains_empty_summary_and_review_queue(self) -> None:
         gui = _load_gui_module(self)

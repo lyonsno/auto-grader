@@ -400,7 +400,6 @@ Example first-pass professor GUI:
 python scripts/launch_mc_workflow_gui.py \
   --open-browser \
   --database-url postgresql:///postgres \
-  --exam-instance-id 123 \
   --artifact-json /tmp/mc-generated-exam-demo-artifact.json \
   --scan-dir /tmp/mc-scans \
   --output-dir /tmp/mc-gui-output
@@ -409,6 +408,15 @@ python scripts/launch_mc_workflow_gui.py \
 The GUI is intentionally thin over the landed workflow: it lets an operator
 ingest scans, inspect the review queue, persist resolutions, and export final
 results without re-owning any of the underlying DB truth or MC/OpenCV logic.
+It now also supports a more professor-shaped grading-target flow:
+
+- a primary `Grade Scans` section for choosing an existing exam and ingesting
+  scans into it
+- a separate `Need a Different Exam?` section for creating a new exam from an
+  existing assessment template when the desired target is not already listed
+- the GUI keeps internal database ids behind the curtain and exposes the
+  creation flow in the same local web surface instead of requiring raw YAML,
+  SQL, or ad hoc terminal glue just to pick or create the grading target
 
 ## Data model
 
