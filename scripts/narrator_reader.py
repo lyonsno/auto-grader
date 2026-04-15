@@ -1548,7 +1548,6 @@ class FocusPreviewKittyImage:
         No styled text segments — the entire band is a single placed
         image. Rich sees cursor-forward control segments and newlines,
         which cost ~30 bytes total per frame instead of ~12KB.
-
         Always place at the dimensions the composite was built for.
         On resize, ``retransmit_kitty_image`` rebuilds the composite
         at the new geometry and updates ``_band_cell_width`` and
