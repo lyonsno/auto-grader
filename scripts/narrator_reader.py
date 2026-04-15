@@ -1856,12 +1856,13 @@ class FocusPreviewKittyImage:
         and produces garbled frames.
         """
         term_width = max(1, options.max_width)
-        # Place at the dimensions the composite was built for. The
-        # retransmit_kitty_image resize handler rebuilds at the new
-        # geometry between frames — trying to rescale the placement
-        # here just warps the image because the pixel aspect doesn't
-        # match the recomputed cell aspect.
-        place_w = self._band_cell_width
+        # Always place at the current terminal width so the band
+        # fills the screen. The height stays at the built value —
+        # horizontal stretch from a width mismatch is barely visible
+        # and resolves on the next frame when retransmit_kitty_image
+        # rebuilds the composite at the correct geometry. A band
+        # that doesn't fill the width is much more noticeable.
+        place_w = term_width
         place_h = self._band_cell_height
 
         place_sequence = _build_kitty_place_sequence(
