@@ -1427,14 +1427,18 @@ def _paint_border_row(
     rgb: tuple[int, int, int],
     title: str,
 ) -> None:
-    """Paint a thin horizontal border line into a pixmap row."""
-    y_center = cell_row * cell_px_h + cell_px_h // 2
+    """Paint a full-height border row matching terminal ─ rendering.
+
+    In a terminal, a styled ``─`` character fills the cell background
+    with the style color and draws the line glyph on top. The visual
+    result is a full-cell-height colored strip with a horizontal rule
+    through the middle. We replicate that by filling the full cell row
+    at the border color — this gives the border the same visual weight
+    as the original text-based ``_emit_band_border_row``.
+    """
+    y0 = cell_row * cell_px_h
+    y1 = y0 + cell_px_h
     x_end = min(term_width * cell_px_w, pix.width)
-    # Draw a 2px horizontal line at the vertical center of the cell row
-    # using set_rect for efficiency.
-    line_height = 2
-    y0 = max(0, y_center - line_height // 2)
-    y1 = min(pix.height, y0 + line_height)
     if y1 > y0 and x_end > 0:
         pix.set_rect(fitz.IRect(0, y0, x_end, y1), rgb + (255,))
 
