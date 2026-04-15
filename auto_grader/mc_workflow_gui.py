@@ -283,9 +283,13 @@ class McWorkflowGuiApp:
 
         source_yaml = _build_template_yaml(slug=slug, title=title, kind=kind, questions=questions)
 
-        config = self._require_config("database_url")
+        # database_url is optional here — _connect falls through to the
+        # DATABASE_URL env var when not provided, which is the common case
+        # on the Author tab where the Workflow Settings disclosure may
+        # never have been opened.
+        config = self.state.config
         connection = _connect(
-            database_url=config["database_url"] or None,
+            database_url=config.get("database_url") or None,
             schema_name=config.get("schema_name") or None,
         )
         # Intentionally write-once: version is always 1. The schema enforces
