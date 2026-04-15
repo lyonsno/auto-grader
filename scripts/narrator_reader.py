@@ -1835,39 +1835,6 @@ class FocusPreviewKittyImage:
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
 
-    def _rebuild_for_width(self, new_width: int, console: Console) -> None:
-        """Rebuild and retransmit the composite at a new terminal width."""
-        if not self._crop_png_bytes:
-            return
-        inner_budget = max(1, new_width - 2)
-        image_cw, image_ch = _compute_inline_image_cell_dimensions(
-            self._image_pixel_width,
-            self._image_pixel_height,
-            max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
-            max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
-            terminal_cell_aspect=self._terminal_cell_aspect,
-        )
-        band_cell_rows = image_ch + _BAND_EXTRA_ROWS + 2
-        try:
-            composite_png = _build_composite_band_png(
-                self._crop_png_bytes,
-                term_width=new_width,
-                image_cell_width=image_cw,
-                image_cell_height=image_ch,
-                image_id=self._image_id,
-                title=self._title,
-            )
-            stream = console.file if console is not None else sys.stdout
-            # Delete old image, transmit new composite.
-            _kitty_delete_image(self._image_id, stream=stream)
-            for chunk in _build_kitty_transmit_chunks(composite_png, self._image_id):
-                stream.write(chunk)
-            stream.flush()
-            self._band_cell_width = new_width
-            self._band_cell_height = band_cell_rows
-        except Exception:
-            pass  # Next frame or next focus_preview will recover.
-
     def __rich_console__(
         self,
         console: Console,
@@ -1878,22 +1845,30 @@ class FocusPreviewKittyImage:
         No styled text segments — the entire band is a single placed
         image. Rich sees cursor-forward control segments and newlines,
         which cost ~30 bytes total per frame instead of ~12KB.
+
+        On resize, the placement cell dimensions are adjusted to match
+        the current terminal width so the terminal scales the existing
+        composite to fit. The image pixels are slightly stretched until
+        the next ``on_focus_preview`` rebuilds the composite at the
+        correct geometry — this is much better than the alternative of
+        transmitting a new composite from inside Rich's render path,
+        which interleaves Kitty escape sequences with Rich's output
+        and produces garbled frames.
         """
         term_width = max(1, options.max_width)
-        if term_width != self._band_cell_width:
-            self._rebuild_for_width(term_width, console)
+        # Scale placement to current width — the terminal stretches
+        # the cached composite pixels to fit the new cell footprint.
+        place_w = term_width
+        place_h = self._band_cell_height
 
         place_sequence = _build_kitty_place_sequence(
             self._image_id,
-            cell_width=self._band_cell_width,
-            cell_height=self._band_cell_height,
+            cell_width=place_w,
+            cell_height=place_h,
         )
-        # Place the composite image.
         yield Segment(place_sequence, None, [(ControlType.BELL,)])
-        # Cursor-forward + newlines for each row so Rich accounts for
-        # the vertical footprint correctly.
-        forward_escape = f"\x1b[{self._band_cell_width}C"
-        for row in range(self._band_cell_height):
+        forward_escape = f"\x1b[{place_w}C"
+        for row in range(place_h):
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
             yield Segment.line()
 
@@ -4756,32 +4731,48 @@ class PaintDryDisplay:
         self.wrap_up_pending = False
 
     def retransmit_kitty_image(self) -> None:
-        """Delete and re-upload the Kitty graphics image.
+        """Rebuild and re-upload the Kitty composite at current geometry.
 
         Called on terminal resize to flush the terminal's image
-        compositing layer.  The terminal caches rendered image pixels
-        independently of the character cell grid — a screen clear
-        (ESC[2J) removes text but can leave image pixels behind.
-        Deleting and re-transmitting the image forces the terminal
-        to re-render the image at the correct geometry.
+        compositing layer and rebuild the composite at the new
+        terminal width. The renderable stores the original crop PNG
+        and image dimensions so the composite can be rebuilt without
+        a fresh ``on_focus_preview`` event.
         """
         if not self._kitty_graphics_supported:
             return
-        if self.focus_preview_png is None:
-            return
         if self.focus_preview_kitty_renderable is None:
             return
+        rend = self.focus_preview_kitty_renderable
+        if not rend._crop_png_bytes:
+            return
         stream = self._console.file if self._console is not None else sys.stdout
-        # Delete the old image from the terminal cache.
-        _kitty_delete_image(_KITTY_IMAGE_ID, stream=stream)
-        # Re-transmit.
         try:
-            chunks = _build_kitty_transmit_chunks(
-                self.focus_preview_png, _KITTY_IMAGE_ID
+            console_width = self._console.size.width if self._console else 120
+            inner_budget = max(1, console_width - 2)
+            image_cw, image_ch = _compute_inline_image_cell_dimensions(
+                rend._image_pixel_width,
+                rend._image_pixel_height,
+                max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
+                terminal_cell_aspect=rend._terminal_cell_aspect,
             )
-            for chunk in chunks:
+            band_cell_rows = image_ch + _BAND_EXTRA_ROWS + 2
+            composite_png = _build_composite_band_png(
+                rend._crop_png_bytes,
+                term_width=console_width,
+                image_cell_width=image_cw,
+                image_cell_height=image_ch,
+                image_id=_KITTY_IMAGE_ID,
+                title=rend._title,
+            )
+            _kitty_delete_image(_KITTY_IMAGE_ID, stream=stream)
+            for chunk in _build_kitty_transmit_chunks(composite_png, _KITTY_IMAGE_ID):
                 stream.write(chunk)
             stream.flush()
+            self.focus_preview_png = composite_png
+            rend._band_cell_width = console_width
+            rend._band_cell_height = band_cell_rows
         except Exception:
             pass  # Next focus_preview event will recover.
 
