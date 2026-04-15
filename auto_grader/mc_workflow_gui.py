@@ -542,6 +542,11 @@ def render_page(state: GuiState) -> str:
             const sel = authorForm.elements["q_" + i + "_mode"];
             if (sel) window.toggleQuestionMode(sel, i);
           }}
+          // Clear stale error banners — this is a fresh page load with
+          // a restored draft, not a continuation of the failed POST.
+          for (const msg of document.querySelectorAll(".message.error")) {{
+            msg.remove();
+          }}
         }} catch (e) {{ /* ignore corrupt localStorage */ }}
 
         // Save draft on every change.
