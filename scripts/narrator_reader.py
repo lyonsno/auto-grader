@@ -1431,12 +1431,15 @@ def _paint_border_row(
     rgb: tuple[int, int, int],
     title: str,
 ) -> None:
-    """Paint a full-height border row with optional inlined title.
+    """Paint a border row: thin horizontal line with optional title.
 
-    Replicates the visual weight of the original text-based
-    ``_emit_band_border_row``: a full-cell-height colored strip
-    with the title text rendered in a darker shade so it reads
-    against the border fill.
+    The original text-based ``_emit_band_border_row`` renders ``─``
+    characters — a thin horizontal rule at the cell's vertical
+    midline, with the cell background being the terminal's dark
+    background (not a solid colored strip). We replicate that: a
+    2px line at the vertical center of the cell row in the moss
+    color, on the dark ``_TEXTURE_BG_RGB`` background. The title
+    text is rendered in the moss color on the same dark background.
     """
     y0 = cell_row * cell_px_h
     y1 = y0 + cell_px_h
@@ -1444,8 +1447,10 @@ def _paint_border_row(
     if y1 <= y0 or row_w <= 0:
         return
 
-    # Fill the full row at the border color.
-    pix.set_rect(fitz.IRect(0, y0, row_w, y1), rgb)
+    # The canvas is already _TEXTURE_BG_RGB. Paint a thin line.
+    line_h = 2
+    line_y = y0 + cell_px_h // 2 - line_h // 2
+    pix.set_rect(fitz.IRect(0, line_y, row_w, line_y + line_h), rgb)
 
     if not title:
         return
@@ -1458,14 +1463,13 @@ def _paint_border_row(
         remaining = 0
     border_text = prefix_text + ("\u2500" * remaining)
 
-    # Render the title text via a temporary PDF page. Use a darker
-    # shade of the border color so it reads against the fill.
-    text_rgb_f = (
-        max(0, rgb[0] - 40) / 255,
-        max(0, rgb[1] - 40) / 255,
-        max(0, rgb[2] - 40) / 255,
+    # Render the title text on the dark background in moss color.
+    bg_rgb_f = (
+        _TEXTURE_BG_RGB[0] / 255,
+        _TEXTURE_BG_RGB[1] / 255,
+        _TEXTURE_BG_RGB[2] / 255,
     )
-    bg_rgb_f = (rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
+    text_rgb_f = (rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
     try:
         txt_doc = fitz.open()
         txt_page = txt_doc.new_page(width=row_w, height=cell_px_h)
@@ -1484,7 +1488,6 @@ def _paint_border_row(
         txt_pix = txt_page.get_pixmap(alpha=False)
         txt_doc.close()
 
-        # Blit the rendered title row onto the composite.
         blit_w = min(txt_pix.width, row_w)
         blit_h = min(txt_pix.height, cell_px_h)
         for row in range(blit_h):
@@ -1492,7 +1495,7 @@ def _paint_border_row(
                 pixel = txt_pix.pixel(col, row)
                 pix.set_pixel(col, y0 + row, (pixel[0], pixel[1], pixel[2]))
     except Exception:
-        pass  # Solid border fill is already there as fallback.
+        pass  # Thin line is already there as fallback.
 
 
 class FocusPreviewKittyImage:
@@ -4254,8 +4257,12 @@ class PaintDryDisplay:
         self.focus_preview_png = png_bytes
         self.focus_preview_label = label
         self.focus_preview_source = source
-        self.focus_preview_pending = False
-        self.focus_preview_pending_started = None
+        # Keep pending=True during composite build + transmit so
+        # render() doesn't try to place a mid-upload image. The
+        # Kitty path clears pending after the renderable is fully
+        # ready; non-Kitty paths clear it below.
+        self.focus_preview_pending = True
+        self.focus_preview_pending_started = time.monotonic()
         self._focus_preview_pending_bucket = None
         self._focus_preview_pending_renderable = None
 
@@ -4329,6 +4336,9 @@ class PaintDryDisplay:
                 self.focus_preview_inline_renderable = None
                 self.focus_preview_pixels = None
                 self.focus_preview_renderable = None
+                # Composite is fully transmitted and renderable is
+                # assigned — clear pending so render() places it.
+                self.focus_preview_pending = False
                 return
             except Exception:
                 # If anything in the Kitty path fails (fitz quirk,
@@ -4361,6 +4371,7 @@ class PaintDryDisplay:
                 self.focus_preview_kitty_renderable = None
                 self.focus_preview_pixels = None
                 self.focus_preview_renderable = None
+                self.focus_preview_pending = False
                 return
             except Exception:
                 self.focus_preview_inline_renderable = None
@@ -4380,6 +4391,7 @@ class PaintDryDisplay:
         )
         self.focus_preview_inline_renderable = None
         self.focus_preview_kitty_renderable = None
+        self.focus_preview_pending = False
 
     def on_topic(
         self,
