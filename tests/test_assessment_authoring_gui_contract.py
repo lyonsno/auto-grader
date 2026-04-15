@@ -18,7 +18,25 @@ def _load_gui_module(test_case: unittest.TestCase):
     return mc_workflow_gui
 
 
-class AssessmentAuthoringGuiRenderTests(unittest.TestCase):
+class _AuthoringTestBase(unittest.TestCase):
+    """Base class that stubs out the catalog refresh so authoring tests
+    don't need a real DB connection for the grading-target list."""
+
+    def setUp(self) -> None:
+        gui = _load_gui_module(self)
+        self._patches = [
+            mock.patch.object(gui, "list_grading_targets", return_value=[]),
+            mock.patch.object(gui, "list_assessment_definitions", return_value=[]),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def tearDown(self) -> None:
+        for p in self._patches:
+            p.stop()
+
+
+class AssessmentAuthoringGuiRenderTests(_AuthoringTestBase):
     """The rendered page must expose an assessment authoring section."""
 
     def test_render_page_exposes_authoring_section(self) -> None:
@@ -83,7 +101,7 @@ class AssessmentAuthoringGuiRenderTests(unittest.TestCase):
         self.assertIn('name="q_1_correct"', html)
 
 
-class AssessmentAuthoringBackendTests(unittest.TestCase):
+class AssessmentAuthoringBackendTests(_AuthoringTestBase):
     """POST /author must persist a valid assessment to the durable model."""
 
     def _post_author(self, gui, app, form_body: str):
@@ -214,7 +232,7 @@ class AssessmentAuthoringBackendTests(unittest.TestCase):
         self.assertNotIn('class="message error"', html)
 
 
-class AssessmentKindTests(unittest.TestCase):
+class AssessmentKindTests(_AuthoringTestBase):
     """Quiz must be a first-class assessment kind, not silently exam-only."""
 
     def test_quiz_kind_accepted_without_error(self) -> None:
@@ -257,7 +275,7 @@ class AssessmentKindTests(unittest.TestCase):
         self.assertIn("saved", html.lower())
 
 
-class AssessmentAuthoringValidationTests(unittest.TestCase):
+class AssessmentAuthoringValidationTests(_AuthoringTestBase):
     """Panopticon-driven hardening: correct-answer validation, gap tolerance, slug conflicts."""
 
     def _post_author(self, gui, app, form_body: str):
@@ -383,7 +401,7 @@ class AssessmentAuthoringValidationTests(unittest.TestCase):
         self.assertIsNone(app.state.authoring_message)
 
 
-class ComputedDistractorTests(unittest.TestCase):
+class ComputedDistractorTests(_AuthoringTestBase):
     """Questions can use computed distractors instead of static choices."""
 
     def _post_author(self, gui, app, form_body: str):
