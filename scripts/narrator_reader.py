@@ -4241,6 +4241,67 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
+    def retransmit_kitty_image(self) -> None:
+        """Rebuild and re-upload the Kitty composite at current geometry.
+
+        Called on terminal resize to flush the terminal's image
+        compositing layer and rebuild the composite at the new
+        terminal width. The renderable stores the original crop PNG
+        and image dimensions so the composite can be rebuilt without
+        a fresh ``on_focus_preview`` event.
+        """
+        if not self._kitty_graphics_supported:
+            return
+        if self.focus_preview_kitty_renderable is None:
+            return
+        rend = self.focus_preview_kitty_renderable
+        if not rend._crop_png_bytes:
+            return
+        stream = self._console.file if self._console is not None else sys.stdout
+        try:
+            console_width = self._console.size.width if self._console else 120
+            inner_budget = max(1, console_width - 2)
+            image_cw, image_ch = _compute_inline_image_cell_dimensions(
+                rend._image_pixel_width,
+                rend._image_pixel_height,
+                max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
+                terminal_cell_aspect=rend._terminal_cell_aspect,
+            )
+            band_cell_rows = image_ch + _BAND_EXTRA_ROWS + 2
+            composite_png = _build_composite_band_png(
+                rend._crop_png_bytes,
+                term_width=console_width,
+                image_cell_width=image_cw,
+                image_cell_height=image_ch,
+                image_id=_KITTY_IMAGE_ID,
+                title=rend._title,
+            )
+            # Don't delete the old image — transmitting with the same
+            # image ID atomically replaces the cached image when the
+            # final chunk (m=0) lands. Deleting first creates a window
+            # where a=p has nothing to place, causing flicker.
+            for chunk in _build_kitty_transmit_chunks(composite_png, _KITTY_IMAGE_ID):
+                stream.write(chunk)
+            stream.flush()
+            # Don't overwrite focus_preview_png — it holds the raw
+            # crop bytes (pipeline contract). The composite is ephemeral.
+            rend._band_cell_width = console_width
+            rend._band_cell_height = band_cell_rows
+        except Exception:
+            # Leaving the stale Kitty renderable in place produces a
+            # visibly stretched preview with no local recovery until a
+            # future focus_preview event arrives. Drop back to the
+            # non-Kitty path immediately so the operator keeps a
+            # truthful preview surface instead of a corrupted one.
+            self._pending_kitty_transmit = None
+            self.focus_preview_kitty_renderable = None
+            self._kitty_graphics_supported = False
+            self.on_focus_preview(
+                rend._crop_png_bytes,
+                label=self.focus_preview_label,
+                source=self.focus_preview_source,
+            )
     def on_focus_preview(
         self,
         png_bytes: bytes,
