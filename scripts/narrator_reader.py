@@ -439,9 +439,12 @@ _LIVE_FROZEN_VAL_MUL = 0.85
 _ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
                               # the slower animation families above are eased
                               # back to keep the overall feel restrained
-_PREVIEW_ANIMATION_FPS = 10.0  # steady image previews should keep some life
-                               # without feeling sluggish once the preview
-                               # itself is no longer re-placed every tick.
+_PREVIEW_ANIMATION_FPS = 24.0  # now that the preview band is a precomposed
+                               # Kitty image (~30 bytes/frame instead of
+                               # ~12KB of text segments), there is no reason
+                               # to throttle below the active animation rate.
+                               # The original 10fps throttle made the shimmer
+                               # look sluggish because it was tuned for 24fps.
 _IDLE_POLL_S = 0.20           # static state still needs to pick up new fifo
                               # messages quickly, but doesn't need redraw spam
 _SESSION_END_ANIMATION_LINGER_S = 120.0  # keep the finished painting alive
