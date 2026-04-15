@@ -1856,22 +1856,13 @@ class FocusPreviewKittyImage:
         and produces garbled frames.
         """
         term_width = max(1, options.max_width)
-        # Recompute image cell box for the current width so the
-        # placement height stays aspect-correct even when the
-        # terminal has shrunk/grown since the composite was built.
-        if term_width != self._band_cell_width and self._image_pixel_width > 0:
-            inner_budget = max(1, term_width - 2)
-            _, image_ch = _compute_inline_image_cell_dimensions(
-                self._image_pixel_width,
-                self._image_pixel_height,
-                max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
-                max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
-                terminal_cell_aspect=self._terminal_cell_aspect,
-            )
-            place_h = image_ch + _BAND_EXTRA_ROWS + 2
-        else:
-            place_h = self._band_cell_height
-        place_w = term_width
+        # Place at the dimensions the composite was built for. The
+        # retransmit_kitty_image resize handler rebuilds at the new
+        # geometry between frames — trying to rescale the placement
+        # here just warps the image because the pixel aspect doesn't
+        # match the recomputed cell aspect.
+        place_w = self._band_cell_width
+        place_h = self._band_cell_height
 
         place_sequence = _build_kitty_place_sequence(
             self._image_id,
