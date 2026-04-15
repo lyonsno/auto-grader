@@ -3205,10 +3205,12 @@ class NarratorReaderContract(unittest.TestCase):
             display.should_animate(),
             "steady inline-image preview should still animate, just at a calmer cadence so the surface does not feel frozen",
         )
-        self.assertLess(
+        self.assertEqual(
             display.target_animation_fps(),
             _ACTIVE_ANIMATION_FPS,
-            "steady inline-image preview should run below the normal animation cadence so the image surface is not thrashed",
+            "steady preview should run at the same animation cadence as "
+            "active mode now that the band is precomposed — the original "
+            "throttle made the shimmer look sluggish at 10fps",
         )
         self.assertFalse(
             display.should_refresh_on_event("delta"),
@@ -3309,10 +3311,11 @@ class NarratorReaderContract(unittest.TestCase):
             display.should_animate(),
             "steady kitty-image preview should still animate, just at a calmer cadence so the surface does not feel frozen",
         )
-        self.assertLess(
+        self.assertEqual(
             display.target_animation_fps(),
             _ACTIVE_ANIMATION_FPS,
-            "steady kitty-image preview should also run below the normal animation cadence so the terminal image layer is not churned continuously",
+            "steady kitty preview should run at the same animation cadence "
+            "as active mode now that the band is precomposed",
         )
 
     def test_live_update_gates_global_clear_on_geometry_change(self) -> None:
