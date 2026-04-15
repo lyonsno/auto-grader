@@ -1724,20 +1724,68 @@ def _paint_border_row(
     rgb: tuple[int, int, int],
     title: str,
 ) -> None:
-    """Paint a full-height border row matching terminal ─ rendering.
+    """Paint a full-height border row with optional inlined title.
 
-    In a terminal, a styled ``─`` character fills the cell background
-    with the style color and draws the line glyph on top. The visual
-    result is a full-cell-height colored strip with a horizontal rule
-    through the middle. We replicate that by filling the full cell row
-    at the border color — this gives the border the same visual weight
-    as the original text-based ``_emit_band_border_row``.
+    Replicates the visual weight of the original text-based
+    ``_emit_band_border_row``: a full-cell-height colored strip
+    with the title text rendered in a darker shade so it reads
+    against the border fill.
     """
     y0 = cell_row * cell_px_h
     y1 = y0 + cell_px_h
-    x_end = min(term_width * cell_px_w, pix.width)
-    if y1 > y0 and x_end > 0:
-        pix.set_rect(fitz.IRect(0, y0, x_end, y1), rgb + (255,))
+    row_w = min(term_width * cell_px_w, pix.width)
+    if y1 <= y0 or row_w <= 0:
+        return
+
+    # Fill the full row at the border color.
+    pix.set_rect(fitz.IRect(0, y0, row_w, y1), rgb + (255,))
+
+    if not title:
+        return
+
+    # Build the title string matching _emit_band_border_row format.
+    prefix_text = f"\u2500 {title} "
+    remaining = term_width - len(prefix_text)
+    if remaining < 0:
+        prefix_text = prefix_text[:term_width]
+        remaining = 0
+    border_text = prefix_text + ("\u2500" * remaining)
+
+    # Render the title text via a temporary PDF page. Use a darker
+    # shade of the border color so it reads against the fill.
+    text_rgb_f = (
+        max(0, rgb[0] - 40) / 255,
+        max(0, rgb[1] - 40) / 255,
+        max(0, rgb[2] - 40) / 255,
+    )
+    bg_rgb_f = (rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
+    try:
+        txt_doc = fitz.open()
+        txt_page = txt_doc.new_page(width=row_w, height=cell_px_h)
+        txt_page.draw_rect(
+            fitz.Rect(0, 0, row_w, cell_px_h),
+            fill=bg_rgb_f,
+        )
+        fontsize = max(6, cell_px_h * 0.65)
+        txt_page.insert_text(
+            fitz.Point(0, cell_px_h * 0.75),
+            border_text,
+            fontsize=fontsize,
+            color=text_rgb_f,
+            fontname="cour",
+        )
+        txt_pix = txt_page.get_pixmap(alpha=False)
+        txt_doc.close()
+
+        # Blit the rendered title row onto the composite.
+        blit_w = min(txt_pix.width, row_w)
+        blit_h = min(txt_pix.height, cell_px_h)
+        for row in range(blit_h):
+            for col in range(blit_w):
+                pixel = txt_pix.pixel(col, row)
+                pix.set_pixel(col, y0 + row, (pixel[0], pixel[1], pixel[2], 255))
+    except Exception:
+        pass  # Solid border fill is already there as fallback.
 
 
 class FocusPreviewKittyImage:
