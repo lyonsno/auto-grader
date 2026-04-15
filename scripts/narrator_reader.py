@@ -4319,6 +4319,10 @@ class PaintDryDisplay:
                     band_cell_width=console_width,
                     band_cell_height=band_cell_rows,
                     title=title,
+                    crop_png_bytes=png_bytes,
+                    image_pixel_width=pix.width,
+                    image_pixel_height=pix.height,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
                 )
                 # No need to build the iTerm2 or half-block paths —
                 # the Kitty path owns the panel when it's available.
