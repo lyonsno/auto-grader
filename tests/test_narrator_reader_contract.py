@@ -2800,6 +2800,39 @@ class NarratorReaderContract(unittest.TestCase):
         for msg_type in ("wrap_up", "basis", "review_marker", "end"):
             self.assertTrue(_message_requires_immediate_refresh(msg_type))
 
+    def test_inline_focus_preview_uses_reduced_animation_cadence(self):
+        display = self._make_display()
+        display._inline_images_supported = True
+        display._kitty_graphics_supported = False
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-10b",
+            source="mock_tricky",
+        )
+
+        self.assertTrue(
+            display.should_animate(),
+            "steady inline-image preview should still animate, just at a calmer cadence so the surface does not feel frozen",
+        )
+        self.assertEqual(
+            display.target_animation_fps(),
+            _ACTIVE_ANIMATION_FPS,
+            "steady preview should run at the same animation cadence as "
+            "active mode now that the band is precomposed — the original "
+            "throttle made the shimmer look sluggish at 10fps",
+        )
+        self.assertFalse(
+            display.should_refresh_on_event("delta"),
+            "inline preview mode should not repaint on every streaming token",
+        )
+        self.assertTrue(
+            display.should_refresh_on_event("commit"),
+            "inline preview mode must still repaint on structural boundaries so the visible state keeps moving",
+        )
+        self.assertTrue(
+            display.should_refresh_on_event("focus_preview"),
+            "a newly arrived preview image still needs an immediate paint in event-driven mode",
+        )
     def test_lower_history_tiers_render_dimmer_than_top_tier(self) -> None:
         top_text = Text()
         _apply_shimmer(top_text, "ABC", "line", 0, phase_override=0.0)
@@ -2872,6 +2905,44 @@ class NarratorReaderContract(unittest.TestCase):
             )
         )
 
+    def test_kitty_focus_preview_also_uses_reduced_animation_cadence(self) -> None:
+        display = self._make_display()
+        display._kitty_graphics_supported = True
+        display._inline_images_supported = False
+        display.on_focus_preview(
+            self._make_png(),
+            label="15-blue/fr-10b",
+            source="mock_tricky",
+        )
+
+        self.assertTrue(
+            display.should_animate(),
+            "steady kitty-image preview should still animate, just at a calmer cadence so the surface does not feel frozen",
+        )
+        self.assertEqual(
+            display.target_animation_fps(),
+            _ACTIVE_ANIMATION_FPS,
+            "steady kitty preview should run at the same animation cadence "
+            "as active mode now that the band is precomposed",
+        )
+
+    def test_live_update_gates_global_clear_on_geometry_change(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        live_update = source.split("def _live_update():", 1)[1].split(
+            "with Live(",
+            1,
+        )[0]
+
+        self.assertIn(
+            "_live_frame_requires_full_clear(",
+            source,
+            "steady preview mode should decide explicitly when a global alt-screen clear is necessary instead of hard-clearing every frame",
+        )
+        self.assertIn(
+            "if _live_frame_requires_full_clear(",
+            live_update,
+            "the live paint loop should only send ESC[2J when the frame geometry changed or the first paint still needs a clean slate",
+        )
     def test_session_end_stops_animation(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")
