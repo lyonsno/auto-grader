@@ -1125,19 +1125,17 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_focus_preview_kitty_image_renderable_yields_only_place(self):
         # FocusPreviewKittyImage does NOT carry the PNG data. The
-        # transmit is done by the caller (on_focus_preview) directly
-        # to stdout before the next Rich frame. The renderable's
-        # job is only to emit the tiny place-by-ID command at the
-        # correct cursor position inside its own border frame, on
-        # every single Rich refresh, at essentially zero cost
-        # (~30 bytes per frame).
+        # composite is transmitted by on_focus_preview directly to
+        # stdout before the next Rich frame. The renderable's job is
+        # only to emit the tiny place-by-ID command at the correct
+        # cursor position on every Rich refresh, at essentially zero
+        # cost (~30 bytes per frame).
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
             image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
+            band_cell_width=120,
+            band_cell_height=22,
             title="test",
         )
         console = Console(
@@ -1158,42 +1156,6 @@ class NarratorReaderContract(unittest.TestCase):
         # flicker bug we're trying to avoid.
         self.assertNotIn("f=100", output)
 
-    def test_focus_preview_kitty_image_shrinks_on_narrow_console(self):
-        # The Kitty box must be computed from the currently available
-        # width budget, not cached at construction time. A narrower
-        # budget must shrink the cell box; a wider budget must let it
-        # grow again while keeping the aspect stable.
-        renderable = FocusPreviewKittyImage(
-            image_id=1,
-            image_pixel_width=3000,
-            image_pixel_height=1000,
-            terminal_cell_aspect=2.1,
-            title="test",
-        )
-
-        c_narrow, r_narrow = renderable._compute_box(50)
-        self.assertLess(
-            c_narrow,
-            120,
-            "narrow width budget must materially shrink the Kitty box rather than keeping a wide-console size",
-        )
-
-        c_wide, r_wide = renderable._compute_box(200)
-        self.assertGreater(
-            c_wide,
-            c_narrow,
-            "wider width budget must let the box grow larger than the narrow case",
-        )
-
-        ratio_narrow = c_narrow / r_narrow
-        ratio_wide = c_wide / r_wide
-        self.assertAlmostEqual(
-            ratio_narrow,
-            ratio_wide,
-            delta=1.0,
-            msg="resizing must preserve image aspect ratio",
-        )
-
     def test_focus_preview_kitty_image_replaces_on_every_frame(self):
         # The Kitty place command (a=p) must be re-issued on every
         # frame, not just the first render. Rich's Live repainter
@@ -1205,9 +1167,8 @@ class NarratorReaderContract(unittest.TestCase):
 
         renderable = FocusPreviewKittyImage(
             image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
+            band_cell_width=120,
+            band_cell_height=22,
             title="test",
         )
         console = Console(
@@ -1233,57 +1194,21 @@ class NarratorReaderContract(unittest.TestCase):
             "survives Rich's per-line erase between repaints",
         )
 
-    def test_focus_preview_kitty_image_reissues_place_after_geometry_change(self):
+    def test_focus_preview_kitty_composite_emits_no_texture_segments(self):
+        # The precomposed Kitty band includes the ornate texture/border
+        # baked into the composite image. The renderable must therefore
+        # emit NO styled text segments for texture or border — only the
+        # Kitty place command, cursor-forward escapes for vertical
+        # height, and newlines. Any styled text segment means the band
+        # is still being drawn as Rich text, which defeats the
+        # precomposition and keeps ~12KB of ANSI per frame.
         from rich.console import Console
+        from rich.segment import Segment
 
         renderable = FocusPreviewKittyImage(
             image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
-            title="test",
-        )
-        console = Console(
-            width=120,
-            record=True,
-            color_system="truecolor",
-            force_terminal=True,
-        )
-        first = "".join(
-            segment.text
-            for segment in renderable.__rich_console__(
-                console,
-                console.options.update(width=120),
-            )
-        )
-        second = "".join(
-            segment.text
-            for segment in renderable.__rich_console__(
-                console,
-                console.options.update(width=50),
-            )
-        )
-        self.assertEqual(first.count("\x1b_Ga=p"), 1)
-        self.assertEqual(
-            second.count("\x1b_Ga=p"),
-            1,
-            "changing the width budget should invalidate the cached placement so the preview is re-placed at the new geometry",
-        )
-
-    def test_focus_preview_kitty_band_segments_cached_across_steady_frames(self):
-        # The ornate steady preview band (borders + texture spans flanking the
-        # image) is geometry-deterministic: same terminal width + same image
-        # box = identical Rich segments. When the geometry has not changed
-        # between frames, the renderable must return pre-cached segments
-        # instead of recomputing them, so the text shimmer path is not
-        # dragged by per-frame band rendering.
-        from rich.console import Console
-
-        renderable = FocusPreviewKittyImage(
-            image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
+            band_cell_width=120,
+            band_cell_height=22,
             title="test",
         )
         console = Console(
@@ -1293,60 +1218,22 @@ class NarratorReaderContract(unittest.TestCase):
             force_terminal=True,
         )
         options = console.options.update(width=120)
-        # First render: populates the cache.
-        first_segments = list(
+        segments = list(
             renderable.__rich_console__(console, options)
         )
-        # Second render at same geometry: must return the same list object
-        # (identity check proves no recomputation happened).
-        second_segments = list(
-            renderable.__rich_console__(console, options)
-        )
-        # The segments from a cached steady frame must be identical objects,
-        # not freshly allocated copies. If this fails, the band is being
-        # recomputed on every animation tick.
-        self.assertIs(
-            first_segments[0],
-            second_segments[0],
-            "steady-frame band segments should be cached — got freshly "
-            "allocated segments on the second render at unchanged geometry",
-        )
-
-    def test_focus_preview_kitty_band_cache_invalidates_on_geometry_change(self):
-        # When the terminal width changes, the band cache must be
-        # invalidated so the texture/border segments are recomputed
-        # to fit the new geometry.
-        from rich.console import Console
-
-        renderable = FocusPreviewKittyImage(
-            image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
-            title="test",
-        )
-        console = Console(
-            width=120,
-            record=True,
-            color_system="truecolor",
-            force_terminal=True,
-        )
-        first_segments = list(
-            renderable.__rich_console__(
-                console, console.options.update(width=120)
-            )
-        )
-        resized_segments = list(
-            renderable.__rich_console__(
-                console, console.options.update(width=80)
-            )
-        )
-        # After a geometry change, the segments must be freshly computed
-        # (different objects), not stale cached segments from the old width.
-        self.assertIsNot(
-            first_segments[0],
-            resized_segments[0],
-            "band segments must be recomputed after a geometry change",
+        styled_text_segments = [
+            s for s in segments
+            if isinstance(s, Segment)
+            and s.style is not None
+            and s.control is None  # not a control segment
+            and s.text.strip()  # has visible text content
+        ]
+        self.assertEqual(
+            len(styled_text_segments),
+            0,
+            f"precomposed Kitty band should emit no styled text "
+            f"segments but got {len(styled_text_segments)}: "
+            f"{[s.text[:20] for s in styled_text_segments[:5]]}",
         )
 
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
