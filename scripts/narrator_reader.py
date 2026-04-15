@@ -1275,35 +1275,45 @@ def _build_composite_band_png(
     px_w = term_width * cell_px_w
     px_h = band_cell_rows * cell_px_h
 
-    # Create the composite canvas at the dark background color.
+    # Create the composite canvas with alpha so empty cells are
+    # transparent (terminal background shows through the sparse
+    # braille regions instead of a visible dark rectangle).
     comp = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, px_w, px_h), 1)
-    comp.set_rect(
-        fitz.IRect(0, 0, px_w, px_h),
-        _TEXTURE_BG_RGB + (255,),
-    )
+    comp.set_rect(fitz.IRect(0, 0, px_w, px_h), (0, 0, 0, 0))
 
     # --- Paint border rows ---
     border_rgb = (135, 160, 145)  # moss, matches _emit_band_border_row
-    # Top border: row 0
     _paint_border_row(comp, 0, term_width, cell_px_w, cell_px_h, border_rgb, title)
-    # Bottom border: last row
     _paint_border_row(
         comp, band_cell_rows - 1, term_width, cell_px_w, cell_px_h, border_rgb, "",
     )
 
-    # --- Paint texture ---
-    # Texture rows: row 1 (extra above), image rows 2..2+cell_height-1,
-    # row 2+cell_height (extra below).
+    # --- Paint texture with glyph patterns ---
+    # Braille dot layout: 2 columns × 4 rows within each cell.
+    # Bit positions map to (col, row) in the dot grid:
+    #   bit 0 → (0,0), bit 1 → (0,1), bit 2 → (0,2), bit 6 → (0,3)
+    #   bit 3 → (1,0), bit 4 → (1,1), bit 5 → (1,2), bit 7 → (1,3)
+    _BRAILLE_BIT_POSITIONS = [
+        (0, 0), (0, 1), (0, 2),  # bits 0-2: left column rows 0-2
+        (1, 0), (1, 1), (1, 2),  # bits 3-5: right column rows 0-2
+        (0, 3),                   # bit 6: left column row 3
+        (1, 3),                   # bit 7: right column row 3
+    ]
+    dot_w = max(1, cell_px_w // 2)
+    dot_h = max(1, cell_px_h // 4)
+    # Inset dots slightly for rounder appearance.
+    dot_inset_x = max(0, (dot_w - max(1, dot_w * 2 // 3)) // 2)
+    dot_inset_y = max(0, (dot_h - max(1, dot_h * 2 // 3)) // 2)
+
     for cell_row in range(1, band_cell_rows - 1):
         if cell_row == 1:
-            row_seed_id = 0  # extra row above
+            row_seed_id = 0
         elif cell_row == band_cell_rows - 2:
-            row_seed_id = 1 + image_cell_height  # extra row below
+            row_seed_id = 1 + image_cell_height
         else:
-            row_seed_id = cell_row - 1  # image rows
+            row_seed_id = cell_row - 1
 
         for col in range(term_width):
-            # Skip the image region on image rows
             is_image_row = 2 <= cell_row <= 1 + image_cell_height
             if is_image_row and image_left <= col < image_right:
                 continue
@@ -1318,18 +1328,57 @@ def _build_composite_band_png(
                 distance = 0
                 max_dist = 1
 
-            _, rgb = _texture_cell(
+            glyph, rgb = _texture_cell(
                 distance_from_image=distance,
                 max_distance=max_dist,
                 seed_key=(image_id, row_seed_id, col),
             )
-            # Fill the cell rectangle with the texture color.
+
             x0 = col * cell_px_w
             y0 = cell_row * cell_px_h
-            comp.set_rect(
-                fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
-                rgb + (255,),
-            )
+            rgba = rgb + (255,)
+
+            if glyph == " ":
+                # Empty cell — leave transparent.
+                continue
+            elif glyph in ("█", "▓"):
+                # Full or dense block — fill the entire cell.
+                if glyph == "▓":
+                    # ▓ is ~75% fill — paint a slightly inset rect.
+                    inset = max(1, cell_px_w // 8)
+                    comp.set_rect(
+                        fitz.IRect(
+                            x0 + inset, y0 + inset,
+                            x0 + cell_px_w - inset, y0 + cell_px_h - inset,
+                        ),
+                        rgba,
+                    )
+                else:
+                    comp.set_rect(
+                        fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
+                        rgba,
+                    )
+            elif ord(glyph) >= _BRAILLE_BASE:
+                # Braille character — paint individual dots.
+                bits = ord(glyph) - _BRAILLE_BASE
+                for bit_idx in range(8):
+                    if bits & (1 << bit_idx):
+                        dcol, drow = _BRAILLE_BIT_POSITIONS[bit_idx]
+                        dx = x0 + dcol * dot_w + dot_inset_x
+                        dy = y0 + drow * dot_h + dot_inset_y
+                        dw = dot_w - 2 * dot_inset_x
+                        dh = dot_h - 2 * dot_inset_y
+                        if dw > 0 and dh > 0:
+                            comp.set_rect(
+                                fitz.IRect(dx, dy, dx + dw, dy + dh),
+                                rgba,
+                            )
+            else:
+                # Fallback: any other glyph — fill the cell.
+                comp.set_rect(
+                    fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
+                    rgba,
+                )
 
     # --- Paste the exam crop centered in the image region ---
     # Build the final composite by rendering a PDF page that has the
