@@ -303,12 +303,12 @@ class McWorkflowGuiApp:
                     "INSERT INTO template_versions (slug, version, source_yaml) "
                     "VALUES (%s, 1, %s) RETURNING id",
                     (slug, source_yaml),
-                ).fetchone()[0]
+                ).fetchone()["id"]
                 connection.execute(
                     "INSERT INTO exam_definitions (slug, version, title, template_version_id) "
                     "VALUES (%s, 1, %s, %s) RETURNING id",
                     (slug, title, tv_id),
-                ).fetchone()
+                ).fetchone()["id"]
         except Exception as exc:
             exc_str = str(exc)
             if "unique" in exc_str.lower() or "duplicate" in exc_str.lower():

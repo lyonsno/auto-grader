@@ -129,8 +129,8 @@ class AssessmentAuthoringBackendTests(_AuthoringTestBase):
         fake_connection = mock.MagicMock()
         # fetchone returns the inserted template_version id, then exam_definition id
         fake_connection.execute.return_value.fetchone.side_effect = [
-            (1,),  # template_versions INSERT ... RETURNING id
-            (1,),  # exam_definitions INSERT ... RETURNING id
+            {"id": 1},  # template_versions INSERT ... RETURNING id
+            {"id": 1},  # exam_definitions INSERT ... RETURNING id
         ]
 
         form_body = (
@@ -206,7 +206,7 @@ class AssessmentAuthoringBackendTests(_AuthoringTestBase):
                     if isinstance(p, str) and "slug" in p:
                         persisted_yaml = p
             result = mock.Mock()
-            result.fetchone.return_value = (1,)
+            result.fetchone.return_value = {"id": 1}
             return result
 
         fake_connection.execute.side_effect = capture_execute
@@ -240,7 +240,7 @@ class AssessmentKindTests(_AuthoringTestBase):
         app = gui.McWorkflowGuiApp()
 
         fake_connection = mock.MagicMock()
-        fake_connection.execute.return_value.fetchone.return_value = (1,)
+        fake_connection.execute.return_value.fetchone.return_value = {"id": 1}
 
         form_body = (
             "database_url=postgresql%3A%2F%2F%2Fpostgres&"
@@ -322,7 +322,7 @@ class AssessmentAuthoringValidationTests(_AuthoringTestBase):
         app = gui.McWorkflowGuiApp()
 
         fake_connection = mock.MagicMock()
-        fake_connection.execute.return_value.fetchone.return_value = (1,)
+        fake_connection.execute.return_value.fetchone.return_value = {"id": 1}
 
         form_body = (
             "database_url=postgresql%3A%2F%2F%2Fpostgres&"
@@ -445,7 +445,7 @@ class ComputedDistractorTests(_AuthoringTestBase):
         app = gui.McWorkflowGuiApp()
 
         fake_connection = mock.MagicMock()
-        fake_connection.execute.return_value.fetchone.return_value = (1,)
+        fake_connection.execute.return_value.fetchone.return_value = {"id": 1}
 
         form_body = (
             "database_url=postgresql%3A%2F%2F%2Fpostgres&"
