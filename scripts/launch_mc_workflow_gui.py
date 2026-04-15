@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 
 from auto_grader.mc_workflow_gui import GuiState, serve_mc_workflow_gui
 
@@ -27,11 +29,38 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _resolve_database_url(args: argparse.Namespace) -> str:
+    """Return the database URL from --database-url or DATABASE_URL.
+
+    Exits with a clear operator-facing message if neither is set.
+    """
+    url = args.database_url or os.environ.get("DATABASE_URL", "").strip()
+    if url:
+        return url
+    print(
+        "No database connection configured.\n"
+        "\n"
+        "The GUI needs a running Postgres database to store assessments and\n"
+        "grading results. Set the DATABASE_URL environment variable before\n"
+        "launching:\n"
+        "\n"
+        "  export DATABASE_URL=\"postgresql:///postgres\"\n"
+        "  python scripts/launch_mc_workflow_gui.py --open-browser\n"
+        "\n"
+        "Or pass it directly:\n"
+        "\n"
+        "  python scripts/launch_mc_workflow_gui.py --database-url postgresql:///postgres\n",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
 def main() -> int:
     args = _parse_args()
+    database_url = _resolve_database_url(args)
     initial_state = GuiState(
         config={
-            "database_url": args.database_url,
+            "database_url": database_url,
             "schema_name": args.schema_name,
             "exam_instance_id": str(args.exam_instance_id),
             "artifact_json": args.artifact_json,
