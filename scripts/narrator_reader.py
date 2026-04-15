@@ -1237,6 +1237,153 @@ class FocusPreviewInlineImage:
         yield Segment.line()
 
 
+def _build_composite_band_png(
+    crop_png_bytes: bytes,
+    *,
+    term_width: int,
+    image_cell_width: int,
+    image_cell_height: int,
+    image_id: int,
+    title: str,
+    cell_px_w: int = 8,
+    cell_px_h: int = 16,
+) -> bytes:
+    """Build a single PNG that composites the exam crop with the ornate
+    textured band surround.
+
+    The resulting image covers the full band at ``term_width`` cells
+    wide and ``(image_cell_height + _BAND_EXTRA_ROWS + 2)`` cells tall
+    (image rows + 1 extra row above + 1 extra row below + 2 border
+    rows). The texture, borders, and exam crop are all baked into one
+    image so the terminal receives a single Kitty placement instead of
+    hundreds of styled text segments per frame.
+
+    ``cell_px_w`` and ``cell_px_h`` set the pixel resolution per cell
+    in the composite — the terminal scales the placed image to fit
+    the cell footprint regardless of source resolution.
+    """
+    image_left = max(0, (term_width - image_cell_width) // 2)
+    image_right = image_left + image_cell_width
+    band_cell_rows = image_cell_height + _BAND_EXTRA_ROWS + 2
+
+    px_w = term_width * cell_px_w
+    px_h = band_cell_rows * cell_px_h
+
+    # Create the composite canvas at the dark background color.
+    comp = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, px_w, px_h), 1)
+    comp.set_rect(
+        fitz.IRect(0, 0, px_w, px_h),
+        _TEXTURE_BG_RGB + (255,),
+    )
+
+    # --- Paint border rows ---
+    border_rgb = (135, 160, 145)  # moss, matches _emit_band_border_row
+    # Top border: row 0
+    _paint_border_row(comp, 0, term_width, cell_px_w, cell_px_h, border_rgb, title)
+    # Bottom border: last row
+    _paint_border_row(
+        comp, band_cell_rows - 1, term_width, cell_px_w, cell_px_h, border_rgb, "",
+    )
+
+    # --- Paint texture ---
+    # Texture rows: row 1 (extra above), image rows 2..2+cell_height-1,
+    # row 2+cell_height (extra below).
+    for cell_row in range(1, band_cell_rows - 1):
+        if cell_row == 1:
+            row_seed_id = 0  # extra row above
+        elif cell_row == band_cell_rows - 2:
+            row_seed_id = 1 + image_cell_height  # extra row below
+        else:
+            row_seed_id = cell_row - 1  # image rows
+
+        for col in range(term_width):
+            # Skip the image region on image rows
+            is_image_row = 2 <= cell_row <= 1 + image_cell_height
+            if is_image_row and image_left <= col < image_right:
+                continue
+
+            if col < image_left:
+                distance = image_left - col
+                max_dist = image_left
+            elif col >= image_right:
+                distance = col - image_right + 1
+                max_dist = max(1, term_width - image_right)
+            else:
+                distance = 0
+                max_dist = 1
+
+            _, rgb = _texture_cell(
+                distance_from_image=distance,
+                max_distance=max_dist,
+                seed_key=(image_id, row_seed_id, col),
+            )
+            # Fill the cell rectangle with the texture color.
+            x0 = col * cell_px_w
+            y0 = cell_row * cell_px_h
+            comp.set_rect(
+                fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
+                rgb + (255,),
+            )
+
+    # --- Paste the exam crop centered in the image region ---
+    # Build the final composite by rendering a PDF page that has the
+    # texture background as a base image and the crop overlaid on top.
+    # This avoids slow pixel-by-pixel Python loops — fitz handles the
+    # scaling and compositing natively.
+    crop_pix = fitz.Pixmap(crop_png_bytes)
+    crop_x0 = image_left * cell_px_w
+    crop_y0 = 2 * cell_px_h  # after top border + extra row
+    crop_target_w = image_cell_width * cell_px_w
+    crop_target_h = image_cell_height * cell_px_h
+
+    # Scale the crop to fit, centered in the image region.
+    src_w, src_h = crop_pix.width, crop_pix.height
+    scale = min(crop_target_w / max(1, src_w), crop_target_h / max(1, src_h))
+    scaled_w = max(1, int(src_w * scale))
+    scaled_h = max(1, int(src_h * scale))
+    paste_x = crop_x0 + (crop_target_w - scaled_w) // 2
+    paste_y = crop_y0 + (crop_target_h - scaled_h) // 2
+
+    # Use a PDF page to composite: background (texture) + foreground (crop).
+    final_doc = fitz.open()
+    final_page = final_doc.new_page(width=px_w, height=px_h)
+    # Insert the texture background as the base layer.
+    bg_png = comp.tobytes("png")
+    final_page.insert_image(fitz.Rect(0, 0, px_w, px_h), stream=bg_png)
+    # Insert the exam crop on top at the computed position.
+    final_page.insert_image(
+        fitz.Rect(paste_x, paste_y, paste_x + scaled_w, paste_y + scaled_h),
+        stream=crop_png_bytes,
+    )
+    # Render the composited page to PNG.
+    final_pix = final_page.get_pixmap(alpha=False)
+    result = final_pix.tobytes("png")
+    final_doc.close()
+
+    return result
+
+
+def _paint_border_row(
+    pix: "fitz.Pixmap",
+    cell_row: int,
+    term_width: int,
+    cell_px_w: int,
+    cell_px_h: int,
+    rgb: tuple[int, int, int],
+    title: str,
+) -> None:
+    """Paint a thin horizontal border line into a pixmap row."""
+    y_center = cell_row * cell_px_h + cell_px_h // 2
+    x_end = min(term_width * cell_px_w, pix.width)
+    # Draw a 2px horizontal line at the vertical center of the cell row
+    # using set_rect for efficiency.
+    line_height = 2
+    y0 = max(0, y_center - line_height // 2)
+    y1 = min(pix.height, y0 + line_height)
+    if y1 > y0 and x_end > 0:
+        pix.set_rect(fitz.IRect(0, y0, x_end, y1), rgb + (255,))
+
+
 class FocusPreviewKittyImage:
     """Rich Renderable that places a precomposed Kitty image covering
     the full ornate preview band.
@@ -1328,7 +1475,6 @@ class FocusPreviewKittyImage:
         for row in range(self._band_cell_height):
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
             yield Segment.line()
-
         place_sequence = _build_kitty_place_sequence(
             self._image_id,
             cell_width=self._band_cell_width,
@@ -4015,22 +4161,52 @@ class PaintDryDisplay:
             try:
                 pix = fitz.Pixmap(png_bytes)
                 title = f"focus preview · {label}" if label else "focus preview"
-                # Transmit the PNG chunks directly to the console
-                # output stream. Bypasses Rich entirely and runs
-                # on the event thread, so the decode has a head
-                # start on the next Rich refresh.
+                # Compute image cell box at the current console width.
+                console_width = (
+                    self._console.size.width
+                    if self._console is not None
+                    else 120
+                )
+                inner_budget = max(1, console_width - 2)
+                image_cw, image_ch = _compute_inline_image_cell_dimensions(
+                    pix.width,
+                    pix.height,
+                    max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+                    max_cell_width=min(
+                        _INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget,
+                    ),
+                    terminal_cell_aspect=self._terminal_cell_aspect,
+                )
+                band_cell_rows = image_ch + _BAND_EXTRA_ROWS + 2
+                # Build the composite PNG: exam crop + ornate texture
+                # + borders all baked into one image.
+                composite_png = _build_composite_band_png(
+                    png_bytes,
+                    term_width=console_width,
+                    image_cell_width=image_cw,
+                    image_cell_height=image_ch,
+                    image_id=_KITTY_IMAGE_ID,
+                    title=title,
+                )
+                # Transmit the composite PNG directly to the console
+                # output stream. Bypasses Rich entirely and runs on
+                # the event thread, so the terminal starts decoding
+                # in the background before Rich's next refresh fires.
                 transmit_stream = (
                     self._console.file if self._console is not None else sys.stdout
                 )
-                chunks = _build_kitty_transmit_chunks(png_bytes, _KITTY_IMAGE_ID)
+                chunks = _build_kitty_transmit_chunks(
+                    composite_png, _KITTY_IMAGE_ID,
+                )
                 for chunk in chunks:
                     transmit_stream.write(chunk)
                 transmit_stream.flush()
+                # Store the composite for retransmission on resize.
+                self.focus_preview_png = composite_png
                 self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
                     image_id=_KITTY_IMAGE_ID,
-                    image_pixel_width=pix.width,
-                    image_pixel_height=pix.height,
-                    terminal_cell_aspect=self._terminal_cell_aspect,
+                    band_cell_width=console_width,
+                    band_cell_height=band_cell_rows,
                     title=title,
                 )
                 # No need to build the iTerm2 or half-block paths —

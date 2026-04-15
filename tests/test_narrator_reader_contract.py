@@ -1124,19 +1124,17 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_focus_preview_kitty_image_renderable_yields_only_place(self):
         # FocusPreviewKittyImage does NOT carry the PNG data. The
-        # transmit is done by the caller (on_focus_preview) directly
-        # to stdout before the next Rich frame. The renderable's
-        # job is only to emit the tiny place-by-ID command at the
-        # correct cursor position inside its own border frame, on
-        # every single Rich refresh, at essentially zero cost
-        # (~30 bytes per frame).
+        # composite is transmitted by on_focus_preview directly to
+        # stdout before the next Rich frame. The renderable's job is
+        # only to emit the tiny place-by-ID command at the correct
+        # cursor position on every Rich refresh, at essentially zero
+        # cost (~30 bytes per frame).
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
             image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
+            band_cell_width=120,
+            band_cell_height=22,
             title="test",
         )
         console = Console(
@@ -1157,54 +1155,18 @@ class NarratorReaderContract(unittest.TestCase):
         # flicker bug we're trying to avoid.
         self.assertNotIn("f=100", output)
 
-    def test_focus_preview_kitty_image_shrinks_on_narrow_console(self):
-        # The Kitty box must be computed from the currently available
-        # width budget, not cached at construction time. A narrower
-        # budget must shrink the cell box; a wider budget must let it
-        # grow again while keeping the aspect stable.
-        renderable = FocusPreviewKittyImage(
-            image_id=1,
-            image_pixel_width=3000,
-            image_pixel_height=1000,
-            terminal_cell_aspect=2.1,
-            title="test",
-        )
-
-        c_narrow, r_narrow = renderable._compute_box(50)
-        self.assertLess(
-            c_narrow,
-            120,
-            "narrow width budget must materially shrink the Kitty box rather than keeping a wide-console size",
-        )
-
-        c_wide, r_wide = renderable._compute_box(200)
-        self.assertGreater(
-            c_wide,
-            c_narrow,
-            "wider width budget must let the box grow larger than the narrow case",
-        )
-
-        ratio_narrow = c_narrow / r_narrow
-        ratio_wide = c_wide / r_wide
-        self.assertAlmostEqual(
-            ratio_narrow,
-            ratio_wide,
-            delta=1.0,
-            msg="resizing must preserve image aspect ratio",
-        )
-
-    def test_focus_preview_kitty_image_emits_place_every_render(self):
-        # Rich Live clears the image region between frames, so we
-        # must re-emit the place command on every render. The place
-        # command is tiny and WezTerm doesn't re-parse anything, so
-        # this is cheap and flicker-free.
+    def test_focus_preview_kitty_image_places_on_every_frame(self):
+        # The Kitty place command (a=p) must fire on every frame.
+        # Rich's Live erases each line (CSI 2K) between frames,
+        # wiping the image pixels. Without a fresh a=p the image
+        # disappears after one frame. The placement is ~30 bytes
+        # and references the already-cached image — no PNG data.
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
             image_id=1,
-            image_pixel_width=1600,
-            image_pixel_height=900,
-            terminal_cell_aspect=2.1,
+            band_cell_width=120,
+            band_cell_height=22,
             title="test",
         )
         console = Console(
