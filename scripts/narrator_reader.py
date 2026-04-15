@@ -1803,8 +1803,11 @@ class FocusPreviewKittyImage:
     (~30 bytes) and cursor-forward escapes on every frame so the
     terminal paints the cached composite at the right position.
 
-    This eliminates ~12KB of styled ANSI text segments per frame that
-    the old text-based band was emitting for borders and texture.
+    On terminal resize, the renderable detects that
+    ``options.max_width`` no longer matches the width the composite
+    was built for, rebuilds the composite at the new geometry, and
+    retransmits it via Kitty before placing. This keeps the preview
+    resize-safe without requiring a fresh ``on_focus_preview`` event.
     """
 
     def __init__(
@@ -1814,11 +1817,53 @@ class FocusPreviewKittyImage:
         band_cell_width: int,
         band_cell_height: int,
         title: str = "",
+        crop_png_bytes: bytes = b"",
+        image_pixel_width: int = 0,
+        image_pixel_height: int = 0,
+        terminal_cell_aspect: float = _DEFAULT_TERMINAL_CELL_ASPECT,
     ) -> None:
         self._image_id = image_id
         self._band_cell_width = band_cell_width
         self._band_cell_height = band_cell_height
         self._title = title
+        # Stored for resize rebuild.
+        self._crop_png_bytes = crop_png_bytes
+        self._image_pixel_width = image_pixel_width
+        self._image_pixel_height = image_pixel_height
+        self._terminal_cell_aspect = terminal_cell_aspect
+
+    def _rebuild_for_width(self, new_width: int, console: Console) -> None:
+        """Rebuild and retransmit the composite at a new terminal width."""
+        if not self._crop_png_bytes:
+            return
+        inner_budget = max(1, new_width - 2)
+        image_cw, image_ch = _compute_inline_image_cell_dimensions(
+            self._image_pixel_width,
+            self._image_pixel_height,
+            max_cell_height=_INLINE_IMAGE_CELL_HEIGHT,
+            max_cell_width=min(_INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
+            terminal_cell_aspect=self._terminal_cell_aspect,
+        )
+        band_cell_rows = image_ch + _BAND_EXTRA_ROWS + 2
+        try:
+            composite_png = _build_composite_band_png(
+                self._crop_png_bytes,
+                term_width=new_width,
+                image_cell_width=image_cw,
+                image_cell_height=image_ch,
+                image_id=self._image_id,
+                title=self._title,
+            )
+            stream = console.file if console is not None else sys.stdout
+            # Delete old image, transmit new composite.
+            _kitty_delete_image(self._image_id, stream=stream)
+            for chunk in _build_kitty_transmit_chunks(composite_png, self._image_id):
+                stream.write(chunk)
+            stream.flush()
+            self._band_cell_width = new_width
+            self._band_cell_height = band_cell_rows
+        except Exception:
+            pass  # Next frame or next focus_preview will recover.
 
     def __rich_console__(
         self,
@@ -1831,6 +1876,10 @@ class FocusPreviewKittyImage:
         image. Rich sees cursor-forward control segments and newlines,
         which cost ~30 bytes total per frame instead of ~12KB.
         """
+        term_width = max(1, options.max_width)
+        if term_width != self._band_cell_width:
+            self._rebuild_for_width(term_width, console)
+
         place_sequence = _build_kitty_place_sequence(
             self._image_id,
             cell_width=self._band_cell_width,
@@ -4814,6 +4863,10 @@ class PaintDryDisplay:
                     band_cell_width=console_width,
                     band_cell_height=band_cell_rows,
                     title=title,
+                    crop_png_bytes=png_bytes,
+                    image_pixel_width=pix.width,
+                    image_pixel_height=pix.height,
+                    terminal_cell_aspect=self._terminal_cell_aspect,
                 )
                 # No need to build the iTerm2 or half-block paths —
                 # the Kitty path owns the panel when it's available.
