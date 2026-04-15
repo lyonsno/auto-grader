@@ -418,6 +418,30 @@ It now also supports a more professor-shaped grading-target flow:
   creation flow in the same local web surface instead of requiring raw YAML,
   SQL, or ad hoc terminal glue just to pick or create the grading target
 
+## Near-term forcing case
+
+The next concrete forcing case is not another MC packet. It is a real
+short-answer quiz family already sitting in `auto-grader-assets/exams/`:
+
+- `260326_Quiz _5 A.pdf`
+- `260326_Quiz _5 B.pdf`
+
+These are fixed-layout short-answer chemistry quizzes with typed prompts and
+boxed final-answer fields. The observed `A/B` differences appear structured
+enough that the project should be able to:
+
+- reconstruct a canonical authored quiz family from the legacy variant PDFs
+- generate a reviewable sibling variant `C`
+- render QR-/identity-bearing tracked artifacts for `A`, `B`, and `C`
+- and run a DB-backed VLM-facing trial against the real student scripts that
+  arrive next week
+
+That work is not landed yet. The point of calling it out here is to keep the
+README honest about the next chapter: the immediate frontier is no longer "can
+the MC workflow work at all?" but "can the same system support fixed-layout
+short-answer quiz reconstruction, tracked variant generation, and VLM-first
+answer-box reading on a real upcoming assessment?"
+
 ## Data model
 
 This is high-level and intentionally does not commit to table names yet.
