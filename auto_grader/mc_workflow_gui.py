@@ -514,6 +514,56 @@ def render_page(state: GuiState) -> str:
           if (panel) panel.classList.add("active");
         }});
       }}
+
+      // --- localStorage draft persistence for the Author tab ---
+      const DRAFT_KEY = "mc_authoring_draft";
+      const authorForm = document.querySelector('form[action="/author"]');
+      if (authorForm) {{
+        // Restore saved draft into any field that is still at its default.
+        try {{
+          const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{{}}");
+          for (const [name, val] of Object.entries(saved)) {{
+            const el = authorForm.elements[name];
+            if (!el) continue;
+            if (el.tagName === "TEXTAREA") {{
+              if (!el.value) el.value = val;
+            }} else if (el.tagName === "SELECT") {{
+              el.value = val;
+              // fire mode toggle if this is a question mode selector
+              if (name.match(/^q_\d+_mode$/) && typeof el.onchange === "function") {{
+                el.onchange.call(el);
+              }}
+            }} else if (el.type === "text") {{
+              if (!el.value) el.value = val;
+            }}
+          }}
+          // re-trigger mode toggles so panels match restored selects
+          for (let i = 1; i <= 5; i++) {{
+            const sel = authorForm.elements["q_" + i + "_mode"];
+            if (sel) window.toggleQuestionMode(sel, i);
+          }}
+        }} catch (e) {{ /* ignore corrupt localStorage */ }}
+
+        // Save draft on every change.
+        authorForm.addEventListener("input", () => {{
+          const data = {{}};
+          for (const el of authorForm.elements) {{
+            if (!el.name || el.type === "hidden") continue;
+            data[el.name] = el.value;
+          }}
+          try {{ localStorage.setItem(DRAFT_KEY, JSON.stringify(data)); }} catch (e) {{}}
+        }});
+        authorForm.addEventListener("change", () => {{
+          const evt = new Event("input");
+          authorForm.dispatchEvent(evt);
+        }});
+
+        // Clear draft on successful save (page reloads with a success message).
+        const okMsg = document.querySelector("#tab-author .message.ok");
+        if (okMsg && okMsg.textContent.toLowerCase().includes("saved")) {{
+          try {{ localStorage.removeItem(DRAFT_KEY); }} catch (e) {{}}
+        }}
+      }}
     }});
   </script>
 </head>

@@ -45,6 +45,14 @@ class AssessmentAuthoringGuiRenderTests(unittest.TestCase):
         self.assertIn('id="tab-grade"', html)
         self.assertIn('id="tab-author"', html)
 
+    def test_render_page_includes_localstorage_draft_persistence(self) -> None:
+        gui = _load_gui_module(self)
+        state = gui.GuiState(config={"database_url": "postgresql:///postgres"})
+        html = gui.render_page(state)
+
+        self.assertIn("mc_authoring_draft", html)
+        self.assertIn("localStorage", html)
+
     def test_authoring_section_has_title_and_slug_fields(self) -> None:
         gui = _load_gui_module(self)
         state = gui.GuiState(config={"database_url": "postgresql:///postgres"})
