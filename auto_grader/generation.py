@@ -29,6 +29,7 @@ _LETTER_HEIGHT = 792
 _LAYOUT_LEFT = 72
 _LAYOUT_TOP = 188
 _ROW_HEIGHT = 150
+_QUESTION_GAP = 20
 _BUBBLE_SIZE = 22
 _BUBBLE_GAP = 28
 _BUBBLE_ROW_LEFT = 320
@@ -327,7 +328,7 @@ def build_mc_answer_sheet_pages(
         # Below the bubble row: choice legend
         below_bubbles = _CHOICE_LEGEND_TOP_OFFSET + _CHOICE_LEGEND_LINE_SPACING * legend_line_count
 
-        content_height = above_bubbles + below_bubbles
+        content_height = above_bubbles + below_bubbles + _QUESTION_GAP
         question_metrics.append({
             "above": above_bubbles,
             "below": below_bubbles,
