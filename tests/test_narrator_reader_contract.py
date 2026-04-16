@@ -1298,34 +1298,38 @@ class NarratorReaderContract(unittest.TestCase):
             _KITTY_IMAGE_ID,
         )
 
-        buf = self._TTYBuffer()
-        console = Console(
-            file=buf,
-            width=120,
-            force_terminal=True,
-            color_system="truecolor",
-        )
-        display = PaintDryDisplay(console=console)
-        display._kitty_graphics_supported = True
+        # TERM must be non-dumb so Rich respects the explicit width=
+        # parameter; without it console.size.width falls back to 80
+        # regardless of the width= kwarg.
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            buf = self._TTYBuffer()
+            console = Console(
+                file=buf,
+                width=120,
+                force_terminal=True,
+                color_system="truecolor",
+            )
+            display = PaintDryDisplay(console=console)
+            display._kitty_graphics_supported = True
 
-        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
-        pix.clear_with(128)
-        valid_png = pix.tobytes("png")
+            pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
+            pix.clear_with(128)
+            valid_png = pix.tobytes("png")
 
-        display.on_focus_preview(valid_png, label="test", source="cache")
-        rend = display.focus_preview_kitty_renderable
-        if rend is None:
-            self.skipTest("Kitty path not taken (no renderable created)")
+            display.on_focus_preview(valid_png, label="test", source="cache")
+            rend = display.focus_preview_kitty_renderable
+            if rend is None:
+                self.skipTest("Kitty path not taken (no renderable created)")
 
-        original_width = rend._band_cell_width
-        self.assertEqual(original_width, 120,
-            "initial band width must match console width")
+            original_width = rend._band_cell_width
+            self.assertEqual(original_width, 120,
+                "initial band width must match console width")
 
-        # Simulate resize to narrower terminal.
-        console._width = 80
-        buf.seek(0)
-        buf.truncate(0)
-        display.retransmit_kitty_image()
+            # Simulate resize to narrower terminal.
+            console._width = 80
+            buf.seek(0)
+            buf.truncate(0)
+            display.retransmit_kitty_image()
 
         self.assertEqual(
             rend._band_cell_width,
@@ -1350,33 +1354,38 @@ class NarratorReaderContract(unittest.TestCase):
             _KITTY_IMAGE_ID,
         )
 
-        buf = self._TTYBuffer()
-        console = Console(
-            file=buf,
-            width=120,
-            force_terminal=True,
-            color_system="truecolor",
-        )
-        display = PaintDryDisplay(console=console)
-        display._kitty_graphics_supported = True
+        # TERM must be non-dumb so Rich respects the explicit width=
+        # parameter; without it console.size.width falls back to 80
+        # regardless of the width= kwarg.
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            buf = self._TTYBuffer()
+            console = Console(
+                file=buf,
+                width=120,
+                force_terminal=True,
+                color_system="truecolor",
+            )
+            display = PaintDryDisplay(console=console)
+            display._kitty_graphics_supported = True
 
-        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
-        pix.clear_with(128)
-        valid_png = pix.tobytes("png")
+            pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
+            pix.clear_with(128)
+            valid_png = pix.tobytes("png")
 
-        display.on_focus_preview(valid_png, label="test", source="cache")
-        rend = display.focus_preview_kitty_renderable
-        if rend is None:
-            self.skipTest("Kitty path not taken")
+            display.on_focus_preview(valid_png, label="test", source="cache")
+            rend = display.focus_preview_kitty_renderable
+            if rend is None:
+                self.skipTest("Kitty path not taken")
 
-        # Resize to 80 columns.
-        console._width = 80
-        display.retransmit_kitty_image()
+            # Resize to 80 columns.
+            console._width = 80
+            display.retransmit_kitty_image()
 
-        # Render the placement as __rich_console__ would.
-        options = console.options
-        segments = list(rend.__rich_console__(console, options))
-        place_text = "".join(seg.text for seg in segments)
+            # Render the placement as __rich_console__ would.
+            options = console.options
+            segments = list(rend.__rich_console__(console, options))
+            place_text = "".join(seg.text for seg in segments)
+
         match = re.search(r"c=(\d+),r=(\d+)", place_text)
         self.assertIsNotNone(match, "a=p must contain c= and r= parameters")
         placed_width = int(match.group(1))
