@@ -12,15 +12,20 @@ This module intentionally keeps the paper surface small and explicit:
 from __future__ import annotations
 
 from collections.abc import Mapping
-import re
-import textwrap
 from typing import Any
 
 import qrcode
 
+from auto_grader.mc_layout import (
+    CHOICE_LEGEND_LINE_SPACING as _CHOICE_LEGEND_LINE_SPACING,
+    CHOICE_LEGEND_TOP_OFFSET as _CHOICE_LEGEND_TOP_OFFSET,
+    PROMPT_LINE_GAP as _PROMPT_LINE_GAP,
+    PROMPT_LINE_SPACING as _PROMPT_LINE_SPACING,
+    display_prompt as _display_prompt,
+    wrap_choice_text as _wrap_choice_text,
+    wrap_prompt_text as _wrap_prompt_text,
+)
 
-_PROMPT_OFFSET = 96
-_PROMPT_LINE_GAP = 28
 _QUESTION_BLOCK_LEFT = 72
 _HEADER_LEFT = 60
 _HEADER_TITLE_TOP = 36
@@ -33,11 +38,6 @@ _CHOICE_LEGEND_FONT_SIZE = 10
 _BUBBLE_LABEL_FONT_SIZE = 10
 _BUBBLE_LABEL_TOP_OFFSET = 6
 _CHOICE_LEGEND_LEFT_OFFSET = 12
-_CHOICE_LEGEND_TOP_OFFSET = 4
-_CHOICE_LEGEND_LINE_SPACING = 14
-_CHOICE_WRAP_WIDTH = 46
-_PROMPT_LINE_SPACING = 14
-_PROMPT_WRAP_WIDTH = 52
 
 
 def render_mc_answer_sheet_pdf(artifact: Mapping[str, Any]) -> bytes:
@@ -276,16 +276,6 @@ def _text_block(x: int | float, y: int | float, font_size: int | float, text: st
     ]
 
 
-def _display_prompt(question_number: int, prompt: str) -> str:
-    normalized_prompt = re.sub(
-        rf"^\s*question\s+{question_number}\s*[:.\-]\s*",
-        "",
-        prompt,
-        flags=re.IGNORECASE,
-    )
-    return f"{question_number}. {normalized_prompt}"
-
-
 def _render_qr_code(page_height: int | float, qr_code: Mapping[str, Any]) -> list[str]:
     if qr_code.get("kind") != "page_identity_qr":
         raise ValueError("identity_qr_codes.kind must be 'page_identity_qr'")
@@ -352,27 +342,6 @@ def _qr_matrix(payload: str, *, error_correction: str, border_modules: int) -> l
 
 def _escape_text(text: str) -> str:
     return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
-def _wrap_prompt_text(text: str) -> list[str]:
-    wrapped = textwrap.wrap(
-        text,
-        width=_PROMPT_WRAP_WIDTH,
-        break_long_words=False,
-        break_on_hyphens=False,
-    )
-    return wrapped or [text]
-
-
-def _wrap_choice_text(bubble_label: str, text: str) -> list[str]:
-    wrapped = textwrap.wrap(
-        f"{bubble_label}. {text}",
-        width=_CHOICE_WRAP_WIDTH,
-        subsequent_indent="   ",
-        break_long_words=False,
-        break_on_hyphens=False,
-    )
-    return wrapped or [f"{bubble_label}. {text}"]
 
 
 def _circle_path(x: int | float, y: int | float, width: int | float, height: int | float) -> str:

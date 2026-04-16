@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping
 import hashlib
 import random
 import re
+import warnings
 from typing import Any
 
 from auto_grader.template_schema import validate_template
@@ -301,34 +302,36 @@ def build_mc_answer_sheet_pages(
     if not isinstance(layout, McAnswerSheetLayout):
         raise TypeError("layout must be a McAnswerSheetLayout")
 
-    from auto_grader.pdf_rendering import (
-        _CHOICE_LEGEND_LINE_SPACING,
-        _CHOICE_LEGEND_TOP_OFFSET,
-        _PROMPT_LINE_GAP,
-        _PROMPT_LINE_SPACING,
-        _wrap_choice_text,
-        _wrap_prompt_text,
-        _display_prompt,
+    from auto_grader.mc_layout import (
+        CHOICE_LEGEND_LINE_SPACING,
+        CHOICE_LEGEND_TOP_OFFSET,
+        PROMPT_LINE_GAP,
+        PROMPT_LINE_SPACING,
+        display_prompt,
+        wrap_choice_text,
+        wrap_prompt_text,
     )
 
     # Compute per-question layout metrics.
     question_metrics: list[dict[str, int]] = []
     for question_number, question in enumerate(rendered_questions, start=1):
-        prompt_text = _display_prompt(question_number, str(question.get("prompt", "")))
-        prompt_line_count = len(_wrap_prompt_text(prompt_text))
+        prompt_text = display_prompt(question_number, str(question.get("prompt", "")))
+        prompt_line_count = len(wrap_prompt_text(prompt_text))
 
         legend_line_count = 0
         if question.get("show_choice_legend", True):
             for choice in question.get("choices", []):
                 legend_line_count += len(
-                    _wrap_choice_text(str(choice["bubble_label"]), str(choice.get("text", "")))
+                    wrap_choice_text(str(choice["bubble_label"]), str(choice.get("text", "")))
                 )
 
         # Above the bubble row: prompt lines + gap
-        above_bubbles = _PROMPT_LINE_GAP + _PROMPT_LINE_SPACING * max(0, prompt_line_count - 1)
+        above_bubbles = PROMPT_LINE_GAP + PROMPT_LINE_SPACING * max(0, prompt_line_count - 1)
         # Below the bubble row: choice legend (0 when hidden)
+        # The renderer places lines at offsets 0, 1, ..., (count-1) * spacing,
+        # so the total extent is the offset plus the top padding.
         below_bubbles = (
-            (_CHOICE_LEGEND_TOP_OFFSET + _CHOICE_LEGEND_LINE_SPACING * legend_line_count)
+            (CHOICE_LEGEND_TOP_OFFSET + CHOICE_LEGEND_LINE_SPACING * (legend_line_count - 1))
             if legend_line_count > 0
             else 0
         )
@@ -361,6 +364,18 @@ def build_mc_answer_sheet_pages(
             # Check if this question's legend bottom fits on the page.
             if rows_on_page > 0 and cursor_y + metrics["below"] > _PAGE_CONTENT_BOTTOM:
                 break
+
+            # Warn if this question's content will overflow past registration
+            # markers.  This can only happen for the first question on a page
+            # (subsequent questions are checked by the fitting guard above).
+            if cursor_y + metrics["below"] > _PAGE_CONTENT_BOTTOM:
+                question = rendered_questions[question_index]
+                warnings.warn(
+                    f"Question {question['question_id']!r} choice legend extends past "
+                    f"the page content area ({cursor_y + metrics['below']:.0f}pt > "
+                    f"{_PAGE_CONTENT_BOTTOM}pt) and may overlap registration markers.",
+                    stacklevel=2,
+                )
 
             question = rendered_questions[question_index]
             bubbles_x = layout.bubble_row_left
