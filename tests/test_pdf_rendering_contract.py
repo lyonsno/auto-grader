@@ -178,6 +178,70 @@ def _build_wrapped_choice_artifact() -> dict:
     )
 
 
+def _build_overflow_artifact() -> dict:
+    """Build a 2-question artifact where Q1 has a very long choice E.
+
+    Choice E contains ~30 words which, at _CHOICE_WRAP_WIDTH=46, wraps to
+    4+ lines.  Combined with the other 4 short choices (1 line each), the
+    legend needs ~8 lines × 14pt = 112pt — well past the 150pt row height
+    budget once the prompt offset and choice-top offset are accounted for.
+    """
+    from auto_grader.generation import build_mc_answer_sheet
+
+    template = {
+        "slug": "quiz-overflow",
+        "title": "Overflow Quiz",
+        "sections": [
+            {
+                "id": "mc",
+                "title": "Multiple Choice",
+                "questions": [
+                    {
+                        "id": "mc-overflow-1",
+                        "points": 2,
+                        "answer_type": "multiple_choice",
+                        "prompt": "Short prompt for question one?",
+                        "choices": {
+                            "A": "Short answer A.",
+                            "B": "Short answer B.",
+                            "C": "Short answer C.",
+                            "D": "Short answer D.",
+                            "E": (
+                                "The actual right answer is right here and it is "
+                                "extremely long because it contains a detailed "
+                                "explanation of why this particular choice is the "
+                                "correct one among all the other options presented"
+                            ),
+                        },
+                        "correct": "E",
+                        "shuffle": False,
+                    },
+                    {
+                        "id": "mc-overflow-2",
+                        "points": 2,
+                        "answer_type": "multiple_choice",
+                        "prompt": "Short prompt for question two?",
+                        "choices": {
+                            "A": "Alpha.",
+                            "B": "Bravo.",
+                            "C": "Charlie.",
+                            "D": "Delta.",
+                        },
+                        "correct": "A",
+                        "shuffle": False,
+                    },
+                ],
+            }
+        ],
+    }
+    return build_mc_answer_sheet(
+        template,
+        {"student_id": "s-overflow", "student_name": "Test Overflow"},
+        attempt_number=1,
+        seed=42,
+    )
+
+
 def _build_instruction_only_artifact() -> dict:
     artifact = _build_artifact()
     artifact["mc_questions"][0]["prompt"] = "Fill B dark and solid."
@@ -573,6 +637,66 @@ class PdfRenderingContractTests(unittest.TestCase):
             b"(A. More exposed particles create more collision opportunities)",
             pdf_bytes,
             "Long choice text should not remain one unbounded line once choice wrapping is supported.",
+        )
+
+    def test_renderer_clamps_long_choice_legend_within_question_block(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_overflow_artifact()
+        page = artifact["pages"][0]
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        q1_regions = [
+            region
+            for region in page["bubble_regions"]
+            if region["question_id"] == "mc-overflow-1"
+        ]
+        q2_regions = [
+            region
+            for region in page["bubble_regions"]
+            if region["question_id"] == "mc-overflow-2"
+        ]
+        q1_bubble_top = min(region["y"] for region in q1_regions)
+        q2_bubble_top = min(region["y"] for region in q2_regions)
+        page_height = page["height"]
+
+        # Extract all legend text blocks at x=84 (the choice_legend_left) with
+        # their PDF-space y positions.
+        import re as _re
+        legend_pattern = _re.compile(
+            rb"BT\n/F1 10 Tf\n84 ([0-9.]+) Td\n\(.*?\) Tj\nET"
+        )
+        legend_entries = [
+            float(m.group(1)) for m in legend_pattern.finditer(pdf_bytes)
+        ]
+
+        # Q1's legend lines are the ones with PDF-y above Q2's bubble region.
+        # In PDF space (origin bottom-left), Q2's bubble top converts to:
+        q2_bubble_pdf_y = page_height - q2_bubble_top - 10
+        q1_legend_lines = [y for y in legend_entries if y > q2_bubble_pdf_y]
+
+        # The next question's prompt zone begins at roughly
+        # q2_bubble_top - _PROMPT_LINE_GAP (28).  In PDF-space:
+        q2_prompt_pdf_y = page_height - (q2_bubble_top - 28) - 10
+
+        # Every Q1 legend line must stay above Q2's prompt zone (higher
+        # PDF-y = higher on page).
+        overflowing = [y for y in q1_legend_lines if y <= q2_prompt_pdf_y]
+        self.assertEqual(
+            overflowing,
+            [],
+            "Choice legend text from one question must not overflow into the "
+            "next question's vertical space.  Long choices should be truncated "
+            "within the question block's row allocation.",
+        )
+
+        # The original 5-choice set (with E wrapping to ~5 lines) would need
+        # 9 total legend lines.  Verify the renderer actually truncated.
+        self.assertLess(
+            len(q1_legend_lines),
+            9,
+            "The renderer should truncate the choice legend when it would "
+            "overflow into the next question block.",
         )
 
     def test_renderer_can_hide_choice_legend_for_instruction_only_questions(self) -> None:
