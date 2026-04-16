@@ -228,11 +228,19 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
         show_choice_legend = bool(question.get("show_choice_legend", True))
 
         # Compute the maximum number of legend lines that fit before the
-        # next question's prompt zone (or the page bottom for the last
-        # question).
-        if page_q_index + 1 < len(page_bubble_tops):
+        # next question's prompt block (or the page bottom for the last
+        # question).  The next prompt may wrap to multiple lines, so we
+        # compute its actual block top rather than assuming a single line.
+        if page_q_index + 1 < len(page_questions):
+            next_q_number, next_question = page_questions[page_q_index + 1]
             next_bubble_top = page_bubble_tops[page_q_index + 1]
-            legend_bottom_limit = next_bubble_top - _PROMPT_LINE_GAP
+            next_prompt_lines = _wrap_prompt_text(
+                _display_prompt(next_q_number, str(next_question.get("prompt", "")))
+            )
+            next_prompt_block_top = next_bubble_top - _PROMPT_LINE_GAP - (
+                _PROMPT_LINE_SPACING * (len(next_prompt_lines) - 1)
+            )
+            legend_bottom_limit = next_prompt_block_top
         else:
             legend_bottom_limit = height
         legend_start_y = prompt_y_top + _CHOICE_LEGEND_TOP_OFFSET
