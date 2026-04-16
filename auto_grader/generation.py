@@ -318,15 +318,20 @@ def build_mc_answer_sheet_pages(
         prompt_line_count = len(_wrap_prompt_text(prompt_text))
 
         legend_line_count = 0
-        for choice in question.get("choices", []):
-            legend_line_count += len(
-                _wrap_choice_text(str(choice["bubble_label"]), str(choice.get("text", "")))
-            )
+        if question.get("show_choice_legend", True):
+            for choice in question.get("choices", []):
+                legend_line_count += len(
+                    _wrap_choice_text(str(choice["bubble_label"]), str(choice.get("text", "")))
+                )
 
         # Above the bubble row: prompt lines + gap
         above_bubbles = _PROMPT_LINE_GAP + _PROMPT_LINE_SPACING * max(0, prompt_line_count - 1)
-        # Below the bubble row: choice legend
-        below_bubbles = _CHOICE_LEGEND_TOP_OFFSET + _CHOICE_LEGEND_LINE_SPACING * legend_line_count
+        # Below the bubble row: choice legend (0 when hidden)
+        below_bubbles = (
+            (_CHOICE_LEGEND_TOP_OFFSET + _CHOICE_LEGEND_LINE_SPACING * legend_line_count)
+            if legend_line_count > 0
+            else 0
+        )
 
         content_height = above_bubbles + below_bubbles + _QUESTION_GAP
         question_metrics.append({
