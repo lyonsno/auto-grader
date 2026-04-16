@@ -4774,7 +4774,8 @@ class PaintDryDisplay:
             for chunk in _build_kitty_transmit_chunks(composite_png, _KITTY_IMAGE_ID):
                 stream.write(chunk)
             stream.flush()
-            self.focus_preview_png = composite_png
+            # Don't overwrite focus_preview_png — it holds the raw
+            # crop bytes (pipeline contract). The composite is ephemeral.
             rend._band_cell_width = console_width
             rend._band_cell_height = band_cell_rows
         except Exception:
@@ -4858,8 +4859,9 @@ class PaintDryDisplay:
                 for chunk in chunks:
                     transmit_stream.write(chunk)
                 transmit_stream.flush()
-                # Store the composite for retransmission on resize.
-                self.focus_preview_png = composite_png
+                # focus_preview_png keeps the raw incoming PNG bytes
+                # (pipeline contract). The composite is stored on the
+                # renderable and rebuilt by retransmit_kitty_image.
                 self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
                     image_id=_KITTY_IMAGE_ID,
                     band_cell_width=console_width,
