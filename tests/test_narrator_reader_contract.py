@@ -1290,6 +1290,104 @@ class NarratorReaderContract(unittest.TestCase):
             "Kitty placement must still appear in the suppressed frame",
         )
 
+    def test_retransmit_kitty_image_updates_placement_dimensions(self):
+        # On resize, retransmit_kitty_image rebuilds the composite at the
+        # new console width and updates the renderable's placement
+        # dimensions so the next a=p uses the correct cell footprint.
+        import fitz
+        from scripts.narrator_reader import (
+            PaintDryDisplay,
+            _KITTY_IMAGE_ID,
+        )
+
+        buf = self._TTYBuffer()
+        console = Console(
+            file=buf,
+            width=120,
+            force_terminal=True,
+            color_system="truecolor",
+        )
+        display = PaintDryDisplay(console=console)
+        display._kitty_graphics_supported = True
+
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
+        pix.clear_with(128)
+        valid_png = pix.tobytes("png")
+
+        display.on_focus_preview(valid_png, label="test", source="cache")
+        rend = display.focus_preview_kitty_renderable
+        if rend is None:
+            self.skipTest("Kitty path not taken (no renderable created)")
+
+        original_width = rend._band_cell_width
+        self.assertEqual(original_width, 120,
+            "initial band width must match console width")
+
+        # Simulate resize to narrower terminal.
+        console._width = 80
+        buf.seek(0)
+        buf.truncate(0)
+        display.retransmit_kitty_image()
+
+        self.assertEqual(
+            rend._band_cell_width,
+            80,
+            "retransmit must update _band_cell_width to the new console width",
+        )
+        transmitted = buf.getvalue()
+        self.assertIn(
+            "f=100",
+            transmitted,
+            "retransmit must upload new image data (PNG format marker)",
+        )
+
+    def test_resize_placement_matches_rebuilt_dimensions(self):
+        # End-to-end resize contract: after retransmit_kitty_image at a
+        # new width, the a=p placement emitted by __rich_console__ must
+        # use the new dimensions, not the old ones.
+        import re
+        import fitz
+        from scripts.narrator_reader import (
+            PaintDryDisplay,
+            _KITTY_IMAGE_ID,
+        )
+
+        buf = self._TTYBuffer()
+        console = Console(
+            file=buf,
+            width=120,
+            force_terminal=True,
+            color_system="truecolor",
+        )
+        display = PaintDryDisplay(console=console)
+        display._kitty_graphics_supported = True
+
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
+        pix.clear_with(128)
+        valid_png = pix.tobytes("png")
+
+        display.on_focus_preview(valid_png, label="test", source="cache")
+        rend = display.focus_preview_kitty_renderable
+        if rend is None:
+            self.skipTest("Kitty path not taken")
+
+        # Resize to 80 columns.
+        console._width = 80
+        display.retransmit_kitty_image()
+
+        # Render the placement as __rich_console__ would.
+        options = console.options
+        segments = list(rend.__rich_console__(console, options))
+        place_text = "".join(seg.text for seg in segments)
+        match = re.search(r"c=(\d+),r=(\d+)", place_text)
+        self.assertIsNotNone(match, "a=p must contain c= and r= parameters")
+        placed_width = int(match.group(1))
+        self.assertEqual(
+            placed_width,
+            80,
+            "a=p placement width must match the post-resize console width",
+        )
+
     def test_focus_preview_kitty_composite_emits_no_texture_segments(self):
         # The precomposed Kitty band includes the ornate texture/border
         # baked into the composite image. The renderable must therefore
