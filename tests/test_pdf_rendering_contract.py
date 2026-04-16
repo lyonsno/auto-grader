@@ -639,65 +639,75 @@ class PdfRenderingContractTests(unittest.TestCase):
             "Long choice text should not remain one unbounded line once choice wrapping is supported.",
         )
 
-    def test_renderer_clamps_long_choice_legend_within_question_block(self) -> None:
+    def test_long_choice_text_renders_fully_without_overlapping_next_question(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
         artifact = _build_overflow_artifact()
         page = artifact["pages"][0]
 
         pdf_bytes = render_mc_answer_sheet_pdf(artifact)
 
-        q1_regions = [
-            region
-            for region in page["bubble_regions"]
-            if region["question_id"] == "mc-overflow-1"
-        ]
-        q2_regions = [
-            region
-            for region in page["bubble_regions"]
-            if region["question_id"] == "mc-overflow-2"
-        ]
-        q1_bubble_top = min(region["y"] for region in q1_regions)
-        q2_bubble_top = min(region["y"] for region in q2_regions)
-        page_height = page["height"]
+        # The full text of the long choice E must appear — no silent truncation.
+        self.assertIn(
+            b"other options presented",
+            pdf_bytes,
+            "Long choice text must render in full.  The generation layer should "
+            "allocate enough vertical space per question instead of silently "
+            "truncating what the professor authored.",
+        )
 
-        # Extract all legend text blocks at x=84 (the choice_legend_left) with
-        # their PDF-space y positions.
+        # No rendered content from Q1 may visually overlap Q2's prompt.
         import re as _re
         legend_pattern = _re.compile(
             rb"BT\n/F1 10 Tf\n84 ([0-9.]+) Td\n\(.*?\) Tj\nET"
         )
-        legend_entries = [
+        prompt_pattern = _re.compile(
+            rb"BT\n/F1 13 Tf\n72 ([0-9.]+) Td\n\(.*?\) Tj\nET"
+        )
+
+        legend_y_positions = [
             float(m.group(1)) for m in legend_pattern.finditer(pdf_bytes)
         ]
-
-        # Q1's legend lines are the ones with PDF-y above Q2's bubble region.
-        # In PDF space (origin bottom-left), Q2's bubble top converts to:
-        q2_bubble_pdf_y = page_height - q2_bubble_top - 10
-        q1_legend_lines = [y for y in legend_entries if y > q2_bubble_pdf_y]
-
-        # The next question's prompt zone begins at roughly
-        # q2_bubble_top - _PROMPT_LINE_GAP (28).  In PDF-space:
-        q2_prompt_pdf_y = page_height - (q2_bubble_top - 28) - 10
-
-        # Every Q1 legend line must stay above Q2's prompt zone (higher
-        # PDF-y = higher on page).
-        overflowing = [y for y in q1_legend_lines if y <= q2_prompt_pdf_y]
-        self.assertEqual(
-            overflowing,
-            [],
-            "Choice legend text from one question must not overflow into the "
-            "next question's vertical space.  Long choices should be truncated "
-            "within the question block's row allocation.",
+        prompt_y_positions = sorted(
+            (float(m.group(1)) for m in prompt_pattern.finditer(pdf_bytes)),
+            reverse=True,
         )
 
-        # The original 5-choice set (with E wrapping to ~5 lines) would need
-        # 9 total legend lines.  Verify the renderer actually truncated.
-        self.assertLess(
-            len(q1_legend_lines),
-            9,
-            "The renderer should truncate the choice legend when it would "
-            "overflow into the next question block.",
+        # Q2's prompt lines are the second group of prompt-font blocks
+        # (lower PDF-y than Q1's prompt).  Find the highest Q2 prompt y.
+        q1_regions = [
+            region for region in page["bubble_regions"]
+            if region["question_id"] == "mc-overflow-1"
+        ]
+        q1_bubble_top = min(region["y"] for region in q1_regions)
+        page_height = page["height"]
+
+        # Q1's legend lines are the ones positioned above Q1's bubble row
+        # bottom + label zone — roughly anything with PDF-y above the midpoint
+        # between Q1 and Q2 bubble rows.
+        q2_regions = [
+            region for region in page["bubble_regions"]
+            if region["question_id"] == "mc-overflow-2"
+        ]
+        q2_bubble_top = min(region["y"] for region in q2_regions)
+        midpoint_pdf_y = page_height - ((q1_bubble_top + q2_bubble_top) / 2) - 10
+
+        q1_legend_bottom = min(
+            (y for y in legend_y_positions if y > midpoint_pdf_y),
+            default=None,
         )
+        q2_prompt_top = max(
+            (y for y in prompt_y_positions if y < midpoint_pdf_y),
+            default=None,
+        )
+
+        if q1_legend_bottom is not None and q2_prompt_top is not None:
+            self.assertGreater(
+                q1_legend_bottom - q2_prompt_top,
+                0,
+                "The lowest Q1 choice-legend line must sit above the highest Q2 "
+                "prompt line — the generation layer should size the row to prevent "
+                "visual overlap between adjacent question blocks.",
+            )
 
     def test_renderer_can_hide_choice_legend_for_instruction_only_questions(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)

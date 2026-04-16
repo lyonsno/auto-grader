@@ -41,6 +41,8 @@ _IDENTITY_QR_TOP = 36
 _IDENTITY_QR_LEFT = 420
 _IDENTITY_QR_GAP = 10
 
+_PAGE_CONTENT_BOTTOM = _LETTER_HEIGHT - _REGISTRATION_MARKER_INSET - _REGISTRATION_MARKER_SIZE - 10
+
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
 
@@ -298,18 +300,64 @@ def build_mc_answer_sheet_pages(
     if not isinstance(layout, McAnswerSheetLayout):
         raise TypeError("layout must be a McAnswerSheetLayout")
 
+    from auto_grader.pdf_rendering import (
+        _CHOICE_LEGEND_LINE_SPACING,
+        _CHOICE_LEGEND_TOP_OFFSET,
+        _PROMPT_LINE_GAP,
+        _PROMPT_LINE_SPACING,
+        _wrap_choice_text,
+        _wrap_prompt_text,
+        _display_prompt,
+    )
+
+    # Compute per-question layout metrics.
+    question_metrics: list[dict[str, int]] = []
+    for question_number, question in enumerate(rendered_questions, start=1):
+        prompt_text = _display_prompt(question_number, str(question.get("prompt", "")))
+        prompt_line_count = len(_wrap_prompt_text(prompt_text))
+
+        legend_line_count = 0
+        for choice in question.get("choices", []):
+            legend_line_count += len(
+                _wrap_choice_text(str(choice["bubble_label"]), str(choice.get("text", "")))
+            )
+
+        # Above the bubble row: prompt lines + gap
+        above_bubbles = _PROMPT_LINE_GAP + _PROMPT_LINE_SPACING * max(0, prompt_line_count - 1)
+        # Below the bubble row: choice legend
+        below_bubbles = _CHOICE_LEGEND_TOP_OFFSET + _CHOICE_LEGEND_LINE_SPACING * legend_line_count
+
+        content_height = above_bubbles + below_bubbles
+        question_metrics.append({
+            "above": above_bubbles,
+            "below": below_bubbles,
+            "row_height": max(layout.row_height, content_height),
+        })
+
+    # Pack questions onto pages.  The bubble row sits at cursor_y; content
+    # extends above (prompt) and below (legend).  A question fits when its
+    # legend bottom (cursor_y + below) stays within the page content area.
     pages: list[dict[str, Any]] = []
     registration_markers = _build_registration_markers()
+    question_index = 0
 
-    for page_index, start in enumerate(range(0, len(rendered_questions), layout.rows_per_page), start=1):
+    while question_index < len(rendered_questions):
+        page_index = len(pages) + 1
         bubble_regions: list[dict[str, Any]] = []
-        page_questions = rendered_questions[start : start + layout.rows_per_page]
         fallback_page_code = f"{opaque_instance_code}-p{page_index}"
+        cursor_y = layout.layout_top
+        rows_on_page = 0
 
-        for row, question in enumerate(page_questions):
-            row_y = layout.layout_top + (row * layout.row_height)
+        while question_index < len(rendered_questions):
+            if rows_on_page >= layout.rows_per_page:
+                break
+            metrics = question_metrics[question_index]
+            # Check if this question's legend bottom fits on the page.
+            if rows_on_page > 0 and cursor_y + metrics["below"] > _PAGE_CONTENT_BOTTOM:
+                break
+
+            question = rendered_questions[question_index]
             bubbles_x = layout.bubble_row_left
-
             for choice_index, choice in enumerate(question["choices"]):
                 bubble_regions.append(
                     {
@@ -317,11 +365,15 @@ def build_mc_answer_sheet_pages(
                         "bubble_label": choice["bubble_label"],
                         "shape": "circle",
                         "x": bubbles_x + choice_index * (_BUBBLE_SIZE + _BUBBLE_GAP),
-                        "y": row_y,
+                        "y": cursor_y,
                         "width": _BUBBLE_SIZE,
                         "height": _BUBBLE_SIZE,
                     }
                 )
+
+            cursor_y += metrics["row_height"]
+            rows_on_page += 1
+            question_index += 1
 
         pages.append(
             {
