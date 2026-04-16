@@ -22,8 +22,10 @@ surfaces rather than a purely aspirational plan.
 
 These are here to keep the project from exploding.
 
-- No full question-type library with a GUI editor. Authoring is power-user YAML/JSON plus
-  helper scripts.
+- No full question-type library with polished end-to-end GUI support. The
+  landed professor-facing authoring surface now covers the real MC workflow and
+  assessment-authoring path, but unsupported or more advanced question types
+  still require schema-level work and follow-on implementation.
 - No LMS integration (Canvas, Blackboard, etc.) in v1. CSV in and out is sufficient.
 - No cloud dependency required for the core workflow. The system should run on a
   professor's laptop.
@@ -69,9 +71,11 @@ and process.
 
 ### 1. Authoring (Templates)
 
-Professors create question templates and exam definitions using YAML/JSON. The authoring
-format is designed for researchers: structured, explicit, validated, and not dependent on
-terminal expertise.
+The durable authored representation is still YAML/JSON, but the project now
+has a professor-facing local GUI for the first real authoring and workflow
+surfaces. Professors no longer need to start from blank YAML just to create an
+assessment, create/select a grading target, or drive the MC grading workflow.
+The underlying format remains structured, explicit, validated, and reviewable.
 
 Key properties:
 
@@ -81,6 +85,21 @@ Key properties:
 - questions define correct answers and distractor generation strategies, or allow explicit
   distractor lists
 - template versions are immutable once used to generate student exams
+
+Current implementation status on this authoring surface:
+
+- `auto_grader.mc_workflow_gui` plus
+  `scripts/launch_mc_workflow_gui.py` now provide a thin local web GUI for:
+  - creating assessments through a professor-facing authoring flow
+  - creating or selecting the exam to grade without exposing raw database ids
+  - ingesting scans, reviewing flagged questions, persisting decisions, and
+    exporting results
+- the GUI intentionally remains thin over the landed durable model and DB-backed
+  workflow surfaces instead of inventing a second source of truth
+- static-choice multiple-choice authoring is landed and validated before
+  persistence
+- computed-distractor authoring is intentionally fenced off until the
+  generation/rendering path supports it end to end
 
 ### 2. Generation (Per-student exams)
 
@@ -675,7 +694,8 @@ transcript).
 
 1. Create or open a project folder.
 2. Import roster CSV.
-3. Create or edit templates, or run skeletonizer / LLM inferencer and review drafts.
+3. Create or edit assessments through the local authoring surface, or run the
+   skeletonizer / LLM inferencer and review drafts.
 4. Validate templates.
 5. Preview a few generated variants.
 6. Generate exam PDFs.
