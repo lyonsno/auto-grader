@@ -4379,8 +4379,9 @@ class PaintDryDisplay:
                 for chunk in chunks:
                     transmit_stream.write(chunk)
                 transmit_stream.flush()
-                # Store the composite for retransmission on resize.
-                self.focus_preview_png = composite_png
+                # focus_preview_png keeps the raw incoming PNG bytes
+                # (pipeline contract). The composite is stored on the
+                # renderable and rebuilt by retransmit_kitty_image.
                 self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
                     image_id=_KITTY_IMAGE_ID,
                     band_cell_width=console_width,
