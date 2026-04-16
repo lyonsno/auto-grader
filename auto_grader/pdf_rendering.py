@@ -173,10 +173,6 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
     if not isinstance(questions, list):
         raise ValueError("artifact.mc_questions must be a list")
 
-    # Pre-collect bubble-top y for each page question so we can compute
-    # per-question vertical bounds for the choice legend.
-    page_questions: list[tuple[int, dict[str, Any]]] = []
-    page_bubble_tops: list[int | float] = []
     for question_number, raw_question in enumerate(questions, start=1):
         if not isinstance(raw_question, Mapping):
             raise ValueError("artifact.mc_questions entries must be mappings")
@@ -184,28 +180,18 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
         question_id = str(question["question_id"])
         if question_id not in page_question_ids:
             continue
+
         choices = question.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError(f"Question {question_id!r} must have rendered choices")
+
         question_regions = [
             region_lookup[(question_id, str(choice["bubble_label"]))]
             for choice in choices
         ]
-        bubble_top = min(
+        prompt_y_top = min(
             _require_number(region["y"], "bubble_region.y") for region in question_regions
         )
-        page_questions.append((question_number, question))
-        page_bubble_tops.append(bubble_top)
-
-    for page_q_index, (question_number, question) in enumerate(page_questions):
-        question_id = str(question["question_id"])
-        choices = question["choices"]
-
-        question_regions = [
-            region_lookup[(question_id, str(choice["bubble_label"]))]
-            for choice in choices
-        ]
-        prompt_y_top = page_bubble_tops[page_q_index]
         prompt_left = _QUESTION_BLOCK_LEFT
         prompt_lines = _wrap_prompt_text(_display_prompt(question_number, str(question.get("prompt", ""))))
         prompt_block_top = prompt_y_top - _PROMPT_LINE_GAP - (
@@ -227,38 +213,14 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
         choice_legend_left = prompt_left + _CHOICE_LEGEND_LEFT_OFFSET
         show_choice_legend = bool(question.get("show_choice_legend", True))
 
-        # Compute the maximum number of legend lines that fit before the
-        # next question's prompt block (or the page bottom for the last
-        # question).  The next prompt may wrap to multiple lines, so we
-        # compute its actual block top rather than assuming a single line.
-        if page_q_index + 1 < len(page_questions):
-            next_q_number, next_question = page_questions[page_q_index + 1]
-            next_bubble_top = page_bubble_tops[page_q_index + 1]
-            next_prompt_lines = _wrap_prompt_text(
-                _display_prompt(next_q_number, str(next_question.get("prompt", "")))
-            )
-            next_prompt_block_top = next_bubble_top - _PROMPT_LINE_GAP - (
-                _PROMPT_LINE_SPACING * (len(next_prompt_lines) - 1)
-            )
-            legend_bottom_limit = next_prompt_block_top
-        else:
-            legend_bottom_limit = height
-        legend_start_y = prompt_y_top + _CHOICE_LEGEND_TOP_OFFSET
-        available_height = legend_bottom_limit - legend_start_y
-        max_legend_lines = max(1, int(available_height // _CHOICE_LEGEND_LINE_SPACING))
-
         if show_choice_legend:
             choice_line_cursor = 0
             for choice in choices:
-                if choice_line_cursor >= max_legend_lines:
-                    break
                 wrapped_choice_lines = _wrap_choice_text(
                     choice["bubble_label"],
                     str(choice.get("text", "")),
                 )
                 for wrapped_line in wrapped_choice_lines:
-                    if choice_line_cursor >= max_legend_lines:
-                        break
                     content_lines.extend(
                         _text_block(
                             choice_legend_left,

@@ -691,23 +691,30 @@ class PdfRenderingContractTests(unittest.TestCase):
         q2_bubble_top = min(region["y"] for region in q2_regions)
         midpoint_pdf_y = page_height - ((q1_bubble_top + q2_bubble_top) / 2) - 10
 
-        q1_legend_bottom = min(
-            (y for y in legend_y_positions if y > midpoint_pdf_y),
-            default=None,
+        q1_legend_candidates = [y for y in legend_y_positions if y > midpoint_pdf_y]
+        q2_prompt_candidates = [y for y in prompt_y_positions if y < midpoint_pdf_y]
+
+        self.assertTrue(
+            q1_legend_candidates,
+            "Expected to find Q1 choice-legend text blocks in the PDF stream.  "
+            "If the rendering format changed, update the regex pattern.",
         )
-        q2_prompt_top = max(
-            (y for y in prompt_y_positions if y < midpoint_pdf_y),
-            default=None,
+        self.assertTrue(
+            q2_prompt_candidates,
+            "Expected to find Q2 prompt text blocks in the PDF stream.  "
+            "If the rendering format changed, update the regex pattern.",
         )
 
-        if q1_legend_bottom is not None and q2_prompt_top is not None:
-            self.assertGreater(
-                q1_legend_bottom - q2_prompt_top,
-                0,
-                "The lowest Q1 choice-legend line must sit above the highest Q2 "
-                "prompt line — the generation layer should size the row to prevent "
-                "visual overlap between adjacent question blocks.",
-            )
+        q1_legend_bottom = min(q1_legend_candidates)
+        q2_prompt_top = max(q2_prompt_candidates)
+
+        self.assertGreater(
+            q1_legend_bottom - q2_prompt_top,
+            0,
+            "The lowest Q1 choice-legend line must sit above the highest Q2 "
+            "prompt line — the generation layer should size the row to prevent "
+            "visual overlap between adjacent question blocks.",
+        )
 
     def test_renderer_can_hide_choice_legend_for_instruction_only_questions(self) -> None:
         render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
