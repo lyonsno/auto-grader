@@ -3,11 +3,13 @@ from __future__ import annotations
 import math
 import time
 import unittest
+from io import StringIO
 from unittest import mock
 
 import fitz
 from rich.align import Align
 from rich.console import Console, Group
+from rich.live import Live
 from rich.text import Text
 
 from scripts.narrator_reader import (
@@ -56,6 +58,10 @@ def _extract_plain(renderable) -> str:
 
 
 class NarratorReaderContract(unittest.TestCase):
+    class _TTYBuffer(StringIO):
+        def isatty(self) -> bool:
+            return True
+
     @staticmethod
     def _hex_luminance(style: str) -> int:
         style = style.split()[-1].lstrip("#")
