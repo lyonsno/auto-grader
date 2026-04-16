@@ -1156,13 +1156,13 @@ class NarratorReaderContract(unittest.TestCase):
         # flicker bug we're trying to avoid.
         self.assertNotIn("f=100", output)
 
-    def test_focus_preview_kitty_image_replaces_on_every_frame(self):
-        # The Kitty place command (a=p) must be re-issued on every
-        # frame, not just the first render. Rich's Live repainter
-        # erases each line (CSI 2K) before redrawing, which wipes the
-        # terminal cells the image was painted into. Without a fresh
-        # a=p on every frame the image disappears after the first
-        # render and shows as a blank dark rectangle.
+    def test_focus_preview_kitty_image_places_only_on_first_frame(self):
+        # The Kitty place command (a=p) should only fire on the first
+        # frame or after a geometry change. Re-placing on every frame
+        # at 24fps causes rapid flicker as the terminal's compositor
+        # fights with the text repaint. The image pixels persist
+        # between frames because the animation loop uses cursor-home
+        # without screen clear on steady frames.
         from rich.console import Console
 
         renderable = FocusPreviewKittyImage(
@@ -1186,12 +1186,13 @@ class NarratorReaderContract(unittest.TestCase):
             segment.text
             for segment in renderable.__rich_console__(console, options)
         )
-        self.assertEqual(first.count("\x1b_Ga=p"), 1)
+        self.assertEqual(first.count("\x1b_Ga=p"), 1,
+            "first frame must emit placement")
         self.assertEqual(
             second.count("\x1b_Ga=p"),
-            1,
-            "Kitty place command must fire on every frame so the image "
-            "survives Rich's per-line erase between repaints",
+            0,
+            "steady frames must NOT re-place — re-placing at 24fps "
+            "causes rapid flicker in the terminal compositor",
         )
 
     def test_focus_preview_kitty_composite_emits_no_texture_segments(self):

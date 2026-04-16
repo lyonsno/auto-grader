@@ -1834,6 +1834,10 @@ class FocusPreviewKittyImage:
         self._image_pixel_width = image_pixel_width
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
+        # Track last placed dimensions so we only emit a=p when
+        # the geometry changes (first frame or after resize rebuild),
+        # not on every animation tick.
+        self._last_placed_dims: tuple[int, int] | None = None
 
     def __rich_console__(
         self,
@@ -1846,33 +1850,39 @@ class FocusPreviewKittyImage:
         image. Rich sees cursor-forward control segments and newlines,
         which cost ~30 bytes total per frame instead of ~12KB.
 
-        On resize, the placement cell dimensions are adjusted to match
-        the current terminal width so the terminal scales the existing
-        composite to fit. The image pixels are slightly stretched until
-        the next ``on_focus_preview`` rebuilds the composite at the
-        correct geometry — this is much better than the alternative of
-        transmitting a new composite from inside Rich's render path,
-        which interleaves Kitty escape sequences with Rich's output
-        and produces garbled frames.
-        """
-        term_width = max(1, options.max_width)
-        # Always place at the current terminal width so the band
-        # fills the screen. The height stays at the built value —
-        # horizontal stretch from a width mismatch is barely visible
-        # and resolves on the next frame when retransmit_kitty_image
-        # rebuilds the composite at the correct geometry. A band
-        # that doesn't fill the width is much more noticeable.
-        place_w = term_width
-        place_h = self._band_cell_height
+        Always place at the dimensions the composite was built for.
+        On resize, ``retransmit_kitty_image`` rebuilds the composite
+        at the new geometry and updates ``_band_cell_width`` and
+        ``_band_cell_height`` before the next frame renders. Between
+        the resize and the rebuild there may be one frame where the
+        composite overflows or underflows the terminal width — that
+        is acceptable. Trying to rescale the placement to the current
+        terminal width here causes aspect-ratio warping because the
+        composite pixels don't match the recomputed cell dimensions.
 
-        place_sequence = _build_kitty_place_sequence(
-            self._image_id,
-            cell_width=place_w,
-            cell_height=place_h,
-        )
-        yield Segment(place_sequence, None, [(ControlType.BELL,)])
-        forward_escape = f"\x1b[{place_w}C"
-        for row in range(place_h):
+        The ``a=p`` placement is only emitted when needed (first
+        frame, or after dimensions change from a resize rebuild).
+        On steady frames, the image pixels persist from the previous
+        frame because the animation loop uses cursor-home without
+        screen clear. Re-placing on every frame at 24fps causes
+        visible rapid flicker as the terminal's compositor fights
+        with the text repaint.
+        """
+        # Only emit the a=p placement when needed.
+        dims = (self._band_cell_width, self._band_cell_height)
+        need_place = self._last_placed_dims != dims
+        if need_place:
+            place_sequence = _build_kitty_place_sequence(
+                self._image_id,
+                cell_width=self._band_cell_width,
+                cell_height=self._band_cell_height,
+            )
+            yield Segment(place_sequence, None, [(ControlType.BELL,)])
+            self._last_placed_dims = dims
+        # Cursor-forward + newlines for vertical footprint regardless
+        # of whether the placement fired.
+        forward_escape = f"\x1b[{self._band_cell_width}C"
+        for row in range(self._band_cell_height):
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
             yield Segment.line()
 
@@ -4770,7 +4780,10 @@ class PaintDryDisplay:
                 image_id=_KITTY_IMAGE_ID,
                 title=rend._title,
             )
-            _kitty_delete_image(_KITTY_IMAGE_ID, stream=stream)
+            # Don't delete the old image — transmitting with the same
+            # image ID atomically replaces the cached image when the
+            # final chunk (m=0) lands. Deleting first creates a window
+            # where a=p has nothing to place, causing flicker.
             for chunk in _build_kitty_transmit_chunks(composite_png, _KITTY_IMAGE_ID):
                 stream.write(chunk)
             stream.flush()
