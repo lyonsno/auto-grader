@@ -1834,10 +1834,6 @@ class FocusPreviewKittyImage:
         self._image_pixel_width = image_pixel_width
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
-        # Track last placed dimensions so we only emit a=p when
-        # the geometry changes (first frame or after resize rebuild),
-        # not on every animation tick.
-        self._last_placed_dims: tuple[int, int] | None = None
 
     def __rich_console__(
         self,
@@ -1860,27 +1856,22 @@ class FocusPreviewKittyImage:
         terminal width here causes aspect-ratio warping because the
         composite pixels don't match the recomputed cell dimensions.
 
-        The ``a=p`` placement is only emitted when needed (first
-        frame, or after dimensions change from a resize rebuild).
-        On steady frames, the image pixels persist from the previous
-        frame because the animation loop uses cursor-home without
-        screen clear. Re-placing on every frame at 24fps causes
-        visible rapid flicker as the terminal's compositor fights
-        with the text repaint.
+        The ``a=p`` placement fires on every frame. Rich's Live
+        erases each line (CSI 2K) between frames, which wipes the
+        terminal cells the image was painted into. Without a fresh
+        placement the image disappears. The placement command is
+        ~30 bytes and tells the terminal to re-place the already-
+        cached image — no PNG retransmission, just a cursor-position
+        reference. The earlier rapid flicker was caused by transmit
+        interleaving (now fixed via drain_pending_kitty_transmit),
+        not by the placement itself.
         """
-        # Only emit the a=p placement when needed.
-        dims = (self._band_cell_width, self._band_cell_height)
-        need_place = self._last_placed_dims != dims
-        if need_place:
-            place_sequence = _build_kitty_place_sequence(
-                self._image_id,
-                cell_width=self._band_cell_width,
-                cell_height=self._band_cell_height,
-            )
-            yield Segment(place_sequence, None, [(ControlType.BELL,)])
-            self._last_placed_dims = dims
-        # Cursor-forward + newlines for vertical footprint regardless
-        # of whether the placement fired.
+        place_sequence = _build_kitty_place_sequence(
+            self._image_id,
+            cell_width=self._band_cell_width,
+            cell_height=self._band_cell_height,
+        )
+        yield Segment(place_sequence, None, [(ControlType.BELL,)])
         forward_escape = f"\x1b[{self._band_cell_width}C"
         for row in range(self._band_cell_height):
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
@@ -4813,8 +4804,6 @@ class PaintDryDisplay:
             # crop bytes (pipeline contract). The composite is ephemeral.
             rend._band_cell_width = console_width
             rend._band_cell_height = band_cell_rows
-            # Reset so the next frame emits a fresh a=p placement.
-            rend._last_placed_dims = None
         except Exception:
             pass  # Next focus_preview event will recover.
 
