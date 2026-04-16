@@ -1537,6 +1537,10 @@ class FocusPreviewKittyImage:
         self._image_pixel_width = image_pixel_width
         self._image_pixel_height = image_pixel_height
         self._terminal_cell_aspect = terminal_cell_aspect
+        # Track last placed dimensions so we only emit a=p when
+        # the geometry changes (first frame or after resize rebuild),
+        # not on every animation tick.
+        self._last_placed_dims: tuple[int, int] | None = None
 
     def __rich_console__(
         self,
@@ -1557,7 +1561,6 @@ class FocusPreviewKittyImage:
         is acceptable. Trying to rescale the placement to the current
         terminal width here causes aspect-ratio warping because the
         composite pixels don't match the recomputed cell dimensions.
-
         The ``a=p`` placement fires on every frame. Rich's Live
         erases each line (CSI 2K) between frames, which wipes the
         terminal cells the image was painted into. Without a fresh
@@ -1583,7 +1586,6 @@ class FocusPreviewKittyImage:
         # Move up to the start of the band after walking past it.
         move_up = f"\x1b[{self._band_cell_height}A"
         carriage_return = "\r"
-
         forward_escape = f"\x1b[{self._band_cell_width}C"
         for row in range(self._band_cell_height):
             yield Segment(forward_escape, None, [(ControlType.BELL,)])
