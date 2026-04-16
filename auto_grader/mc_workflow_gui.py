@@ -330,10 +330,19 @@ class McWorkflowGuiApp:
         self.state.authoring_message = msg
         self.state.message = None
 
+    _FIELD_LABELS: dict[str, str] = {
+        "database_url": "Database URL",
+        "schema_name": "Schema Name",
+        "exam_instance_id": "Selected Exam",
+        "artifact_json": "Answer Key File",
+        "scan_dir": "Scanned Pages Folder",
+        "output_dir": "Save Results To",
+    }
+
     def _require_config(self, *keys: str) -> dict[str, str]:
-        missing = [key for key in keys if self.state.config.get(key, "").strip() == ""]
+        missing = [self._FIELD_LABELS.get(k, k) for k in keys if self.state.config.get(k, "").strip() == ""]
         if missing:
-            raise ValueError(f"Missing required fields: {', '.join(missing)}")
+            raise ValueError(f"Please fill in: {', '.join(missing)}")
         return self.state.config
 
     def _handle_open_path(self, form: dict[str, str], *, reveal: bool) -> None:
@@ -638,9 +647,9 @@ def render_page(state: GuiState) -> str:
         <p class="support-copy">Choose the exam and scanned pages you want to grade.</p>
         <form method="post" action="/ingest" data-busy-label="Ingesting scans...">
           {_render_exam_selector(state, config)}
-          {_render_browse_input("scan_dir", "Scan Directory", config["scan_dir"], browse_type="dir", config=config)}
-          {_render_browse_input("artifact_json", "Artifact JSON", config["artifact_json"], browse_type="file", config=config)}
-          {_render_browse_input("output_dir", "Output Directory", config["output_dir"], browse_type="dir", config=config)}
+          {_render_browse_input("scan_dir", "Scanned Pages Folder", config["scan_dir"], browse_type="dir", config=config)}
+          {_render_browse_input("artifact_json", "Answer Key File", config["artifact_json"], browse_type="file", config=config)}
+          {_render_browse_input("output_dir", "Save Results To", config["output_dir"], browse_type="dir", config=config)}
           <details class="settings">
             <summary>Advanced Settings</summary>
             {_render_text_input("database_url", "Database URL", config["database_url"])}

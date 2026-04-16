@@ -156,12 +156,12 @@ class McWorkflowGuiContractTests(unittest.TestCase):
 
         self.assertIn("Selected Exam", html)
         self.assertNotIn("Exam Instance ID", html)
-        self.assertIn("Scan Directory", html)
+        self.assertIn("Scanned Pages Folder", html)
         self.assertIn("Advanced Settings", html)
         self.assertIn("Database URL", html)
         self.assertIn("Schema Name", html)
-        self.assertIn("Artifact JSON", html)
-        self.assertIn("Output Directory", html)
+        self.assertIn("Answer Key File", html)
+        self.assertIn("Save Results To", html)
         self.assertNotIn("Different exam? Create a separate exam record.", html)
 
     def test_render_page_promotes_target_creation_when_no_exam_records_exist(self) -> None:
