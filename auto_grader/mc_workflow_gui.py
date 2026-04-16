@@ -12,7 +12,7 @@ import subprocess
 from typing import Any
 from urllib.parse import parse_qs
 import webbrowser
-from wsgiref.simple_server import make_server
+from wsgiref.simple_server import WSGIServer
 
 from psycopg import sql
 
@@ -517,6 +517,30 @@ def render_page(state: GuiState) -> str:
           }}
         }});
       }}
+      window.doBrowse = (action, targetField) => {{
+        const form = document.createElement("form");
+        form.method = "post";
+        form.action = action;
+        form.style.display = "none";
+        // Copy all config hidden fields from the main ingest form
+        const mainForm = document.querySelector('form[action="/ingest"]');
+        if (mainForm) {{
+          for (const input of mainForm.querySelectorAll('input[type="hidden"], input[type="text"], select')) {{
+            const h = document.createElement("input");
+            h.type = "hidden";
+            h.name = input.name;
+            h.value = input.value;
+            form.appendChild(h);
+          }}
+        }}
+        const tf = document.createElement("input");
+        tf.type = "hidden";
+        tf.name = "target_field";
+        tf.value = targetField;
+        form.appendChild(tf);
+        document.body.appendChild(form);
+        form.submit();
+      }};
       window.toggleQuestionMode = (sel, idx) => {{
         const isComputed = sel.value === "computed";
         const sp = document.getElementById("q_" + idx + "_static_panel");
@@ -562,9 +586,10 @@ def render_page(state: GuiState) -> str:
             const sel = authorForm.elements["q_" + i + "_mode"];
             if (sel) window.toggleQuestionMode(sel, i);
           }}
-          // Clear stale error banners — this is a fresh page load with
-          // a restored draft, not a continuation of the failed POST.
-          for (const msg of document.querySelectorAll(".message.error")) {{
+          // Clear stale error banners only inside the Author tab — a
+          // restored draft means the author tab is a fresh start, but
+          // Grade tab errors should remain visible.
+          for (const msg of document.querySelectorAll("#tab-author .message.error")) {{
             msg.remove();
           }}
         }} catch (e) {{ /* ignore corrupt localStorage */ }}
@@ -614,12 +639,12 @@ def render_page(state: GuiState) -> str:
         <form method="post" action="/ingest" data-busy-label="Ingesting scans...">
           {_render_exam_selector(state, config)}
           {_render_browse_input("scan_dir", "Scan Directory", config["scan_dir"], browse_type="dir", config=config)}
+          {_render_browse_input("artifact_json", "Artifact JSON", config["artifact_json"], browse_type="file", config=config)}
+          {_render_browse_input("output_dir", "Output Directory", config["output_dir"], browse_type="dir", config=config)}
           <details class="settings">
-            <summary>Workflow Settings</summary>
+            <summary>Advanced Settings</summary>
             {_render_text_input("database_url", "Database URL", config["database_url"])}
             {_render_text_input("schema_name", "Schema Name", config["schema_name"])}
-            {_render_browse_input("artifact_json", "Artifact JSON", config["artifact_json"], browse_type="file", config=config)}
-            {_render_browse_input("output_dir", "Output Directory", config["output_dir"], browse_type="dir", config=config)}
           </details>
           <p class="action-copy">When you're ready, ingest the scans to load results and any questions that need review.</p>
           <button type="submit">Ingest Scans</button>
@@ -736,13 +761,22 @@ def serve_mc_workflow_gui(
     initial_state: GuiState | None = None,
     open_browser: bool = False,
 ) -> int:
+    import socketserver
+    from wsgiref.simple_server import WSGIRequestHandler
+
+    class _ThreadedWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
+        """Handle each request in a separate thread so blocking ops
+        (like native file pickers via osascript) don't freeze the browser."""
+        daemon_threads = True
+
     app = McWorkflowGuiApp(initial_state=initial_state)
     url = f"http://{host}:{port}"
     print(url, flush=True)
     if open_browser:
         webbrowser.open(url)
-    with make_server(host, port, app) as server:
-        server.serve_forever()
+    server = _ThreadedWSGIServer((host, port), WSGIRequestHandler)
+    server.set_app(app)
+    server.serve_forever()
     return 0
 
 
@@ -797,18 +831,20 @@ def _render_browse_input(
 ) -> str:
     """Render a text input with a Browse button that pops a native file/dir picker.
 
-    browse_type is either "dir" or "file".
+    browse_type is either "dir" or "file". The Browse button uses JS to
+    submit a standalone form (not nested inside the parent form, which
+    browsers reject as invalid HTML).
     """
     action = "/browse-dir" if browse_type == "dir" else "/browse-file"
+    hidden = _render_hidden_config(config)
+    btn_id = f"browse__{escape(name)}"
     return (
         f'<label>{escape(label)}'
         f'<div style="display:flex;gap:6px;align-items:stretch;">'
         f'<input type="text" name="{escape(name)}" value="{escape(value)}" style="flex:1;">'
-        f'<form method="post" action="{action}" style="margin:0;flex:none;margin-top:4px;">'
-        f'{_render_hidden_config(config)}'
-        f'<input type="hidden" name="target_field" value="{escape(name)}">'
-        f'<button type="submit" class="secondary" style="width:auto;padding:8px 14px;white-space:nowrap;">Browse</button>'
-        f'</form>'
+        f'<button type="button" id="{btn_id}" class="secondary" '
+        f'style="width:auto;padding:8px 14px;white-space:nowrap;margin-top:4px;" '
+        f'onclick="doBrowse(\'{action}\', \'{escape(name)}\')">Browse</button>'
         f'</div></label>'
     )
 
@@ -922,8 +958,12 @@ def _require_int(value: str, label: str) -> int:
 
 def _native_pick_directory() -> str:
     """Pop a native macOS directory picker via AppleScript. Returns the selected path or ''."""
+    script = (
+        'tell application "System Events" to set frontmost of process "osascript" to true\n'
+        'POSIX path of (choose folder with prompt "Choose a folder")'
+    )
     result = subprocess.run(
-        ["osascript", "-e", 'POSIX path of (choose folder with prompt "Choose a folder")'],
+        ["osascript", "-e", script],
         capture_output=True, text=True,
     )
     return result.stdout.strip().rstrip("/") if result.returncode == 0 else ""
@@ -931,8 +971,12 @@ def _native_pick_directory() -> str:
 
 def _native_pick_file() -> str:
     """Pop a native macOS file picker via AppleScript. Returns the selected path or ''."""
+    script = (
+        'tell application "System Events" to set frontmost of process "osascript" to true\n'
+        'POSIX path of (choose file with prompt "Choose a file")'
+    )
     result = subprocess.run(
-        ["osascript", "-e", 'POSIX path of (choose file with prompt "Choose a file")'],
+        ["osascript", "-e", script],
         capture_output=True, text=True,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
