@@ -3118,6 +3118,10 @@ class PaintDryDisplay:
             not _force_no_inline
             and _supports_kitty_graphics(os.environ.get("TERM_PROGRAM"))
         )
+        # Pending composite PNG to transmit on the animation thread.
+        # Set by on_focus_preview (event thread), drained by
+        # _live_update (animation thread) before the next frame.
+        self._pending_kitty_transmit: bytes | None = None
         # Query the terminal for its real cell pixel dimensions once
         # at init. Used by the Kitty renderer to compute correct
         # cell boxes for images — hardcoding this is brittle across
@@ -4744,6 +4748,24 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
+    def drain_pending_kitty_transmit(self) -> None:
+        """Transmit a pending composite PNG on the animation thread.
+
+        Called from ``_live_update`` before the next frame so Kitty
+        escape sequences don't interleave with Rich's output.
+        """
+        png = self._pending_kitty_transmit
+        if png is None:
+            return
+        self._pending_kitty_transmit = None
+        stream = self._console.file if self._console is not None else sys.stdout
+        try:
+            for chunk in _build_kitty_transmit_chunks(png, _KITTY_IMAGE_ID):
+                stream.write(chunk)
+            stream.flush()
+        except Exception:
+            pass
+
     def retransmit_kitty_image(self) -> None:
         """Rebuild and re-upload the Kitty composite at current geometry.
 
@@ -4791,6 +4813,8 @@ class PaintDryDisplay:
             # crop bytes (pipeline contract). The composite is ephemeral.
             rend._band_cell_width = console_width
             rend._band_cell_height = band_cell_rows
+            # Reset so the next frame emits a fresh a=p placement.
+            rend._last_placed_dims = None
         except Exception:
             pass  # Next focus_preview event will recover.
 
@@ -4859,19 +4883,12 @@ class PaintDryDisplay:
                     image_id=_KITTY_IMAGE_ID,
                     title=title,
                 )
-                # Transmit the composite PNG directly to the console
-                # output stream. Bypasses Rich entirely and runs on
-                # the event thread, so the terminal starts decoding
-                # in the background before Rich's next refresh fires.
-                transmit_stream = (
-                    self._console.file if self._console is not None else sys.stdout
-                )
-                chunks = _build_kitty_transmit_chunks(
-                    composite_png, _KITTY_IMAGE_ID,
-                )
-                for chunk in chunks:
-                    transmit_stream.write(chunk)
-                transmit_stream.flush()
+                # Don't transmit from the event thread — that interleaves
+                # Kitty escape sequences with Rich's output on the
+                # animation thread, producing visible garbage. Instead,
+                # store the composite for the animation thread to
+                # transmit before the next frame via _live_update.
+                self._pending_kitty_transmit = composite_png
                 # focus_preview_png keeps the raw incoming PNG bytes
                 # (pipeline contract). The composite is stored on the
                 # renderable and rebuilt by retransmit_kitty_image.
@@ -5109,6 +5126,11 @@ def main() -> int:
             """
             nonlocal _last_paint_size
             _resize_pending.clear()
+
+            # Drain any pending Kitty transmit from the event thread
+            # before painting so escape sequences don't interleave
+            # with Rich's output.
+            display.drain_pending_kitty_transmit()
 
             cur_size = (console.size.width, console.size.height)
             if (
