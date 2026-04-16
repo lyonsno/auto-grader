@@ -2822,6 +2822,10 @@ class PaintDryDisplay:
         self._kitty_graphics_supported: bool = _supports_kitty_graphics(
             os.environ.get("TERM_PROGRAM")
         )
+        # Pending composite PNG to transmit on the animation thread.
+        # Set by on_focus_preview (event thread), drained by
+        # _live_update (animation thread) before the next frame.
+        self._pending_kitty_transmit: bytes | None = None
         # Query the terminal for its real cell pixel dimensions once
         # at init. Used by the Kitty renderer to compute correct
         # cell boxes for images — hardcoding this is brittle across
@@ -4242,6 +4246,24 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
+    def drain_pending_kitty_transmit(self) -> None:
+        """Transmit a pending composite PNG on the animation thread.
+
+        Called from ``_live_update`` before the next frame so Kitty
+        escape sequences don't interleave with Rich's output.
+        """
+        png = self._pending_kitty_transmit
+        if png is None:
+            return
+        self._pending_kitty_transmit = None
+        stream = self._console.file if self._console is not None else sys.stdout
+        try:
+            for chunk in _build_kitty_transmit_chunks(png, _KITTY_IMAGE_ID):
+                stream.write(chunk)
+            stream.flush()
+        except Exception:
+            pass
+
     def retransmit_kitty_image(self) -> None:
         """Rebuild and re-upload the Kitty composite at current geometry.
 
@@ -4289,6 +4311,8 @@ class PaintDryDisplay:
             # crop bytes (pipeline contract). The composite is ephemeral.
             rend._band_cell_width = console_width
             rend._band_cell_height = band_cell_rows
+            # Reset so the next frame emits a fresh a=p placement.
+            rend._last_placed_dims = None
         except Exception:
             # Leaving the stale Kitty renderable in place produces a
             # visibly stretched preview with no local recovery until a
@@ -4368,19 +4392,12 @@ class PaintDryDisplay:
                     image_id=_KITTY_IMAGE_ID,
                     title=title,
                 )
-                # Transmit the composite PNG directly to the console
-                # output stream. Bypasses Rich entirely and runs on
-                # the event thread, so the terminal starts decoding
-                # in the background before Rich's next refresh fires.
-                transmit_stream = (
-                    self._console.file if self._console is not None else sys.stdout
-                )
-                chunks = _build_kitty_transmit_chunks(
-                    composite_png, _KITTY_IMAGE_ID,
-                )
-                for chunk in chunks:
-                    transmit_stream.write(chunk)
-                transmit_stream.flush()
+                # Don't transmit from the event thread — that interleaves
+                # Kitty escape sequences with Rich's output on the
+                # animation thread, producing visible garbage. Instead,
+                # store the composite for the animation thread to
+                # transmit before the next frame via _live_update.
+                self._pending_kitty_transmit = composite_png
                 # focus_preview_png keeps the raw incoming PNG bytes
                 # (pipeline contract). The composite is stored on the
                 # renderable and rebuilt by retransmit_kitty_image.
@@ -4560,38 +4577,115 @@ def main() -> int:
         animation_stop = threading.Event()
         session_exit = threading.Event()
         scroll_controller = HistoryScrollController(display)
+        # screen=True — use the terminal's alternate screen buffer.
+        # Alt-screen gives us clean resize handling: Rich redraws the
+        # full screen on every frame instead of trying to diff against
+        # reflowed main-buffer text. Previously reverted because the
+        # rendered height could exceed the terminal's row count, but
+        # render() now caps the history panel via a height budget so
+        # the total output never exceeds console.size.height.
+        # Only clear the alt-screen when geometry changed or the very
+        # first frame still needs a clean slate. Rich redraws from the
+        # top on each paint, so stable same-size frames can just cursor-
+        # home and repaint in place. That preserves the resize safety we
+        # want without paying the global ESC[2J tax on every animation
+        # tick while a steady preview is already settled.
+        # Resize coordination.  SIGWINCH fires on the main thread
+        # (signal delivery) while the animation thread is writing to
+        # stdout via live.update().  Writing \033[2J from the signal
+        # handler interleaves with Rich's output and corrupts the
+        # frame.  Instead, the handler only sets a flag and wakes the
+        # animation thread; all stdout writes happen on one thread.
+        _resize_pending = threading.Event()
+        # Wakeup event: the animation thread sleeps on this instead
+        # of time.sleep() so SIGWINCH can cut the sleep short.
+        _animation_wake = threading.Event()
 
-        # screen=True — run the reader in the terminal's alternate
-        # screen buffer (like vim / less / htop). Two reasons, both
-        # load-bearing for Crispy Drips:
-        #
-        #   1. Without alt-screen, Rich's in-place redraw leaves prior
-        #      frames in the terminal's native scrollback. Scrolling
-        #      the terminal up then shows the live surface scroll out
-        #      of view with a ghost trail of accumulated header/score
-        #      rows trailing off into infinity. That directly defeats
-        #      the lane's whole point — in-pane history scrolling is
-        #      supposed to be the canonical affordance for inspecting
-        #      earlier content.
-        #
-        #   2. Alt-screen also gives a clean exit: on session-end or
-        #      Ctrl-C the terminal returns to whatever was on screen
-        #      before the reader started, with no leftover narrator
-        #      frames in scrollback. Post-hoc inspection of past runs
-        #      lives in runs/<ts>-<model>/narrator.txt, which is the
-        #      durable artifact for that job anyway.
+        _prev_sigwinch = signal.getsignal(signal.SIGWINCH)
+
+        def _on_sigwinch(signum, frame):
+            _resize_pending.set()
+            _animation_wake.set()  # wake the animation thread NOW
+            if callable(_prev_sigwinch):
+                _prev_sigwinch(signum, frame)
+
+        signal.signal(signal.SIGWINCH, _on_sigwinch)
+
+        _last_paint_size: tuple[int, int] | None = None
+
+        def _live_update():
+            """Render, clear, and paint one frame.
+
+            Render and paint are size-checked: the terminal size is
+            snapshotted before render and verified again after.  If
+            the size changed during render (resize arrived mid-
+            layout), re-render at the new size.  Up to 3 retries to
+            converge during rapid resize; after that, paint whatever
+            we have (a briefly stale frame is better than dropping
+            a frame entirely).
+
+            On resize, Kitty graphics images are deleted and
+            re-transmitted so the terminal's image compositing layer
+            doesn't retain stale pixels from the previous geometry.
+
+            All stdout writes happen here on the animation thread,
+            never from the signal handler, so there is no interleaving.
+            """
+            nonlocal _last_paint_size
+            _resize_pending.clear()
+
+            # Drain any pending Kitty transmit from the event thread
+            # before painting so escape sequences don't interleave
+            # with Rich's output.
+            display.drain_pending_kitty_transmit()
+
+            cur_size = (console.size.width, console.size.height)
+            if (
+                _live_frame_requires_full_clear(_last_paint_size, cur_size)
+                and _last_paint_size is not None
+            ):
+                display.retransmit_kitty_image()
+
+            renderable = None
+            for _attempt in range(3):
+                size_before = (console.size.width, console.size.height)
+                renderable = display.render()
+                size_after = (console.size.width, console.size.height)
+                if size_before == size_after:
+                    break  # geometry stable — safe to paint
+
+            paint_size = (console.size.width, console.size.height)
+            if _live_frame_requires_full_clear(_last_paint_size, paint_size):
+                sys.stdout.write("\033[2J\033[H")
+            else:
+                sys.stdout.write("\033[H")
+            sys.stdout.flush()
+            live.update(renderable, refresh=True)
+            _last_paint_size = paint_size
+
+        # Enter alt-screen manually.  We use screen=False on Live so
+        # Rich doesn't wrap our renderable in Screen (which pads to a
+        # height that can be stale during resize).  Our _live_update
+        # does its own clear + cursor-home on every frame.
+        sys.stdout.write("\033[?1049h")
+        sys.stdout.flush()
         with Live(
             display.render(),
             console=console,
             refresh_per_second=int(_ACTIVE_ANIMATION_FPS),
-            screen=True,
+            screen=False,
             auto_refresh=False,
         ) as live:
+            # Suppress Rich's per-row CSI 2K erase.  We manage alt-screen
+            # and cursor-home ourselves; Rich's erase is redundant and
+            # destroys Kitty image compositor pixels between frames.
+            suppress_live_erase(live)
+
             def _wait_for_manual_close() -> int:
                 while True:
                     if not display.should_animate():
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update()
                         except Exception:
                             pass
                     try:
@@ -4612,16 +4706,20 @@ def main() -> int:
 
             def _animation_tick():
                 while not animation_stop.is_set():
-                    if display.should_animate():
+                    if display.should_animate() or _resize_pending.is_set():
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update()
                         except Exception:
                             # Transient race with the message loop mutating
                             # display state — next tick will recover.
                             pass
-                        time.sleep(1.0 / _ACTIVE_ANIMATION_FPS)
+                        _animation_wake.clear()
+                        _animation_wake.wait(
+                            timeout=1.0 / display.target_animation_fps()
+                        )
                     else:
-                        time.sleep(_IDLE_POLL_S)
+                        _animation_wake.clear()
+                        _animation_wake.wait(timeout=_IDLE_POLL_S)
 
             anim_thread = threading.Thread(
                 target=_animation_tick,
