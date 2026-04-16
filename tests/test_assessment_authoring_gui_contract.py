@@ -440,7 +440,8 @@ class ComputedDistractorTests(_AuthoringTestBase):
         self.assertIn('name="q_1_distractor_1"', html)
         self.assertIn('name="q_1_variables"', html)
 
-    def test_computed_distractor_question_persists_without_error(self) -> None:
+    def test_computed_distractor_question_blocked_until_generation_supports_it(self) -> None:
+        """Computed-distractor save is blocked because generation can't handle it yet."""
         gui = _load_gui_module(self)
         app = gui.McWorkflowGuiApp()
 
@@ -465,9 +466,11 @@ class ComputedDistractorTests(_AuthoringTestBase):
             status, html = self._post_author(gui, app, form_body)
 
         self.assertEqual(status, "200 OK")
-        self.assertIn("saved", html.lower())
-        # Should mention that distractor evaluation needs the generation pipeline
-        self.assertIn("distractor", html.lower())
+        # Save must be blocked with a clear explanation
+        self.assertIn("cannot be saved yet", html.lower())
+        self.assertIn("static choices", html.lower())
+        # Must NOT have persisted anything
+        self.assertFalse(fake_connection.execute.called)
 
     def test_computed_distractor_question_builds_distractor_yaml(self) -> None:
         """The YAML for a computed question must use the distractors schema, not choices."""
@@ -488,6 +491,57 @@ class ComputedDistractorTests(_AuthoringTestBase):
         self.assertIn("answer_expr", q)
         self.assertIn("distractor_exprs", q)
         self.assertNotIn("choices", q)
+
+
+class TemplateValidationGateTests(_AuthoringTestBase):
+    """Authored templates must pass schema validation before persisting."""
+
+    def _post_author(self, gui, app, form_body: str):
+        captured: dict[str, object] = {}
+
+        def start_response(status, headers):
+            captured["status"] = status
+
+        body_bytes = form_body.encode("utf-8")
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/author",
+            "CONTENT_LENGTH": str(len(body_bytes)),
+            "wsgi.input": io.BytesIO(body_bytes),
+        }
+        chunks = list(app(environ, start_response))
+        html = b"".join(chunks).decode("utf-8")
+        return captured["status"], html
+
+    def test_invalid_template_rejected_before_db_write(self) -> None:
+        """A static-choice question with no choices should fail validation."""
+        gui = _load_gui_module(self)
+        app = gui.McWorkflowGuiApp()
+
+        fake_connection = mock.MagicMock()
+        fake_connection.execute.return_value.fetchone.return_value = {"id": 1}
+
+        # Question with prompt and correct answer but no choice text at all
+        form_body = (
+            "database_url=postgresql%3A%2F%2F%2Fpostgres&"
+            "authoring_title=Bad+Quiz&"
+            "authoring_slug=bad-quiz&"
+            "authoring_kind=quiz&"
+            "q_1_prompt=Empty+choices%3F&"
+            "q_1_mode=static&"
+            "q_1_choice_A=&"
+            "q_1_choice_B=&"
+            "q_1_correct=A"
+        )
+
+        with mock.patch.object(gui, "_connect", return_value=fake_connection):
+            status, html = self._post_author(gui, app, form_body)
+
+        self.assertEqual(status, "200 OK")
+        # Should show a validation error, not succeed
+        self.assertIn("validation error", html.lower())
+        # Must NOT have persisted anything
+        self.assertFalse(fake_connection.execute.called)
 
 
 if __name__ == "__main__":

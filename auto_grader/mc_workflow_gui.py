@@ -285,7 +285,34 @@ class McWorkflowGuiApp:
                 if not q.get("distractor_exprs"):
                     raise ValueError(f"Question {q['form_slot']}: at least one distractor expression is required.")
 
+        # Computed-distractor questions cannot be saved yet because the
+        # generation pipeline does not evaluate distractor expressions.
+        # Saving them would create durable state that crashes the next
+        # obvious workflow step (generate answer sheets). The form shape
+        # and schema validation are correct; only the generation wiring
+        # is missing. Block save until that lands.
+        if has_computed:
+            raise ValueError(
+                "Computed-distractor questions cannot be saved yet \u2014 "
+                "the answer-sheet generation pipeline does not support "
+                "evaluating distractor expressions. Use Static Choices "
+                "for now, or check back after the generation pipeline "
+                "is updated."
+            )
+
         source_yaml = _build_template_yaml(slug=slug, title=title, kind=kind, questions=questions)
+
+        # Validate the built template through the schema validator before
+        # persisting — the authoring surface should be safer than hand-writing
+        # YAML, not less safe.
+        from auto_grader.template_schema import load_template, validate_template
+        built_template = load_template(source_yaml)
+        validation_errors = validate_template(built_template)
+        if validation_errors:
+            raise ValueError(
+                "The authored assessment has validation errors:\n"
+                + "\n".join(f"  - {e}" for e in validation_errors)
+            )
 
         # database_url is optional here — _connect falls through to the
         # DATABASE_URL env var when not provided, which is the common case
@@ -583,7 +610,7 @@ def render_page(state: GuiState) -> str:
             }} else if (el.tagName === "SELECT") {{
               el.value = val;
               // fire mode toggle if this is a question mode selector
-              if (name.match(/^q_\d+_mode$/) && typeof el.onchange === "function") {{
+              if (name.match(/^q_\\d+_mode$/) && typeof el.onchange === "function") {{
                 el.onchange.call(el);
               }}
             }} else if (el.type === "text") {{
