@@ -3,12 +3,14 @@ from __future__ import annotations
 import math
 import time
 import unittest
+from io import StringIO
 from unittest import mock
 from pathlib import Path
 
 import fitz
 from rich.align import Align
 from rich.console import Console, Group
+from rich.live import Live
 from rich.text import Text
 
 from scripts.narrator_reader import (
@@ -57,6 +59,10 @@ def _extract_plain(renderable) -> str:
 
 
 class NarratorReaderContract(unittest.TestCase):
+    class _TTYBuffer(StringIO):
+        def isatty(self) -> bool:
+            return True
+
     @staticmethod
     def _hex_luminance(style: str) -> int:
         style = style.split()[-1].lstrip("#")
@@ -1192,6 +1198,50 @@ class NarratorReaderContract(unittest.TestCase):
             1,
             "every frame must re-place — Rich's per-line erase wipes "
             "the image pixels between frames",
+        )
+
+    def test_rich_live_erases_preview_rows_before_kitty_replaces_image(self):
+        # Characterization test for the remaining composite-band debug
+        # lane: Rich Live's second frame starts by erasing each row of
+        # the previous live shape before our renderable emits the next
+        # a=p placement. That means "skip placement on steady frames"
+        # can never work for an in-band Kitty image inside Live.
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            buf = self._TTYBuffer()
+            console = Console(
+                file=buf,
+                width=80,
+                force_terminal=True,
+                color_system="truecolor",
+            )
+            renderable = FocusPreviewKittyImage(
+                image_id=1,
+                band_cell_width=20,
+                band_cell_height=4,
+                title="test",
+                crop_png_bytes=b"raw",
+                image_pixel_width=100,
+                image_pixel_height=100,
+            )
+            with Live(console=console, auto_refresh=False, screen=False) as live:
+                live.update(renderable, refresh=True)
+                buf.seek(0)
+                buf.truncate(0)
+                live.update(renderable, refresh=True)
+                second = buf.getvalue()
+
+        first_place = second.index("\x1b_Ga=p")
+        erase_prefix = second[:first_place]
+        self.assertEqual(
+            erase_prefix.count("\x1b[2K"),
+            4,
+            "Rich Live should erase each prior preview row before the next "
+            "Kitty placement fires",
+        )
+        self.assertEqual(
+            second.count("\x1b_Ga=p"),
+            1,
+            "second frame must still place exactly once after Rich's erase pass",
         )
 
     def test_focus_preview_kitty_composite_emits_no_texture_segments(self):
