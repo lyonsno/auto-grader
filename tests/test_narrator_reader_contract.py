@@ -1244,6 +1244,52 @@ class NarratorReaderContract(unittest.TestCase):
             "second frame must still place exactly once after Rich's erase pass",
         )
 
+    def test_suppress_live_erase_eliminates_per_row_csi2k(self):
+        # The animation loop manages alt-screen and cursor-home itself.
+        # Rich's Live.position_cursor() emits CSI 2K per row which
+        # destroys Kitty image pixels between frames, causing visible
+        # flicker.  suppress_live_erase() must neuter that so steady-
+        # state frames contain zero CSI 2K sequences.
+        from scripts.narrator_reader import suppress_live_erase
+
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            buf = self._TTYBuffer()
+            console = Console(
+                file=buf,
+                width=80,
+                force_terminal=True,
+                color_system="truecolor",
+            )
+            renderable = FocusPreviewKittyImage(
+                image_id=1,
+                band_cell_width=20,
+                band_cell_height=4,
+                title="test",
+                crop_png_bytes=b"raw",
+                image_pixel_width=100,
+                image_pixel_height=100,
+            )
+            with Live(console=console, auto_refresh=False, screen=False) as live:
+                suppress_live_erase(live)
+                live.update(renderable, refresh=True)
+                buf.seek(0)
+                buf.truncate(0)
+                live.update(renderable, refresh=True)
+                second = buf.getvalue()
+
+        self.assertEqual(
+            second.count("\x1b[2K"),
+            0,
+            "after suppress_live_erase(), Rich must not emit CSI 2K — "
+            "the animation loop handles positioning and Kitty pixels "
+            "must survive between frames",
+        )
+        self.assertIn(
+            "\x1b_Ga=p",
+            second,
+            "Kitty placement must still appear in the suppressed frame",
+        )
+
     def test_focus_preview_kitty_composite_emits_no_texture_segments(self):
         # The precomposed Kitty band includes the ornate texture/border
         # baked into the composite image. The renderable must therefore

@@ -476,6 +476,28 @@ def _live_frame_requires_full_clear(
     return last_paint_size is None or current_size != last_paint_size
 
 
+def suppress_live_erase(live: "Live") -> None:
+    """Neuter Rich Live's per-row CSI 2K erase so Kitty pixels survive.
+
+    Rich's ``LiveRender.position_cursor()`` emits ``CSI 2K`` (erase
+    entire line) on every row of the previous frame before each refresh.
+    That destroys Kitty image compositor pixels between frames, causing
+    a visible strobe at 24 fps.
+
+    The animation loop already manages alt-screen entry and cursor-home /
+    full-clear positioning itself (``\\033[H`` or ``\\033[2J\\033[H``
+    before each ``live.update``).  Rich's erase is therefore redundant
+    *and* destructive.  This function replaces ``position_cursor`` with
+    a no-op so the only per-frame positioning comes from our animation
+    loop.
+    """
+    from rich.control import Control
+
+    render = getattr(live, "_live_render", None)
+    if render is not None:
+        render.position_cursor = lambda: Control()  # type: ignore[attr-defined]
+
+
 # Shimmer peak — what each character's color is interpolated toward
 # at the shimmer head. Pale moonlit gold (the highlight on a brush
 # stroke as the wash dries), so the wave reads as a quiet brightening
@@ -5159,6 +5181,11 @@ def main() -> int:
             screen=False,
             auto_refresh=False,
         ) as live:
+            # Suppress Rich's per-row CSI 2K erase.  We manage alt-screen
+            # and cursor-home ourselves; Rich's erase is redundant and
+            # destroys Kitty image compositor pixels between frames.
+            suppress_live_erase(live)
+
             def _wait_for_manual_close() -> int:
                 while True:
                     if not display.should_animate():
