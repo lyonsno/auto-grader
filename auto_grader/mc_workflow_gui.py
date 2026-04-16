@@ -98,6 +98,10 @@ class McWorkflowGuiApp:
                     self._handle_open_path(form, reveal=True)
                 elif path == "/author":
                     self._handle_author(form)
+                elif path == "/browse-dir":
+                    self._handle_browse_dir(form)
+                elif path == "/browse-file":
+                    self._handle_browse_file(form)
                 else:
                     raise ValueError(f"Unknown action path: {path}")
                 self._refresh_catalog()
@@ -344,6 +348,22 @@ class McWorkflowGuiApp:
         command = ["open", "-R", path] if reveal else ["open", path]
         subprocess.run(command, check=True)
         self.state.message = "Opened in Finder." if reveal else "Opened result."
+
+    def _handle_browse_dir(self, form: dict[str, str]) -> None:
+        target_field = form.get("target_field", "").strip()
+        if not target_field:
+            raise ValueError("No target field specified for browse.")
+        selected = _native_pick_directory()
+        if selected:
+            self.state.config[target_field] = selected
+
+    def _handle_browse_file(self, form: dict[str, str]) -> None:
+        target_field = form.get("target_field", "").strip()
+        if not target_field:
+            raise ValueError("No target field specified for browse.")
+        selected = _native_pick_file()
+        if selected:
+            self.state.config[target_field] = selected
 
     def _refresh_catalog_if_possible(self) -> None:
         if self.state.config.get("database_url", "").strip() == "":
@@ -593,13 +613,13 @@ def render_page(state: GuiState) -> str:
         <p class="support-copy">Choose the exam and scanned pages you want to grade.</p>
         <form method="post" action="/ingest" data-busy-label="Ingesting scans...">
           {_render_exam_selector(state, config)}
-          {_render_text_input("scan_dir", "Scan Directory", config["scan_dir"])}
+          {_render_browse_input("scan_dir", "Scan Directory", config["scan_dir"], browse_type="dir", config=config)}
           <details class="settings">
             <summary>Workflow Settings</summary>
             {_render_text_input("database_url", "Database URL", config["database_url"])}
             {_render_text_input("schema_name", "Schema Name", config["schema_name"])}
-            {_render_text_input("artifact_json", "Artifact JSON", config["artifact_json"])}
-            {_render_text_input("output_dir", "Output Directory", config["output_dir"])}
+            {_render_browse_input("artifact_json", "Artifact JSON", config["artifact_json"], browse_type="file", config=config)}
+            {_render_browse_input("output_dir", "Output Directory", config["output_dir"], browse_type="dir", config=config)}
           </details>
           <p class="action-copy">When you're ready, ingest the scans to load results and any questions that need review.</p>
           <button type="submit">Ingest Scans</button>
@@ -772,6 +792,27 @@ def _render_text_input(name: str, label: str, value: str) -> str:
     )
 
 
+def _render_browse_input(
+    name: str, label: str, value: str, *, browse_type: str, config: dict[str, str],
+) -> str:
+    """Render a text input with a Browse button that pops a native file/dir picker.
+
+    browse_type is either "dir" or "file".
+    """
+    action = "/browse-dir" if browse_type == "dir" else "/browse-file"
+    return (
+        f'<label>{escape(label)}'
+        f'<div style="display:flex;gap:6px;align-items:stretch;">'
+        f'<input type="text" name="{escape(name)}" value="{escape(value)}" style="flex:1;">'
+        f'<form method="post" action="{action}" style="margin:0;flex:none;margin-top:4px;">'
+        f'{_render_hidden_config(config)}'
+        f'<input type="hidden" name="target_field" value="{escape(name)}">'
+        f'<button type="submit" class="secondary" style="width:auto;padding:8px 14px;white-space:nowrap;">Browse</button>'
+        f'</form>'
+        f'</div></label>'
+    )
+
+
 def _render_select_input(name: str, label: str, value: str, options: list[tuple[str, str]]) -> str:
     rendered_options = []
     for option_value, option_label in options:
@@ -877,6 +918,24 @@ def _require_int(value: str, label: str) -> int:
         return int(value)
     except ValueError as exc:
         raise ValueError(f"{label} must be an integer") from exc
+
+
+def _native_pick_directory() -> str:
+    """Pop a native macOS directory picker via AppleScript. Returns the selected path or ''."""
+    result = subprocess.run(
+        ["osascript", "-e", 'POSIX path of (choose folder with prompt "Choose a folder")'],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip().rstrip("/") if result.returncode == 0 else ""
+
+
+def _native_pick_file() -> str:
+    """Pop a native macOS file picker via AppleScript. Returns the selected path or ''."""
+    result = subprocess.run(
+        ["osascript", "-e", 'POSIX path of (choose file with prompt "Choose a file")'],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _require_schema_identifier(value: str) -> str:
