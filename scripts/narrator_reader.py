@@ -4628,49 +4628,28 @@ def main() -> int:
             nonlocal _last_paint_size
             _resize_pending.clear()
 
-            # --- DIAGNOSTIC: log frame details to file ---
-            _diag_frame_count = getattr(_live_update, '_frame', 0) + 1
-            _live_update._frame = _diag_frame_count
-            _diag_log = getattr(_live_update, '_log', None)
-            if _diag_log is None:
-                import tempfile
-                _diag_path = os.path.join(tempfile.gettempdir(), "paint_dry_frame_diag.log")
-                _diag_log = open(_diag_path, "w")
-                _live_update._log = _diag_log
-                _diag_log.write(f"=== Paint Dry frame diagnostics ===\n")
-                _diag_log.write(f"suppress_live_erase called: {hasattr(live, '_live_render') and not callable(getattr(live._live_render, '_orig_position_cursor', None))}\n")
-                # Check if position_cursor is actually suppressed
-                from rich.control import Control
-                try:
-                    pc = live._live_render.position_cursor()
-                    _diag_log.write(f"position_cursor() returns: {repr(pc)}, segments: {list(pc.segment)}\n")
-                except Exception as e:
-                    _diag_log.write(f"position_cursor() error: {e}\n")
-                _diag_log.flush()
-
             # Drain any pending Kitty transmit from the event thread
             # before painting so escape sequences don't interleave
             # with Rich's output.
             display.drain_pending_kitty_transmit()
 
             cur_size = (console.size.width, console.size.height)
-            _needs_retransmit = (
+            if (
                 _live_frame_requires_full_clear(_last_paint_size, cur_size)
                 and _last_paint_size is not None
-            )
+            ):
+                display.retransmit_kitty_image()
             # Also retransmit if the composite was built at a different
             # width than the current terminal — happens when
             # on_focus_preview fires during a resize or the terminal
             # was resized after the event thread read console.size.
-            if not _needs_retransmit:
+            else:
                 _krend = display.focus_preview_kitty_renderable
                 if (
                     _krend is not None
                     and _krend._band_cell_width != cur_size[0]
                 ):
-                    _needs_retransmit = True
-            if _needs_retransmit:
-                display.retransmit_kitty_image()
+                    display.retransmit_kitty_image()
 
             renderable = None
             for _attempt in range(3):
@@ -4681,66 +4660,12 @@ def main() -> int:
                     break  # geometry stable — safe to paint
 
             paint_size = (console.size.width, console.size.height)
-            full_clear = _live_frame_requires_full_clear(_last_paint_size, paint_size)
-            if full_clear:
+            if _live_frame_requires_full_clear(_last_paint_size, paint_size):
                 sys.stdout.write("\033[2J\033[H")
             else:
                 sys.stdout.write("\033[H")
             sys.stdout.flush()
-
-            # Log every 24th frame (once per second at 24fps) to avoid flooding
-            if _diag_frame_count <= 5 or _diag_frame_count % 24 == 0:
-                rend = display.focus_preview_kitty_renderable
-                _crop_len = len(getattr(rend, '_crop_png_bytes', b'')) if rend else 0
-                _diag_log.write(
-                    f"frame={_diag_frame_count} size={paint_size} "
-                    f"full_clear={full_clear} "
-                    f"has_kitty_rend={rend is not None} "
-                    f"band_w={getattr(rend, '_band_cell_width', '?') if rend else 'N/A'} "
-                    f"band_h={getattr(rend, '_band_cell_height', '?') if rend else 'N/A'} "
-                    f"crop_bytes={_crop_len} "
-                    f"pending={display.focus_preview_pending} "
-                    f"kitty_supported={display._kitty_graphics_supported} "
-                    f"retransmitted={_needs_retransmit}\n"
-                )
-                _diag_log.flush()
-
-            # Capture output on early frames + first frame with kitty renderable
-            _should_capture = _diag_frame_count <= 3
-            if not _should_capture and not getattr(_live_update, '_captured_kitty', False):
-                if display.focus_preview_kitty_renderable is not None:
-                    _should_capture = True
-                    _live_update._captured_kitty = True
-            if _should_capture and hasattr(console, 'file'):
-                _cap_file = console.file
-                from io import StringIO
-                _cap_buf = StringIO()
-                # Temporarily redirect console output
-                console.file = _cap_buf  # type: ignore[assignment]
-                try:
-                    live.update(renderable, refresh=True)
-                finally:
-                    console.file = _cap_file  # type: ignore[assignment]
-                captured = _cap_buf.getvalue()
-                # Write the captured output to the real terminal
-                _cap_file.write(captured)
-                _cap_file.flush()
-                # Log diagnostics
-                csi2k_count = captured.count("\x1b[2K")
-                ap_count = captured.count("\x1b_Ga=p")
-                _diag_log.write(
-                    f"  frame={_diag_frame_count} output_len={len(captured)} "
-                    f"CSI_2K_count={csi2k_count} "
-                    f"Ga=p_count={ap_count}\n"
-                )
-                if csi2k_count > 0:
-                    # Find context around first CSI 2K
-                    idx = captured.index("\x1b[2K")
-                    ctx = repr(captured[max(0,idx-20):idx+20])
-                    _diag_log.write(f"  first CSI 2K context: {ctx}\n")
-                _diag_log.flush()
-            else:
-                live.update(renderable, refresh=True)
+            live.update(renderable, refresh=True)
             _last_paint_size = paint_size
 
         # Enter alt-screen manually.  We use screen=False on Live so
