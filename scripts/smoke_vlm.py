@@ -737,6 +737,9 @@ def main():
             spawn_terminal=args.narrate,
             log_dir=run_dir,
             fallback_stream=sys.stderr,
+            session_meta=_scorebug_session_meta(
+                args=args, model=config.model, subset_count=len(subset),
+            ),
         )
         sink_cm = NarratorSink(sink_config)
     else:
