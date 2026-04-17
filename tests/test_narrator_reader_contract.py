@@ -3100,14 +3100,16 @@ class NarratorReaderContract(unittest.TestCase):
             )
 
         self.assertIn(
-            "EMITTED",
+            "EMITTED  1",
             header_plain,
-            "EMITTED counter should remain in header after timer dial promotion",
+            "EMITTED counter value (1 from on_commit thought) must survive "
+            "in header after timer dial promotion",
         )
         self.assertIn(
-            "DEDUP",
+            "DEDUP  0",
             header_plain,
-            "DEDUP counter should remain in header after timer dial promotion",
+            "DEDUP counter value (0, no drops in setup) must survive "
+            "in header after timer dial promotion",
         )
 
         for label in ("TOTAL", "TURN"):
