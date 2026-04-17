@@ -1888,16 +1888,39 @@ class FocusPreviewKittyImage:
         interleaving (now fixed via drain_pending_kitty_transmit),
         not by the placement itself.
         """
+        # Emit cursor-forwards + newlines FIRST so Rich's line-padding
+        # spaces get written to the terminal before the image placement.
+        # Then save cursor, return to the start of the band, place the
+        # image (which paints over the spaces in the compositor layer),
+        # and restore cursor so Rich continues below the band.
+        #
+        # Why this order: Rich pads each line to console width with
+        # spaces. If we place the image first, the padding spaces
+        # overwrite the image cells and the image goes black. By
+        # placing last, the image compositor layer wins.
+        save_cursor = "\x1b[s"
+        restore_cursor = "\x1b[u"
+        # Move up to the start of the band after walking past it.
+        move_up = f"\x1b[{self._band_cell_height}A"
+        carriage_return = "\r"
+
+        forward_escape = f"\x1b[{self._band_cell_width}C"
+        for row in range(self._band_cell_height):
+            yield Segment(forward_escape, None, [(ControlType.BELL,)])
+            yield Segment.line()
+
         place_sequence = _build_kitty_place_sequence(
             self._image_id,
             cell_width=self._band_cell_width,
             cell_height=self._band_cell_height,
         )
-        yield Segment(place_sequence, None, [(ControlType.BELL,)])
-        forward_escape = f"\x1b[{self._band_cell_width}C"
-        for row in range(self._band_cell_height):
-            yield Segment(forward_escape, None, [(ControlType.BELL,)])
-            yield Segment.line()
+        # Save cursor (at bottom of band), move back to top-left of
+        # band, place image, restore cursor to bottom.
+        yield Segment(
+            save_cursor + move_up + carriage_return + place_sequence + restore_cursor,
+            None,
+            [(ControlType.BELL,)],
+        )
 
 
 

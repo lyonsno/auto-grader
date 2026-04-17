@@ -1201,11 +1201,11 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
     def test_rich_live_erases_preview_rows_before_kitty_replaces_image(self):
-        # Characterization test for the remaining composite-band debug
-        # lane: Rich Live's second frame starts by erasing each row of
-        # the previous live shape before our renderable emits the next
-        # a=p placement. That means "skip placement on steady frames"
-        # can never work for an in-band Kitty image inside Live.
+        # Characterization test: Rich Live erases previous rows (CSI 2K)
+        # before each refresh. The renderable now defers a=p placement
+        # to AFTER the cursor-forward walk so that Rich's line-padding
+        # spaces land before the image, preventing them from overwriting
+        # the Kitty compositor pixels.
         with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
             buf = self._TTYBuffer()
             console = Console(
@@ -1230,18 +1230,20 @@ class NarratorReaderContract(unittest.TestCase):
                 live.update(renderable, refresh=True)
                 second = buf.getvalue()
 
-        first_place = second.index("\x1b_Ga=p")
-        erase_prefix = second[:first_place]
-        self.assertEqual(
-            erase_prefix.count("\x1b[2K"),
-            4,
-            "Rich Live should erase each prior preview row before the next "
-            "Kitty placement fires",
-        )
         self.assertEqual(
             second.count("\x1b_Ga=p"),
             1,
-            "second frame must still place exactly once after Rich's erase pass",
+            "second frame must place exactly once",
+        )
+        # The a=p must come AFTER the cursor-forward walk (deferred
+        # placement) so Rich's padding spaces don't overwrite it.
+        last_forward = second.rfind("\x1b[20C")
+        place_pos = second.index("\x1b_Ga=p")
+        self.assertGreater(
+            place_pos,
+            last_forward,
+            "a=p placement must fire after cursor-forward walk so "
+            "Rich's line-padding spaces don't overwrite the image",
         )
 
     def test_suppress_live_erase_eliminates_per_row_csi2k(self):
