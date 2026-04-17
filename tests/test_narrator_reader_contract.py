@@ -2811,6 +2811,155 @@ class NarratorReaderContract(unittest.TestCase):
             "TURN value should render through _scorebug_big_value_rows too",
         )
 
+        # Extract header panel plain text for counter-survival and
+        # no-duplication assertions.
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+        if isinstance(header_renderable, Group):
+            header_renderable = header_renderable.renderables[0]
+        header_plain = header_renderable.plain
+
+        # Label cells carry the ``on #...`` capsule style.
+        # Find whichever scorebug row carries each label and assert
+        # the label style has a background component.
+        def _label_style_in_scorebug(label: str) -> str:
+            for row in scorebug_rows:
+                if not isinstance(row, Text):
+                    continue
+                if label in row.plain:
+                    return self._style_for_substring(row, label)
+            raise AssertionError(
+                f"no scorebug row carried the label {label!r}"
+            )
+
+        self.assertIn(
+            "EMITTED  1",
+            header_plain,
+            "EMITTED counter value (1 from on_commit thought) must survive "
+            "in header after timer dial promotion",
+        )
+        self.assertIn(
+            "DEDUP  0",
+            header_plain,
+            "DEDUP counter value (0, no drops in setup) must survive "
+            "in header after timer dial promotion",
+        )
+
+        for label in ("TOTAL", "TURN"):
+            style = _label_style_in_scorebug(label)
+            self.assertIn(
+                "on #",
+                style,
+                f"timer plate label {label!r} should live inside a capsule "
+                f"cell (``fg on #bghex`` style), matching the existing "
+                f"ON TARGET / LEFT ON TABLE / BAD CALLS label cells",
+            )
+
+        total_label_bg = self._background_hex(_label_style_in_scorebug("TOTAL"))
+        turn_label_bg = self._background_hex(_label_style_in_scorebug("TURN"))
+        on_target_label_bg = self._background_hex(_label_style_in_scorebug("ON TARGET"))
+        self.assertEqual(
+            {total_label_bg, turn_label_bg, on_target_label_bg},
+            {on_target_label_bg},
+            "TOTAL and TURN should share the same charcoal label field as the rest of the scorebug row rather than living on isolated blue/orange slabs",
+        )
+
+        self.assertNotIn(
+            "TOTAL",
+            header_plain,
+            "TOTAL label should no longer appear in the top header band "
+            "once it is promoted to a tall scorebug plate — otherwise the "
+            "dial is duplicated",
+        )
+        self.assertNotIn(
+            "TURN",
+            header_plain,
+            "TURN label should no longer appear in the top header band "
+            "once it is promoted to a tall scorebug plate — otherwise the "
+            "dial is duplicated",
+        )
+
+    def test_timer_promotion_preserves_event_counters_in_header(self):
+        """The emitted/dedup event counters must survive in the header
+        panel after TOTAL and TURN are promoted to tall scorebug plates.
+
+        This was previously a dead test body: Python silently kept only
+        the second definition of
+        ``test_timers_render_as_tall_scorebug_plates_not_small_capsules``,
+        so these assertions (emitted "1" and dedup "2" still in header,
+        plus label background equality) never ran. Renamed to restore
+        coverage.
+        """
+        display = self._make_display()
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=1000.0):
+            display.on_header("[item 1/6] 15-blue/fr-1")
+        # Emit some activity so a realistic render is exercised and
+        # no panel collapses to a degenerate empty state.
+        display.on_delta("I'm tracing the stoichiometry.")
+        display.on_commit("thought")
+        display.on_delta("Tracing the stoichiometry setup.", mode="status")
+        display.on_commit("status")
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=3963.0):
+            group = display.render()
+
+        header_panel = group.renderables[0]
+        scorebug_panel = group.renderables[1]
+
+        # Collect the scorebug panel plain text from every row so the
+        # assertions don't depend on the exact row index of the new
+        # timer plates.
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        scorebug_rows = scorebug_renderable.renderables
+        scorebug_plain = "\n".join(
+            row.plain if isinstance(row, Text) else ""
+            for row in scorebug_rows
+        )
+
+        # Labels present in the scorebug panel.
+        self.assertIn(
+            "TOTAL",
+            scorebug_plain,
+            "TOTAL timer should live as a tall scoreboard-plate label "
+            "inside the scorebug panel, not as a small top-band capsule",
+        )
+        self.assertIn(
+            "TURN",
+            scorebug_plain,
+            "TURN timer should live as a tall scoreboard-plate label "
+            "inside the scorebug panel, not as a small top-band capsule",
+        )
+
+        # TOTAL value 2963 should walk through _scorebug_big_value_rows,
+        # so the top row of the three-row tall-digit signature for
+        # "2963" should appear verbatim somewhere in the scorebug plain
+        # text. Using the top row is the strongest check because the
+        # middle/bottom rows of some glyph pairs collide with other
+        # plates' glyphs.
+        total_top, _total_middle, _total_bottom = _scorebug_big_value_rows("2963")
+        self.assertIn(
+            total_top,
+            scorebug_plain,
+            "TOTAL value 2963 should render through _scorebug_big_value_rows "
+            "so the three-row tall-digit glyph signature is present in the "
+            "scorebug panel — this is how the plate is distinguished from a "
+            "small text capsule",
+        )
+
+        # TURN value 2963 (same elapsed because the test header fires
+        # at t=1000 and renders at t=3963; turn timer started at the
+        # header) should likewise walk through the big-digit renderer.
+        turn_top, _turn_middle, _turn_bottom = _scorebug_big_value_rows("2963")
+        self.assertIn(
+            turn_top,
+            scorebug_plain,
+            "TURN value should render through _scorebug_big_value_rows too",
+        )
+
         # Label cells carry the ``on #...`` capsule style.
         # Find whichever scorebug row carries each label and assert
         # the label style has a background component.
