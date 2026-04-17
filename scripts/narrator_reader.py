@@ -4671,15 +4671,15 @@ def main() -> int:
             # the padding in small chunks, the terminal clears image
             # cells, and the a=p arrives in a later write — producing
             # a visible flicker between the clear and the re-place.
-            from io import StringIO
-            _frame_buf = StringIO()
             _real_file = console.file
-            console.file = _frame_buf  # type: ignore[assignment]
+            _real_write = _real_file.write
+            _frame_parts: list[str] = []
+            _real_file.write = _frame_parts.append  # type: ignore[assignment]
             try:
                 live.update(renderable, refresh=True)
             finally:
-                console.file = _real_file  # type: ignore[assignment]
-            _real_file.write(_frame_buf.getvalue())
+                _real_file.write = _real_write  # type: ignore[assignment]
+            _real_write("".join(_frame_parts))
             _real_file.flush()
             _last_paint_size = paint_size
 
