@@ -4654,10 +4654,22 @@ def main() -> int:
             display.drain_pending_kitty_transmit()
 
             cur_size = (console.size.width, console.size.height)
-            if (
+            _needs_retransmit = (
                 _live_frame_requires_full_clear(_last_paint_size, cur_size)
                 and _last_paint_size is not None
-            ):
+            )
+            # Also retransmit if the composite was built at a different
+            # width than the current terminal — happens when
+            # on_focus_preview fires during a resize or the terminal
+            # was resized after the event thread read console.size.
+            if not _needs_retransmit:
+                _krend = display.focus_preview_kitty_renderable
+                if (
+                    _krend is not None
+                    and _krend._band_cell_width != cur_size[0]
+                ):
+                    _needs_retransmit = True
+            if _needs_retransmit:
                 display.retransmit_kitty_image()
 
             renderable = None
