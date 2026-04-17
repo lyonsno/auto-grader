@@ -5201,19 +5201,27 @@ def main() -> int:
             # Log every 24th frame (once per second at 24fps) to avoid flooding
             if _diag_frame_count <= 5 or _diag_frame_count % 24 == 0:
                 rend = display.focus_preview_kitty_renderable
+                _crop_len = len(getattr(rend, '_crop_png_bytes', b'')) if rend else 0
                 _diag_log.write(
                     f"frame={_diag_frame_count} size={paint_size} "
                     f"full_clear={full_clear} "
                     f"has_kitty_rend={rend is not None} "
                     f"band_w={getattr(rend, '_band_cell_width', '?') if rend else 'N/A'} "
                     f"band_h={getattr(rend, '_band_cell_height', '?') if rend else 'N/A'} "
+                    f"crop_bytes={_crop_len} "
                     f"pending={display.focus_preview_pending} "
-                    f"kitty_supported={display._kitty_graphics_supported}\n"
+                    f"kitty_supported={display._kitty_graphics_supported} "
+                    f"retransmitted={_needs_retransmit}\n"
                 )
                 _diag_log.flush()
 
-            # On first few frames, capture what live.update writes to check for CSI 2K
-            if _diag_frame_count <= 3 and hasattr(console, 'file'):
+            # Capture output on early frames + first frame with kitty renderable
+            _should_capture = _diag_frame_count <= 3
+            if not _should_capture and not getattr(_live_update, '_captured_kitty', False):
+                if display.focus_preview_kitty_renderable is not None:
+                    _should_capture = True
+                    _live_update._captured_kitty = True
+            if _should_capture and hasattr(console, 'file'):
                 _cap_file = console.file
                 from io import StringIO
                 _cap_buf = StringIO()
