@@ -3075,6 +3075,15 @@ class NarratorReaderContract(unittest.TestCase):
             "TURN value should render through _scorebug_big_value_rows too",
         )
 
+        # Extract header panel plain text for counter-survival and
+        # no-duplication assertions.
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+        if isinstance(header_renderable, Group):
+            header_renderable = header_renderable.renderables[0]
+        header_plain = header_renderable.plain
+
         # Label cells carry the ``on #...`` capsule style.
         # Find whichever scorebug row carries each label and assert
         # the label style has a background component.
@@ -3089,14 +3098,14 @@ class NarratorReaderContract(unittest.TestCase):
             )
 
         self.assertIn(
-            "1",
+            "EMITTED",
             header_plain,
-            "emitted count (1) should still be visible after dial treatment",
+            "EMITTED counter should remain in header after timer dial promotion",
         )
         self.assertIn(
-            "2",
+            "DEDUP",
             header_plain,
-            "dedup count (2) should still be visible after dial treatment",
+            "DEDUP counter should remain in header after timer dial promotion",
         )
 
         for label in ("TOTAL", "TURN"):
@@ -3118,15 +3127,6 @@ class NarratorReaderContract(unittest.TestCase):
             "TOTAL and TURN should share the same charcoal label field as the rest of the scorebug row rather than living on isolated blue/orange slabs",
         )
 
-        # Header panel no longer carries small TOTAL/TURN capsules —
-        # the promotion replaces the top-band treatment rather than
-        # duplicating it.
-        header_renderable = header_panel.renderable
-        if isinstance(header_renderable, Align):
-            header_renderable = header_renderable.renderable
-        if isinstance(header_renderable, Group):
-            header_renderable = header_renderable.renderables[0]
-        header_plain = header_renderable.plain
         self.assertNotIn(
             "TOTAL",
             header_plain,
@@ -3142,37 +3142,16 @@ class NarratorReaderContract(unittest.TestCase):
             "dial is duplicated",
         )
 
-    def test_timers_render_as_tall_scorebug_plates_not_small_capsules(self):
-        """TOTAL and TURN must render as full three-row
-        ``_append_scorebug_big_value_cell`` plates inside the scorebug
-        panel, next to ON TARGET / LEFT ON TABLE / BAD CALLS — not as
-        small single-row ``_append_scorebug_cell`` capsules in the top
-        header band.
+    def test_timer_promotion_preserves_event_counters_in_header(self):
+        """The emitted/dedup event counters must survive in the header
+        panel after TOTAL and TURN are promoted to tall scorebug plates.
 
-        The previous Gauge Saints slice put all five run counters into
-        the small header-band capsule treatment. On review that made
-        the timer promotion invisible: the eye reads only the three
-        existing grading plates as "scoreboard dials" and the small
-        header capsules read as unchanged metadata chrome. The fix is
-        to promote TOTAL and TURN into the tall scoreboard-plate
-        treatment so there is an actual dial-shape promotion. The
-        event-count trio (EMITTED / DEDUP / EMPTY) stays as small
-        header capsules because the attractor only asked for timer
-        promotion.
-
-        Falsifiable shape:
-          * TOTAL and TURN labels appear in the scorebug panel's plain
-            text, not only in the header panel.
-          * The tall-digit three-row glyph signature produced by
-            ``_scorebug_big_value_rows`` for the TOTAL value (e.g.
-            ``2963``) appears in the scorebug panel rendering, so the
-            timer values are actually walking through the big-digit
-            renderer rather than being printed in bare text.
-          * Each of TOTAL and TURN has an ``on #...`` capsule label
-            style matching the ON TARGET / LEFT ON TABLE / BAD CALLS
-            label cell idiom.
-          * TOTAL and TURN are gone from the header panel plain text —
-            no duplicated small-capsule version in the top band.
+        This was previously a dead test body: Python silently kept only
+        the second definition of
+        ``test_timers_render_as_tall_scorebug_plates_not_small_capsules``,
+        so these assertions (emitted "1" and dedup "2" still in header,
+        plus label background equality) never ran. Renamed to restore
+        coverage.
         """
         display = self._make_display()
 
