@@ -5198,7 +5198,22 @@ def main() -> int:
             else:
                 sys.stdout.write("\033[H")
             sys.stdout.flush()
-            live.update(renderable, refresh=True)
+            # Buffer the entire frame into a single write so the
+            # terminal receives padding spaces and the deferred Kitty
+            # a=p placement atomically. Without buffering, Rich writes
+            # the padding in small chunks, the terminal clears image
+            # cells, and the a=p arrives in a later write — producing
+            # a visible flicker between the clear and the re-place.
+            from io import StringIO
+            _frame_buf = StringIO()
+            _real_file = console.file
+            console.file = _frame_buf  # type: ignore[assignment]
+            try:
+                live.update(renderable, refresh=True)
+            finally:
+                console.file = _real_file  # type: ignore[assignment]
+            _real_file.write(_frame_buf.getvalue())
+            _real_file.flush()
             _last_paint_size = paint_size
 
         # Enter alt-screen manually.  We use screen=False on Live so
