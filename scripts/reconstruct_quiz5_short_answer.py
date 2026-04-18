@@ -3,14 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 
-from auto_grader.short_answer_reconstruction import (
+from auto_grader.quiz5_short_answer_reconstruction import (
     write_reconstructed_short_answer_quiz_family,
 )
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Reconstruct a canonical short-answer quiz family from legacy PDF variants."
+        description="Reconstruct the Quiz #5 short-answer family from legacy PDF variants."
     )
     parser.add_argument(
         "--pdf",

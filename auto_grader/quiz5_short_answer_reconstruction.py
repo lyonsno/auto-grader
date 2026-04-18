@@ -1,4 +1,4 @@
-"""Reconstruct canonical short-answer quiz families from legacy PDF variants."""
+"""Reconstruct and generate the Quiz #5 short-answer family from legacy PDFs."""
 
 from __future__ import annotations
 
@@ -175,6 +175,7 @@ def _extract_pdf_text(path: Path) -> str:
     if not path.exists():
         raise FileNotFoundError(path)
 
+    # Batch-CLI path; synchronous extraction is acceptable in this first slice.
     doc = fitz.open(path)
     try:
         return "\n".join(page.get_text("text") for page in doc)

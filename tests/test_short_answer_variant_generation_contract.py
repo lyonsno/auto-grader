@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import unittest
 
 
-_ASSET_ROOT = Path("/Users/noahlyons/dev/auto-grader-assets/exams")
+def _asset_root() -> Path:
+    configured = os.environ.get("AUTO_GRADER_ASSETS_DIR")
+    if configured:
+        return Path(configured) / "exams"
+    return Path.home() / "dev" / "auto-grader-assets" / "exams"
+
+
+_ASSET_ROOT = _asset_root()
 _QUIZ_A = _ASSET_ROOT / "260326_Quiz _5 A.pdf"
 _QUIZ_B = _ASSET_ROOT / "260326_Quiz _5 B.pdf"
 
@@ -14,21 +22,21 @@ _QUIZ_B = _ASSET_ROOT / "260326_Quiz _5 B.pdf"
 @unittest.skipUnless(_QUIZ_A.exists() and _QUIZ_B.exists(), "Quiz #5 legacy PDFs are required for this contract")
 class ShortAnswerVariantGenerationContractTests(unittest.TestCase):
     def _family(self):
-        from auto_grader.short_answer_reconstruction import (
+        from auto_grader.quiz5_short_answer_reconstruction import (
             reconstruct_short_answer_quiz_family,
         )
 
         return reconstruct_short_answer_quiz_family([_QUIZ_A, _QUIZ_B])
 
     def _generated(self):
-        from auto_grader.short_answer_reconstruction import (
+        from auto_grader.quiz5_short_answer_reconstruction import (
             build_generated_short_answer_variant,
         )
 
         return build_generated_short_answer_variant(self._family(), variant_id="C")
 
     def test_variant_builder_exists(self) -> None:
-        from auto_grader.short_answer_reconstruction import (
+        from auto_grader.quiz5_short_answer_reconstruction import (
             build_generated_short_answer_variant,
         )
 
@@ -68,3 +76,11 @@ class ShortAnswerVariantGenerationContractTests(unittest.TestCase):
         self.assertAlmostEqual(answers["q2"], 2.0114, places=4)
         self.assertAlmostEqual(answers["q3"], 12.5302, places=4)
         self.assertAlmostEqual(answers["q4"], 0.005623413, places=9)
+
+    def test_unsupported_variant_id_is_rejected(self) -> None:
+        from auto_grader.quiz5_short_answer_reconstruction import (
+            build_generated_short_answer_variant,
+        )
+
+        with self.assertRaises(ValueError):
+            build_generated_short_answer_variant(self._family(), variant_id="Z")

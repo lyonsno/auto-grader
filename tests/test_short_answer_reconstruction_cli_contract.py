@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import json
 import subprocess
@@ -7,19 +8,26 @@ import tempfile
 import unittest
 
 
-_ASSET_ROOT = Path("/Users/noahlyons/dev/auto-grader-assets/exams")
+def _asset_root() -> Path:
+    configured = os.environ.get("AUTO_GRADER_ASSETS_DIR")
+    if configured:
+        return Path(configured) / "exams"
+    return Path.home() / "dev" / "auto-grader-assets" / "exams"
+
+
+_ASSET_ROOT = _asset_root()
 _QUIZ_A = _ASSET_ROOT / "260326_Quiz _5 A.pdf"
 _QUIZ_B = _ASSET_ROOT / "260326_Quiz _5 B.pdf"
 
 
 def _load_writer(test_case: unittest.TestCase):
     try:
-        from auto_grader.short_answer_reconstruction import (
+        from auto_grader.quiz5_short_answer_reconstruction import (
             write_reconstructed_short_answer_quiz_family,
         )
     except ModuleNotFoundError:
         test_case.fail(
-            "Keep `auto_grader.short_answer_reconstruction` importable so the "
+            "Keep `auto_grader.quiz5_short_answer_reconstruction` importable so the "
             "short-answer reconstruction lane has a stable repo-local surface."
         )
     except ImportError:
@@ -50,10 +58,10 @@ class ShortAnswerReconstructionCliContractTests(unittest.TestCase):
             self.assertEqual(set(family["variants"]), {"A", "B"})
 
     def test_cli_script_writes_family_json_and_prints_result_paths(self) -> None:
-        script_path = Path("scripts/reconstruct_short_answer_quiz.py")
+        script_path = Path("scripts/reconstruct_quiz5_short_answer.py")
         self.assertTrue(
             script_path.exists(),
-            "Add `scripts/reconstruct_short_answer_quiz.py` so the Quiz #5 reconstruction "
+            "Add `scripts/reconstruct_quiz5_short_answer.py` so the Quiz #5 reconstruction "
             "flow is available as a CLI tool instead of only a Python import seam.",
         )
 
@@ -86,7 +94,7 @@ class ShortAnswerReconstructionCliContractTests(unittest.TestCase):
             self.assertEqual(family_path.name, "short-answer-quiz-family.json")
 
     def test_cli_can_emit_reviewable_generated_variant_c(self) -> None:
-        script_path = Path("scripts/reconstruct_short_answer_quiz.py")
+        script_path = Path("scripts/reconstruct_quiz5_short_answer.py")
 
         with tempfile.TemporaryDirectory(prefix="short-answer-reconstruction-generate-") as tempdir:
             proc = subprocess.run(
@@ -117,6 +125,18 @@ class ShortAnswerReconstructionCliContractTests(unittest.TestCase):
             generated = json.loads(generated_path.read_text(encoding="utf-8"))
             self.assertEqual(generated["variant_id"], "C")
             self.assertIn("question_prompts", generated)
+
+    def test_cli_reports_usage_when_required_arguments_are_missing(self) -> None:
+        script_path = Path("scripts/reconstruct_quiz5_short_answer.py")
+        proc = subprocess.run(
+            [str(Path(".venv/bin/python")), str(script_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("usage:", proc.stderr)
 
 
 if __name__ == "__main__":

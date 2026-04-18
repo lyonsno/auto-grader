@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import unittest
 
 
-_ASSET_ROOT = Path("/Users/noahlyons/dev/auto-grader-assets/exams")
+def _asset_root() -> Path:
+    configured = os.environ.get("AUTO_GRADER_ASSETS_DIR")
+    if configured:
+        return Path(configured) / "exams"
+    return Path.home() / "dev" / "auto-grader-assets" / "exams"
+
+
+_ASSET_ROOT = _asset_root()
 _QUIZ_A = _ASSET_ROOT / "260326_Quiz _5 A.pdf"
 _QUIZ_B = _ASSET_ROOT / "260326_Quiz _5 B.pdf"
 
@@ -16,14 +24,14 @@ class TestShortAnswerQuizFamilyReconstruction(unittest.TestCase):
     """The Quiz #5 A/B legacy forms should collapse into one canonical family."""
 
     def _reconstruct(self):
-        from auto_grader.short_answer_reconstruction import (
+        from auto_grader.quiz5_short_answer_reconstruction import (
             reconstruct_short_answer_quiz_family,
         )
 
         return reconstruct_short_answer_quiz_family([_QUIZ_A, _QUIZ_B])
 
     def test_module_and_entrypoint_exist(self) -> None:
-        from auto_grader.short_answer_reconstruction import (
+        from auto_grader.quiz5_short_answer_reconstruction import (
             reconstruct_short_answer_quiz_family,
         )
 
@@ -96,3 +104,20 @@ class TestShortAnswerQuizFamilyReconstruction(unittest.TestCase):
         family = self._reconstruct()
         self.assertEqual(validate_template(family["template"]), [])
 
+    def test_bad_variant_filename_is_rejected(self) -> None:
+        from auto_grader.quiz5_short_answer_reconstruction import _infer_variant_id
+
+        with self.assertRaises(ValueError):
+            _infer_variant_id(Path("quiz-five.pdf"))
+
+    def test_capture_raises_when_expected_text_is_missing(self) -> None:
+        from auto_grader.quiz5_short_answer_reconstruction import _capture
+
+        with self.assertRaises(ValueError):
+            _capture(r"Question (?P<value>.+)", "no matching quiz text here")
+
+    def test_missing_pdf_raises_file_not_found(self) -> None:
+        from auto_grader.quiz5_short_answer_reconstruction import _extract_pdf_text
+
+        with self.assertRaises(FileNotFoundError):
+            _extract_pdf_text(Path("/tmp/does-not-exist-quiz5.pdf"))
