@@ -395,7 +395,7 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
         line_spacing = _require_number(prompt_block["line_spacing"], "prompt_block.line_spacing")
         for line_index, line in enumerate(wrapped_lines):
             content_lines.extend(
-                _text_block(
+                _pdf_safe_text_block(
                     x,
                     _pdf_text_y(height, y + (line_index * line_spacing)),
                     font_size,
@@ -415,7 +415,7 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
         box_width = _require_number(response_box["width"], "response_box.width")
         box_height = _require_number(response_box["height"], "response_box.height")
         content_lines.extend(
-            _text_block(
+            _pdf_safe_text_block(
                 box_x,
                 _pdf_text_y(height, box_y - 6),
                 10,
@@ -449,6 +449,16 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
 
 
 def _text_block(x: int | float, y: int | float, font_size: int | float, text: str) -> list[str]:
+    return [
+        "BT",
+        f"/F1 {_pdf_number(font_size)} Tf",
+        f"{_pdf_number(x)} {_pdf_number(y)} Td",
+        f"({_escape_text(text)}) Tj",
+        "ET",
+    ]
+
+
+def _pdf_safe_text_block(x: int | float, y: int | float, font_size: int | float, text: str) -> list[str]:
     return [
         "BT",
         f"/F1 {_pdf_number(font_size)} Tf",

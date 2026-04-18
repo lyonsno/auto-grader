@@ -733,6 +733,27 @@ class PdfRenderingContractTests(unittest.TestCase):
             "When a question hides the choice legend, the renderer should not emit the stacked answer-text legend.",
         )
 
+    def test_mc_renderer_preserves_unicode_prompt_and_choice_text(self) -> None:
+        render_mc_answer_sheet_pdf = _load_pdf_renderer(self)
+        artifact = _build_artifact()
+        artifact["mc_questions"][0]["prompt"] = "What does 1.2 × 10⁻³ M HCl mean at equilibrium ⇄?"
+        artifact["mc_questions"][0]["choices"][0]["text"] = "It stays 1.2 × 10⁻³ M on both sides of ⇄."
+
+        pdf_bytes = render_mc_answer_sheet_pdf(artifact)
+
+        self.assertIn(
+            "1. What does 1.2 × 10⁻³ M HCl mean at equilibrium ⇄?".encode("utf-8"),
+            pdf_bytes,
+            "MC prompt rendering should preserve authored chemistry notation instead of rewriting "
+            "shared prompt text through a short-answer-specific ASCII fallback.",
+        )
+        self.assertIn(
+            "A. It stays 1.2 × 10⁻³ M on both sides of ⇄.".encode("utf-8"),
+            pdf_bytes,
+            "MC choice rendering should preserve authored chemistry notation instead of rewriting "
+            "shared choice text through a short-answer-specific ASCII fallback.",
+        )
+
 
 def _escape_pdf_text(text: str) -> str:
     return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
