@@ -15,6 +15,19 @@ from auto_grader.template_schema import evaluate_expr, validate_template
 
 _SCIENTIFIC_RE = re.compile(r"(?P<base>\d+(?:\.\d+)?)×10(?P<exp>[+-]?\d+)")
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+_SUPERSCRIPT_DIGITS = str.maketrans({
+    "0": "⁰",
+    "1": "¹",
+    "2": "²",
+    "3": "³",
+    "4": "⁴",
+    "5": "⁵",
+    "6": "⁶",
+    "7": "⁷",
+    "8": "⁸",
+    "9": "⁹",
+    "-": "⁻",
+})
 
 
 def reconstruct_short_answer_quiz_family(pdf_paths: Iterable[str | Path]) -> dict[str, Any]:
@@ -257,17 +270,25 @@ def _review_prompt_for_entry(entry_id: str, base_prompt: str, variables: dict[st
 
 def _render_text(text: str, variables: dict[str, Any]) -> str:
     return _PLACEHOLDER_RE.sub(
-        lambda match: _format_variable(variables[match.group(1)]),
+        lambda match: _format_variable(match.group(1), variables[match.group(1)]),
         text,
     )
 
 
-def _format_variable(value: Any) -> str:
+def _format_variable(name: str, value: Any) -> str:
+    if name == "acid_molarity" and isinstance(value, float):
+        return _format_scientific_notation(value, sig_figs=3)
     if isinstance(value, float):
         if value >= 0.01:
             return f"{value:.4f}".rstrip("0").rstrip(".")
         return f"{value:.5f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+def _format_scientific_notation(value: float, *, sig_figs: int) -> str:
+    mantissa, exponent = f"{value:.{sig_figs - 1}e}".split("e")
+    exponent_text = str(int(exponent)).translate(_SUPERSCRIPT_DIGITS)
+    return f"{mantissa}×10{exponent_text}"
 
 
 def _build_answer_preview(template: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:

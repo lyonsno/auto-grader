@@ -69,7 +69,7 @@ class ShortAnswerVariantGenerationContractTests(unittest.TestCase):
 
         self.assertEqual(prompts["q1a"], "Write a net ionic equation to show how methylamine CH3NH2 behaves as a Bronsted base in water.")
         self.assertEqual(prompts["q1b"], "Write a net ionic equation to show how acetic acid CH3COOH behaves as a Bronsted acid in water.")
-        self.assertEqual(prompts["q2"], "What is the pH of an aqueous solution of 0.00974 M strong acid?")
+        self.assertEqual(prompts["q2"], "What is the pH of an aqueous solution of 9.74×10⁻³ M strong acid?")
         self.assertIn("0.0339 M aqueous solution of sodium hydroxide", prompts["q3"])
         self.assertIn("pH of 2.25", prompts["q4"])
         self.assertEqual(response_boxes["q6-ch4"], "6.[CH4]=")
