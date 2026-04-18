@@ -86,6 +86,52 @@ def render_mc_answer_sheet_pdf(artifact: Mapping[str, Any]) -> bytes:
     return _build_pdf(objects)
 
 
+def render_quiz5_short_answer_pdf(artifact: Mapping[str, Any]) -> bytes:
+    """Render a Quiz #5 short-answer artifact into PDF bytes."""
+    if not isinstance(artifact, Mapping):
+        raise TypeError("artifact must be a mapping")
+
+    pages = artifact.get("pages")
+    if not isinstance(pages, list) or not pages:
+        raise ValueError("artifact.pages must be a non-empty list")
+
+    objects: list[bytes] = []
+    page_object_numbers: list[int] = []
+    next_object_number = 4
+
+    for _page in pages:
+        page_object_numbers.append(next_object_number)
+        next_object_number += 2
+
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    kids = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
+    objects.append(f"<< /Type /Pages /Count {len(pages)} /Kids [{kids}] >>".encode("utf-8"))
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    for index, page in enumerate(pages):
+        page_object_number = page_object_numbers[index]
+        content_object_number = page_object_number + 1
+        rendered_page = _render_quiz5_short_answer_page(artifact, _require_short_answer_page(page))
+        objects.append(
+            (
+                "<< /Type /Page /Parent 2 0 R "
+                f"/MediaBox [0 0 {_pdf_number(rendered_page['width'])} {_pdf_number(rendered_page['height'])}] "
+                "/Resources << /Font << /F1 3 0 R >> >> "
+                f"/Contents {content_object_number} 0 R >>"
+            ).encode("utf-8")
+        )
+        stream = rendered_page["stream"].encode("utf-8")
+        objects.append(
+            b"<< /Length "
+            + str(len(stream)).encode("utf-8")
+            + b" >>\nstream\n"
+            + stream
+            + b"\nendstream"
+        )
+
+    return _build_pdf(objects)
+
+
 def _require_page(page: Any) -> dict[str, Any]:
     if not isinstance(page, Mapping):
         raise TypeError("artifact.pages entries must be mappings")
@@ -93,6 +139,23 @@ def _require_page(page: Any) -> dict[str, Any]:
     page_dict = dict(page)
     required_layout = {
         "layout_version": "mc_answer_sheet_v1",
+        "units": "pt",
+        "origin": "top_left",
+        "y_axis": "down",
+    }
+    for key, expected in required_layout.items():
+        if page_dict.get(key) != expected:
+            raise ValueError(f"Unsupported page layout contract: {key} must be {expected!r}")
+    return page_dict
+
+
+def _require_short_answer_page(page: Any) -> dict[str, Any]:
+    if not isinstance(page, Mapping):
+        raise TypeError("artifact.pages entries must be mappings")
+
+    page_dict = dict(page)
+    required_layout = {
+        "layout_version": "quiz5_short_answer_v1",
         "units": "pt",
         "origin": "top_left",
         "y_axis": "down",
@@ -266,12 +329,131 @@ def _render_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[s
     return {"width": width, "height": height, "stream": "\n".join(content_lines)}
 
 
+def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[str, Any]) -> dict[str, Any]:
+    width = _require_number(page.get("width"), "page.width")
+    height = _require_number(page.get("height"), "page.height")
+
+    content_lines = [
+        "0 G",
+        "1 w",
+        *_text_block(_HEADER_LEFT, _pdf_text_y(height, _HEADER_TITLE_TOP), _HEADER_TITLE_FONT_SIZE, "Quiz 5 Short Answer"),
+        *_text_block(
+            _HEADER_LEFT,
+            _pdf_text_y(height, _HEADER_INSTANCE_TOP),
+            _HEADER_META_FONT_SIZE,
+            f"Instance: {artifact['opaque_instance_code']}",
+        ),
+        *_text_block(
+            _HEADER_LEFT,
+            _pdf_text_y(height, _HEADER_PAGE_CODE_TOP),
+            _HEADER_META_FONT_SIZE,
+            f"Page code: {page['fallback_page_code']}",
+        ),
+    ]
+
+    registration_markers = page.get("registration_markers")
+    if not isinstance(registration_markers, list):
+        raise ValueError("page.registration_markers must be a list")
+    for raw_marker in registration_markers:
+        if not isinstance(raw_marker, Mapping):
+            raise ValueError("page.registration_markers entries must be mappings")
+        marker = dict(raw_marker)
+        marker_x = _require_number(marker["x"], "registration_marker.x")
+        marker_y = _require_number(marker["y"], "registration_marker.y")
+        marker_width = _require_number(marker["width"], "registration_marker.width")
+        marker_height = _require_number(marker["height"], "registration_marker.height")
+        content_lines.append(
+            (
+                f"{_pdf_number(marker_x)} "
+                f"{_pdf_number(_pdf_rect_y(height, marker_y, marker_height))} "
+                f"{_pdf_number(marker_width)} "
+                f"{_pdf_number(marker_height)} re f"
+            )
+        )
+
+    identity_qr_codes = page.get("identity_qr_codes")
+    if not isinstance(identity_qr_codes, list):
+        raise ValueError("page.identity_qr_codes must be a list")
+    for raw_qr_code in identity_qr_codes:
+        if not isinstance(raw_qr_code, Mapping):
+            raise ValueError("page.identity_qr_codes entries must be mappings")
+        content_lines.extend(_render_qr_code(height, dict(raw_qr_code)))
+
+    prompt_blocks = page.get("prompt_blocks")
+    if not isinstance(prompt_blocks, list):
+        raise ValueError("page.prompt_blocks must be a list")
+    for raw_prompt_block in prompt_blocks:
+        if not isinstance(raw_prompt_block, Mapping):
+            raise ValueError("page.prompt_blocks entries must be mappings")
+        prompt_block = dict(raw_prompt_block)
+        wrapped_lines = prompt_block.get("wrapped_lines")
+        if not isinstance(wrapped_lines, list):
+            raise ValueError("prompt_block.wrapped_lines must be a list")
+        x = _require_number(prompt_block["x"], "prompt_block.x")
+        y = _require_number(prompt_block["y"], "prompt_block.y")
+        font_size = _require_number(prompt_block["font_size"], "prompt_block.font_size")
+        line_spacing = _require_number(prompt_block["line_spacing"], "prompt_block.line_spacing")
+        for line_index, line in enumerate(wrapped_lines):
+            content_lines.extend(
+                _text_block(
+                    x,
+                    _pdf_text_y(height, y + (line_index * line_spacing)),
+                    font_size,
+                    str(line),
+                )
+            )
+
+    response_boxes = page.get("response_boxes")
+    if not isinstance(response_boxes, list):
+        raise ValueError("page.response_boxes must be a list")
+    for raw_response_box in response_boxes:
+        if not isinstance(raw_response_box, Mapping):
+            raise ValueError("page.response_boxes entries must be mappings")
+        response_box = dict(raw_response_box)
+        box_x = _require_number(response_box["x"], "response_box.x")
+        box_y = _require_number(response_box["y"], "response_box.y")
+        box_width = _require_number(response_box["width"], "response_box.width")
+        box_height = _require_number(response_box["height"], "response_box.height")
+        content_lines.extend(
+            _text_block(
+                box_x,
+                _pdf_text_y(height, box_y - 6),
+                10,
+                str(response_box["label"]),
+            )
+        )
+        content_lines.append(
+            (
+                f"{_pdf_number(box_x)} "
+                f"{_pdf_number(_pdf_rect_y(height, box_y, box_height))} "
+                f"{_pdf_number(box_width)} "
+                f"{_pdf_number(box_height)} re S"
+            )
+        )
+        workspace = response_box.get("workspace")
+        if isinstance(workspace, Mapping):
+            ws_x = _require_number(workspace["x"], "workspace.x")
+            ws_y = _require_number(workspace["y"], "workspace.y")
+            ws_width = _require_number(workspace["width"], "workspace.width")
+            ws_height = _require_number(workspace["height"], "workspace.height")
+            content_lines.append(
+                (
+                    f"{_pdf_number(ws_x)} "
+                    f"{_pdf_number(_pdf_rect_y(height, ws_y, ws_height))} "
+                    f"{_pdf_number(ws_width)} "
+                    f"{_pdf_number(ws_height)} re S"
+                )
+            )
+
+    return {"width": width, "height": height, "stream": "\n".join(content_lines)}
+
+
 def _text_block(x: int | float, y: int | float, font_size: int | float, text: str) -> list[str]:
     return [
         "BT",
         f"/F1 {_pdf_number(font_size)} Tf",
         f"{_pdf_number(x)} {_pdf_number(y)} Td",
-        f"({_escape_text(text)}) Tj",
+        f"({_escape_text(_pdf_safe_text(text))}) Tj",
         "ET",
     ]
 
@@ -342,6 +524,25 @@ def _qr_matrix(payload: str, *, error_correction: str, border_modules: int) -> l
 
 def _escape_text(text: str) -> str:
     return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _pdf_safe_text(text: str) -> str:
+    return (
+        str(text)
+        .replace("×", "x")
+        .replace("⁻", "-")
+        .replace("⁰", "0")
+        .replace("¹", "1")
+        .replace("²", "2")
+        .replace("³", "3")
+        .replace("⁴", "4")
+        .replace("⁵", "5")
+        .replace("⁶", "6")
+        .replace("⁷", "7")
+        .replace("⁸", "8")
+        .replace("⁹", "9")
+        .replace("⇄", "<=>")
+    )
 
 
 def _circle_path(x: int | float, y: int | float, width: int | float, height: int | float) -> str:
