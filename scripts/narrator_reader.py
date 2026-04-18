@@ -4850,7 +4850,19 @@ class PaintDryDisplay:
             rend._band_cell_width = console_width
             rend._band_cell_height = band_cell_rows
         except Exception:
-            pass  # Next focus_preview event will recover.
+            # Leaving the stale Kitty renderable in place produces a
+            # visibly stretched preview with no local recovery until a
+            # future focus_preview event arrives. Drop back to the
+            # non-Kitty path immediately so the operator keeps a
+            # truthful preview surface instead of a corrupted one.
+            self._pending_kitty_transmit = None
+            self.focus_preview_kitty_renderable = None
+            self._kitty_graphics_supported = False
+            self.on_focus_preview(
+                rend._crop_png_bytes,
+                label=self.focus_preview_label,
+                source=self.focus_preview_source,
+            )
 
     def on_focus_preview(
         self,
