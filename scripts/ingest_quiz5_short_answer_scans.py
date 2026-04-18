@@ -6,6 +6,11 @@ from pathlib import Path
 
 import cv2
 
+from auto_grader.db import create_connection
+from auto_grader.quiz5_short_answer_scan_db import (
+    _get_exam_instance_id_for_opaque_instance_code,
+    persist_quiz5_short_answer_scan_session_manifest_to_db,
+)
 from auto_grader.quiz5_short_answer_scan_session import (
     persist_quiz5_short_answer_scan_session,
 )
@@ -30,6 +35,11 @@ def _parse_args() -> argparse.Namespace:
         required=True,
         help="Directory where the ingest manifest and normalized images should be written.",
     )
+    parser.add_argument(
+        "--database-url",
+        default=None,
+        help="Optional Postgres URL. When provided, persist the returned scan-session manifest into the durable DB model too.",
+    )
     return parser.parse_args()
 
 
@@ -46,6 +56,21 @@ def main() -> int:
         artifact=artifact,
         output_dir=str(output_dir),
     )
+    if args.database_url:
+        manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+        connection = create_connection(args.database_url)
+        try:
+            exam_instance_id = _get_exam_instance_id_for_opaque_instance_code(
+                opaque_instance_code=artifact["opaque_instance_code"],
+                connection=connection,
+            )
+            result["db"] = persist_quiz5_short_answer_scan_session_manifest_to_db(
+                manifest=manifest,
+                exam_instance_id=exam_instance_id,
+                connection=connection,
+            )
+        finally:
+            connection.close()
     print(json.dumps(result, indent=2))
     return 0
 
