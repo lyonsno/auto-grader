@@ -455,11 +455,17 @@ enough that the project should be able to:
 - and run a DB-backed VLM-facing trial against the real student scripts that
   arrive next week
 
-That work is not landed yet. The point of calling it out here is to keep the
-README honest about the next chapter: the immediate frontier is no longer "can
-the MC workflow work at all?" but "can the same system support fixed-layout
-short-answer quiz reconstruction, tracked variant generation, and VLM-first
-answer-box reading on a real upcoming assessment?"
+The first part of that chapter is now landed:
+
+- canonical reconstruction of the observed `Quiz 5 A/B` family
+- a repo-local CLI for reconstructing the family from the legacy PDFs
+- generation of a reviewable sibling variant `C`
+
+The immediate frontier is now the next layer on top of that foundation:
+
+- render QR-/identity-bearing tracked artifacts for `A`, `B`, and `C`
+- and run a DB-backed VLM-facing trial against the real student scripts that
+  arrive next week
 
 ## Data model
 
