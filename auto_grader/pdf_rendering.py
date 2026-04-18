@@ -97,7 +97,7 @@ def render_quiz5_short_answer_pdf(artifact: Mapping[str, Any]) -> bytes:
 
     objects: list[bytes] = []
     page_object_numbers: list[int] = []
-    next_object_number = 4
+    next_object_number = 7
 
     for _page in pages:
         page_object_numbers.append(next_object_number)
@@ -107,6 +107,9 @@ def render_quiz5_short_answer_pdf(artifact: Mapping[str, Any]) -> bytes:
     kids = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
     objects.append(f"<< /Type /Pages /Count {len(pages)} /Kids [{kids}] >>".encode("utf-8"))
     objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>")
 
     for index, page in enumerate(pages):
         page_object_number = page_object_numbers[index]
@@ -116,7 +119,7 @@ def render_quiz5_short_answer_pdf(artifact: Mapping[str, Any]) -> bytes:
             (
                 "<< /Type /Page /Parent 2 0 R "
                 f"/MediaBox [0 0 {_pdf_number(rendered_page['width'])} {_pdf_number(rendered_page['height'])}] "
-                "/Resources << /Font << /F1 3 0 R >> >> "
+                "/Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> "
                 f"/Contents {content_object_number} 0 R >>"
             ).encode("utf-8")
         )
@@ -336,20 +339,10 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
     content_lines = [
         "0 G",
         "1 w",
-        *_text_block(_HEADER_LEFT, _pdf_text_y(height, _HEADER_TITLE_TOP), _HEADER_TITLE_FONT_SIZE, "Quiz 5 Short Answer"),
-        *_text_block(
-            _HEADER_LEFT,
-            _pdf_text_y(height, _HEADER_INSTANCE_TOP),
-            _HEADER_META_FONT_SIZE,
-            f"Instance: {artifact['opaque_instance_code']}",
-        ),
-        *_text_block(
-            _HEADER_LEFT,
-            _pdf_text_y(height, _HEADER_PAGE_CODE_TOP),
-            _HEADER_META_FONT_SIZE,
-            f"Page code: {page['fallback_page_code']}",
-        ),
     ]
+    content_lines.extend(_render_quiz5_source_header(height, page_number=int(page["page_number"])))
+    if int(page["page_number"]) == 1:
+        content_lines.extend(_render_quiz5_reference_band(height))
 
     registration_markers = page.get("registration_markers")
     if not isinstance(registration_markers, list):
@@ -400,6 +393,7 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
                     _pdf_text_y(height, y + (line_index * line_spacing)),
                     font_size,
                     str(line),
+                    font_resource="F4",
                 )
             )
 
@@ -416,10 +410,11 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
         box_height = _require_number(response_box["height"], "response_box.height")
         content_lines.extend(
             _pdf_safe_text_block(
-                box_x,
-                _pdf_text_y(height, box_y - 6),
-                10,
+                box_x + 6,
+                _pdf_text_y(height, box_y + 23),
+                11,
                 str(response_box["label"]),
+                font_resource="F4",
             )
         )
         content_lines.append(
@@ -430,41 +425,96 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
                 f"{_pdf_number(box_height)} re S"
             )
         )
-        workspace = response_box.get("workspace")
-        if isinstance(workspace, Mapping):
-            ws_x = _require_number(workspace["x"], "workspace.x")
-            ws_y = _require_number(workspace["y"], "workspace.y")
-            ws_width = _require_number(workspace["width"], "workspace.width")
-            ws_height = _require_number(workspace["height"], "workspace.height")
-            content_lines.append(
-                (
-                    f"{_pdf_number(ws_x)} "
-                    f"{_pdf_number(_pdf_rect_y(height, ws_y, ws_height))} "
-                    f"{_pdf_number(ws_width)} "
-                    f"{_pdf_number(ws_height)} re S"
-                )
-            )
 
     return {"width": width, "height": height, "stream": "\n".join(content_lines)}
 
 
+def _render_quiz5_source_header(page_height: int | float, *, page_number: int) -> list[str]:
+    lines: list[str] = [
+        *_font_text_block("F4", 96, _pdf_text_y(page_height, 54), 15, "CHM 142"),
+        *_font_text_block("F4", 224, _pdf_text_y(page_height, 54), 15, "Prof. Lyons"),
+        *_font_text_block("F4", 332, _pdf_text_y(page_height, 54), 14, "Quiz #5"),
+        *_font_text_block("F4", 414, _pdf_text_y(page_height, 54), 12, "26 March, 2026"),
+        *_font_text_block("F2", 198, _pdf_text_y(page_height, 92), 14, "Name:"),
+        *_draw_line(250, page_height, 92, 468, 92),
+        *_draw_line(78, page_height, 118, 540, 118),
+    ]
+
+    if page_number == 1:
+        lines.extend(
+            [
+                *_font_text_block("F4", 258, _pdf_text_y(page_height, 154), 13, "There are 5 questions"),
+                *_font_text_block(
+                    "F2",
+                    164,
+                    _pdf_text_y(page_height, 184),
+                    15,
+                    "Be sure to enter your answers inside the boxes !",
+                ),
+            ]
+        )
+    return lines
+
+
+def _render_quiz5_reference_band(page_height: int | float) -> list[str]:
+    lines: list[str] = [
+        *_font_text_block("F2", 96, _pdf_text_y(page_height, 236), 12, "Reference"),
+        *_font_text_block("F4", 96, _pdf_text_y(page_height, 258), 11, "R = 8.3145 J/(K*mol)"),
+        *_font_text_block("F4", 96, _pdf_text_y(page_height, 274), 11, "R = 0.08206 L*atm/mol*K"),
+        *_font_text_block("F4", 96, _pdf_text_y(page_height, 290), 11, "1atm = 760 mm Hg"),
+        *_font_text_block("F4", 96, _pdf_text_y(page_height, 306), 11, "Kw = 1 x 10^-14 = [H3O+][OH-]"),
+        *_font_text_block("F4", 96, _pdf_text_y(page_height, 324), 14, "1.   Net ionic equations:"),
+    ]
+    return lines
+
+
 def _text_block(x: int | float, y: int | float, font_size: int | float, text: str) -> list[str]:
+    return _font_text_block("F1", x, y, font_size, text)
+
+
+def _font_text_block(
+    font_resource: str,
+    x: int | float,
+    y: int | float,
+    font_size: int | float,
+    text: str,
+) -> list[str]:
     return [
         "BT",
-        f"/F1 {_pdf_number(font_size)} Tf",
+        f"/{font_resource} {_pdf_number(font_size)} Tf",
         f"{_pdf_number(x)} {_pdf_number(y)} Td",
         f"({_escape_text(text)}) Tj",
         "ET",
     ]
 
 
-def _pdf_safe_text_block(x: int | float, y: int | float, font_size: int | float, text: str) -> list[str]:
+def _pdf_safe_text_block(
+    x: int | float,
+    y: int | float,
+    font_size: int | float,
+    text: str,
+    *,
+    font_resource: str = "F1",
+) -> list[str]:
     return [
         "BT",
-        f"/F1 {_pdf_number(font_size)} Tf",
+        f"/{font_resource} {_pdf_number(font_size)} Tf",
         f"{_pdf_number(x)} {_pdf_number(y)} Td",
         f"({_escape_text(_pdf_safe_text(text))}) Tj",
         "ET",
+    ]
+
+
+def _draw_line(
+    x1: int | float,
+    page_height: int | float,
+    y1: int | float,
+    x2: int | float,
+    y2: int | float,
+) -> list[str]:
+    return [
+        f"{_pdf_number(x1)} {_pdf_number(page_height - y1)} m",
+        f"{_pdf_number(x2)} {_pdf_number(page_height - y2)} l S",
     ]
 
 

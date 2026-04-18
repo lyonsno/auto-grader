@@ -20,10 +20,10 @@ _LETTER_WIDTH = 612
 _LETTER_HEIGHT = 792
 _REGISTRATION_MARKER_SIZE = 18
 _REGISTRATION_MARKER_INSET = 24
-_IDENTITY_QR_SIZE = 56
-_IDENTITY_QR_TOP = 36
-_IDENTITY_QR_LEFT = 420
-_IDENTITY_QR_GAP = 10
+_IDENTITY_QR_SIZE = 30
+_IDENTITY_QR_TOP = 28
+_IDENTITY_QR_LEFT = 490
+_IDENTITY_QR_GAP = 6
 
 
 def build_quiz5_short_answer_variant_packet(
@@ -287,18 +287,63 @@ def _build_pages(
             "registration_markers": _build_registration_markers(),
             "identity_qr_codes": _build_identity_qr_codes(f"{opaque_instance_code}-p1"),
             "prompt_blocks": [
-                _prompt_block(prompt_index["q1a"], x=72, y=112, width=360),
-                _prompt_block(prompt_index["q1b"], x=72, y=250, width=360),
-                _prompt_block(prompt_index["q2"], x=72, y=388, width=360),
-                _prompt_block(prompt_index["q3"], x=72, y=496, width=360),
-                _prompt_block(prompt_index["q4"], x=72, y=604, width=360),
+                _prompt_block(
+                    prompt_index["q1a"],
+                    x=148,
+                    y=336,
+                    width=400,
+                    wrap_width=70,
+                    display_prefix="a.  ",
+                    font_size=10.5,
+                    line_spacing=13,
+                ),
+                _prompt_block(
+                    prompt_index["q1b"],
+                    x=148,
+                    y=424,
+                    width=400,
+                    wrap_width=70,
+                    display_prefix="b.  ",
+                    font_size=10.5,
+                    line_spacing=13,
+                ),
+                _prompt_block(
+                    prompt_index["q2"],
+                    x=114,
+                    y=520,
+                    width=432,
+                    wrap_width=78,
+                    display_prefix="2.  ",
+                    font_size=10.5,
+                    line_spacing=13,
+                ),
+                _prompt_block(
+                    prompt_index["q3"],
+                    x=114,
+                    y=606,
+                    width=432,
+                    wrap_width=78,
+                    display_prefix="3.  ",
+                    font_size=10.5,
+                    line_spacing=13,
+                ),
+                _prompt_block(
+                    prompt_index["q4"],
+                    x=114,
+                    y=688,
+                    width=432,
+                    wrap_width=76,
+                    display_prefix="4.  ",
+                    font_size=10.5,
+                    line_spacing=13,
+                ),
             ],
             "response_boxes": [
-                _response_box(prompt_index["q1a"], x=460, y=126, width=96, height=32, workspace_height=82),
-                _response_box(prompt_index["q1b"], x=460, y=264, width=96, height=32, workspace_height=82),
-                _response_box(prompt_index["q2"], x=460, y=402, width=96, height=32, workspace_height=54),
-                _response_box(prompt_index["q3"], x=460, y=510, width=96, height=32, workspace_height=54),
-                _response_box(prompt_index["q4"], x=460, y=618, width=96, height=32, workspace_height=54),
+                _response_box(prompt_index["q1a"], x=86, y=378, width=436, height=34),
+                _response_box(prompt_index["q1b"], x=86, y=466, width=436, height=34),
+                _response_box(prompt_index["q2"], x=86, y=558, width=92, height=34),
+                _response_box(prompt_index["q3"], x=86, y=644, width=92, height=34),
+                _response_box(prompt_index["q4"], x=86, y=736, width=92, height=34),
             ],
         },
         {
@@ -313,21 +358,49 @@ def _build_pages(
             "registration_markers": _build_registration_markers(),
             "identity_qr_codes": _build_identity_qr_codes(f"{opaque_instance_code}-p2"),
             "prompt_blocks": [
-                _prompt_block(prompt_index["q5"], x=72, y=112, width=360),
-                _prompt_block(prompt_index["q6-ch4"], x=72, y=336, width=360),
+                _prompt_block(
+                    prompt_index["q5"],
+                    x=114,
+                    y=190,
+                    width=432,
+                    wrap_width=74,
+                    display_prefix="5.  ",
+                    font_size=10.5,
+                    line_spacing=13,
+                ),
+                _prompt_block(
+                    prompt_index["q6-ch4"],
+                    x=114,
+                    y=336,
+                    width=432,
+                    wrap_width=74,
+                    display_prefix="6.  ",
+                    font_size=10.5,
+                    line_spacing=13,
+                ),
             ],
             "response_boxes": [
-                _response_box(prompt_index["q5"], x=460, y=152, width=96, height=32, workspace_height=118),
-                _response_box(prompt_index["q6-ch4"], x=440, y=384, width=116, height=32, workspace_height=180),
-                _response_box(prompt_index["q6-ccl4"], x=440, y=438, width=116, height=32, workspace_height=0),
-                _response_box(prompt_index["q6-ch2cl2"], x=420, y=492, width=136, height=32, workspace_height=0),
+                _response_box(prompt_index["q5"], x=86, y=254, width=92, height=34),
+                _response_box(prompt_index["q6-ch4"], x=86, y=430, width=110, height=34),
+                _response_box(prompt_index["q6-ccl4"], x=86, y=482, width=110, height=34),
+                _response_box(prompt_index["q6-ch2cl2"], x=86, y=534, width=126, height=34),
             ],
         },
     ]
 
 
-def _prompt_block(entry: Mapping[str, str], *, x: int, y: int, width: int) -> dict[str, Any]:
-    wrapped_lines = textwrap.wrap(entry["prompt"], width=64)
+def _prompt_block(
+    entry: Mapping[str, str],
+    *,
+    x: int,
+    y: int,
+    width: int,
+    wrap_width: int = 64,
+    display_prefix: str = "",
+    font_size: float = 12,
+    line_spacing: float = 15,
+) -> dict[str, Any]:
+    wrapped_lines = textwrap.wrap(f"{display_prefix}{entry['prompt']}", width=wrap_width)
     return {
         "question_id": entry["id"],
         "text": entry["prompt"],
@@ -335,8 +408,8 @@ def _prompt_block(entry: Mapping[str, str], *, x: int, y: int, width: int) -> di
         "x": x,
         "y": y,
         "width": width,
-        "font_size": 12,
-        "line_spacing": 15,
+        "font_size": font_size,
+        "line_spacing": line_spacing,
     }
 
 
@@ -347,9 +420,8 @@ def _response_box(
     y: int,
     width: int,
     height: int,
-    workspace_height: int,
 ) -> dict[str, Any]:
-    box = {
+    return {
         "question_id": entry["id"],
         "label": entry["response_box_label"],
         "x": x,
@@ -357,14 +429,6 @@ def _response_box(
         "width": width,
         "height": height,
     }
-    if workspace_height > 0:
-        box["workspace"] = {
-            "x": 72,
-            "y": y + 42,
-            "width": 484,
-            "height": workspace_height,
-        }
-    return box
 
 
 def _build_registration_markers() -> list[dict[str, Any]]:

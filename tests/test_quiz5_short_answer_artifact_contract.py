@@ -90,6 +90,28 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
         self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
         self.assertIn(b"/Type /Page", pdf_bytes)
 
+    def test_pdf_renderer_uses_source_quiz_identity_instead_of_internal_packet_header(self) -> None:
+        from auto_grader.pdf_rendering import render_quiz5_short_answer_pdf
+        from auto_grader.quiz5_short_answer_packets import (
+            build_quiz5_short_answer_variant_packet,
+        )
+
+        artifact = build_quiz5_short_answer_variant_packet(
+            self._family(),
+            variant_id="A",
+            opaque_instance_code="QUIZ5-A-DEMO",
+        )
+        pdf_bytes = render_quiz5_short_answer_pdf(artifact)
+
+        self.assertIn(b"CHM 142", pdf_bytes)
+        self.assertIn(b"Prof. Lyons", pdf_bytes)
+        self.assertIn(b"Quiz #5", pdf_bytes)
+        self.assertIn(b"Name:", pdf_bytes)
+        self.assertIn(b"Be sure to enter your answers inside the boxes !", pdf_bytes)
+        self.assertNotIn(b"Quiz 5 Short Answer", pdf_bytes)
+        self.assertNotIn(b"Instance: QUIZ5-A-DEMO", pdf_bytes)
+        self.assertNotIn(b"Page code: QUIZ5-A-DEMO-p1", pdf_bytes)
+
 
 if __name__ == "__main__":
     unittest.main()
