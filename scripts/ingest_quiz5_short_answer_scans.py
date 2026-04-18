@@ -8,7 +8,7 @@ import cv2
 
 from auto_grader.db import create_connection
 from auto_grader.quiz5_short_answer_scan_db import (
-    _get_exam_instance_id_for_opaque_instance_code,
+    get_exam_instance_id_for_opaque_instance_code,
     persist_quiz5_short_answer_scan_session_manifest_to_db,
 )
 from auto_grader.quiz5_short_answer_scan_session import (
@@ -60,7 +60,7 @@ def main() -> int:
         manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
         connection = create_connection(args.database_url)
         try:
-            exam_instance_id = _get_exam_instance_id_for_opaque_instance_code(
+            exam_instance_id = get_exam_instance_id_for_opaque_instance_code(
                 opaque_instance_code=artifact["opaque_instance_code"],
                 connection=connection,
             )

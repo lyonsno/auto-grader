@@ -41,6 +41,43 @@ _QUIZ_A = _ASSET_ROOT / "260326_Quiz _5 A.pdf"
 _QUIZ_B = _ASSET_ROOT / "260326_Quiz _5 B.pdf"
 
 
+class Quiz5ShortAnswerScanDbPublicApiContractTests(unittest.TestCase):
+    def test_lookup_exam_instance_id_by_opaque_instance_code_is_public(self) -> None:
+        from auto_grader.quiz5_short_answer_scan_db import (
+            get_exam_instance_id_for_opaque_instance_code,
+        )
+
+        class _FakeResult:
+            def fetchone(self) -> dict[str, int]:
+                return {"id": 17}
+
+        class _FakeConnection:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+            def execute(self, query: str, params: tuple[str, ...]) -> _FakeResult:
+                self.calls.append((query, params))
+                return _FakeResult()
+
+        connection = _FakeConnection()
+
+        exam_instance_id = get_exam_instance_id_for_opaque_instance_code(
+            opaque_instance_code="QUIZ5-C",
+            connection=connection,
+        )
+
+        self.assertEqual(exam_instance_id, 17)
+        self.assertEqual(
+            connection.calls,
+            [
+                (
+                    "SELECT id FROM exam_instances WHERE opaque_instance_code = %s",
+                    ("QUIZ5-C",),
+                )
+            ],
+        )
+
+
 @unittest.skipUnless(_QUIZ_A.exists() and _QUIZ_B.exists(), "Quiz #5 legacy PDFs are required for this contract")
 class Quiz5ShortAnswerScanDbContractTests(unittest.TestCase):
     @classmethod

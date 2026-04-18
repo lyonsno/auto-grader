@@ -102,7 +102,7 @@ def persist_quiz5_short_answer_scan_session_manifest_to_db(
     }
 
 
-def _get_exam_instance_id_for_opaque_instance_code(
+def get_exam_instance_id_for_opaque_instance_code(
     *,
     opaque_instance_code: str,
     connection: object,
@@ -114,6 +114,9 @@ def _get_exam_instance_id_for_opaque_instance_code(
     if row is None:
         raise KeyError(f"Unknown opaque_instance_code {opaque_instance_code!r}")
     return int(row["id"])
+
+
+_get_exam_instance_id_for_opaque_instance_code = get_exam_instance_id_for_opaque_instance_code
 
 
 def _get_or_create_scan_artifact(
