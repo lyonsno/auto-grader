@@ -1395,6 +1395,59 @@ class NarratorReaderContract(unittest.TestCase):
             "a=p placement width must match the post-resize console width",
         )
 
+    def test_retransmit_kitty_image_falls_back_when_rebuild_fails(self):
+        # If the composite rebuild fails during resize, we must not
+        # leave the operator stuck with a stale stretched Kitty band.
+        # The display should degrade to the non-Kitty preview path so
+        # a real preview remains visible.
+        import fitz
+        from scripts.narrator_reader import PaintDryDisplay
+
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            buf = self._TTYBuffer()
+            console = Console(
+                file=buf,
+                width=120,
+                force_terminal=True,
+                color_system="truecolor",
+            )
+            display = PaintDryDisplay(console=console)
+            display._kitty_graphics_supported = True
+            display._inline_images_supported = False
+
+            pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
+            pix.clear_with(128)
+            valid_png = pix.tobytes("png")
+
+            display.on_focus_preview(valid_png, label="test", source="cache")
+            self.assertIsNotNone(
+                display.focus_preview_kitty_renderable,
+                "test precondition: Kitty path should be active before resize",
+            )
+
+            with mock.patch(
+                "scripts.narrator_reader._build_composite_band_png",
+                side_effect=RuntimeError("boom"),
+            ):
+                display.retransmit_kitty_image()
+
+        self.assertFalse(
+            display._kitty_graphics_supported,
+            "failed Kitty resize rebuild should disable Kitty mode for the session",
+        )
+        self.assertIsNone(
+            display.focus_preview_kitty_renderable,
+            "failed Kitty resize rebuild must clear the stale Kitty renderable",
+        )
+        self.assertIsNotNone(
+            display.focus_preview_renderable,
+            "failed Kitty resize rebuild must fall back to a non-Kitty preview renderable",
+        )
+        self.assertFalse(
+            display.focus_preview_pending,
+            "fallback preview should be immediately renderable after recovery",
+        )
+
     def test_focus_preview_kitty_composite_emits_no_texture_segments(self):
         # The precomposed Kitty band includes the ornate texture/border
         # baked into the composite image. The renderable must therefore
