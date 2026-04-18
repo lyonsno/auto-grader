@@ -240,6 +240,8 @@ def _render_question_prompts(template: dict[str, Any], variables: dict[str, Any]
 
 
 def _review_prompt_for_entry(entry_id: str, base_prompt: str, variables: dict[str, Any]) -> str:
+    # The current template schema only supports numeric variables, so the
+    # acid/base identity for q1 must still be woven in at review-packet time.
     if entry_id == "q1a":
         return (
             f"Write a net ionic equation to show how {variables['bronsted_base']} "
@@ -249,11 +251,6 @@ def _review_prompt_for_entry(entry_id: str, base_prompt: str, variables: dict[st
         return (
             f"Write a net ionic equation to show how {variables['bronsted_acid']} "
             "behaves as a Bronsted acid in water."
-        )
-    if entry_id == "q2":
-        return (
-            f"What is the pH of an aqueous solution of {variables['acid_molarity']:.5f} M "
-            f"{variables['acid_species']}?"
         )
     return _render_text(base_prompt, variables)
 
