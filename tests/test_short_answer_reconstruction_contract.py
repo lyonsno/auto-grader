@@ -64,7 +64,7 @@ class TestShortAnswerQuizFamilyReconstruction(unittest.TestCase):
         self.assertEqual([part["id"] for part in q6["parts"]], ["q6-ch4", "q6-ccl4", "q6-ch2cl2"])
         self.assertEqual(
             [part["response_box_label"] for part in q6["parts"]],
-            ["6.[CH4]=", "6.[CCl4]=", "6.[CH2Cl2]="],
+            ["6.[CH4]=", "6. [CCl4]=", "6. [CH2Cl2]="],
         )
 
     def test_reconstruction_captures_variant_specific_substitutions_without_forking_questions(self) -> None:

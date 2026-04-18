@@ -424,7 +424,7 @@ def _build_quiz5_template() -> dict[str, Any]:
                                 "id": "q6-ccl4",
                                 "points": 1,
                                 "answer_type": "numeric",
-                                "response_box_label": "6.[CCl4]=",
+                                "response_box_label": "6. [CCl4]=",
                                 "prompt": "Equilibrium concentration of CCl4",
                                 "answer": {
                                     "expr": "0.375 - (0.375 * sqrt(kc_q6) / (2 + sqrt(kc_q6)))",
@@ -435,7 +435,7 @@ def _build_quiz5_template() -> dict[str, Any]:
                                 "id": "q6-ch2cl2",
                                 "points": 1,
                                 "answer_type": "numeric",
-                                "response_box_label": "6.[CH2Cl2]=",
+                                "response_box_label": "6. [CH2Cl2]=",
                                 "prompt": "Equilibrium concentration of CH2Cl2",
                                 "answer": {
                                     "expr": "2 * (0.375 * sqrt(kc_q6) / (2 + sqrt(kc_q6)))",
