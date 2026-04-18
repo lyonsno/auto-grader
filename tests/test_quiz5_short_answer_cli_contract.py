@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import qrcode
 import numpy as np
@@ -21,6 +22,59 @@ def _asset_root() -> Path:
 _ASSET_ROOT = _asset_root()
 _QUIZ_A = _ASSET_ROOT / "260326_Quiz _5 A.pdf"
 _QUIZ_B = _ASSET_ROOT / "260326_Quiz _5 B.pdf"
+
+
+class Quiz5ShortAnswerCliArgumentContractTests(unittest.TestCase):
+    def test_bundle_rejects_unsupported_generated_variant_before_reconstruction(self) -> None:
+        from auto_grader.quiz5_short_answer_packets import (
+            write_quiz5_short_answer_variant_bundle,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="quiz5-stage-invalid-variant-") as tempdir:
+            with patch(
+                "auto_grader.quiz5_short_answer_packets.reconstruct_short_answer_quiz_family",
+                side_effect=AssertionError("reconstruction should not run for unsupported generated variants"),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "Unsupported generated variant ids",
+                ):
+                    write_quiz5_short_answer_variant_bundle(
+                        pdf_paths=["ignored.pdf"],
+                        output_dir=tempdir,
+                        generated_variant_ids=["D"],
+                    )
+
+    def test_staging_cli_rejects_unsupported_generated_variant_at_argument_parse_time(self) -> None:
+        script_path = Path("scripts/stage_quiz5_short_answer_variants.py")
+
+        with tempfile.TemporaryDirectory(prefix="quiz5-stage-cli-invalid-variant-") as tempdir:
+            proc = subprocess.run(
+                [
+                    str(Path(".venv/bin/python")),
+                    str(script_path),
+                    "--output-dir",
+                    tempdir,
+                    "--pdf",
+                    "ignored.pdf",
+                    "--generate-variant",
+                    "D",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(
+            proc.returncode,
+            2,
+            proc.stderr,
+        )
+        self.assertIn(
+            "invalid choice: 'D'",
+            proc.stderr,
+            "The staging CLI should reject unsupported generated variants at argument-parse time.",
+        )
 
 
 @unittest.skipUnless(_QUIZ_A.exists() and _QUIZ_B.exists(), "Quiz #5 legacy PDFs are required for this contract")

@@ -24,6 +24,7 @@ _IDENTITY_QR_SIZE = 56
 _IDENTITY_QR_TOP = 36
 _IDENTITY_QR_LEFT = 420
 _IDENTITY_QR_GAP = 10
+SUPPORTED_GENERATED_VARIANT_IDS = frozenset({"C"})
 
 
 def build_quiz5_short_answer_variant_packet(
@@ -64,6 +65,7 @@ def write_quiz5_short_answer_variant_bundle(
     from auto_grader.db import create_connection, initialize_schema
     from auto_grader.pdf_rendering import render_quiz5_short_answer_pdf
 
+    normalized_generated_variant_ids = _normalize_generated_variant_ids(generated_variant_ids)
     family = reconstruct_short_answer_quiz_family(pdf_paths)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -74,7 +76,7 @@ def write_quiz5_short_answer_variant_bundle(
         encoding="utf-8",
     )
 
-    requested_variant_ids = sorted(set(family["variants"]).union(set(generated_variant_ids)))
+    requested_variant_ids = sorted(set(family["variants"]).union(set(normalized_generated_variant_ids)))
     artifacts: dict[str, dict[str, Any]] = {}
     packets: dict[str, dict[str, Any]] = {}
     for variant_id in requested_variant_ids:
@@ -172,6 +174,25 @@ def register_quiz5_short_answer_variants(
         "exam_definition_id": exam_definition_id,
         "variants": variants,
     }
+
+
+def _normalize_generated_variant_ids(generated_variant_ids: Iterable[str]) -> list[str]:
+    normalized_ids = [str(variant_id).strip() for variant_id in generated_variant_ids]
+    unsupported_ids = sorted(
+        {
+            variant_id
+            for variant_id in normalized_ids
+            if variant_id not in SUPPORTED_GENERATED_VARIANT_IDS
+        }
+    )
+    if unsupported_ids:
+        supported = ", ".join(sorted(SUPPORTED_GENERATED_VARIANT_IDS))
+        unsupported = ", ".join(unsupported_ids)
+        raise ValueError(
+            f"Unsupported generated variant ids: {unsupported}. "
+            f"This slice only supports: {supported}."
+        )
+    return normalized_ids
 
 
 def _resolve_variant(family: Mapping[str, Any], *, variant_id: str) -> dict[str, Any]:

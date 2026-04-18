@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 
-from auto_grader.quiz5_short_answer_packets import write_quiz5_short_answer_variant_bundle
+from auto_grader.quiz5_short_answer_packets import (
+    SUPPORTED_GENERATED_VARIANT_IDS,
+    write_quiz5_short_answer_variant_bundle,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -27,6 +30,7 @@ def _parse_args() -> argparse.Namespace:
         dest="generate_variant_ids",
         action="append",
         default=[],
+        choices=sorted(SUPPORTED_GENERATED_VARIANT_IDS),
         help="Optional sibling variant id to generate in addition to the observed variants.",
     )
     parser.add_argument(
