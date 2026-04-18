@@ -411,8 +411,8 @@ def _render_quiz5_short_answer_page(artifact: Mapping[str, Any], page: Mapping[s
         content_lines.extend(
             _pdf_safe_text_block(
                 box_x + 6,
-                _pdf_text_y(height, box_y + 23),
-                11,
+                _pdf_text_y(height, box_y + 15),
+                10.5,
                 str(response_box["label"]),
                 font_resource="F4",
             )
@@ -458,12 +458,23 @@ def _render_quiz5_source_header(page_height: int | float, *, page_number: int) -
 
 def _render_quiz5_reference_band(page_height: int | float) -> list[str]:
     lines: list[str] = [
-        *_font_text_block("F2", 96, _pdf_text_y(page_height, 236), 12, "Reference"),
-        *_font_text_block("F4", 96, _pdf_text_y(page_height, 258), 11, "R = 8.3145 J/(K*mol)"),
-        *_font_text_block("F4", 96, _pdf_text_y(page_height, 274), 11, "R = 0.08206 L*atm/mol*K"),
-        *_font_text_block("F4", 96, _pdf_text_y(page_height, 290), 11, "1atm = 760 mm Hg"),
-        *_font_text_block("F4", 96, _pdf_text_y(page_height, 306), 11, "Kw = 1 x 10^-14 = [H3O+][OH-]"),
-        *_font_text_block("F4", 96, _pdf_text_y(page_height, 324), 14, "1.   Net ionic equations:"),
+        *_draw_line(82, page_height, 228, 292, 228),
+        *_font_text_block("F2", 124, _pdf_text_y(page_height, 246), 10, "Rate"),
+        *_font_text_block("F2", 114, _pdf_text_y(page_height, 260), 10, "Order"),
+        *_font_text_block("F2", 164, _pdf_text_y(page_height, 246), 10, "Rate"),
+        *_font_text_block("F2", 153, _pdf_text_y(page_height, 260), 10, "Equation"),
+        *_font_text_block("F2", 230, _pdf_text_y(page_height, 246), 10, "Integrated"),
+        *_font_text_block("F2", 224, _pdf_text_y(page_height, 260), 10, "Rate Equation"),
+        *_draw_line(82, page_height, 270, 292, 270),
+        *_pdf_safe_text_block(82, _pdf_text_y(page_height, 292), 9.5, "0    -Δ[R]/ΔT = k[R]^0    [R]0 - [R]t = kt", font_resource="F4"),
+        *_pdf_safe_text_block(82, _pdf_text_y(page_height, 312), 9.5, "1    -Δ[R]/ΔT = k[R]^1    ln ([R]t/[R]0) = -kt", font_resource="F4"),
+        *_pdf_safe_text_block(82, _pdf_text_y(page_height, 332), 9.5, "2    -Δ[R]/ΔT = k[R]^2    (1/[R]t) - (1/[R]0) = kt", font_resource="F4"),
+        *_draw_line(82, page_height, 340, 292, 340),
+        *_font_text_block("F4", 310, _pdf_text_y(page_height, 252), 11, "R = 8.3145 J/(K*mol)"),
+        *_font_text_block("F4", 310, _pdf_text_y(page_height, 272), 11, "R = 0.08206 L*atm/mol*K"),
+        *_font_text_block("F4", 310, _pdf_text_y(page_height, 292), 11, "1atm = 760 mm Hg"),
+        *_font_text_block("F4", 310, _pdf_text_y(page_height, 322), 11, "Kw = 1 x 10^-14 = [H3O+][OH-]"),
+        *_font_text_block("F4", 96, _pdf_text_y(page_height, 372), 14, "1.   Net ionic equations:"),
     ]
     return lines
 
