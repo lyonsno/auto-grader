@@ -1427,22 +1427,19 @@ def _build_composite_band_png(
     px_w = term_width * cell_px_w
     px_h = band_cell_rows * cell_px_h
 
-    # Fill the canvas with the dark terminal background color.
-    # Transparency doesn't work here — Kitty/fitz flatten alpha to
-    # white, which inverts the intended dark-on-light dot pattern.
-    # Using the explicit dark background matches the terminal and
-    # gives the correct light-dots-on-dark visual.
-    comp = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, px_w, px_h), 0)
-    comp.set_rect(
-        fitz.IRect(0, 0, px_w, px_h),
-        _TEXTURE_BG_RGB,
-    )
+    # Start with a transparent RGBA canvas. The textured band and border
+    # rows are painted opaque; the image box interior is left transparent
+    # unless occupied by the scaled crop. That lets the terminal's real
+    # background show through in any letterboxed negative space instead of
+    # baking in a near-match dark matte that never quite lines up.
+    comp = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, px_w, px_h), 1)
+    comp.clear_with()
 
     # --- Paint border rows ---
-    border_rgb = (135, 160, 145)  # moss, matches _emit_band_border_row
-    _paint_border_row(comp, 0, term_width, cell_px_w, cell_px_h, border_rgb, title)
+    border_rgba = (135, 160, 145, 255)  # moss, matches _emit_band_border_row
+    _paint_border_row(comp, 0, term_width, cell_px_w, cell_px_h, border_rgba, title)
     _paint_border_row(
-        comp, band_cell_rows - 1, term_width, cell_px_w, cell_px_h, border_rgb, "",
+        comp, band_cell_rows - 1, term_width, cell_px_w, cell_px_h, border_rgba, "",
     )
 
     # --- Paint texture with glyph patterns ---
@@ -1507,12 +1504,12 @@ def _build_composite_band_png(
                             x0 + inset, y0 + inset,
                             x0 + cell_px_w - inset, y0 + cell_px_h - inset,
                         ),
-                        rgb,
+                        (*rgb, 255),
                     )
                 else:
                     comp.set_rect(
                         fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
-                        rgb,
+                        (*rgb, 255),
                     )
             elif ord(glyph) >= _BRAILLE_BASE:
                 # Braille character — paint individual dots.
@@ -1527,13 +1524,13 @@ def _build_composite_band_png(
                         if dw > 0 and dh > 0:
                             comp.set_rect(
                                 fitz.IRect(dx, dy, dx + dw, dy + dh),
-                                rgb,
+                                (*rgb, 255),
                             )
             else:
                 # Fallback: any other glyph — fill the cell.
                 comp.set_rect(
                     fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
-                    rgb,
+                    (*rgb, 255),
                 )
 
     # --- Paste the exam crop centered in the image region ---
@@ -1567,7 +1564,7 @@ def _build_composite_band_png(
         stream=crop_png_bytes,
     )
     # Render the composited page to PNG.
-    final_pix = final_page.get_pixmap(alpha=False)
+    final_pix = final_page.get_pixmap(alpha=True)
     result = final_pix.tobytes("png")
     final_doc.close()
 

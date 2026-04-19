@@ -19,6 +19,7 @@ from scripts.narrator_reader import (
     _DEFAULT_TERMINAL_CELL_ASPECT,
     _build_focus_preview_pixels,
     _build_iterm2_inline_image_sequence,
+    _build_composite_band_png,
     _build_kitty_place_sequence,
     _build_kitty_transmit_chunks,
     _compute_inline_image_cell_dimensions,
@@ -1501,6 +1502,56 @@ class NarratorReaderContract(unittest.TestCase):
             f"precomposed Kitty band should emit no styled text "
             f"segments but got {len(styled_text_segments)}: "
             f"{[s.text[:20] for s in styled_text_segments[:5]]}",
+        )
+
+    def test_focus_preview_kitty_composite_keeps_letterbox_area_transparent(self):
+        # When the crop aspect ratio doesn't fill the target image box,
+        # the unused area inside that box should stay transparent so the
+        # terminal background shows through. Baking the old dark matte
+        # into the composite makes the letterbox bars visibly miss the
+        # real terminal background.
+        tall_png = self._make_png(width=100, height=400)
+        comp_png = _build_composite_band_png(
+            tall_png,
+            term_width=80,
+            image_cell_width=30,
+            image_cell_height=12,
+            image_id=1,
+            title="test",
+        )
+        comp = fitz.Pixmap(comp_png)
+
+        self.assertTrue(
+            comp.alpha,
+            "composite band PNG should preserve alpha so unused image-box "
+            "space can stay transparent instead of hard-coding a dark matte",
+        )
+
+        # Coordinates inside the target image box but outside the pasted
+        # scaled crop: left letterbox bar at the vertical midpoint.
+        image_left = (80 - 30) // 2
+        crop_x0 = image_left * 8
+        crop_y0 = 2 * 16
+        crop_target_w = 30 * 8
+        crop_target_h = 12 * 16
+        scale = min(crop_target_w / 100.0, crop_target_h / 400.0)
+        scaled_w = int(100 * scale)
+        paste_x = crop_x0 + (crop_target_w - scaled_w) // 2
+        probe_x = crop_x0 + 8
+        probe_y = crop_y0 + crop_target_h // 2
+
+        self.assertLess(
+            probe_x,
+            paste_x,
+            "test probe must land in the left letterbox bar, not inside the crop",
+        )
+        off = (probe_y * comp.width + probe_x) * comp.n
+        rgba = tuple(comp.samples[off : off + comp.n])
+        self.assertEqual(
+            rgba,
+            (0, 0, 0, 0),
+            "unused space inside the image box should be transparent so the "
+            "terminal background shows through cleanly",
         )
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
