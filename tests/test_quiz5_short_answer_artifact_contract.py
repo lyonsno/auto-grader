@@ -92,6 +92,7 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
         qr_codes = artifact["pages"][0]["identity_qr_codes"]
         self.assertEqual([qr["width"] for qr in qr_codes], [30, 30])
         self.assertEqual([qr["height"] for qr in qr_codes], [30, 30])
+        self.assertTrue(all(qr["y"] >= 44 for qr in qr_codes))
 
     def test_pdf_renderer_emits_pdf_bytes_for_short_answer_packet(self) -> None:
         from auto_grader.pdf_rendering import render_quiz5_short_answer_pdf
