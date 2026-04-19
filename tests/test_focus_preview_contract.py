@@ -38,6 +38,59 @@ def _bordered_png(
     return pix.tobytes("png")
 
 
+def _content_box_png(
+    width: int,
+    height: int,
+    *,
+    bg_rgb: tuple[int, int, int],
+    box_rgb: tuple[int, int, int],
+    box_x: int,
+    box_y: int,
+    box_w: int,
+    box_h: int,
+) -> bytes:
+    rows = bytearray(width * height * 3)
+    for y in range(height):
+        for x in range(width):
+            rgb = (
+                box_rgb
+                if box_x <= x < box_x + box_w and box_y <= y < box_y + box_h
+                else bg_rgb
+            )
+            off = (y * width + x) * 3
+            rows[off : off + 3] = bytes(rgb)
+    pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(rows), False)
+    return pix.tobytes("png")
+
+
+def _noisy_margin_content_box_png(
+    width: int,
+    height: int,
+    *,
+    bg_rgb: tuple[int, int, int],
+    noisy_bg_rgb: tuple[int, int, int],
+    box_rgb: tuple[int, int, int],
+    box_x: int,
+    box_y: int,
+    box_w: int,
+    box_h: int,
+) -> bytes:
+    rows = bytearray(width * height * 3)
+    for y in range(height):
+        for x in range(width):
+            in_box = box_x <= x < box_x + box_w and box_y <= y < box_y + box_h
+            if in_box:
+                rgb = box_rgb
+            elif (x * 7 + y * 11) % 5 == 0:
+                rgb = noisy_bg_rgb
+            else:
+                rgb = bg_rgb
+            off = (y * width + x) * 3
+            rows[off : off + 3] = bytes(rgb)
+    pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(rows), False)
+    return pix.tobytes("png")
+
+
 def _png_dimensions(png_bytes: bytes) -> tuple[int, int]:
     pix = fitz.Pixmap(png_bytes)
     return pix.width, pix.height
@@ -152,6 +205,55 @@ class FocusPreviewContract(unittest.TestCase):
             (1360, 960),
             "paper-colored scan borders should still trim even with small "
             "scanner-noise variation along the edge",
+        )
+
+    def test_preview_tightens_to_content_bounds_when_margin_dominates(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        page_png = _content_box_png(
+            1600,
+            1200,
+            bg_rgb=(231, 221, 199),
+            box_rgb=(40, 35, 28),
+            box_x=600,
+            box_y=420,
+            box_w=400,
+            box_h=260,
+        )
+        focus = FocusRegion(page=1, x=0.0, y=0.0, width=1.0, height=1.0, source="template")
+        preview = render_focus_preview(page_png, focus)
+
+        self.assertEqual(
+            _png_dimensions(preview),
+            (400, 260),
+            "when the requested region is mostly uniform paper margin, the "
+            "preview should trim cleanly all the way to the real content "
+            "island rather than preserving a page-sized cream surround",
+        )
+
+    def test_preview_tightens_to_content_bounds_even_with_heavier_margin_wash(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        page_png = _noisy_margin_content_box_png(
+            1600,
+            1200,
+            bg_rgb=(231, 221, 199),
+            noisy_bg_rgb=(188, 176, 158),
+            box_rgb=(40, 35, 28),
+            box_x=600,
+            box_y=420,
+            box_w=400,
+            box_h=260,
+        )
+        focus = FocusRegion(page=1, x=0.0, y=0.0, width=1.0, height=1.0, source="template")
+        preview = render_focus_preview(page_png, focus)
+
+        self.assertEqual(
+            _png_dimensions(preview),
+            (408, 268),
+            "even when scanner wash breaks simple edge-matte detection, the "
+            "preview should tighten to the actual content bounds with only a "
+            "small pad instead of preserving a page-sized cream surround",
         )
 
 

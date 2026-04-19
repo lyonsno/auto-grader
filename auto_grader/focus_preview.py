@@ -31,6 +31,11 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
         crop_width,
         crop_height,
     )
+    crop_rgb, crop_width, crop_height = _tighten_to_content_bounds(
+        crop_rgb,
+        crop_width,
+        crop_height,
+    )
     out = bytearray(crop_width * crop_height * 3)
 
     for y in range(crop_height):
@@ -92,6 +97,75 @@ def _trim_edge_matte(
         crop_height,
     )
     return _trim_uniform_paper_matte(crop_rgb, crop_width, crop_height)
+
+
+def _tighten_to_content_bounds(
+    crop_rgb: bytes,
+    crop_width: int,
+    crop_height: int,
+    *,
+    content_threshold: int = 48,
+    pad_px: int = 4,
+) -> tuple[bytes, int, int]:
+    """Tighten a crop to the meaningful content inside it.
+
+    Edge-matte trimming handles obvious scan borders. This second pass handles
+    the harder case: a crop that is mostly paper margin with a smaller content
+    island inside it. We detect pixels that differ materially from the corner
+    paper tone, compute a bounding box, and keep only that box plus a tiny
+    stable pad so the preview doesn't feel claustrophobic.
+    """
+
+    def _rgb(x: int, y: int) -> tuple[int, int, int]:
+        off = (y * crop_width + x) * 3
+        return tuple(crop_rgb[off : off + 3])
+
+    bg = tuple(
+        round(
+            (
+                a + b + c + d
+            )
+            / 4
+        )
+        for a, b, c, d in zip(
+            _rgb(0, 0),
+            _rgb(crop_width - 1, 0),
+            _rgb(0, crop_height - 1),
+            _rgb(crop_width - 1, crop_height - 1),
+        )
+    )
+
+    left = crop_width
+    right = -1
+    top = crop_height
+    bottom = -1
+
+    for y in range(crop_height):
+        row_base = y * crop_width * 3
+        for x in range(crop_width):
+            off = row_base + x * 3
+            r = crop_rgb[off]
+            g = crop_rgb[off + 1]
+            b = crop_rgb[off + 2]
+            if max(abs(r - bg[0]), abs(g - bg[1]), abs(b - bg[2])) >= content_threshold:
+                if x < left:
+                    left = x
+                if x > right:
+                    right = x
+                if y < top:
+                    top = y
+                if y > bottom:
+                    bottom = y
+
+    if right < left or bottom < top:
+        return crop_rgb, crop_width, crop_height
+
+    left = max(0, left - pad_px)
+    top = max(0, top - pad_px)
+    right = min(crop_width - 1, right + pad_px)
+    bottom = min(crop_height - 1, bottom + pad_px)
+
+    return _slice_crop_rgb(crop_rgb, crop_width, crop_height, left, top, right, bottom)
 
 
 def _trim_near_black_matte(
