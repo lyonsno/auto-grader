@@ -4850,13 +4850,6 @@ def main() -> int:
                             break  # geometry stable — safe to paint
 
                     paint_size = (console.size.width, console.size.height)
-                    if _live_frame_requires_full_clear(
-                        _last_paint_size, paint_size
-                    ):
-                        sys.stdout.write("\033[2J\033[H")
-                    else:
-                        sys.stdout.write("\033[H")
-                    sys.stdout.flush()
                     # Buffer the entire frame into a single write so the
                     # terminal receives padding spaces and the deferred Kitty
                     # a=p placement atomically. Without buffering, Rich writes
@@ -4866,6 +4859,12 @@ def main() -> int:
                     _real_file = console.file
                     _real_write = _real_file.write
                     _frame_parts: list[str] = []
+                    if _live_frame_requires_full_clear(
+                        _last_paint_size, paint_size
+                    ):
+                        _frame_parts.append("\033[2J\033[H")
+                    else:
+                        _frame_parts.append("\033[H")
                     _real_file.write = _frame_parts.append  # type: ignore[assignment]
                     try:
                         live.update(renderable, refresh=True)
@@ -4881,8 +4880,8 @@ def main() -> int:
         # Rich doesn't wrap our renderable in Screen (which pads to a
         # height that can be stale during resize).  Our _live_update
         # does its own clear + cursor-home on every frame.
-        sys.stdout.write("\033[?1049h")
-        sys.stdout.flush()
+        console.file.write("\033[?1049h")
+        console.file.flush()
         with Live(
             display.render(),
             console=console,

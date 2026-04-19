@@ -3331,6 +3331,19 @@ class NarratorReaderContract(unittest.TestCase):
             "through the manual live-update helper that owns cursor-home, "
             "buffering, and Kitty sequencing",
         )
+
+    def test_main_keeps_control_sequences_on_console_file_path(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        main_tail = source.split("def main() -> int:", 1)[1]
+
+        self.assertNotIn(
+            "sys.stdout.write(",
+            main_tail,
+            "the spawned Paint Dry reader must keep alt-screen and cursor-home "
+            "control sequences on the same console.file path as the buffered "
+            "frame write; mixing raw sys.stdout writes with console.file writes "
+            "can leak visible '[H' text instead of repainting in place",
+        )
     def test_session_end_stops_animation(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")
