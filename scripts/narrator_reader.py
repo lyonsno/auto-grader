@@ -923,11 +923,13 @@ def _compute_inline_image_cell_dimensions(
 # own border frame.
 # ---------------------------------------------------------------------
 
-#: Numeric Kitty image ID used for the focus preview cache. We use a
-#: single fixed ID because we only ever care about the current item's
-#: preview — each new focus_preview event re-transmits with the same
-#: ID, which overwrites the previous image in WezTerm's cache rather
-#: than accumulating. Bounded memory footprint on the terminal side.
+#: Starting Kitty image ID used for focus-preview uploads. The live
+#: display hands out fresh IDs from this seed so successive previews
+#: don't rely on in-place overwrite of one cached image. That overwrite
+#: path turned out to be a bad fit once the composite started using real
+#: transparency: later previews could read as though old opaque pixels
+#: were still hanging around. Fresh IDs make each preview a clean
+#: compositor surface.
 _KITTY_IMAGE_ID = 1
 
 #: Base64 chunks must be at most this many characters. Kitty protocol
@@ -2990,6 +2992,8 @@ class PaintDryDisplay:
         # Set by on_focus_preview (event thread), drained by
         # _live_update (animation thread) before the next frame.
         self._pending_kitty_transmit: bytes | None = None
+        self._pending_kitty_image_id: int | None = None
+        self._next_kitty_image_id: int = _KITTY_IMAGE_ID
         # Query the terminal for its real cell pixel dimensions once
         # at init. Used by the Kitty renderer to compute correct
         # cell boxes for images — hardcoding this is brittle across
@@ -4483,6 +4487,11 @@ class PaintDryDisplay:
         self.wrap_up_text = text
         self.wrap_up_pending = False
 
+    def _allocate_kitty_image_id(self) -> int:
+        image_id = self._next_kitty_image_id
+        self._next_kitty_image_id += 1
+        return image_id
+
     def drain_pending_kitty_transmit(self) -> None:
         """Transmit a pending composite PNG on the animation thread.
 
@@ -4492,10 +4501,14 @@ class PaintDryDisplay:
         png = self._pending_kitty_transmit
         if png is None:
             return
+        image_id = self._pending_kitty_image_id
         self._pending_kitty_transmit = None
+        self._pending_kitty_image_id = None
+        if image_id is None:
+            return
         stream = self._console.file if self._console is not None else sys.stdout
         try:
-            for chunk in _build_kitty_transmit_chunks(png, _KITTY_IMAGE_ID):
+            for chunk in _build_kitty_transmit_chunks(png, image_id):
                 stream.write(chunk)
             stream.flush()
         except Exception:
@@ -4534,18 +4547,16 @@ class PaintDryDisplay:
                 term_width=console_width,
                 image_cell_width=image_cw,
                 image_cell_height=image_ch,
-                image_id=_KITTY_IMAGE_ID,
+                image_id=rend._image_id,
                 title=rend._title,
             )
-            # Don't delete the old image — transmitting with the same
-            # image ID atomically replaces the cached image when the
-            # final chunk (m=0) lands. Deleting first creates a window
-            # where a=p has nothing to place, causing flicker.
-            for chunk in _build_kitty_transmit_chunks(composite_png, _KITTY_IMAGE_ID):
+            image_id = self._allocate_kitty_image_id()
+            for chunk in _build_kitty_transmit_chunks(composite_png, image_id):
                 stream.write(chunk)
             stream.flush()
             # Don't overwrite focus_preview_png — it holds the raw
             # crop bytes (pipeline contract). The composite is ephemeral.
+            rend._image_id = image_id
             rend._band_cell_width = console_width
             rend._band_cell_height = band_cell_rows
         except Exception:
@@ -4624,20 +4635,22 @@ class PaintDryDisplay:
                     term_width=console_width,
                     image_cell_width=image_cw,
                     image_cell_height=image_ch,
-                    image_id=_KITTY_IMAGE_ID,
+                    image_id=self._next_kitty_image_id,
                     title=title,
                 )
+                image_id = self._allocate_kitty_image_id()
                 # Don't transmit from the event thread — that interleaves
                 # Kitty escape sequences with Rich's output on the
                 # animation thread, producing visible garbage. Instead,
                 # store the composite for the animation thread to
                 # transmit before the next frame via _live_update.
                 self._pending_kitty_transmit = composite_png
+                self._pending_kitty_image_id = image_id
                 # focus_preview_png keeps the raw incoming PNG bytes
                 # (pipeline contract). The composite is stored on the
                 # renderable and rebuilt by retransmit_kitty_image.
                 self.focus_preview_kitty_renderable = FocusPreviewKittyImage(
-                    image_id=_KITTY_IMAGE_ID,
+                    image_id=image_id,
                     band_cell_width=console_width,
                     band_cell_height=band_cell_rows,
                     title=title,
@@ -4660,6 +4673,7 @@ class PaintDryDisplay:
                 # stdout write error, etc.), fall through to the
                 # iTerm2 OSC 1337 path so the operator still sees
                 # something.
+                self._pending_kitty_image_id = None
                 self.focus_preview_kitty_renderable = None
 
         # iTerm2 OSC 1337 path: fallback for terminals that don't

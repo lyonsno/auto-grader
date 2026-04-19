@@ -1336,6 +1336,7 @@ class NarratorReaderContract(unittest.TestCase):
             if rend is None:
                 self.skipTest("Kitty path not taken (no renderable created)")
 
+            original_image_id = rend._image_id
             original_width = rend._band_cell_width
             self.assertEqual(original_width, 120,
                 "initial band width must match console width")
@@ -1351,11 +1352,56 @@ class NarratorReaderContract(unittest.TestCase):
             80,
             "retransmit must update _band_cell_width to the new console width",
         )
+        self.assertGreater(
+            rend._image_id,
+            original_image_id,
+            "resize retransmit should allocate a fresh Kitty image ID so "
+            "transparent regions don't rely on in-place overwrite of the "
+            "previous cached image",
+        )
         transmitted = buf.getvalue()
         self.assertIn(
             "f=100",
             transmitted,
             "retransmit must upload new image data (PNG format marker)",
+        )
+
+    def test_successive_focus_previews_allocate_fresh_kitty_image_ids(self):
+        import fitz
+        from scripts.narrator_reader import PaintDryDisplay
+
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            buf = self._TTYBuffer()
+            console = Console(
+                file=buf,
+                width=120,
+                force_terminal=True,
+                color_system="truecolor",
+            )
+            display = PaintDryDisplay(console=console)
+            display._kitty_graphics_supported = True
+
+            first_pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 300), 1)
+            first_pix.clear_with(128)
+            second_pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 100, 400), 1)
+            second_pix.clear_with(192)
+
+            display.on_focus_preview(first_pix.tobytes("png"), label="first", source="cache")
+            first_rend = display.focus_preview_kitty_renderable
+            if first_rend is None:
+                self.skipTest("Kitty path not taken")
+            first_id = first_rend._image_id
+
+            display.on_focus_preview(second_pix.tobytes("png"), label="second", source="cache")
+            second_rend = display.focus_preview_kitty_renderable
+            if second_rend is None:
+                self.skipTest("Kitty path not taken on second preview")
+
+        self.assertGreater(
+            second_rend._image_id,
+            first_id,
+            "each new focus preview should mint a fresh Kitty image ID "
+            "instead of reusing the previous cached surface",
         )
 
     def test_resize_placement_matches_rebuilt_dimensions(self):
