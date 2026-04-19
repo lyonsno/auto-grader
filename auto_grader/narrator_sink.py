@@ -24,6 +24,7 @@ just routes events to its outputs. JSON line protocol over the fifo:
 from __future__ import annotations
 
 import base64
+import errno
 import json
 import os
 import shutil
@@ -47,6 +48,10 @@ class SinkConfig:
 
 
 class NarratorSink:
+    _FIFO_CONNECT_TIMEOUT_S = 5.0
+    _FIFO_CONNECT_POLL_S = 0.05
+    _WEZTERM_SPAWN_TIMEOUT_S = 5.0
+
     """Fan-out destination for narrator events.
 
     Use as a context manager:
@@ -71,6 +76,7 @@ class NarratorSink:
         self._live_buffer = ""  # accumulator for the txt transcript only
         self._lock = threading.Lock()
         self._started = False
+        self._fifo_failure_path: Path | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -99,13 +105,12 @@ class NarratorSink:
                 f"# Project Paint Dry transcript\n"
                 f"# Started: {datetime.now().isoformat(timespec='seconds')}\n\n"
             )
+            self._fifo_failure_path = self.config.log_dir / "fifo_writer_failure.txt"
 
         if self.config.spawn_terminal:
             self._fifo_path = self._make_fifo()
             self._spawn_terminal_window(self._fifo_path)
-            # Open the fifo for writing — blocks until reader connects.
-            # Use line buffering so messages flush on \n.
-            self._fifo_writer = open(self._fifo_path, "w", buffering=1)
+            self._fifo_writer = self._open_fifo_writer_with_timeout(self._fifo_path)
 
         if self.config.session_meta:
             self._emit({"type": "session_meta", **self.config.session_meta})
@@ -223,24 +228,26 @@ class NarratorSink:
                 self._fallback.flush()
 
     def write_basis(self, text: str) -> None:
-        """Write a compact post-game basis row into durable history."""
-        with self._lock:
-            self._emit({"type": "basis", "text": text})
-            if self._txt_file is not None:
-                self._txt_file.write(f"  ≡ Basis: {text}\n")
-            if not self.config.spawn_terminal:
-                self._fallback.write(f"  ≡ Basis: {text}\n")
-                self._fallback.flush()
+        self._write_structured_row("basis", "Basis", text)
+
+    def write_ambiguity(self, text: str) -> None:
+        self._write_structured_row("ambiguity", "Ambiguity", text)
+
+    def write_credit_preserved(self, text: str) -> None:
+        self._write_structured_row(
+            "credit_preserved", "Credit preserved for", text
+        )
+
+    def write_deduction(self, text: str) -> None:
+        self._write_structured_row("deduction", "Deduction", text)
 
     def write_review_marker(self, text: str) -> None:
-        """Write a post-game review-needed marker into durable history."""
-        with self._lock:
-            self._emit({"type": "review_marker", "text": text})
-            if self._txt_file is not None:
-                self._txt_file.write(f"  ! Review needed: {text}\n")
-            if not self.config.spawn_terminal:
-                self._fallback.write(f"  ! Review needed: {text}\n")
-                self._fallback.flush()
+        self._write_structured_row("review_marker", "Review needed", text)
+
+    def write_professor_mismatch(self, text: str) -> None:
+        self._write_structured_row(
+            "professor_mismatch", "Professor mismatch", text
+        )
 
     def write_drop(self, reason: str, text: str) -> None:
         """Record a dropped summary (dedup, empty, etc.) for observability.
@@ -332,9 +339,40 @@ class NarratorSink:
             try:
                 self._fifo_writer.write(line)
                 self._fifo_writer.flush()
-            except (BrokenPipeError, OSError):
+            except (BrokenPipeError, OSError) as exc:
+                self._record_fifo_writer_failure(msg.get("type"), exc)
                 # Reader closed — we'll keep logging to disk only
                 self._fifo_writer = None
+
+    def _record_fifo_writer_failure(self, event_type: str | None, exc: BaseException) -> None:
+        detail = (
+            f"{datetime.now().isoformat(timespec='seconds')} "
+            f"event={event_type or 'unknown'} "
+            f"error={type(exc).__name__}: {exc}\n"
+        )
+        try:
+            self._fallback.write(f"[narrator fifo lost] {detail}")
+            self._fallback.flush()
+        except Exception:
+            pass
+        if self._fifo_failure_path is not None:
+            try:
+                with open(self._fifo_failure_path, "a", buffering=1) as fh:
+                    fh.write(detail)
+            except Exception:
+                pass
+
+    def _write_structured_row(self, event_type: str, label: str, text: str) -> None:
+        """Write one structured legibility row under the current item."""
+        if not text:
+            return
+        with self._lock:
+            self._emit({"type": event_type, "text": text})
+            if self._txt_file is not None:
+                self._txt_file.write(f"  {label}: {text}\n")
+            if not self.config.spawn_terminal:
+                self._fallback.write(f"  {label}: {text}\n")
+                self._fallback.flush()
 
     @staticmethod
     def _make_fifo() -> Path:
@@ -342,6 +380,36 @@ class NarratorSink:
         fifo = tmp / "narrator.fifo"
         os.mkfifo(fifo)
         return fifo
+
+    def _open_fifo_writer_with_timeout(self, fifo: Path) -> IO[str]:
+        """Open the writer side of the narrator FIFO without wedging forever.
+
+        A plain blocking open() can hang the whole smoke run indefinitely
+        if the reader window fails to boot or exits before connecting.
+        Retry a non-blocking open for a short bounded window, then fail
+        loudly so the operator gets a real startup error instead of a
+        silent stall at 'Run dir:'.
+        """
+        deadline = time.monotonic() + self._FIFO_CONNECT_TIMEOUT_S
+        last_err: OSError | None = None
+        while time.monotonic() < deadline:
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                os.set_blocking(fd, True)
+                return os.fdopen(fd, "w", buffering=1)
+            except OSError as exc:
+                last_err = exc
+                if exc.errno not in {errno.ENXIO, errno.ENOENT}:
+                    raise RuntimeError(
+                        f"Could not open narrator FIFO writer at {fifo}: {exc}"
+                    ) from exc
+                time.sleep(self._FIFO_CONNECT_POLL_S)
+
+        detail = f"{last_err}" if last_err is not None else "reader never attached"
+        raise RuntimeError(
+            "Narrator reader did not connect to the FIFO within "
+            f"{self._FIFO_CONNECT_TIMEOUT_S:.1f}s: {detail}"
+        )
 
     @staticmethod
     def _resolve_wezterm_executable() -> str:
@@ -390,12 +458,39 @@ class NarratorSink:
 
         # Project root for uv run
         project_root = Path(__file__).resolve().parent.parent
+        project_python = project_root / ".venv" / "bin" / "python"
+        if not project_python.exists():
+            raise RuntimeError(
+                f"project python not found at {project_python}"
+            )
 
         runner = fifo.parent / "run.sh"
+        diagnostics_dir = self.config.log_dir or fifo.parent
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        reader_stderr = diagnostics_dir / "reader.stderr"
+        reader_exit = diagnostics_dir / "reader.exit"
         runner.write_text(
             "#!/bin/bash\n"
+            "set -u\n"
             f"cd {project_root}\n"
-            f"exec uv run python {reader_script} {fifo}\n"
+            "unset PAINT_DRY_NO_INLINE_IMAGES\n"
+            f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
+            f"2>\"{reader_stderr}\"\n"
+            "status=$?\n"
+            f"printf '%s\\n' \"$status\" >\"{reader_exit}\"\n"
+            "if [ \"$status\" -ne 0 ]; then\n"
+            "  echo \"Project Paint Dry reader exited with status $status\"\n"
+            f"  echo \"stderr log: {reader_stderr}\"\n"
+            f"  echo \"exit log: {reader_exit}\"\n"
+            "  if [ -s "
+            f"\"{reader_stderr}\""
+            " ]; then\n"
+            f"    tail -n 80 \"{reader_stderr}\"\n"
+            "  fi\n"
+            "  echo \"Press Enter to close\"\n"
+            "  read -r _\n"
+            "fi\n"
+            "exit \"$status\"\n"
         )
         runner.chmod(0o755)
         self._owns_tmpdir = fifo.parent
@@ -410,7 +505,13 @@ class NarratorSink:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=self._WEZTERM_SPAWN_TIMEOUT_S,
             )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                "Timed out spawning WezTerm window for narrator after "
+                f"{self._WEZTERM_SPAWN_TIMEOUT_S:.1f}s: {e}"
+            ) from e
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             stderr = getattr(e, "stderr", "") or ""
             raise RuntimeError(
