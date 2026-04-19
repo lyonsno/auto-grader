@@ -26,6 +26,11 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
     entirely by the textured-band renderer in narrator_reader.
     """
     crop_rgb, crop_width, crop_height = _crop_focus_region(page_png, focus_region)
+    crop_rgb, crop_width, crop_height = _trim_edge_matte(
+        crop_rgb,
+        crop_width,
+        crop_height,
+    )
     out = bytearray(crop_width * crop_height * 3)
 
     for y in range(crop_height):
@@ -74,6 +79,139 @@ def _crop_focus_region(
             crop[dest_offset : dest_offset + 3] = samples[src_offset : src_offset + 3]
 
     return bytes(crop), crop_width, crop_height
+
+
+def _trim_edge_matte(
+    crop_rgb: bytes,
+    crop_width: int,
+    crop_height: int,
+) -> tuple[bytes, int, int]:
+    crop_rgb, crop_width, crop_height = _trim_near_black_matte(
+        crop_rgb,
+        crop_width,
+        crop_height,
+    )
+    return _trim_uniform_paper_matte(crop_rgb, crop_width, crop_height)
+
+
+def _trim_near_black_matte(
+    crop_rgb: bytes,
+    crop_width: int,
+    crop_height: int,
+    *,
+    threshold: int = 20,
+) -> tuple[bytes, int, int]:
+    def _is_near_black(x: int, y: int) -> bool:
+        off = (y * crop_width + x) * 3
+        r, g, b = crop_rgb[off : off + 3]
+        return r <= threshold and g <= threshold and b <= threshold
+
+    def _row_is_near_black(y: int) -> bool:
+        return all(_is_near_black(x, y) for x in range(crop_width))
+
+    def _col_is_near_black(x: int) -> bool:
+        return all(_is_near_black(x, y) for y in range(crop_height))
+
+    top = 0
+    while top < crop_height - 1 and _row_is_near_black(top):
+        top += 1
+
+    bottom = crop_height - 1
+    while bottom > top and _row_is_near_black(bottom):
+        bottom -= 1
+
+    left = 0
+    while left < crop_width - 1 and _col_is_near_black(left):
+        left += 1
+
+    right = crop_width - 1
+    while right > left and _col_is_near_black(right):
+        right -= 1
+
+    return _slice_crop_rgb(crop_rgb, crop_width, crop_height, left, top, right, bottom)
+
+
+def _trim_uniform_paper_matte(
+    crop_rgb: bytes,
+    crop_width: int,
+    crop_height: int,
+    *,
+    color_tolerance: int = 28,
+    coverage: float = 0.92,
+) -> tuple[bytes, int, int]:
+    def _rgb(x: int, y: int) -> tuple[int, int, int]:
+        off = (y * crop_width + x) * 3
+        return tuple(crop_rgb[off : off + 3])
+
+    def _close(a: tuple[int, int, int], b: tuple[int, int, int]) -> bool:
+        return (
+            abs(a[0] - b[0]) <= color_tolerance
+            and abs(a[1] - b[1]) <= color_tolerance
+            and abs(a[2] - b[2]) <= color_tolerance
+        )
+
+    top_left = _rgb(0, 0)
+    top_right = _rgb(crop_width - 1, 0)
+    bottom_left = _rgb(0, crop_height - 1)
+    bottom_right = _rgb(crop_width - 1, crop_height - 1)
+    center = _rgb(crop_width // 2, crop_height // 2)
+
+    if (
+        _close(top_left, center)
+        and _close(top_right, center)
+        and _close(bottom_left, center)
+        and _close(bottom_right, center)
+    ):
+        return crop_rgb, crop_width, crop_height
+
+    def _row_matches(y: int, sample: tuple[int, int, int]) -> bool:
+        hits = sum(1 for x in range(crop_width) if _close(_rgb(x, y), sample))
+        return hits / max(1, crop_width) >= coverage
+
+    def _col_matches(x: int, sample: tuple[int, int, int]) -> bool:
+        hits = sum(1 for y in range(crop_height) if _close(_rgb(x, y), sample))
+        return hits / max(1, crop_height) >= coverage
+
+    top = 0
+    while top < crop_height - 1 and _row_matches(top, top_left):
+        top += 1
+
+    bottom = crop_height - 1
+    while bottom > top and _row_matches(bottom, bottom_left):
+        bottom -= 1
+
+    left = 0
+    while left < crop_width - 1 and _col_matches(left, top_left):
+        left += 1
+
+    right = crop_width - 1
+    while right > left and _col_matches(right, top_right):
+        right -= 1
+
+    return _slice_crop_rgb(crop_rgb, crop_width, crop_height, left, top, right, bottom)
+
+
+def _slice_crop_rgb(
+    crop_rgb: bytes,
+    crop_width: int,
+    crop_height: int,
+    left: int,
+    top: int,
+    right: int,
+    bottom: int,
+) -> tuple[bytes, int, int]:
+    if top == 0 and left == 0 and right == crop_width - 1 and bottom == crop_height - 1:
+        return crop_rgb, crop_width, crop_height
+
+    new_w = right - left + 1
+    new_h = bottom - top + 1
+    trimmed = bytearray(new_w * new_h * 3)
+    for row in range(new_h):
+        src_start = ((top + row) * crop_width + left) * 3
+        src_end = src_start + new_w * 3
+        dst_start = row * new_w * 3
+        trimmed[dst_start : dst_start + new_w * 3] = crop_rgb[src_start:src_end]
+    return bytes(trimmed), new_w, new_h
 
 
 def _png_to_pixmap(png_bytes: bytes) -> fitz.Pixmap:

@@ -13,6 +13,31 @@ def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
     return pix.tobytes("png")
 
 
+def _bordered_png(
+    width: int,
+    height: int,
+    *,
+    border: int,
+    inner_rgb: tuple[int, int, int],
+    border_rgb: tuple[int, int, int],
+    noisy: bool = False,
+) -> bytes:
+    rows = bytearray(width * height * 3)
+    for y in range(height):
+        for x in range(width):
+            rgb = (
+                border_rgb
+                if x < border or x >= width - border or y < border or y >= height - border
+                else inner_rgb
+            )
+            if noisy and rgb == border_rgb and (x + y) % 11 == 0:
+                rgb = tuple(max(0, c - 11) for c in border_rgb)
+            off = (y * width + x) * 3
+            rows[off : off + 3] = bytes(rgb)
+    pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(rows), False)
+    return pix.tobytes("png")
+
+
 def _png_dimensions(png_bytes: bytes) -> tuple[int, int]:
     pix = fitz.Pixmap(png_bytes)
     return pix.width, pix.height
@@ -86,6 +111,47 @@ class FocusPreviewContract(unittest.TestCase):
             center[1],
             "preview should skew warm enough that blue remains the coolest "
             "channel even on bright paper",
+        )
+
+    def test_preview_trims_uniform_paper_matte_before_tinting(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        page_png = _bordered_png(
+            1600,
+            1200,
+            border=120,
+            inner_rgb=(180, 150, 120),
+            border_rgb=(231, 221, 199),
+        )
+        focus = FocusRegion(page=1, x=0.0, y=0.0, width=1.0, height=1.0, source="template")
+        preview = render_focus_preview(page_png, focus)
+
+        self.assertEqual(
+            _png_dimensions(preview),
+            (1360, 960),
+            "focus preview should trim the all-around paper-colored scan "
+            "matte instead of preserving a thick cream frame around the crop",
+        )
+
+    def test_preview_trims_noisy_paper_matte_before_tinting(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        page_png = _bordered_png(
+            1600,
+            1200,
+            border=120,
+            inner_rgb=(180, 150, 120),
+            border_rgb=(231, 221, 199),
+            noisy=True,
+        )
+        focus = FocusRegion(page=1, x=0.0, y=0.0, width=1.0, height=1.0, source="template")
+        preview = render_focus_preview(page_png, focus)
+
+        self.assertEqual(
+            _png_dimensions(preview),
+            (1360, 960),
+            "paper-colored scan borders should still trim even with small "
+            "scanner-noise variation along the edge",
         )
 
 
