@@ -20,10 +20,10 @@ _LETTER_WIDTH = 612
 _LETTER_HEIGHT = 792
 _REGISTRATION_MARKER_SIZE = 18
 _REGISTRATION_MARKER_INSET = 24
-_IDENTITY_QR_SIZE = 30
-_IDENTITY_QR_TOP = 28
-_IDENTITY_QR_LEFT = 490
-_IDENTITY_QR_GAP = 6
+_IDENTITY_QR_SIZE = 24
+_IDENTITY_QR_TOP = 18
+_IDENTITY_QR_LEFT = 520
+_IDENTITY_QR_GAP = 4
 
 
 def build_quiz5_short_answer_variant_packet(
@@ -40,6 +40,7 @@ def build_quiz5_short_answer_variant_packet(
     resolved_variant = _resolve_variant(family, variant_id=variant_id)
     pages = _build_pages(
         prompts=resolved_variant["printable_prompts"],
+        variant_id=variant_id,
         opaque_instance_code=opaque_instance_code.strip(),
     )
     return {
@@ -271,9 +272,11 @@ def _build_printable_prompts(variables: Mapping[str, Any]) -> list[dict[str, str
 def _build_pages(
     *,
     prompts: list[dict[str, str]],
+    variant_id: str,
     opaque_instance_code: str,
 ) -> list[dict[str, Any]]:
     prompt_index = {entry["id"]: entry for entry in prompts}
+    reference_template_variant_id = variant_id if variant_id in {"A", "B"} else "A"
     return [
         {
             "layout_version": "quiz5_short_answer_v1",
@@ -283,67 +286,80 @@ def _build_pages(
             "width": _LETTER_WIDTH,
             "height": _LETTER_HEIGHT,
             "page_number": 1,
+            "reference_template_variant_id": reference_template_variant_id,
+            "template_page_number": 1,
             "fallback_page_code": f"{opaque_instance_code}-p1",
             "registration_markers": _build_registration_markers(),
             "identity_qr_codes": _build_identity_qr_codes(f"{opaque_instance_code}-p1"),
+            "text_overlays": _quiz5_text_overlays(variant_id=variant_id, page_number=1, prompt_index=prompt_index),
             "prompt_blocks": [
                 _prompt_block(
                     prompt_index["q1a"],
-                    x=152,
-                    y=378,
+                    x=156,
+                    y=376,
                     width=392,
-                    wrap_width=64,
-                    display_prefix="a.  ",
-                    font_size=10.5,
-                    line_spacing=13,
+                    label_text="a.",
+                    label_x=120,
+                    continuation_x=214,
+                    wrapped_lines_override=[
+                        "Write a net ionic equation to show how methylamine CH3NH2 behaves as a",
+                        "Bronsted base in water.",
+                    ],
+                    font_size=11.5,
+                    line_spacing=12.5,
                 ),
                 _prompt_block(
                     prompt_index["q1b"],
-                    x=152,
-                    y=466,
+                    x=156,
+                    y=456,
                     width=392,
-                    wrap_width=64,
-                    display_prefix="b.  ",
-                    font_size=10.5,
-                    line_spacing=13,
+                    label_text="b.",
+                    label_x=120,
+                    continuation_x=214,
+                    wrapped_lines_override=[
+                        "Write a net ionic equation to show how acetic acid CH3COOH behaves as a",
+                        "Bronsted acid in water.",
+                    ],
+                    font_size=11.5,
+                    line_spacing=12.5,
                 ),
                 _prompt_block(
                     prompt_index["q2"],
-                    x=114,
-                    y=584,
+                    x=112,
+                    y=536,
                     width=432,
-                    wrap_width=78,
+                    wrap_width=84,
                     display_prefix="2.  ",
                     font_size=10.5,
                     line_spacing=13,
                 ),
                 _prompt_block(
                     prompt_index["q3"],
-                    x=114,
-                    y=664,
+                    x=112,
+                    y=614,
                     width=432,
-                    wrap_width=78,
+                    wrap_width=84,
                     display_prefix="3.  ",
                     font_size=10.5,
                     line_spacing=13,
                 ),
                 _prompt_block(
                     prompt_index["q4"],
-                    x=114,
-                    y=730,
+                    x=112,
+                    y=682,
                     width=432,
-                    wrap_width=76,
+                    wrap_width=82,
                     display_prefix="4.  ",
                     font_size=10.5,
                     line_spacing=13,
                 ),
             ],
             "response_boxes": [
-                _response_box(prompt_index["q1a"], x=86, y=430, width=436, height=34),
-                _response_box(prompt_index["q1b"], x=86, y=518, width=436, height=34),
-                _response_box(prompt_index["q2"], x=86, y=624, width=92, height=28),
-                _response_box(prompt_index["q3"], x=86, y=704, width=92, height=28),
-                _response_box(prompt_index["q4"], x=86, y=760, width=92, height=24),
+                _response_box(prompt_index["q1a"], x=94, y=408, width=428, height=32),
+                _response_box(prompt_index["q1b"], x=94, y=490, width=428, height=32),
+                _response_box(prompt_index["q2"], x=94, y=568, width=84, height=28),
+                _response_box(prompt_index["q3"], x=94, y=646, width=84, height=28),
+                _response_box(prompt_index["q4"], x=94, y=710, width=84, height=28),
             ],
         },
         {
@@ -354,9 +370,12 @@ def _build_pages(
             "width": _LETTER_WIDTH,
             "height": _LETTER_HEIGHT,
             "page_number": 2,
+            "reference_template_variant_id": reference_template_variant_id,
+            "template_page_number": 2,
             "fallback_page_code": f"{opaque_instance_code}-p2",
             "registration_markers": _build_registration_markers(),
             "identity_qr_codes": _build_identity_qr_codes(f"{opaque_instance_code}-p2"),
+            "text_overlays": _quiz5_text_overlays(variant_id=variant_id, page_number=2, prompt_index=prompt_index),
             "prompt_blocks": [
                 _prompt_block(
                     prompt_index["q5"],
@@ -397,11 +416,19 @@ def _prompt_block(
     width: int,
     wrap_width: int = 64,
     display_prefix: str = "",
+    label_text: str | None = None,
+    label_x: int | None = None,
+    continuation_x: int | None = None,
+    wrapped_lines_override: list[str] | None = None,
     font_size: float = 12,
     line_spacing: float = 15,
 ) -> dict[str, Any]:
-    wrapped_lines = textwrap.wrap(f"{display_prefix}{entry['prompt']}", width=wrap_width)
-    return {
+    wrapped_lines = (
+        list(wrapped_lines_override)
+        if wrapped_lines_override is not None
+        else textwrap.wrap(f"{display_prefix}{entry['prompt']}", width=wrap_width)
+    )
+    prompt_block: dict[str, Any] = {
         "question_id": entry["id"],
         "text": entry["prompt"],
         "wrapped_lines": wrapped_lines,
@@ -410,7 +437,14 @@ def _prompt_block(
         "width": width,
         "font_size": font_size,
         "line_spacing": line_spacing,
+        "continuation_x": continuation_x if continuation_x is not None else x,
     }
+    if label_text is not None:
+        prompt_block["label_text"] = label_text
+        prompt_block["label_x"] = label_x if label_x is not None else x - 24
+        if continuation_x is None:
+            prompt_block["continuation_x"] = x + 24
+    return prompt_block
 
 
 def _response_box(
@@ -496,6 +530,87 @@ def _ascii_scientific_notation(value: float, *, sig_figs: int) -> str:
 
 def _default_instance_code(variant_id: str) -> str:
     return f"QUIZ5-{variant_id}"
+
+
+def _quiz5_text_overlays(
+    *,
+    variant_id: str,
+    page_number: int,
+    prompt_index: Mapping[str, Mapping[str, str]],
+) -> list[dict[str, Any]]:
+    if variant_id in {"A", "B"}:
+        return []
+
+    if page_number == 1:
+        return [
+            {
+                "search_text": "Write a net ionic equation to show how dimethylamine (CH3)2NH behaves as a",
+                "replacement_text": _extract_q1_first_line(
+                    prompt_index["q1a"]["prompt"],
+                    final_line="Bronsted base in water.",
+                ),
+                "font_size": 11.5,
+            },
+            {
+                "search_text": "Write a net ionic equation to show how isobutyric acid (CH3)2COOH behaves as",
+                "replacement_text": _extract_q1_first_line(
+                    prompt_index["q1b"]["prompt"],
+                    final_line="a Bronsted acid in water.",
+                ),
+                "font_size": 11.5,
+            },
+            {
+                "search_text": "What is the pH of an aqueous solution of 1.68×10-2 M hydroiodic acid?",
+                "replacement_text": prompt_index["q2"]["prompt"].replace(" x 10^-", "×10-"),
+                "font_size": 11.5,
+            },
+            {
+                "search_text": "What is the pH of a 0.0589 M aqueous solution of sodium hydroxide?",
+                "replacement_text": prompt_index["q3"]["prompt"],
+                "font_size": 11.5,
+            },
+            {
+                "search_text": "2.00?",
+                "replacement_text": prompt_index["q4"]["prompt"].split()[-1],
+                "font_size": 11.5,
+            },
+        ]
+
+    return [
+        {
+            "search_text": "0.0029",
+            "replacement_text": _extract_between(
+                prompt_index["q5"]["prompt"],
+                prefix="For 2SO3(g) <=> 2SO2(g) + O2(g), the equilibrium constant Kc is ",
+                suffix=" at 1200 K. If a 1.00 L equilibrium mixture contains 0.200 mol SO3 and 0.387 mol SO2, calculate the equilibrium concentration of O2.",
+            ),
+            "font_size": 11.5,
+        },
+        {
+            "search_text": "0.0952",
+            "replacement_text": _extract_between(
+                prompt_index["q6-ch4"]["prompt"],
+                prefix="For CH4(g) + CCl4(g) <=> 2CH2Cl2(g), the equilibrium constant Kc is ",
+                suffix=" at 548 K. Calculate the equilibrium concentrations when 0.375 mol of CH4 and 0.375 mol of CCl4 are introduced into a 1.00 L vessel.",
+            ),
+            "font_size": 11.5,
+        },
+    ]
+
+
+def _extract_between(text: str, *, prefix: str, suffix: str) -> str:
+    if not text.startswith(prefix):
+        raise ValueError(f"Prompt did not start with expected prefix: {prefix!r}")
+    if not text.endswith(suffix):
+        raise ValueError(f"Prompt did not end with expected suffix: {suffix!r}")
+    return text[len(prefix) : len(text) - len(suffix)]
+
+
+def _extract_q1_first_line(prompt: str, *, final_line: str) -> str:
+    if not prompt.endswith(final_line):
+        raise ValueError(f"Prompt did not end with expected Q1 closing line: {final_line!r}")
+    prefix = prompt[: -len(final_line)].rstrip()
+    return prefix
 
 
 def _get_or_create_template_version(*, slug: str, source_yaml: str, connection: object) -> int:

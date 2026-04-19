@@ -58,6 +58,8 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
 
         page_1 = artifact["pages"][0]
         self.assertEqual(page_1["layout_version"], "quiz5_short_answer_v1")
+        self.assertEqual(page_1["reference_template_variant_id"], "A")
+        self.assertEqual(page_1["template_page_number"], 1)
         self.assertEqual(len(page_1["registration_markers"]), 4)
         self.assertEqual(len(page_1["identity_qr_codes"]), 2)
         self.assertIn(
@@ -69,6 +71,8 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
         self.assertEqual(q1a_box["label"], "1a.")
 
         page_2 = artifact["pages"][1]
+        self.assertEqual(page_2["reference_template_variant_id"], "A")
+        self.assertEqual(page_2["template_page_number"], 2)
         self.assertEqual(
             [box["label"] for box in page_2["response_boxes"]],
             ["5.", "6.[CH4]=", "6. [CCl4]=", "6. [CH2Cl2]="],
@@ -88,9 +92,11 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
         pdf_bytes = render_quiz5_short_answer_pdf(artifact)
 
         self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
-        self.assertIn(b"/Type /Page", pdf_bytes)
+        self.assertTrue(b"/Type/Page" in pdf_bytes or b"/Type /Page" in pdf_bytes)
 
     def test_pdf_renderer_uses_source_quiz_identity_instead_of_internal_packet_header(self) -> None:
+        import fitz
+
         from auto_grader.pdf_rendering import render_quiz5_short_answer_pdf
         from auto_grader.quiz5_short_answer_packets import (
             build_quiz5_short_answer_variant_packet,
@@ -102,15 +108,134 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
             opaque_instance_code="QUIZ5-A-DEMO",
         )
         pdf_bytes = render_quiz5_short_answer_pdf(artifact)
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+            extracted_text = "\n".join(page.get_text("text") for page in document)
 
-        self.assertIn(b"CHM 142", pdf_bytes)
-        self.assertIn(b"Prof. Lyons", pdf_bytes)
-        self.assertIn(b"Quiz #5", pdf_bytes)
-        self.assertIn(b"Name:", pdf_bytes)
-        self.assertIn(b"Be sure to enter your answers inside the boxes !", pdf_bytes)
-        self.assertNotIn(b"Quiz 5 Short Answer", pdf_bytes)
-        self.assertNotIn(b"Instance: QUIZ5-A-DEMO", pdf_bytes)
-        self.assertNotIn(b"Page code: QUIZ5-A-DEMO-p1", pdf_bytes)
+        self.assertIn("CHM 142", extracted_text)
+        self.assertIn("Prof. Lyons", extracted_text)
+        self.assertIn("Quiz #5", extracted_text)
+        self.assertIn("Name:", extracted_text)
+        self.assertIn("Be sure to enter your answers inside the boxes !", extracted_text)
+        self.assertNotIn("Quiz 5 Short Answer", extracted_text)
+        self.assertNotIn("Instance: QUIZ5-A-DEMO", extracted_text)
+        self.assertNotIn("Page code: QUIZ5-A-DEMO-p1", extracted_text)
+
+    def test_page_one_geometry_tracks_source_quiz_rhythm(self) -> None:
+        from auto_grader.quiz5_short_answer_packets import (
+            build_quiz5_short_answer_variant_packet,
+        )
+
+        artifact = build_quiz5_short_answer_variant_packet(
+            self._family(),
+            variant_id="A",
+            opaque_instance_code="QUIZ5-A-DEMO",
+        )
+
+        page_1 = artifact["pages"][0]
+        prompts = {block["question_id"]: block for block in page_1["prompt_blocks"]}
+        boxes = {box["question_id"]: box for box in page_1["response_boxes"]}
+
+        self.assertEqual(prompts["q1a"]["label_text"], "a.")
+        self.assertEqual(prompts["q1b"]["label_text"], "b.")
+        self.assertLess(prompts["q1a"]["label_x"], prompts["q1a"]["x"])
+        self.assertLess(prompts["q1b"]["label_x"], prompts["q1b"]["x"])
+        self.assertLess(prompts["q1a"]["x"], 165)
+        self.assertLess(prompts["q1b"]["x"], 165)
+        self.assertGreater(prompts["q1a"]["y"], 372)
+        self.assertGreater(prompts["q1b"]["y"], 450)
+        self.assertLess(prompts["q1a"]["y"], boxes["q1a"]["y"])
+        self.assertLess(prompts["q1b"]["y"], boxes["q1b"]["y"])
+        self.assertGreaterEqual(prompts["q1a"]["continuation_x"], prompts["q1a"]["x"] + 48)
+        self.assertGreaterEqual(prompts["q1b"]["continuation_x"], prompts["q1b"]["x"] + 48)
+        self.assertEqual(
+            prompts["q1a"]["wrapped_lines"],
+            [
+                "Write a net ionic equation to show how methylamine CH3NH2 behaves as a",
+                "Bronsted base in water.",
+            ],
+        )
+        self.assertEqual(
+            prompts["q1b"]["wrapped_lines"],
+            [
+                "Write a net ionic equation to show how acetic acid CH3COOH behaves as a",
+                "Bronsted acid in water.",
+            ],
+        )
+        self.assertLess(boxes["q4"]["y"] + boxes["q4"]["height"], 744)
+
+    def test_generated_c_page_one_preserves_source_layout_by_replacing_only_changed_substrings(self) -> None:
+        from auto_grader.quiz5_short_answer_packets import (
+            build_quiz5_short_answer_variant_packet,
+        )
+
+        artifact = build_quiz5_short_answer_variant_packet(
+            self._family(),
+            variant_id="C",
+            opaque_instance_code="QUIZ5-C-DEMO",
+        )
+
+        page_1 = artifact["pages"][0]
+        overlays = page_1["text_overlays"]
+        self.assertEqual(
+            [overlay["search_text"] for overlay in overlays],
+            [
+                "Write a net ionic equation to show how dimethylamine (CH3)2NH behaves as a",
+                "Write a net ionic equation to show how isobutyric acid (CH3)2COOH behaves as",
+                "What is the pH of an aqueous solution of 1.68×10-2 M hydroiodic acid?",
+                "What is the pH of a 0.0589 M aqueous solution of sodium hydroxide?",
+                "2.00?",
+            ],
+        )
+        self.assertEqual(
+            overlays[0]["replacement_text"],
+            "Write a net ionic equation to show how methylamine CH3NH2 behaves as a",
+        )
+        self.assertEqual(
+            overlays[1]["replacement_text"],
+            "Write a net ionic equation to show how acetic acid CH3COOH behaves as",
+        )
+        self.assertEqual(
+            overlays[2]["replacement_text"],
+            "What is the pH of an aqueous solution of 9.74×10-3 M hydrochloric acid?",
+        )
+        self.assertEqual(overlays[3]["replacement_text"], "What is the pH of a 0.0339 M aqueous solution of sodium hydroxide?")
+        self.assertEqual(overlays[4]["replacement_text"], "2.25?")
+
+    def test_generated_c_page_two_preserves_source_layout_by_replacing_only_kc_values(self) -> None:
+        from auto_grader.quiz5_short_answer_packets import (
+            build_quiz5_short_answer_variant_packet,
+        )
+
+        artifact = build_quiz5_short_answer_variant_packet(
+            self._family(),
+            variant_id="C",
+            opaque_instance_code="QUIZ5-C-DEMO",
+        )
+
+        page_2 = artifact["pages"][1]
+        overlays = page_2["text_overlays"]
+        self.assertEqual(
+            [overlay["search_text"] for overlay in overlays],
+            ["0.0029", "0.0952"],
+        )
+        self.assertEqual(
+            [overlay["replacement_text"] for overlay in overlays],
+            ["0.0039", "0.0714"],
+        )
+
+    def test_source_style_middle_band_is_not_oversized(self) -> None:
+        from auto_grader.pdf_rendering import (
+            _render_quiz5_reference_band,
+            _render_quiz5_source_header,
+        )
+
+        header_stream = "\n".join(_render_quiz5_source_header(792, page_number=1))
+        band_stream = "\n".join(_render_quiz5_reference_band(792))
+
+        self.assertIn("/F2 11 Tf", header_stream)
+        self.assertNotIn("/F2 13 Tf", header_stream)
+        self.assertIn("/F2 9 Tf", band_stream)
+        self.assertNotIn("/F2 9.5 Tf", band_stream)
 
 
 if __name__ == "__main__":
