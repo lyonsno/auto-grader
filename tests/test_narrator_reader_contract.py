@@ -1645,6 +1645,48 @@ class NarratorReaderContract(unittest.TestCase):
             "texture background cells must stay opaque dark; only the "
             "image-box negative space should be transparent",
         )
+
+    def test_focus_preview_kitty_composite_title_changes_top_strip_pixels(self):
+        # The title strip must actually differ when a title is present.
+        # We previously rendered the title into an RGB helper pixmap and
+        # then tried to blit it into the RGBA composite with 3-tuples,
+        # which fitz rejects as a bad color sequence. `_paint_border_row`
+        # swallowed the exception, so the titled and untitled composites
+        # were literally identical.
+        crop_png = self._make_png(width=500, height=400)
+        titled = fitz.Pixmap(
+            _build_composite_band_png(
+                crop_png,
+                term_width=80,
+                image_cell_width=30,
+                image_cell_height=12,
+                image_id=1,
+                title="focus preview · 15-blue/fr-10b",
+            )
+        )
+        untitled = fitz.Pixmap(
+            _build_composite_band_png(
+                crop_png,
+                term_width=80,
+                image_cell_width=30,
+                image_cell_height=12,
+                image_id=1,
+                title="",
+            )
+        )
+
+        differing_pixels = 0
+        for y in range(0, min(16, titled.height)):
+            for x in range(0, min(320, titled.width)):
+                if titled.pixel(x, y) != untitled.pixel(x, y):
+                    differing_pixels += 1
+
+        self.assertGreater(
+            differing_pixels,
+            0,
+            "a titled composite should visibly differ from an untitled one "
+            "in the top strip; otherwise the title paint path is dead",
+        )
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies

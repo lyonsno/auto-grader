@@ -1661,7 +1661,7 @@ def _paint_border_row(
         for row in range(blit_h):
             for col in range(blit_w):
                 pixel = txt_pix.pixel(col, row)
-                pix.set_pixel(col, y0 + row, (pixel[0], pixel[1], pixel[2]))
+                pix.set_pixel(col, y0 + row, (pixel[0], pixel[1], pixel[2], 255))
     except Exception:
         pass  # Thin line is already there as fallback.
 
