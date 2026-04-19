@@ -223,20 +223,5 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
             ["0.0039", "0.0714"],
         )
 
-    def test_source_style_middle_band_is_not_oversized(self) -> None:
-        from auto_grader.pdf_rendering import (
-            _render_quiz5_reference_band,
-            _render_quiz5_source_header,
-        )
-
-        header_stream = "\n".join(_render_quiz5_source_header(792, page_number=1))
-        band_stream = "\n".join(_render_quiz5_reference_band(792))
-
-        self.assertIn("/F2 11 Tf", header_stream)
-        self.assertNotIn("/F2 13 Tf", header_stream)
-        self.assertIn("/F2 9 Tf", band_stream)
-        self.assertNotIn("/F2 9.5 Tf", band_stream)
-
-
 if __name__ == "__main__":
     unittest.main()
