@@ -27,10 +27,9 @@ def _pixel_at(png_bytes: bytes, x: int, y: int) -> tuple[int, int, int]:
 
 class FocusPreviewContract(unittest.TestCase):
     def setUp(self) -> None:
-        # Use a larger test page so the proportional vignette/padding
-        # produces meaningfully measurable effects. At 1600x1200 the
-        # crop is 800x600, small-dim 600, vignette ~30 px, corner
-        # radius ~15 px — visible in the output.
+        # Use a larger test page so the crop is large enough that any
+        # accidental vignette/edge treatment shows up clearly in the
+        # sampled pixels.
         self.page_png = _solid_png(1600, 1200, (220, 220, 220))
         self.focus = FocusRegion(
             page=1,
@@ -41,47 +40,53 @@ class FocusPreviewContract(unittest.TestCase):
             source="template",
         )
 
-    def test_preview_returns_png_with_proportional_padding(self):
+    def test_preview_returns_png_at_crop_size_without_padding(self):
         from auto_grader.focus_preview import render_focus_preview
-        from auto_grader.focus_preview import _PADDING_PX
 
         preview = render_focus_preview(self.page_png, self.focus)
         self.assertIsInstance(preview, bytes)
         width, height = _png_dimensions(preview)
-        # Crop is 800x600 (50% of 1600x1200), plus padding on each side.
-        self.assertEqual(width, 800 + 2 * _PADDING_PX)
-        self.assertEqual(height, 600 + 2 * _PADDING_PX)
+        self.assertEqual(
+            (width, height),
+            (800, 600),
+            "focus preview should render at the crop size itself now that the "
+            "edge treatment lives in the textured band, not in preview padding",
+        )
 
-    def test_preview_keeps_center_bright_but_vignettes_edges(self):
+    def test_preview_keeps_edges_as_warm_as_center_without_vignette(self):
         from auto_grader.focus_preview import render_focus_preview
-        from auto_grader.focus_preview import _PADDING_PX
 
         preview = render_focus_preview(self.page_png, self.focus)
         width, height = _png_dimensions(preview)
-        # Center of the image should be the original page color.
         center = _pixel_at(preview, width // 2, height // 2)
-        # A pixel near the edge of the crop content (just inside
-        # the padding) should be darker than the center because
-        # the vignette has pulled it toward the background.
-        edge_inside = _pixel_at(preview, _PADDING_PX + 2, height // 2)
+        edge_inside = _pixel_at(preview, 2, height // 2)
 
-        self.assertGreater(sum(center), sum(edge_inside))
-        # Center should still be close to the original page color.
+        self.assertEqual(
+            center,
+            edge_inside,
+            "preview pixels should no longer vignette toward the edges; the "
+            "textured band owns edge treatment now",
+        )
         self.assertGreater(min(center), 180)
 
-    def test_preview_softens_corners_into_terminal_background(self):
+    def test_preview_applies_visible_warm_tone(self):
         from auto_grader.focus_preview import render_focus_preview
-        from auto_grader.focus_preview import _PADDING_PX
 
         preview = render_focus_preview(self.page_png, self.focus)
         width, height = _png_dimensions(preview)
-        # A pixel just inside the padded corner region.
-        near_corner = _pixel_at(preview, _PADDING_PX + 2, _PADDING_PX + 2)
         center = _pixel_at(preview, width // 2, height // 2)
-
-        self.assertLess(sum(near_corner), sum(center))
-        # Corner should be substantially darker than a bright page.
-        self.assertLess(sum(near_corner), 3 * 180)
+        self.assertLess(
+            center[2],
+            center[0],
+            "preview should keep the warm sepia/bone treatment rather than "
+            "rendering as a neutral gray scan",
+        )
+        self.assertLess(
+            center[2],
+            center[1],
+            "preview should skew warm enough that blue remains the coolest "
+            "channel even on bright paper",
+        )
 
 
 if __name__ == "__main__":

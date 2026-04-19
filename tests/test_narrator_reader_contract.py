@@ -2161,10 +2161,9 @@ class NarratorReaderContract(unittest.TestCase):
             2,
             "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
         )
-        on_target_top_bg = self._background_hex(
-            self._style_for_normalized_scorebug_substring(
-                tally_value_top, expected_on_target[0].strip()
-            )
+        on_target_top_style = self._style_for_normalized_scorebug_substring(
+            tally_value_top,
+            expected_on_target[0].strip(),
         )
         left_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
@@ -2174,12 +2173,15 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_top,
             expected_bad[0].strip(),
         )
-        left_top_bg = self._background_hex(left_top_style)
-        bad_top_bg = self._background_hex(bad_top_style)
         self.assertEqual(
-            {on_target_top_bg, left_top_bg, bad_top_bg},
-            {on_target_top_bg},
-            "the scorebug should go back to one unified field treatment instead of three tinted slabs",
+            {
+                self._background_hex(on_target_top_style),
+                self._background_hex(left_top_style),
+                self._background_hex(bad_top_style),
+            },
+            {None},
+            "scorebug value strokes should no longer carry filled backgrounds; "
+            "the plate should read through sparse texture and border ink instead",
         )
         self.assertTrue(
             any(ch in tally_value_top.plain for ch in "░▒·┈╎"),
@@ -2213,30 +2215,33 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_mid.plain + tally_value_top.plain + tally_value_bottom.plain,
             "scorebug texture should avoid thin vertical artifact glyphs that read like accidental banding",
         )
-        on_target_mid_bg = self._background_hex(
-            self._style_for_normalized_scorebug_substring(
-                tally_value_mid, expected_on_target[1].strip()
-            )
+        on_target_mid_style = self._style_for_normalized_scorebug_substring(
+            tally_value_mid,
+            expected_on_target[1].strip(),
         )
-        on_target_bottom_bg = self._background_hex(
-            self._style_for_normalized_scorebug_substring(
-                tally_value_bottom, expected_on_target[2].strip()
-            )
+        on_target_bottom_style = self._style_for_normalized_scorebug_substring(
+            tally_value_bottom,
+            expected_on_target[2].strip(),
         )
-        bg_lumas = [
-            self._hex_luminance(on_target_top_bg),
-            self._hex_luminance(on_target_mid_bg),
-            self._hex_luminance(on_target_bottom_bg),
+        self.assertEqual(
+            {
+                self._background_hex(on_target_mid_style),
+                self._background_hex(on_target_bottom_style),
+            },
+            {None},
+            "middle and bottom numeral strokes should also stay foreground-only "
+            "once the scorebug drops its filled slabs",
+        )
+        fg_lumas = [
+            self._hex_luminance(self._foreground_hex(on_target_top_style)),
+            self._hex_luminance(self._foreground_hex(on_target_mid_style)),
+            self._hex_luminance(self._foreground_hex(on_target_bottom_style)),
         ]
-        self.assertLess(
-            max(bg_lumas) - min(bg_lumas),
-            24,
-            "the score field should read as a flatter low-contrast texture, not a strong descending row gradient",
-        )
         self.assertGreater(
-            max(bg_lumas) - min(bg_lumas),
-            6,
-            "the score field should still have some subtle tonal breathing room instead of collapsing to one dead flat slab",
+            max(fg_lumas) - min(fg_lumas),
+            18,
+            "the scorebug should still keep some row-to-row tonal drift in "
+            "the numeral ink after the fill is removed",
         )
         # Find the first two strong-stroke spans inside the ON TARGET
         # cell by walking the tally_value_top spans from on_target_start
@@ -2764,17 +2769,110 @@ class NarratorReaderContract(unittest.TestCase):
         for legacy in ("total=", "turn=", "emitted=", "dedup=", "empty="):
             self.assertNotIn(legacy, header_plain)
 
-        self.assertIn("1", header_plain)
-        self.assertIn("2", header_plain)
+        emitted_style = self._style_for_substring(header_text_obj, "EMITTED")
+        dedup_style = self._style_for_substring(header_text_obj, "DEDUP")
+        empty_style = self._style_for_substring(header_text_obj, "EMPTY")
+        self.assertEqual(
+            self._background_hex(emitted_style),
+            "#4a9838",
+            "EMITTED should keep the restored bright green board, not the "
+            "older muted telemetry green",
+        )
+        self.assertEqual(
+            self._foreground_hex(emitted_style),
+            "#f4ffea",
+            "EMITTED label ink should stay on the hotter green-white accent",
+        )
+        self.assertEqual(
+            self._background_hex(dedup_style),
+            "#809326",
+            "DEDUP should read as the restored chartreuse board rather than "
+            "the duller amber telemetry pass",
+        )
+        self.assertEqual(
+            self._foreground_hex(dedup_style),
+            "#fbffd7",
+            "DEDUP label ink should stay in the brighter yellow-chartreuse family",
+        )
+        self.assertEqual(
+            self._background_hex(empty_style),
+            "#a13f2f",
+            "EMPTY should keep the restored ember-red board rather than a "
+            "muddier brown-red telemetry pass",
+        )
+        self.assertEqual(
+            self._foreground_hex(empty_style),
+            "#ffe4dc",
+            "EMPTY label ink should stay on the bright red-white accent",
+        )
 
-        for label in ("EMITTED", "DEDUP", "EMPTY"):
-            style = self._style_for_substring(header_text_obj, label)
-            self.assertIn("on #", style)
+    def test_zero_run_counters_keep_semantic_hues_instead_of_dead_gray(self):
+        display = self._make_display()
 
-        drops_panel = group.renderables[-1]
-        drops_title = drops_panel.title or ""
-        self.assertNotIn("dedup=", drops_title)
-        self.assertNotIn("empty=", drops_title)
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            group = display.render()
+
+        header_panel = group.renderables[0]
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+        header_text_obj = header_renderable
+        if isinstance(header_text_obj, Group):
+            header_text_obj = header_text_obj.renderables[0]
+
+        emitted_style = self._style_for_substring(header_text_obj, "EMITTED")
+        dedup_style = self._style_for_substring(header_text_obj, "DEDUP")
+        empty_style = self._style_for_substring(header_text_obj, "EMPTY")
+
+        self.assertNotEqual(self._background_hex(emitted_style), "#2a2d34")
+        self.assertNotEqual(self._background_hex(dedup_style), "#2a2d34")
+        self.assertNotEqual(self._background_hex(empty_style), "#2a2d34")
+
+    def test_scorebug_uses_sparse_separator_dots_and_foreground_only_digits(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY",
+            subset_count=6,
+        )
+        display.on_header("[item 4/6] 15-blue/fr-10b")
+        display.on_topic(
+            "45s · Grader: 1.0/1.0. Prof: 0.0/1.0.",
+            verdict="overshoot",
+            grader_score=1.0,
+            truth_score=0.0,
+            max_points=1.0,
+        )
+
+        scorebug_panel = display.render().renderables[1]
+        scorebug_renderable = scorebug_panel.renderable
+        if isinstance(scorebug_renderable, Align):
+            scorebug_renderable = scorebug_renderable.renderable
+        tally_text_obj = scorebug_renderable.renderables[2]
+        tally_value_top = scorebug_renderable.renderables[3]
+
+        self.assertIn(
+            "·",
+            tally_text_obj.plain,
+            "the big-value strip should use sparse separator dots instead of "
+            "reverting to blocky gutters",
+        )
+        self.assertIn("·", tally_value_top.plain)
+        self.assertIsNone(
+            self._background_hex(self._style_for_substring(tally_text_obj, "·")),
+            "separator dots should read as foreground ink, not as another slab",
+        )
+
+        expected_on_target = _scorebug_big_value_rows("0.0/1.0")
+        on_target_top_style = self._style_for_normalized_scorebug_substring(
+            tally_value_top,
+            expected_on_target[0].strip(),
+        )
+        self.assertIsNone(
+            self._background_hex(on_target_top_style),
+            "scorebug numeral strokes should stay foreground-only once the "
+            "lighter plate treatment is restored",
+        )
 
     def test_timers_render_as_tall_scorebug_plates_not_small_capsules(self):
         """TOTAL and TURN must render as full three-row
