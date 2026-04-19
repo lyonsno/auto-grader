@@ -13,7 +13,7 @@ contention.
 
 The narrator code lives in `auto_grader/thinking_narrator.py` and
 the smoke runner currently defaults to talking to the bonsai server at
-`http://nlmb2p.local:8002`. On this box, the canonical local surface is
+`http://nlm2pr.local:8002`. On this box, the canonical local surface is
 the equivalent loopback URL `http://127.0.0.1:8002`.
 
 The operationally reliable narrator model id on this box is the full
@@ -45,7 +45,7 @@ There are **two OMLX servers** in play during a typical eval:
 They no longer share a port number on this box, which is deliberate:
 the narrator stays on its own `8002` surface so it does not collide
 with the main grader server on `8001`. The narrator client uses
-`--narrator-url` (current default `http://nlmb2p.local:8002` in
+`--narrator-url` (current default `http://nlm2pr.local:8002` in
 `scripts/smoke_vlm.py`); the grader client uses `--base-url` (default
 `http://macbook-pro-2.local:8001`, so the grader URL follows the big
 box across DHCP renewals).

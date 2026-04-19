@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_NARRATOR_MODEL = "Bonsai-8B-mlx-1bit"
-_DEFAULT_NARRATOR_BASE_URL = "http://nlmb2p.local:8002"
+_DEFAULT_NARRATOR_BASE_URL = "http://nlm2pr.local:8002"
 
 _SYSTEM_PROMPT = """\
 You ARE a chemistry-grading AI thinking out loud, in real time, in \

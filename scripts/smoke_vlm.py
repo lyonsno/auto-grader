@@ -43,7 +43,7 @@ _TEMPLATE = (
     / "chm141-final-fall2023.yaml"
 )
 
-_DEFAULT_NARRATOR_URL = "http://nlmb2p.local:8002"
+_DEFAULT_NARRATOR_URL = "http://nlm2pr.local:8002"
 
 _TRICKY_PICKS = [
     ("15-blue", "fr-1"),    # easy warmup (numeric, density)

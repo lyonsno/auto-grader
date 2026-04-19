@@ -40,17 +40,17 @@ class _DummySink:
 
 
 class SmokeVlmContract(unittest.TestCase):
-    def test_smoke_vlm_defaults_narrator_to_nlmb2p_bonsai(self) -> None:
+    def test_smoke_vlm_defaults_narrator_to_nlm2pr_bonsai(self) -> None:
         parser = smoke_vlm._build_arg_parser()
 
         args = parser.parse_args([])
 
-        self.assertEqual(args.narrator_url, "http://nlmb2p.local:8002")
+        self.assertEqual(args.narrator_url, "http://nlm2pr.local:8002")
 
-    def test_thinking_narrator_defaults_to_nlmb2p_bonsai(self) -> None:
+    def test_thinking_narrator_defaults_to_nlm2pr_bonsai(self) -> None:
         narrator = ThinkingNarrator(_DummySink())
 
-        self.assertEqual(narrator._base_url, "http://nlmb2p.local:8002")
+        self.assertEqual(narrator._base_url, "http://nlm2pr.local:8002")
 
     def test_validate_narrator_model_rejects_bare_snapshots_directory(self) -> None:
         with self.assertRaisesRegex(
