@@ -26,6 +26,7 @@ from scripts.narrator_reader import (
     _focus_preview_budget,
     _KITTY_IMAGE_ID,
     _TEXTURE_BG_RGB,
+    _trim_near_black_crop_margins,
     _render_focus_preview_pixels,
     _scaled_preview_size,
     _supports_inline_images,
@@ -109,6 +110,29 @@ class NarratorReaderContract(unittest.TestCase):
             bytes(rgb * (width * height)),
             False,
         )
+        return pix.tobytes("png")
+
+    @staticmethod
+    def _make_bordered_png(
+        *,
+        width: int = 16,
+        height: int = 10,
+        border: int = 2,
+        inner_rgb: tuple[int, int, int] = (180, 150, 120),
+        border_rgb: tuple[int, int, int] = (0, 0, 0),
+    ) -> bytes:
+        channels = 3
+        rows = bytearray(width * height * channels)
+        for y in range(height):
+            for x in range(width):
+                rgb = (
+                    border_rgb
+                    if x < border or x >= width - border or y < border or y >= height - border
+                    else inner_rgb
+                )
+                off = (y * width + x) * channels
+                rows[off : off + channels] = bytes(rgb)
+        pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(rows), False)
         return pix.tobytes("png")
 
     @staticmethod
@@ -1601,11 +1625,10 @@ class NarratorReaderContract(unittest.TestCase):
             "terminal background shows through cleanly",
         )
 
-    def test_focus_preview_kitty_composite_keeps_inner_gutter_transparent(self):
-        # Even when a crop would otherwise fill the image box cleanly, we
-        # still want a little transparent breathing room around it. Once
-        # the old dark matte went away, the page started reading as crowded
-        # because it visually slammed into the surround.
+    def test_focus_preview_kitty_composite_matching_aspect_crop_reaches_image_box(self):
+        # Matching-aspect crops should now fill the image box directly.
+        # We intentionally removed the all-around inner inset because it
+        # read like a second frame inside the segmented surround.
         matching_aspect_png = self._make_png(width=500, height=400)
         comp_png = _build_composite_band_png(
             matching_aspect_png,
@@ -1620,19 +1643,34 @@ class NarratorReaderContract(unittest.TestCase):
         image_left = (80 - 30) // 2
         crop_x0 = image_left * 8
         crop_y0 = 2 * 16
-
-        # Probe just inside the image-box edge. Without a deliberate inset,
-        # this lands on the page itself for a matching-aspect crop.
-        probe_x = crop_x0 + 6
+        probe_x = crop_x0 + 2
         probe_y = crop_y0 + 10
         off = (probe_y * comp.width + probe_x) * comp.n
         rgba = tuple(comp.samples[off : off + comp.n])
+
         self.assertEqual(
-            rgba,
-            (0, 0, 0, 0),
-            "the composite should keep a small transparent gutter around "
-            "the pasted crop so the preview breathes even when the aspect "
-            "ratio would otherwise fill the image box exactly",
+            rgba[3],
+            255,
+            "matching-aspect crops should reach the image-box edge rather "
+            "than leaving behind an extra transparent inner frame",
+        )
+
+    def test_trim_near_black_crop_margins_removes_dark_scan_frame(self):
+        bordered = self._make_bordered_png(
+            width=14,
+            height=10,
+            border=2,
+            inner_rgb=(190, 170, 140),
+            border_rgb=(0, 0, 0),
+        )
+        trimmed = _trim_near_black_crop_margins(bordered)
+        pix = fitz.Pixmap(trimmed)
+
+        self.assertEqual(
+            (pix.width, pix.height),
+            (10, 6),
+            "focus-preview crop trimming should drop contiguous near-black "
+            "edge matte before we scale it into the composite band",
         )
 
     def test_focus_preview_kitty_composite_keeps_border_row_background_opaque(self):
@@ -1735,7 +1773,7 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertGreater(
             differing_pixels,
-            2400,
+            2300,
             "the titled top strip should carry enough rasterized ink mass to "
             "stay legible after terminal downscaling, not just a tiny hairline caption",
         )

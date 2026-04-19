@@ -1422,6 +1422,8 @@ def _build_composite_band_png(
     in the composite — the terminal scales the placed image to fit
     the cell footprint regardless of source resolution.
     """
+    crop_png_bytes = _trim_near_black_crop_margins(crop_png_bytes)
+
     image_left = max(0, (term_width - image_cell_width) // 2)
     image_right = image_left + image_cell_width
     band_cell_rows = image_cell_height + _BAND_EXTRA_ROWS + 2
@@ -1549,22 +1551,14 @@ def _build_composite_band_png(
     crop_y0 = 2 * cell_px_h  # after top border + extra row
     crop_target_w = image_cell_width * cell_px_w
     crop_target_h = image_cell_height * cell_px_h
-    # Keep a small transparent gutter around the pasted crop. The old
-    # dark matte used to fake this breathing room; once we made the
-    # letterbox area transparent, the page started reading as cramped
-    # unless we reserved a little real inset inside the image box.
-    crop_inner_pad_x = min(max(2, cell_px_w), max(0, crop_target_w // 6))
-    crop_inner_pad_y = min(max(2, cell_px_h), max(0, crop_target_h // 6))
-    inner_target_w = max(1, crop_target_w - 2 * crop_inner_pad_x)
-    inner_target_h = max(1, crop_target_h - 2 * crop_inner_pad_y)
 
     # Scale the crop to fit, centered in the image region.
     src_w, src_h = crop_pix.width, crop_pix.height
-    scale = min(inner_target_w / max(1, src_w), inner_target_h / max(1, src_h))
+    scale = min(crop_target_w / max(1, src_w), crop_target_h / max(1, src_h))
     scaled_w = max(1, int(src_w * scale))
     scaled_h = max(1, int(src_h * scale))
-    paste_x = crop_x0 + crop_inner_pad_x + (inner_target_w - scaled_w) // 2
-    paste_y = crop_y0 + crop_inner_pad_y + (inner_target_h - scaled_h) // 2
+    paste_x = crop_x0 + (crop_target_w - scaled_w) // 2
+    paste_y = crop_y0 + (crop_target_h - scaled_h) // 2
 
     # Use a PDF page to composite: background (texture) + foreground (crop).
     final_doc = fitz.open()
@@ -1583,6 +1577,76 @@ def _build_composite_band_png(
     final_doc.close()
 
     return result
+
+
+def _trim_near_black_crop_margins(
+    crop_png_bytes: bytes,
+    *,
+    threshold: int = 20,
+) -> bytes:
+    """Trim contiguous near-black edge margins from a preview crop.
+
+    Some focus-preview crops arrive with black scan matte or letterbox bars
+    already baked in. If we scale those blindly, the preview reads like a
+    warped black frame inside our own band. Trim only contiguous edges that
+    are overwhelmingly near-black; interior dark content is left untouched.
+    """
+    pix = fitz.Pixmap(crop_png_bytes)
+    width = pix.width
+    height = pix.height
+    channels = pix.n
+    samples = pix.samples
+
+    def _pixel_is_near_black(x: int, y: int) -> bool:
+        off = (y * width + x) * channels
+        r = samples[off]
+        g = samples[off + 1]
+        b = samples[off + 2]
+        a = samples[off + 3] if channels >= 4 else 255
+        return a == 0 or (r <= threshold and g <= threshold and b <= threshold)
+
+    def _row_is_near_black(y: int) -> bool:
+        return all(_pixel_is_near_black(x, y) for x in range(width))
+
+    def _col_is_near_black(x: int) -> bool:
+        return all(_pixel_is_near_black(x, y) for y in range(height))
+
+    top = 0
+    while top < height - 1 and _row_is_near_black(top):
+        top += 1
+
+    bottom = height - 1
+    while bottom > top and _row_is_near_black(bottom):
+        bottom -= 1
+
+    left = 0
+    while left < width - 1 and _col_is_near_black(left):
+        left += 1
+
+    right = width - 1
+    while right > left and _col_is_near_black(right):
+        right -= 1
+
+    if top == 0 and left == 0 and right == width - 1 and bottom == height - 1:
+        return crop_png_bytes
+
+    new_w = right - left + 1
+    new_h = bottom - top + 1
+    trimmed = bytearray(new_w * new_h * channels)
+    for row in range(new_h):
+        src_start = ((top + row) * width + left) * channels
+        src_end = src_start + new_w * channels
+        dst_start = row * new_w * channels
+        trimmed[dst_start : dst_start + new_w * channels] = samples[src_start:src_end]
+
+    trimmed_pix = fitz.Pixmap(
+        fitz.csRGB,
+        new_w,
+        new_h,
+        bytes(trimmed),
+        channels >= 4,
+    )
+    return trimmed_pix.tobytes("png")
 
 
 def _paint_border_row(
@@ -1649,7 +1713,7 @@ def _paint_border_row(
         )
         fontsize = max(10, cell_px_h * 1.05)
         txt_page.insert_text(
-            fitz.Point(0, cell_px_h * 0.92),
+            fitz.Point(0, cell_px_h * 0.86),
             border_text,
             fontsize=fontsize,
             color=text_rgb_f,
