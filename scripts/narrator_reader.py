@@ -1604,7 +1604,14 @@ def _paint_border_row(
     if y1 <= y0 or row_w <= 0:
         return
 
-    # The canvas is already _TEXTURE_BG_RGB. Paint a thin line.
+    # Border/title rows should stay opaque dark even when the rest of the
+    # composite canvas is RGBA-transparent. If we leave these rows
+    # transparent, stale text from the previous frame ghosts through the
+    # top strip when Rich repaints in place.
+    bg_rgba = (*_TEXTURE_BG_RGB, 255)
+    pix.set_rect(fitz.IRect(0, y0, row_w, y1), bg_rgba)
+
+    # Paint a thin line on top of the dark strip.
     line_h = 2
     line_y = y0 + cell_px_h // 2 - line_h // 2
     pix.set_rect(fitz.IRect(0, line_y, row_w, line_y + line_h), rgb)

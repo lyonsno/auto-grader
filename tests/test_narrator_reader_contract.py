@@ -25,6 +25,7 @@ from scripts.narrator_reader import (
     _compute_inline_image_cell_dimensions,
     _focus_preview_budget,
     _KITTY_IMAGE_ID,
+    _TEXTURE_BG_RGB,
     _render_focus_preview_pixels,
     _scaled_preview_size,
     _supports_inline_images,
@@ -1586,6 +1587,34 @@ class NarratorReaderContract(unittest.TestCase):
             "the composite should keep a small transparent gutter around "
             "the pasted crop so the preview breathes even when the aspect "
             "ratio would otherwise fill the image box exactly",
+        )
+
+    def test_focus_preview_kitty_composite_keeps_border_row_background_opaque(self):
+        # The image-box negative space should be transparent, but the top
+        # border/title row must stay opaque. If the border row is left
+        # transparent, stale text from the previous frame shows through
+        # the title strip when Rich repaints in place.
+        comp_png = _build_composite_band_png(
+            self._make_png(width=500, height=400),
+            term_width=80,
+            image_cell_width=30,
+            image_cell_height=12,
+            image_id=1,
+            title="test",
+        )
+        comp = fitz.Pixmap(comp_png)
+
+        # Probe the top border row away from the line text and border ink.
+        probe_x = comp.width - 12
+        probe_y = 4
+        off = (probe_y * comp.width + probe_x) * comp.n
+        rgba = tuple(comp.samples[off : off + comp.n])
+
+        self.assertEqual(
+            rgba,
+            (*_TEXTURE_BG_RGB, 255),
+            "the border/title row background must stay opaque dark so "
+            "old frame text cannot ghost through the transparent PNG",
         )
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
