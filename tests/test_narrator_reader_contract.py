@@ -1238,10 +1238,10 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_rich_live_erases_preview_rows_before_kitty_replaces_image(self):
         # Characterization test: Rich Live erases previous rows (CSI 2K)
-        # before each refresh. The renderable now defers a=p placement
-        # to AFTER the cursor-forward walk so that Rich's line-padding
-        # spaces land before the image, preventing them from overwriting
-        # the Kitty compositor pixels.
+        # before each refresh. The renderable must now explicitly blank
+        # the band rows before the deferred a=p placement so transparent
+        # pixels reveal the terminal background rather than stale history
+        # text from previous frames.
         with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
             buf = self._TTYBuffer()
             console = Console(
@@ -1271,15 +1271,16 @@ class NarratorReaderContract(unittest.TestCase):
             1,
             "second frame must place exactly once",
         )
-        # The a=p must come AFTER the cursor-forward walk (deferred
-        # placement) so Rich's padding spaces don't overwrite it.
-        last_forward = second.rfind("\x1b[20C")
+        # The a=p must come AFTER the explicit blank-row clear so
+        # transparent pixels in the composite reveal clean background
+        # instead of stale text that happened to be under the band.
+        last_blank = second.rfind(" " * 20)
         place_pos = second.index("\x1b_Ga=p")
         self.assertGreater(
             place_pos,
-            last_forward,
-            "a=p placement must fire after cursor-forward walk so "
-            "Rich's line-padding spaces don't overwrite the image",
+            last_blank,
+            "a=p placement must fire after the band rows are blanked so "
+            "transparent pixels don't reveal stale text underneath",
         )
 
     def test_suppress_live_erase_eliminates_per_row_csi2k(self):
