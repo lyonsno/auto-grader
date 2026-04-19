@@ -3587,20 +3587,50 @@ class PaintDryDisplay:
             tally_top_bg = "#363328"
             tally_mid_bg = "#322f25"
             tally_bottom_bg = "#2f2b22"
-            tally_value_strong_styles = (
-                "bold #f3ebd8",
-                "bold #e9dfca",
-                "bold #dfd4be",
+            on_target_value_strong_styles = (
+                "bold #e0ebf2",
+                "bold #d4e1ea",
+                "bold #c8d6e0",
             )
-            tally_value_mid_styles = (
-                "bold #c1b79d",
-                "bold #b6ab91",
-                "bold #ab9f85",
+            on_target_value_mid_styles = (
+                "bold #a1b4c2",
+                "bold #96a9b8",
+                "bold #8c9fac",
             )
-            tally_value_texture_styles = (
-                "#7e7b5f",
-                "#77735a",
-                "#706c54",
+            on_target_value_texture_styles = (
+                "#718697",
+                "#697d8d",
+                "#617485",
+            )
+            left_table_value_strong_styles = (
+                "bold #efe2c4",
+                "bold #dbc08d",
+                "bold #d0b07d",
+            )
+            left_table_value_mid_styles = (
+                "bold #b08f62",
+                "bold #a48259",
+                "bold #977550",
+            )
+            left_table_value_texture_styles = (
+                "#846c4d",
+                "#796247",
+                "#6d5841",
+            )
+            bad_calls_value_strong_styles = (
+                "bold #ead6d0",
+                "bold #d1ada2",
+                "bold #bc8f83",
+            )
+            bad_calls_value_mid_styles = (
+                "bold #aa857a",
+                "bold #9d796f",
+                "bold #906d64",
+            )
+            bad_calls_value_texture_styles = (
+                "#7f645c",
+                "#745a52",
+                "#694f49",
             )
             scorebug_top = Text()
             self._append_scorebug_cell(
@@ -3720,9 +3750,9 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_points_possible)}"
                     ),
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
-                    value_row_styles=tally_value_strong_styles,
-                    value_mid_row_styles=tally_value_mid_styles,
-                    value_texture_styles=tally_value_texture_styles,
+                    value_row_styles=on_target_value_strong_styles,
+                    value_mid_row_styles=on_target_value_mid_styles,
+                    value_texture_styles=on_target_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -3741,9 +3771,9 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
                     ),
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
-                    value_row_styles=tally_value_strong_styles,
-                    value_mid_row_styles=tally_value_mid_styles,
-                    value_texture_styles=tally_value_texture_styles,
+                    value_row_styles=left_table_value_strong_styles,
+                    value_mid_row_styles=left_table_value_mid_styles,
+                    value_texture_styles=left_table_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -3762,9 +3792,9 @@ class PaintDryDisplay:
                         f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
                     ),
                     label_style=f"bold #bc9589 on {tally_label_bg}",
-                    value_row_styles=tally_value_strong_styles,
-                    value_mid_row_styles=tally_value_mid_styles,
-                    value_texture_styles=tally_value_texture_styles,
+                    value_row_styles=bad_calls_value_strong_styles,
+                    value_mid_row_styles=bad_calls_value_mid_styles,
+                    value_texture_styles=bad_calls_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -3818,9 +3848,9 @@ class PaintDryDisplay:
                     "ON TARGET",
                     "0.0/0.0",
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
-                    value_row_styles=tally_value_strong_styles,
-                    value_mid_row_styles=tally_value_mid_styles,
-                    value_texture_styles=tally_value_texture_styles,
+                    value_row_styles=on_target_value_strong_styles,
+                    value_mid_row_styles=on_target_value_mid_styles,
+                    value_texture_styles=on_target_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -3836,9 +3866,9 @@ class PaintDryDisplay:
                     "LEFT ON TABLE",
                     "0.0/0.0",
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
-                    value_row_styles=tally_value_strong_styles,
-                    value_mid_row_styles=tally_value_mid_styles,
-                    value_texture_styles=tally_value_texture_styles,
+                    value_row_styles=left_table_value_strong_styles,
+                    value_mid_row_styles=left_table_value_mid_styles,
+                    value_texture_styles=left_table_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -3854,9 +3884,9 @@ class PaintDryDisplay:
                     "BAD CALLS",
                     "0.0/0.0",
                     label_style=f"bold #bc9589 on {tally_label_bg}",
-                    value_row_styles=tally_value_strong_styles,
-                    value_mid_row_styles=tally_value_mid_styles,
-                    value_texture_styles=tally_value_texture_styles,
+                    value_row_styles=bad_calls_value_strong_styles,
+                    value_mid_row_styles=bad_calls_value_mid_styles,
+                    value_texture_styles=bad_calls_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,

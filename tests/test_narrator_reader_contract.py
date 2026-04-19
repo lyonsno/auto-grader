@@ -2284,16 +2284,30 @@ class NarratorReaderContract(unittest.TestCase):
         # relative layout of the three grading plates, so it anchors
         # on wherever ON TARGET lands and walks from there.
         on_target_start = tally_text_obj.plain.index("ON TARGET")
+        left_start = tally_text_obj.plain.index("LEFT ON TABLE")
+        bad_start = tally_text_obj.plain.index("BAD CALLS")
         self.assertEqual(
-            tally_text_obj.plain.index("LEFT ON TABLE"),
+            left_start,
             on_target_start + cell_width + separator_width,
             "LEFT ON TABLE label should start at the left edge of its score cell",
         )
         self.assertEqual(
-            tally_text_obj.plain.index("BAD CALLS"),
+            bad_start,
             on_target_start + (2 * cell_width) + (2 * separator_width),
             "BAD CALLS label should start at the left edge of its score cell",
         )
+        def _first_strong_style_in_cell(row: Text, start: int) -> str:
+            end = start + cell_width
+            for span in row.spans:
+                if not isinstance(span.style, str):
+                    continue
+                if span.start < start or span.end > end:
+                    continue
+                if span.style.startswith("bold #"):
+                    return span.style
+            raise AssertionError(
+                f"no strong scorebug span found in cell range {start}:{end}"
+            )
         on_target_styles = self._styles_in_range(
             tally_value_top,
             on_target_start,
@@ -2361,6 +2375,14 @@ class NarratorReaderContract(unittest.TestCase):
         on_target_mid_style = self._style_for_normalized_scorebug_substring(
             tally_value_mid,
             expected_on_target[1].strip(),
+        )
+        left_mid_style = self._style_for_normalized_scorebug_substring(
+            tally_value_mid,
+            expected_left[1].strip(),
+        )
+        bad_mid_style = self._style_for_normalized_scorebug_substring(
+            tally_value_mid,
+            expected_bad[1].strip(),
         )
         on_target_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
@@ -2431,6 +2453,36 @@ class NarratorReaderContract(unittest.TestCase):
             bad_top_style,
             bad_bottom_style,
             "bad-calls board should also drift tonally instead of reading as a flat tech slab",
+        )
+        top_board_styles = {
+            _first_strong_style_in_cell(tally_value_top, on_target_start),
+            _first_strong_style_in_cell(tally_value_top, left_start),
+            _first_strong_style_in_cell(tally_value_top, bad_start),
+        }
+        mid_board_styles = {
+            _first_strong_style_in_cell(tally_value_mid, on_target_start),
+            _first_strong_style_in_cell(tally_value_mid, left_start),
+            _first_strong_style_in_cell(tally_value_mid, bad_start),
+        }
+        bottom_board_styles = {
+            _first_strong_style_in_cell(tally_value_bottom, on_target_start),
+            _first_strong_style_in_cell(tally_value_bottom, left_start),
+            _first_strong_style_in_cell(tally_value_bottom, bad_start),
+        }
+        self.assertEqual(
+            len(top_board_styles),
+            3,
+            "ON TARGET, LEFT ON TABLE, and BAD CALLS should each keep a distinct top-row board family so the middle table plate still reads as its own bronze surface",
+        )
+        self.assertEqual(
+            len(mid_board_styles),
+            3,
+            "the middle row should also keep distinct board families — otherwise the LEFT ON TABLE plate disappears into the same pale ink as its neighbors",
+        )
+        self.assertEqual(
+            len(bottom_board_styles),
+            3,
+            "the bottom row should keep distinct board families too, not just row-to-row drift inside one shared palette",
         )
         self.assertTrue(
             all(
