@@ -30,6 +30,7 @@ import json
 import math
 import os
 import re
+import random
 import select
 import sys
 import termios
@@ -472,6 +473,43 @@ _HISTORY_CONTINUATION_ROW_MIN = 0.78   # keep deeper wrapped rows visible, but
                                        # clearly subordinate to the first row
 
 
+def _live_frame_requires_full_clear(
+    last_paint_size: tuple[int, int] | None,
+    current_size: tuple[int, int],
+) -> bool:
+    """Return whether the next live paint needs a global alt-screen clear.
+
+    The expensive full-screen clear is only necessary when there is no
+    previous frame yet or when terminal geometry changed. Stable same-size
+    repaints can cursor-home and let Rich redraw in place, which keeps the
+    lively surface moving without hauling the whole alternate screen through
+    ESC[2J on every tick.
+    """
+    return last_paint_size is None or current_size != last_paint_size
+
+
+def suppress_live_erase(live: "Live") -> None:
+    """Neuter Rich Live's per-row CSI 2K erase so Kitty pixels survive.
+
+    Rich's ``LiveRender.position_cursor()`` emits ``CSI 2K`` (erase
+    entire line) on every row of the previous frame before each refresh.
+    That destroys Kitty image compositor pixels between frames, causing
+    a visible strobe at 24 fps.
+
+    The animation loop already manages alt-screen entry and cursor-home /
+    full-clear positioning itself (``\\033[H`` or ``\\033[2J\\033[H``
+    before each ``live.update``). Rich's erase is therefore redundant
+    *and* destructive. This function replaces ``position_cursor`` with
+    a no-op so the only per-frame positioning comes from our animation
+    loop.
+    """
+    from rich.control import Control
+
+    render = getattr(live, "_live_render", None)
+    if render is not None:
+        render.position_cursor = lambda: Control()  # type: ignore[attr-defined]
+
+
 def _interp_rgb(
     base: tuple[int, int, int],
     peak: tuple[int, int, int],
@@ -895,6 +933,42 @@ _KITTY_IMAGE_ID = 1
 #: spec: "chunk size of 4096 for the base64-encoded data".
 _KITTY_CHUNK_SIZE = 4096
 
+#: Extra rows above and below the image inside the band. These rows
+#: run full terminal width with texture but no image content. Two
+#: means one row above the image and one row below.
+_BAND_EXTRA_ROWS = 2
+
+#: Number of solid-block columns hugging the image edge.
+#: Column 0 = █ (bright, matches the extra rows above/below),
+#: column 1 = █ (same glyph, color has started fading slightly),
+#: column 2 = ▓, then braille starts. Three columns gives the
+#: sides enough visual weight to read as a continuous frame with
+#: the top/bottom extra rows.
+_SOLID_COLUMNS = 3
+
+#: Faint floor for both braille density and color intensity at the
+#: terminal edges. 0.12 means the outermost cells carry ~12% of
+#: peak density/color — faintly visible rather than invisible.
+_TEXTURE_EDGE_FLOOR = 0.12
+
+#: Texture accent color near the image edge — warm bone from the
+#: narrator's moss/bone palette, replacing the earlier sepia tone.
+_TEXTURE_ACCENT_RGB = (220, 205, 180)
+
+#: Terminal background color the texture fades toward. Matches the
+#: panel background in focus_preview.py and the dark narrator UI.
+_TEXTURE_BG_RGB = (8, 10, 14)
+
+
+#: Braille base codepoint — U+2800 is the empty braille pattern.
+#: Add a bitmask in [0, 255] to get a braille char with that dot
+#: combination lit. The bitmask follows the Unicode braille ordering:
+#:   bit 0 = dot 1 (top-left), bit 1 = dot 2 (middle-left),
+#:   bit 2 = dot 3 (bottom-left of main 3), bit 3 = dot 4 (top-right),
+#:   bit 4 = dot 5 (middle-right), bit 5 = dot 6 (bottom-right),
+#:   bit 6 = dot 7 (bottom-left extra), bit 7 = dot 8 (bottom-right extra).
+_BRAILLE_BASE = 0x2800
+
 
 def _build_kitty_transmit_chunks(
     png_bytes: bytes,
@@ -978,6 +1052,83 @@ def _build_kitty_place_sequence(
     """
     return (
         f"\x1b_Ga=p,i={image_id},c={cell_width},r={cell_height},C=1\x1b\\"
+    )
+
+
+#: Braille dot indices for left column (bits 0,1,2,6) and right
+#: column (bits 3,4,5,7). Near the image edge, preferring vertical
+#: stripe patterns creates a directional grain that echoes the
+#: solid-block boundary.
+_BRAILLE_LEFT_COL = (0, 1, 2, 6)
+_BRAILLE_RIGHT_COL = (3, 4, 5, 7)
+
+
+def _texture_cell(
+    *,
+    distance_from_image: int,
+    max_distance: int,
+    seed_key: tuple,
+) -> tuple[str, tuple[int, int, int]]:
+    """Pick a (glyph, rgb) pair for one texture cell."""
+    d = max(0, distance_from_image)
+    span = max(1, max_distance)
+    t = min(1.0, d / span)
+    falloff = (1.0 - t) ** 1.8
+    intensity = _TEXTURE_EDGE_FLOOR + (1.0 - _TEXTURE_EDGE_FLOOR) * falloff
+
+    rgb = _lerp_rgb(_TEXTURE_BG_RGB, _TEXTURE_ACCENT_RGB, intensity)
+
+    if d < _SOLID_COLUMNS:
+        glyph = "▓" if d == _SOLID_COLUMNS - 1 else "█"
+        return glyph, rgb
+
+    density = intensity
+    rand = random.Random(hash(seed_key))
+
+    if density <= _TEXTURE_EDGE_FLOOR + 0.01:
+        if rand.random() < _TEXTURE_EDGE_FLOOR:
+            glyph = chr(_BRAILLE_BASE + (1 << rand.randint(0, 7)))
+            return glyph, rgb
+        return " ", _TEXTURE_BG_RGB
+
+    bias_zone = max(1, int(span * 0.2))
+    braille_d = d - _SOLID_COLUMNS
+    vertical_bias = max(0.0, 1.0 - braille_d / bias_zone)
+
+    n_dots = max(1, min(8, int(round(density * 8))))
+    bits = 0
+
+    if rand.random() < vertical_bias:
+        col = _BRAILLE_LEFT_COL if rand.random() < 0.5 else _BRAILLE_RIGHT_COL
+        other = _BRAILLE_RIGHT_COL if col is _BRAILLE_LEFT_COL else _BRAILLE_LEFT_COL
+        primary = list(col)
+        secondary = list(other)
+        rand.shuffle(primary)
+        rand.shuffle(secondary)
+        pool = primary + secondary
+        for bit_idx in pool[:n_dots]:
+            bits |= 1 << bit_idx
+    else:
+        dot_order = list(range(8))
+        rand.shuffle(dot_order)
+        for bit_idx in dot_order[:n_dots]:
+            bits |= 1 << bit_idx
+
+    glyph = chr(_BRAILLE_BASE + bits)
+    return glyph, rgb
+
+
+def _lerp_rgb(
+    a: tuple[int, int, int],
+    b: tuple[int, int, int],
+    t: float,
+) -> tuple[int, int, int]:
+    """Linear interpolation between two RGB tuples."""
+    t = max(0.0, min(1.0, t))
+    return (
+        int(round(a[0] + (b[0] - a[0]) * t)),
+        int(round(a[1] + (b[1] - a[1]) * t)),
+        int(round(a[2] + (b[2] - a[2]) * t)),
     )
 
 
@@ -2950,6 +3101,39 @@ class PaintDryDisplay:
         now = time.monotonic() if now is None else now
         return now < (self._session_ended_at + _SESSION_END_ANIMATION_LINGER_S)
 
+    def target_animation_fps(self) -> float:
+        if self._has_steady_image_preview():
+            return _PREVIEW_ANIMATION_FPS
+        return _ACTIVE_ANIMATION_FPS
+
+    def _has_steady_image_preview(self) -> bool:
+        return (
+            not self.focus_preview_pending
+            and (
+                self.focus_preview_inline_renderable is not None
+                or self.focus_preview_kitty_renderable is not None
+            )
+        )
+
+    def should_refresh_on_event(self, msg_type: str) -> bool:
+        if not self._has_steady_image_preview():
+            return _message_requires_immediate_refresh(msg_type)
+        return msg_type in {
+            "session_meta",
+            "header",
+            "focus_preview",
+            "commit",
+            "rollback_live",
+            "topic",
+            "basis",
+            "review_marker",
+            "checkpoint",
+            "drop",
+            "wrap_up_pending",
+            "wrap_up",
+            "end",
+        }
+
     @staticmethod
     def _entry_visual_rows(entry: tuple, wrap_width: int | None) -> int:
         """Estimate how many visual rows an entry will consume when wrapped."""
@@ -3368,28 +3552,28 @@ class PaintDryDisplay:
         if self.current_model or self.current_item_bug or self.current_set_label:
             meta_bg = "#383530"
             meta_separator_style = "bold #585149 on #383530"
-            tally_label_bg = "#36342f"
-            tally_label_separator_style = "bold #575149 on #36342f"
-            tally_top_separator_style = "bold #545048 on #35332f"
-            tally_mid_separator_style = "bold #514c45 on #33312d"
-            tally_bottom_separator_style = "bold #4c4741 on #302e2b"
-            tally_top_bg = "#34322f"
-            tally_mid_bg = "#322f2d"
-            tally_bottom_bg = "#302d2b"
+            tally_label_bg = "#3b382e"
+            tally_label_separator_style = "bold #877d62"
+            tally_top_separator_style = "bold #7f765d"
+            tally_mid_separator_style = "bold #766d56"
+            tally_bottom_separator_style = "bold #6e654f"
+            tally_top_bg = "#363328"
+            tally_mid_bg = "#322f25"
+            tally_bottom_bg = "#2f2b22"
             tally_value_strong_styles = (
-                f"bold #f0ece5 on {tally_top_bg}",
-                f"bold #e7e1d8 on {tally_mid_bg}",
-                f"bold #ddd7cd on {tally_bottom_bg}",
+                f"bold #f3ebd8 on {tally_top_bg}",
+                f"bold #e9dfca on {tally_mid_bg}",
+                f"bold #dfd4be on {tally_bottom_bg}",
             )
             tally_value_mid_styles = (
-                f"bold #bdb4a8 on {tally_top_bg}",
-                f"bold #b2a898 on {tally_mid_bg}",
-                f"bold #a69c8d on {tally_bottom_bg}",
+                f"bold #c1b79d on {tally_top_bg}",
+                f"bold #b6ab91 on {tally_mid_bg}",
+                f"bold #ab9f85 on {tally_bottom_bg}",
             )
             tally_value_texture_styles = (
-                f"#5b5750 on {tally_top_bg}",
-                f"#57524c on {tally_mid_bg}",
-                f"#534e48 on {tally_bottom_bg}",
+                f"#7e7b5f on {tally_top_bg}",
+                f"#77735a on {tally_mid_bg}",
+                f"#706c54 on {tally_bottom_bg}",
             )
             scorebug_top = Text()
             self._append_scorebug_cell(
@@ -3432,37 +3616,37 @@ class PaintDryDisplay:
             # LEFT ON TABLE's yellow-bronze and BAD CALLS' red-brown,
             # and carries the "currently on the clock" weight that
             # matches the ember ITEM tag above.
-            _total_label_style = "bold #e8ecf5 on #3a4256"
+            _total_label_style = f"bold #c0d4d8 on {tally_label_bg}"
             _total_value_row_styles = (
-                "bold #dde2f0 on #272c39",
-                "bold #d3d8e6 on #1f2430",
-                "bold #c9cedb on #181c27",
+                "bold #d7dad2 on #3a382f",
+                "bold #cecfc8 on #343229",
+                "bold #c5c4bd on #2d2b24",
             )
             _total_value_mid_row_styles = (
-                "bold #8e94a3 on #272c39",
-                "bold #868ca0 on #1f2430",
-                "bold #7d8398 on #181c27",
+                "bold #a3a59d on #3a382f",
+                "bold #9c9d96 on #343229",
+                "bold #94948e on #2d2b24",
             )
             _total_value_texture_styles = (
-                "#4a515f on #272c39",
-                "#434957 on #1f2430",
-                "#3d434f on #181c27",
+                "#5f5d54 on #3a382f",
+                "#59574f on #343229",
+                "#535149 on #2d2b24",
             )
-            _turn_label_style = "bold #ffecd0 on #6b4a22"
+            _turn_label_style = f"bold #dfb57d on {tally_label_bg}"
             _turn_value_row_styles = (
-                "bold #ffe2b8 on #4d361a",
-                "bold #f8d6a8 on #3f2b14",
-                "bold #eac598 on #33220f",
+                "bold #e8d5b4 on #473628",
+                "bold #dcc8a8 on #3f301f",
+                "bold #cfba9a on #36291a",
             )
             _turn_value_mid_row_styles = (
-                "bold #a78768 on #4d361a",
-                "bold #9e7e5f on #3f2b14",
-                "bold #8f7152 on #33220f",
+                "bold #b1936a on #473628",
+                "bold #a38560 on #3f301f",
+                "bold #947756 on #36291a",
             )
             _turn_value_texture_styles = (
-                "#5a4630 on #4d361a",
-                "#523f2b on #3f2b14",
-                "#493827 on #33220f",
+                "#74573b on #473628",
+                "#684e35 on #3f301f",
+                "#5c452f on #36291a",
             )
             _total_value_str = f"{total_elapsed_s}"
             _turn_value_str = (

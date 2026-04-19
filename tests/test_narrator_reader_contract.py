@@ -4,6 +4,7 @@ import math
 import time
 import unittest
 from io import StringIO
+from pathlib import Path
 from unittest import mock
 
 import fitz
