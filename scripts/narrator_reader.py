@@ -1422,7 +1422,7 @@ def _build_composite_band_png(
     in the composite — the terminal scales the placed image to fit
     the cell footprint regardless of source resolution.
     """
-    crop_png_bytes = _trim_near_black_crop_margins(crop_png_bytes)
+    crop_png_bytes = _trim_edge_crop_matte(crop_png_bytes)
 
     image_left = max(0, (term_width - image_cell_width) // 2)
     image_right = image_left + image_cell_width
@@ -1649,6 +1649,110 @@ def _trim_near_black_crop_margins(
     return trimmed_pix.tobytes("png")
 
 
+def _trim_uniform_edge_margins(
+    crop_png_bytes: bytes,
+    *,
+    color_tolerance: int = 18,
+    coverage: float = 0.985,
+) -> bytes:
+    """Trim contiguous edge rows / columns matching the corner matte color.
+
+    After black bars are removed, many exam crops still carry a uniform paper-
+    colored scan border. Trim only the edge matte that matches the corner
+    sample closely enough; interior paper remains untouched once text or
+    drawings start breaking the edge rows/columns.
+    """
+    pix = fitz.Pixmap(crop_png_bytes)
+    width = pix.width
+    height = pix.height
+    channels = pix.n
+    samples = pix.samples
+
+    def _rgba(x: int, y: int) -> tuple[int, int, int, int]:
+        off = (y * width + x) * channels
+        r = samples[off]
+        g = samples[off + 1]
+        b = samples[off + 2]
+        a = samples[off + 3] if channels >= 4 else 255
+        return (r, g, b, a)
+
+    def _close(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+        return (
+            abs(a[0] - b[0]) <= color_tolerance
+            and abs(a[1] - b[1]) <= color_tolerance
+            and abs(a[2] - b[2]) <= color_tolerance
+            and abs(a[3] - b[3]) <= color_tolerance
+        )
+
+    top_left = _rgba(0, 0)
+    top_right = _rgba(width - 1, 0)
+    bottom_left = _rgba(0, height - 1)
+    bottom_right = _rgba(width - 1, height - 1)
+    center = _rgba(width // 2, height // 2)
+
+    # If the body of the crop already matches the corner sample, there
+    # is no distinct paper-colored frame to remove. This guards against
+    # collapsing a uniform crop down to a 1x1 swatch.
+    if (
+        _close(top_left, center)
+        and _close(top_right, center)
+        and _close(bottom_left, center)
+        and _close(bottom_right, center)
+    ):
+        return crop_png_bytes
+
+    def _row_matches(y: int, sample: tuple[int, int, int, int]) -> bool:
+        hits = sum(1 for x in range(width) if _close(_rgba(x, y), sample))
+        return hits / max(1, width) >= coverage
+
+    def _col_matches(x: int, sample: tuple[int, int, int, int]) -> bool:
+        hits = sum(1 for y in range(height) if _close(_rgba(x, y), sample))
+        return hits / max(1, height) >= coverage
+
+    top = 0
+    while top < height - 1 and _row_matches(top, top_left):
+        top += 1
+
+    bottom = height - 1
+    while bottom > top and _row_matches(bottom, bottom_left):
+        bottom -= 1
+
+    left = 0
+    while left < width - 1 and _col_matches(left, top_left):
+        left += 1
+
+    right = width - 1
+    while right > left and _col_matches(right, top_right):
+        right -= 1
+
+    if top == 0 and left == 0 and right == width - 1 and bottom == height - 1:
+        return crop_png_bytes
+
+    new_w = right - left + 1
+    new_h = bottom - top + 1
+    trimmed = bytearray(new_w * new_h * channels)
+    for row in range(new_h):
+        src_start = ((top + row) * width + left) * channels
+        src_end = src_start + new_w * channels
+        dst_start = row * new_w * channels
+        trimmed[dst_start : dst_start + new_w * channels] = samples[src_start:src_end]
+
+    trimmed_pix = fitz.Pixmap(
+        fitz.csRGB,
+        new_w,
+        new_h,
+        bytes(trimmed),
+        channels >= 4,
+    )
+    return trimmed_pix.tobytes("png")
+
+
+def _trim_edge_crop_matte(crop_png_bytes: bytes) -> bytes:
+    """Remove both dark scan matte and uniform paper-colored edge bands."""
+    trimmed = _trim_near_black_crop_margins(crop_png_bytes)
+    return _trim_uniform_edge_margins(trimmed)
+
+
 def _paint_border_row(
     pix: "fitz.Pixmap",
     cell_row: int,
@@ -1713,7 +1817,7 @@ def _paint_border_row(
         )
         fontsize = max(10, cell_px_h * 1.05)
         txt_page.insert_text(
-            fitz.Point(0, cell_px_h * 0.86),
+            fitz.Point(0, cell_px_h * 0.82),
             border_text,
             fontsize=fontsize,
             color=text_rgb_f,

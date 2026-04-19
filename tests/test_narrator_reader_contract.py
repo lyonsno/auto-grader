@@ -27,6 +27,7 @@ from scripts.narrator_reader import (
     _KITTY_IMAGE_ID,
     _TEXTURE_BG_RGB,
     _trim_near_black_crop_margins,
+    _trim_uniform_edge_margins,
     _render_focus_preview_pixels,
     _scaled_preview_size,
     _supports_inline_images,
@@ -1672,6 +1673,25 @@ class NarratorReaderContract(unittest.TestCase):
             (10, 6),
             "focus-preview crop trimming should drop contiguous near-black "
             "edge matte before we scale it into the composite band",
+        )
+
+    def test_trim_uniform_edge_margins_removes_paper_colored_scan_frame(self):
+        bordered = self._make_bordered_png(
+            width=16,
+            height=12,
+            border=2,
+            inner_rgb=(180, 150, 120),
+            border_rgb=(231, 221, 199),
+        )
+        trimmed = _trim_uniform_edge_margins(bordered)
+        pix = fitz.Pixmap(trimmed)
+
+        self.assertEqual(
+            (pix.width, pix.height),
+            (12, 8),
+            "focus-preview crop trimming should also drop uniform paper-"
+            "colored scan borders instead of keeping a cream frame "
+            "inside the composite band",
         )
 
     def test_focus_preview_kitty_composite_keeps_border_row_background_opaque(self):
