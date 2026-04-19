@@ -177,8 +177,9 @@ _BASE_RGB = {
     "line": (135, 160, 145),     # muted celadon — sage moss row,
                                   # desaturated cousin of topic_match
                                   # so the verdict variant still pops
-    "line_alt": (175, 160, 130), # muted ochre — dust earth row,
-                                  # desaturated cousin of topic_undershoot
+    "line_alt": (198, 186, 168), # warm bone — the alternating row should
+                                  # read clearly against the moss row,
+                                  # not collapse into muddy ochre
     "topic": (220, 205, 180),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
@@ -210,11 +211,11 @@ _BASE_RGB = {
                                           # compressed descendants of the
                                           # live history rows, not a separate
                                           # steel annotation layer
-    "checkpoint_alt": (178, 162, 132),    # anchored bone-earth checkpoint —
-                                          # alternating companion to the
-                                          # moss checkpoint tone so durable
-                                          # history keeps the familiar
-                                          # moss/bone cadence
+    "checkpoint_alt": (202, 190, 170),    # anchored warm bone checkpoint —
+                                          # brighter alternating companion
+                                          # so the stack keeps the visible
+                                          # moss/bone cadence the operator
+                                          # expects under the header
     "checkpoint_mark": (162, 114, 82),    # embered rust notch — structural
                                           # mark for checkpoint rows so the
                                           # checkpoint doesn't begin with a
@@ -278,14 +279,15 @@ _SHIMMER_KIND_PEAK_RGB = {
                                        # after a storm wash painting
     "line": (175, 215, 180),      # glazed celadon — sage moss row
                                    # brightens toward kiln-glaze green
-    "line_alt": (225, 200, 150),  # fired ochre — dust earth row
-                                   # brightens toward kiln-fired earth
+    "line_alt": (232, 220, 198),  # lit bone crest — the warm alternating
+                                   # row should brighten within the bone
+                                   # family instead of flashing ochre
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
     "checkpoint": (176, 204, 180),      # brighter celadon crest —
                                         # still in the history family, just
                                         # a touch more settled than live rows
-    "checkpoint_alt": (222, 198, 150),  # brighter bone-earth crest for the
+    "checkpoint_alt": (236, 222, 198),  # brighter bone crest for the
                                         # alternating checkpoint lane
     "checkpoint_mark": (226, 166, 114), # brighter ember crest for the
                                         # checkpoint mark, tied to the
@@ -704,12 +706,12 @@ def _history_tier_dim_factor(layer_index: int) -> float:
 def _render_layer_index(kind: str, group_depth: int) -> int:
     """Return the effective fade layer for a history entry.
 
-    Only narrator thought lines should sink within an item block.
-    Structural lines such as headers and resolution/topic lines stay
-    at full strength so the eye can keep finding the question/result
-    anchors quickly.
+    Headers stay full-strength so the eye can keep finding the item
+    anchor quickly. Everything below the header participates in the
+    local depth fade; otherwise the structured rows beneath a header
+    flatten into one loud block instead of settling as they descend.
     """
-    return group_depth if kind == "line" else 0
+    return 0 if kind == "header" else group_depth
 
 
 def _message_requires_immediate_refresh(msg_type: str) -> bool:
@@ -1556,13 +1558,13 @@ def _build_composite_band_png(
     crop_target_w = image_cell_width * cell_px_w
     crop_target_h = image_cell_height * cell_px_h
 
-    # Scale the crop to fit, centered in the image region.
+    # Scale the crop to COVER the image region, centered and clipped.
+    # The earlier contain behavior left a subtle internal top/bottom
+    # matte on wide crops that kept reading as letterboxing in smoke.
     src_w, src_h = crop_pix.width, crop_pix.height
-    scale = min(crop_target_w / max(1, src_w), crop_target_h / max(1, src_h))
+    scale = max(crop_target_w / max(1, src_w), crop_target_h / max(1, src_h))
     scaled_w = max(1, int(src_w * scale))
     scaled_h = max(1, int(src_h * scale))
-    paste_x = crop_x0 + (crop_target_w - scaled_w) // 2
-    paste_y = crop_y0 + (crop_target_h - scaled_h) // 2
 
     # Use a PDF page to composite: background (texture) + foreground (crop).
     final_doc = fitz.open()
@@ -1570,10 +1572,25 @@ def _build_composite_band_png(
     # Insert the texture background as the base layer.
     bg_png = comp.tobytes("png")
     final_page.insert_image(fitz.Rect(0, 0, px_w, px_h), stream=bg_png)
-    # Insert the exam crop on top at the computed position.
-    final_page.insert_image(
-        fitz.Rect(paste_x, paste_y, paste_x + scaled_w, paste_y + scaled_h),
+
+    # Cover-fill the preview box on a temporary page whose bounds are the
+    # target image region itself. Any overflow from the scaled crop gets
+    # clipped at the page edge, which is exactly the "crop to fill" we want.
+    cover_doc = fitz.open()
+    cover_page = cover_doc.new_page(width=crop_target_w, height=crop_target_h)
+    cover_x0 = (crop_target_w - scaled_w) / 2.0
+    cover_y0 = (crop_target_h - scaled_h) / 2.0
+    cover_page.insert_image(
+        fitz.Rect(cover_x0, cover_y0, cover_x0 + scaled_w, cover_y0 + scaled_h),
         stream=crop_png_bytes,
+    )
+    cover_png = cover_page.get_pixmap(alpha=True).tobytes("png")
+    cover_doc.close()
+
+    # Insert the clipped exam crop on top at the computed position.
+    final_page.insert_image(
+        fitz.Rect(crop_x0, crop_y0, crop_x0 + crop_target_w, crop_y0 + crop_target_h),
+        stream=cover_png,
     )
     # Render the composited page to PNG.
     final_pix = final_page.get_pixmap(alpha=True)

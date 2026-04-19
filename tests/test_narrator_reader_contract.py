@@ -1577,15 +1577,12 @@ class NarratorReaderContract(unittest.TestCase):
             f"{[s.text[:20] for s in styled_text_segments[:5]]}",
         )
 
-    def test_focus_preview_kitty_composite_keeps_letterbox_area_transparent(self):
-        # When the crop aspect ratio doesn't fill the target image box,
-        # the unused area inside that box should stay transparent so the
-        # terminal background shows through. Baking the old dark matte
-        # into the composite makes the letterbox bars visibly miss the
-        # real terminal background.
-        tall_png = self._make_png(width=100, height=400)
+    def test_focus_preview_kitty_composite_cover_fills_wide_crops(self):
+        # Wide crops should now cover-fill the image box instead of
+        # leaving subtle top/bottom matte inside it.
+        wide_png = self._make_png(width=400, height=100)
         comp_png = _build_composite_band_png(
-            tall_png,
+            wide_png,
             term_width=80,
             image_cell_width=30,
             image_cell_height=12,
@@ -1596,35 +1593,29 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertTrue(
             comp.alpha,
-            "composite band PNG should preserve alpha so unused image-box "
-            "space can stay transparent instead of hard-coding a dark matte",
+            "composite band PNG should preserve alpha even after the focus "
+            "preview switches to cover-fill behavior",
         )
 
-        # Coordinates inside the target image box but outside the pasted
-        # scaled crop: left letterbox bar at the vertical midpoint.
         image_left = (80 - 30) // 2
         crop_x0 = image_left * 8
         crop_y0 = 2 * 16
         crop_target_w = 30 * 8
-        crop_target_h = 12 * 16
-        scale = min(crop_target_w / 100.0, crop_target_h / 400.0)
-        scaled_w = int(100 * scale)
-        paste_x = crop_x0 + (crop_target_w - scaled_w) // 2
-        probe_x = crop_x0 + 8
-        probe_y = crop_y0 + crop_target_h // 2
-
-        self.assertLess(
-            probe_x,
-            paste_x,
-            "test probe must land in the left letterbox bar, not inside the crop",
-        )
+        probe_x = crop_x0 + crop_target_w // 2
+        probe_y = crop_y0 + 8
         off = (probe_y * comp.width + probe_x) * comp.n
         rgba = tuple(comp.samples[off : off + comp.n])
         self.assertEqual(
-            rgba,
-            (0, 0, 0, 0),
-            "unused space inside the image box should be transparent so the "
-            "terminal background shows through cleanly",
+            rgba[3],
+            255,
+            "wide crops should reach the top of the image box instead of "
+            "leaving a top letterbox band behind",
+        )
+        self.assertNotEqual(
+            rgba[:3],
+            _TEXTURE_BG_RGB,
+            "top-center pixels inside the image box should come from the "
+            "crop once the internal letterbox matte is removed",
         )
 
     def test_focus_preview_kitty_composite_keeps_extra_rows_dark_not_gold(self):
@@ -1688,6 +1679,50 @@ class NarratorReaderContract(unittest.TestCase):
             255,
             "matching-aspect crops should reach the image-box edge rather "
             "than leaving behind an extra transparent inner frame",
+        )
+
+    def test_history_structured_rows_participate_in_depth_dimming(self):
+        self.assertEqual(
+            _render_layer_index("basis", 3),
+            3,
+            "basis rows should dim as they sink below the item header "
+            "instead of staying pinned at full-strength header intensity",
+        )
+        self.assertEqual(
+            _render_layer_index("checkpoint", 4),
+            4,
+            "checkpoint rows should follow the same depth fade below the "
+            "header instead of reading as a flat full-strength stack",
+        )
+        self.assertEqual(
+            _render_layer_index("topic", 2),
+            2,
+            "topic rows should still participate in the local depth fade "
+            "so the whole post-header block settles as it descends",
+        )
+
+    def test_history_alt_rows_keep_a_bright_bone_family(self):
+        alt_text = Text()
+        _apply_shimmer(alt_text, "A", "line_alt", 0, phase_override=0.0)
+        alt_rgb = self._rgb_from_hex(alt_text.spans[0].style)
+
+        self.assertGreaterEqual(
+            sum(alt_rgb),
+            470,
+            "the alternating warm history row should stay bright enough to "
+            "read as bone rather than collapsing into muddy brown-on-black",
+        )
+        self.assertGreaterEqual(
+            alt_rgb[0],
+            alt_rgb[1],
+            "the alternating warm row should still lead with a warm bone/red "
+            "channel instead of drifting back toward green-gray",
+        )
+        self.assertGreater(
+            alt_rgb[1],
+            alt_rgb[2],
+            "the alternating warm row should remain in a bone family with "
+            "blue clearly trailing the red/green channels",
         )
 
     def test_trim_near_black_crop_margins_removes_dark_scan_frame(self):
@@ -3603,13 +3638,16 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(_history_tier_dim_factor(8), _history_tier_dim_factor(7))
         self.assertEqual(_history_tier_dim_factor(9), _history_tier_dim_factor(10))
 
-    def test_only_reasoning_lines_use_group_depth_for_fade(self):
+    def test_all_post_header_rows_use_group_depth_for_fade(self):
         self.assertEqual(_render_layer_index("line", 2), 2)
         self.assertEqual(
             _render_layer_index("topic", 2),
-            0,
-            "resolution/topic lines should stay full-strength instead of fading with the thought stack",
+            2,
+            "topic rows should participate in the local depth fade so the "
+            "whole block below a header settles as it descends",
         )
+        self.assertEqual(_render_layer_index("basis", 3), 3)
+        self.assertEqual(_render_layer_index("checkpoint", 4), 4)
         self.assertEqual(_render_layer_index("header", 3), 0)
 
     def test_history_groups_get_subtle_setback_with_alternating_secondary_field(self):
