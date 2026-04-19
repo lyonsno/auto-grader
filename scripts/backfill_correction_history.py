@@ -24,6 +24,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,10 @@ import yaml
 
 
 logger = logging.getLogger("backfill_correction_history")
+
+
+class GroundTruthLoadError(ValueError):
+    """Raised when the supplied ground-truth YAML cannot be loaded safely."""
 
 
 @dataclass
@@ -51,7 +56,27 @@ def load_corrections(
 ) -> dict[tuple[str, str], dict[str, float | str]]:
     """Load only the items with human-verified corrected truth."""
 
-    raw = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
+    yaml_path = Path(yaml_path)
+    if not yaml_path.exists():
+        raise GroundTruthLoadError(
+            f"ground truth file does not exist: {yaml_path}"
+        )
+    try:
+        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise GroundTruthLoadError(
+            f"ground truth YAML is malformed: {yaml_path}"
+        ) from exc
+    except OSError as exc:
+        raise GroundTruthLoadError(
+            f"ground truth file could not be read: {yaml_path} ({exc})"
+        ) from exc
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise GroundTruthLoadError(
+            f"ground truth root must be a mapping: {yaml_path}"
+        )
     corrections: dict[tuple[str, str], dict[str, float | str]] = {}
     for exam in raw.get("exams", []):
         exam_id = str(exam["exam_id"])
@@ -87,6 +112,53 @@ def rewrite_prediction_row(
     return rewritten
 
 
+def _process_line(
+    lineno: int,
+    raw: str,
+    *,
+    corrections: dict[tuple[str, str], dict[str, float | str]],
+    report: BackfillReport,
+) -> tuple[str, bool]:
+    stripped = raw.rstrip("\n")
+    if not stripped.strip():
+        report.preserved += 1
+        return stripped, False
+
+    try:
+        row = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        report.skipped += 1
+        report.skip_reasons.append(f"line {lineno}: malformed JSON ({exc.msg})")
+        return stripped, False
+
+    if not isinstance(row, dict):
+        report.skipped += 1
+        report.skip_reasons.append(
+            f"line {lineno}: top-level JSON value is not an object"
+        )
+        return stripped, False
+
+    row_type = row.get("type")
+    if row_type == "footer":
+        report.preserved += 1
+        return stripped, True
+    if row_type == "header":
+        report.preserved += 1
+        return stripped, False
+    if row_type != "prediction":
+        report.skipped += 1
+        report.skip_reasons.append(f"line {lineno}: unknown row type {row_type!r}")
+        return stripped, False
+
+    rewritten = rewrite_prediction_row(row, corrections)
+    if rewritten != row:
+        report.rewritten += 1
+        return json.dumps(rewritten), False
+
+    report.preserved += 1
+    return stripped, False
+
+
 def _classify_and_process(
     rows: list[tuple[int, str]],
     *,
@@ -97,56 +169,14 @@ def _classify_and_process(
     saw_footer = False
 
     for lineno, raw in rows:
-        stripped = raw.rstrip("\n")
-        if not stripped.strip():
-            out_lines.append(stripped)
-            report.preserved += 1
-            continue
-
-        try:
-            row = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            report.skipped += 1
-            report.skip_reasons.append(
-                f"line {lineno}: malformed JSON ({exc.msg})"
-            )
-            out_lines.append(stripped)
-            continue
-
-        if not isinstance(row, dict):
-            report.skipped += 1
-            report.skip_reasons.append(
-                f"line {lineno}: top-level JSON value is not an object"
-            )
-            out_lines.append(stripped)
-            continue
-
-        row_type = row.get("type")
-        if row_type == "footer":
-            saw_footer = True
-            out_lines.append(stripped)
-            report.preserved += 1
-            continue
-        if row_type == "header":
-            out_lines.append(stripped)
-            report.preserved += 1
-            continue
-        if row_type != "prediction":
-            report.skipped += 1
-            report.skip_reasons.append(
-                f"line {lineno}: unknown row type {row_type!r}"
-            )
-            out_lines.append(stripped)
-            continue
-
-        rewritten = rewrite_prediction_row(row, corrections)
-        if rewritten != row:
-            out_lines.append(json.dumps(rewritten))
-            report.rewritten += 1
-            continue
-
-        out_lines.append(stripped)
-        report.preserved += 1
+        rendered, line_has_footer = _process_line(
+            lineno,
+            raw,
+            corrections=corrections,
+            report=report,
+        )
+        saw_footer = saw_footer or line_has_footer
+        out_lines.append(rendered)
 
     return out_lines, report, saw_footer
 
@@ -160,13 +190,39 @@ def backfill_file(
     """Backfill a single ``predictions.jsonl`` file."""
 
     path = Path(path)
-    original_text = path.read_text(encoding="utf-8")
-    lines = original_text.splitlines()
-    out_lines, report, saw_footer = _classify_and_process(
-        list(enumerate(lines, start=1)),
-        corrections=corrections,
-    )
-    report.path = path
+    report = BackfillReport(path=path)
+    saw_footer = False
+    tmp_path = path.with_name(path.name + ".tmp")
+
+    def _consume(writer: Any | None) -> None:
+        nonlocal saw_footer
+        with path.open("r", encoding="utf-8") as src:
+            for lineno, raw in enumerate(src, start=1):
+                rendered, line_has_footer = _process_line(
+                    lineno,
+                    raw,
+                    corrections=corrections,
+                    report=report,
+                )
+                saw_footer = saw_footer or line_has_footer
+                if writer is None:
+                    continue
+                writer.write(rendered)
+                if raw.endswith("\n"):
+                    writer.write("\n")
+
+    try:
+        if commit:
+            with tmp_path.open("w", encoding="utf-8") as tmp:
+                _consume(tmp)
+        else:
+            _consume(None)
+    finally:
+        if (
+            not commit
+            and tmp_path.exists()
+        ):
+            tmp_path.unlink()
 
     if not saw_footer:
         report.skipped += 1
@@ -175,6 +231,8 @@ def backfill_file(
         )
         report.rewritten = 0
         report.committed = False
+        if tmp_path.exists():
+            tmp_path.unlink()
         for reason in report.skip_reasons:
             logger.warning("%s: %s", path, reason)
         return report
@@ -184,19 +242,15 @@ def backfill_file(
 
     if report.rewritten == 0 or not commit:
         report.committed = False
+        if tmp_path.exists():
+            tmp_path.unlink()
         return report
 
     backup = path.with_name(path.name + ".bak")
     if not backup.exists():
-        backup.write_text(original_text, encoding="utf-8")
+        shutil.copyfile(path, backup)
     report.backup_path = backup
 
-    new_text = "\n".join(out_lines)
-    if original_text.endswith("\n"):
-        new_text += "\n"
-
-    tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(new_text, encoding="utf-8")
     os.replace(tmp_path, path)
     report.committed = True
     return report
@@ -312,7 +366,11 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s %(message)s",
     )
 
-    corrections = load_corrections(Path(args.ground_truth).expanduser())
+    try:
+        corrections = load_corrections(Path(args.ground_truth).expanduser())
+    except GroundTruthLoadError as exc:
+        logger.error("could not load ground truth corrections: %s", exc)
+        return 2
     reports = backfill_archive(
         Path(args.root).expanduser(),
         corrections=corrections,

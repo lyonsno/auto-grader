@@ -30,12 +30,15 @@ Contract surface:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import importlib.util
 import json
 import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -361,6 +364,179 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
 
         self.assertEqual(len(reports), 2)
         self.assertEqual(sum(r.rewritten for r in reports), 1)
+
+    def test_commit_streams_archive_instead_of_slurping_with_read_text(self) -> None:
+        path = self.root / "run-stream" / "predictions.jsonl"
+        _write_jsonl(
+            path,
+            [
+                _header_row(),
+                _prediction_row(
+                    exam_id="34-blue",
+                    question_id="fr-8",
+                    professor_score=2.0,
+                ),
+                _footer_row(),
+            ],
+        )
+        corrections = self.module.load_corrections(self.truth_path)
+
+        with mock.patch(
+            "pathlib.Path.read_text",
+            side_effect=AssertionError(
+                "backfill_file should stream archive input instead of read_text slurping"
+            ),
+        ):
+            report = self.module.backfill_file(
+                path, corrections=corrections, commit=True
+            )
+
+        self.assertEqual(report.rewritten, 1)
+        self.assertTrue(report.committed)
+        after = _read_jsonl(path)
+        self.assertEqual(after[1]["corrected_score"], 4.0)
+
+    def test_main_returns_nonzero_for_missing_ground_truth_file(self) -> None:
+        missing = self.root / "missing-ground-truth.yaml"
+
+        with self.assertLogs("backfill_correction_history", level="ERROR") as logs:
+            rc = self.module.main(
+                ["--ground-truth", str(missing), str(self.root)]
+            )
+
+        self.assertNotEqual(rc, 0)
+        self.assertIn("ground truth", "\n".join(logs.output).lower())
+        self.assertIn("does not exist", "\n".join(logs.output).lower())
+
+    def test_main_returns_nonzero_for_malformed_ground_truth_file(self) -> None:
+        broken = self.root / "broken-ground-truth.yaml"
+        broken.write_text("exams: [\n", encoding="utf-8")
+
+        with self.assertLogs("backfill_correction_history", level="ERROR") as logs:
+            rc = self.module.main(
+                ["--ground-truth", str(broken), str(self.root)]
+            )
+
+        self.assertNotEqual(rc, 0)
+        self.assertIn("ground truth", "\n".join(logs.output).lower())
+        self.assertIn("malformed", "\n".join(logs.output).lower())
+
+    def test_preserves_malformed_json_lines_and_logs_skip_reason(self) -> None:
+        path = self.root / "run-malformed-json" / "predictions.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    json.dumps(_header_row()),
+                    '{"type":"prediction","exam_id":"34-blue"',
+                    json.dumps(_footer_row()),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        before = path.read_text(encoding="utf-8")
+        corrections = self.module.load_corrections(self.truth_path)
+
+        with self.assertLogs("backfill_correction_history", level="WARNING") as logs:
+            report = self.module.backfill_file(
+                path, corrections=corrections, commit=False
+            )
+
+        self.assertEqual(report.rewritten, 0)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        self.assertIn("malformed json", "\n".join(logs.output).lower())
+
+    def test_preserves_non_object_json_rows_and_logs_skip_reason(self) -> None:
+        path = self.root / "run-non-object" / "predictions.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    json.dumps(_header_row()),
+                    json.dumps(["not", "an", "object"]),
+                    json.dumps(_footer_row()),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        before = path.read_text(encoding="utf-8")
+        corrections = self.module.load_corrections(self.truth_path)
+
+        with self.assertLogs("backfill_correction_history", level="WARNING") as logs:
+            report = self.module.backfill_file(
+                path, corrections=corrections, commit=False
+            )
+
+        self.assertEqual(report.rewritten, 0)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        self.assertIn("not an object", "\n".join(logs.output).lower())
+
+    def test_preserves_unknown_row_types_and_logs_skip_reason(self) -> None:
+        path = self.root / "run-unknown-type" / "predictions.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    json.dumps(_header_row()),
+                    json.dumps({"type": "mystery", "value": 7}),
+                    json.dumps(_footer_row()),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        before = path.read_text(encoding="utf-8")
+        corrections = self.module.load_corrections(self.truth_path)
+
+        with self.assertLogs("backfill_correction_history", level="WARNING") as logs:
+            report = self.module.backfill_file(
+                path, corrections=corrections, commit=False
+            )
+
+        self.assertEqual(report.rewritten, 0)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        self.assertIn("unknown row type", "\n".join(logs.output).lower())
+
+    def test_backfill_archive_returns_empty_for_missing_root(self) -> None:
+        missing_root = self.root / "missing-archive-root"
+        corrections = self.module.load_corrections(self.truth_path)
+
+        with self.assertLogs("backfill_correction_history", level="WARNING") as logs:
+            reports = self.module.backfill_archive(
+                missing_root,
+                corrections=corrections,
+                commit=False,
+            )
+
+        self.assertEqual(reports, [])
+        self.assertIn("archive root does not exist", "\n".join(logs.output))
+
+    def test_main_dry_run_prints_summary_and_returns_zero(self) -> None:
+        _write_jsonl(
+            self.root / "run-main" / "predictions.jsonl",
+            [
+                _header_row(),
+                _prediction_row(
+                    exam_id="34-blue",
+                    question_id="fr-8",
+                    professor_score=2.0,
+                ),
+                _footer_row(),
+            ],
+        )
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            rc = self.module.main(
+                ["--ground-truth", str(self.truth_path), str(self.root)]
+            )
+
+        self.assertEqual(rc, 0)
+        output = stdout.getvalue()
+        self.assertIn("Historical correction backfill", output)
+        self.assertIn("files with updates: 1", output)
 
 
 if __name__ == "__main__":
