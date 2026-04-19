@@ -1627,6 +1627,38 @@ class NarratorReaderContract(unittest.TestCase):
             "terminal background shows through cleanly",
         )
 
+    def test_focus_preview_kitty_composite_keeps_extra_rows_transparent(self):
+        # The preview band leaves one extra row above and below the image
+        # content for breathing room. Those rows still belong to the image
+        # span, so they should stay transparent rather than picking up the
+        # textured/gold field that only belongs in the side rails.
+        comp_png = _build_composite_band_png(
+            self._make_png(width=500, height=400),
+            term_width=80,
+            image_cell_width=30,
+            image_cell_height=12,
+            image_id=1,
+            title="test",
+        )
+        comp = fitz.Pixmap(comp_png)
+
+        image_left = (80 - 30) // 2
+        crop_x0 = image_left * 8
+
+        probe_x = crop_x0 + (30 * 8) // 2
+        top_extra_probe_y = 1 * 16 + 8
+        bottom_extra_probe_y = (12 + 2) * 16 + 8
+
+        for probe_y in (top_extra_probe_y, bottom_extra_probe_y):
+            off = (probe_y * comp.width + probe_x) * comp.n
+            rgba = tuple(comp.samples[off : off + comp.n])
+            self.assertEqual(
+                rgba,
+                (0, 0, 0, 0),
+                "rows inside the preview span should stay transparent between "
+                "the border rules instead of picking up a smooth gold fill",
+            )
+
     def test_focus_preview_kitty_composite_matching_aspect_crop_reaches_image_box(self):
         # Matching-aspect crops should now fill the image box directly.
         # We intentionally removed the all-around inner inset because it

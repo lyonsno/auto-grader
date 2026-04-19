@@ -1472,8 +1472,9 @@ def _build_composite_band_png(
             row_seed_id = cell_row - 1
 
         for col in range(term_width):
-            is_image_row = 2 <= cell_row <= 1 + image_cell_height
-            if is_image_row and image_left <= col < image_right:
+            in_image_span = image_left <= col < image_right
+            is_band_inner_row = 1 <= cell_row <= band_cell_rows - 2
+            if in_image_span and is_band_inner_row:
                 continue
 
             if col < image_left:
