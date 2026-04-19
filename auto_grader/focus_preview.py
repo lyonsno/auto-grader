@@ -59,12 +59,10 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
                     abs(src_rgb[1] - bg_rgb[1]),
                     abs(src_rgb[2] - bg_rgb[2]),
                 )
-                if diff <= 16:
+                if diff < 48:
                     alpha = 0
-                elif diff >= 64:
-                    alpha = 255
                 else:
-                    alpha = int(round((diff - 16) * 255 / (64 - 16)))
+                    alpha = 255
             else:
                 alpha = 255
             out[out_offset + 3] = alpha

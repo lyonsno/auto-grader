@@ -294,6 +294,14 @@ class FocusPreviewContract(unittest.TestCase):
             200,
             "actual ink/content should remain opaque after background knockout",
         )
+        edge_alphas = [
+            _pixel_rgba_at(preview, x, 0)[3]
+            for x in range(0, width, max(1, width // 40))
+        ]
+        self.assertTrue(
+            all(alpha in (0, 255) for alpha in edge_alphas),
+            "paper-field knockout should not leave a semi-transparent halo band",
+        )
 
 
 if __name__ == "__main__":
