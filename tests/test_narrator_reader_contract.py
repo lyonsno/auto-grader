@@ -1616,6 +1616,35 @@ class NarratorReaderContract(unittest.TestCase):
             "the border/title row background must stay opaque dark so "
             "old frame text cannot ghost through the transparent PNG",
         )
+
+    def test_focus_preview_kitty_composite_keeps_texture_space_cells_opaque(self):
+        # The ornate side field should read as a dark textured panel, not as
+        # a transparent stencil. When the composite canvas went RGBA we left
+        # glyph==" " cells untouched, which turned the gaps between the dots
+        # into literal holes where old history text could show through.
+        comp_png = _build_composite_band_png(
+            self._make_png(width=500, height=400),
+            term_width=80,
+            image_cell_width=30,
+            image_cell_height=12,
+            image_id=1,
+            title="test",
+        )
+        comp = fitz.Pixmap(comp_png)
+
+        # Probe an empty background point in the left textured surround,
+        # between border rows and outside the image box.
+        probe_x = 6
+        probe_y = 3 * 16 + 8
+        off = (probe_y * comp.width + probe_x) * comp.n
+        rgba = tuple(comp.samples[off : off + comp.n])
+
+        self.assertEqual(
+            rgba,
+            (*_TEXTURE_BG_RGB, 255),
+            "texture background cells must stay opaque dark; only the "
+            "image-box negative space should be transparent",
+        )
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies

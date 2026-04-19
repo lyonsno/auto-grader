@@ -1490,9 +1490,13 @@ def _build_composite_band_png(
 
             x0 = col * cell_px_w
             y0 = cell_row * cell_px_h
+            cell_rect = fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h)
+            # The textured surround should remain an opaque dark field.
+            # Only the image-box negative space gets to be transparent.
+            comp.set_rect(cell_rect, (*_TEXTURE_BG_RGB, 255))
 
             if glyph == " ":
-                # Empty cell — already dark background.
+                # Empty texture cell — leave the opaque dark background.
                 continue
             elif glyph in ("█", "▓"):
                 # Full or dense block — fill the entire cell.
@@ -1508,7 +1512,7 @@ def _build_composite_band_png(
                     )
                 else:
                     comp.set_rect(
-                        fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
+                        cell_rect,
                         (*rgb, 255),
                     )
             elif ord(glyph) >= _BRAILLE_BASE:
@@ -1529,7 +1533,7 @@ def _build_composite_band_png(
             else:
                 # Fallback: any other glyph — fill the cell.
                 comp.set_rect(
-                    fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h),
+                    cell_rect,
                     (*rgb, 255),
                 )
 
