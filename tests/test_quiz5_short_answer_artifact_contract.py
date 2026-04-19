@@ -78,6 +78,21 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
             ["5.", "6.[CH4]=", "6. [CCl4]=", "6. [CH2Cl2]="],
         )
 
+    def test_identity_qr_codes_keep_the_larger_smoke_safe_size(self) -> None:
+        from auto_grader.quiz5_short_answer_packets import (
+            build_quiz5_short_answer_variant_packet,
+        )
+
+        artifact = build_quiz5_short_answer_variant_packet(
+            self._family(),
+            variant_id="C",
+            opaque_instance_code="QUIZ5-C-DEMO",
+        )
+
+        qr_codes = artifact["pages"][0]["identity_qr_codes"]
+        self.assertEqual([qr["width"] for qr in qr_codes], [30, 30])
+        self.assertEqual([qr["height"] for qr in qr_codes], [30, 30])
+
     def test_pdf_renderer_emits_pdf_bytes_for_short_answer_packet(self) -> None:
         from auto_grader.pdf_rendering import render_quiz5_short_answer_pdf
         from auto_grader.quiz5_short_answer_packets import (
