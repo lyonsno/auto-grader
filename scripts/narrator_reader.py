@@ -32,6 +32,7 @@ import os
 import re
 import random
 import select
+import signal
 import sys
 import termios
 import threading

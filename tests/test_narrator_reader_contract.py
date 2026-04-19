@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import signal as stdlib_signal
 import time
 import unittest
 from io import StringIO
@@ -59,6 +60,17 @@ def _extract_plain(renderable) -> str:
 
 
 class NarratorReaderContract(unittest.TestCase):
+    def test_reader_module_imports_signal_for_sigwinch_handler(self):
+        import scripts.narrator_reader as narrator_reader
+
+        self.assertIs(
+            narrator_reader.signal,
+            stdlib_signal,
+            "narrator_reader.main installs a SIGWINCH handler, so the module "
+            "must import the stdlib signal module instead of crashing when "
+            "Project Paint Dry launches",
+        )
+
     class _TTYBuffer(StringIO):
         def isatty(self) -> bool:
             return True
