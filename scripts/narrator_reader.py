@@ -1473,8 +1473,8 @@ def _build_composite_band_png(
 
         for col in range(term_width):
             in_image_span = image_left <= col < image_right
-            is_band_inner_row = 1 <= cell_row <= band_cell_rows - 2
-            if in_image_span and is_band_inner_row:
+            is_image_row = 2 <= cell_row <= 1 + image_cell_height
+            if in_image_span and is_image_row:
                 continue
 
             if col < image_left:
@@ -1496,6 +1496,9 @@ def _build_composite_band_png(
             x0 = col * cell_px_w
             y0 = cell_row * cell_px_h
             cell_rect = fitz.IRect(x0, y0, x0 + cell_px_w, y0 + cell_px_h)
+            if in_image_span:
+                comp.set_rect(cell_rect, (*_TEXTURE_BG_RGB, 255))
+                continue
             # The textured surround should remain an opaque dark field.
             # Only the image-box negative space gets to be transparent.
             comp.set_rect(cell_rect, (*_TEXTURE_BG_RGB, 255))

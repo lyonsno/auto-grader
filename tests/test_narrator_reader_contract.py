@@ -1627,11 +1627,12 @@ class NarratorReaderContract(unittest.TestCase):
             "terminal background shows through cleanly",
         )
 
-    def test_focus_preview_kitty_composite_keeps_extra_rows_transparent(self):
+    def test_focus_preview_kitty_composite_keeps_extra_rows_dark_not_gold(self):
         # The preview band leaves one extra row above and below the image
-        # content for breathing room. Those rows still belong to the image
-        # span, so they should stay transparent rather than picking up the
-        # textured/gold field that only belongs in the side rails.
+        # content for breathing room. Those spacer rows should not pick up
+        # the smooth gold fill that reads like a second frame, but they also
+        # don't need to be transparent. A plain dark strip is the safer
+        # presentation surface while the Kitty placement path remains live.
         comp_png = _build_composite_band_png(
             self._make_png(width=500, height=400),
             term_width=80,
@@ -1654,9 +1655,9 @@ class NarratorReaderContract(unittest.TestCase):
             rgba = tuple(comp.samples[off : off + comp.n])
             self.assertEqual(
                 rgba,
-                (0, 0, 0, 0),
-                "rows inside the preview span should stay transparent between "
-                "the border rules instead of picking up a smooth gold fill",
+                (*_TEXTURE_BG_RGB, 255),
+                "rows inside the preview span should stay dark instead of "
+                "picking up a smooth gold fill",
             )
 
     def test_focus_preview_kitty_composite_matching_aspect_crop_reaches_image_box(self):
