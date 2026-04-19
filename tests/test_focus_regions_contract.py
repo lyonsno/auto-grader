@@ -403,6 +403,16 @@ class FocusRegionsRoundTripContract(unittest.TestCase):
             fr_10a.height,
             "fr-10b should be a tighter follow-on crop than fr-10a",
         )
+        self.assertGreater(
+            fr_10b.y,
+            0.56,
+            "fr-10b should start low enough to avoid carrying fr-10a's upper paper margin",
+        )
+        self.assertLess(
+            fr_10b.height,
+            0.11,
+            "fr-10b should stay tight on the answer locus rather than previewing a tall page slab",
+        )
 
         fr_11a = regions[("15-blue", "fr-11a")]
         fr_11c = regions[("15-blue", "fr-11c")]

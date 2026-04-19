@@ -16,9 +16,9 @@ regions:
   15-blue/fr-10b:
     page: 3
     x: 0.1
-    y: 0.555
+    y: 0.575
     width: 0.79
-    height: 0.115
+    height: 0.095
     source: operator_annotated
   15-blue/fr-11a:
     page: 3
