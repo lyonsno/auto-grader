@@ -103,6 +103,15 @@ def _pixel_at(png_bytes: bytes, x: int, y: int) -> tuple[int, int, int]:
     return int(sample[0]), int(sample[1]), int(sample[2])
 
 
+def _pixel_rgba_at(png_bytes: bytes, x: int, y: int) -> tuple[int, int, int, int]:
+    pix = fitz.Pixmap(png_bytes)
+    offset = (y * pix.width + x) * pix.n
+    sample = pix.samples[offset : offset + pix.n]
+    if pix.n >= 4:
+        return int(sample[0]), int(sample[1]), int(sample[2]), int(sample[3])
+    return int(sample[0]), int(sample[1]), int(sample[2]), 255
+
+
 class FocusPreviewContract(unittest.TestCase):
     def setUp(self) -> None:
         # Use a larger test page so the crop is large enough that any
@@ -254,6 +263,36 @@ class FocusPreviewContract(unittest.TestCase):
             "even when scanner wash breaks simple edge-matte detection, the "
             "preview should tighten to the actual content bounds with only a "
             "small pad instead of preserving a page-sized cream surround",
+        )
+
+    def test_preview_knocks_out_uniform_paper_field_to_transparency(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        page_png = _noisy_margin_content_box_png(
+            1600,
+            1200,
+            bg_rgb=(231, 221, 199),
+            noisy_bg_rgb=(188, 176, 158),
+            box_rgb=(40, 35, 28),
+            box_x=600,
+            box_y=420,
+            box_w=400,
+            box_h=260,
+        )
+        focus = FocusRegion(page=1, x=0.0, y=0.0, width=1.0, height=1.0, source="template")
+        preview = render_focus_preview(page_png, focus)
+        width, height = _png_dimensions(preview)
+
+        self.assertEqual(
+            _pixel_rgba_at(preview, 0, 0)[3],
+            0,
+            "paper-colored background should become transparent so the "
+            "composite doesn't render as a smooth filled parchment box",
+        )
+        self.assertGreater(
+            _pixel_rgba_at(preview, width // 2, height // 2)[3],
+            200,
+            "actual ink/content should remain opaque after background knockout",
         )
 
 

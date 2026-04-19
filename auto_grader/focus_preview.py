@@ -36,20 +36,40 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
         crop_width,
         crop_height,
     )
-    out = bytearray(crop_width * crop_height * 3)
+    bg_rgb = _average_corner_rgb(crop_rgb, crop_width, crop_height)
+    max_bg_diff = _max_background_diff(crop_rgb, crop_width, crop_height, bg_rgb)
+    use_transparent_background = max_bg_diff >= 72
+    out = bytearray(crop_width * crop_height * 4)
 
     for y in range(crop_height):
         for x in range(crop_width):
             offset = (y * crop_width + x) * 3
+            out_offset = (y * crop_width + x) * 4
+            src_rgb = tuple(crop_rgb[offset : offset + 3])
             for channel in range(3):
-                src_value = crop_rgb[offset + channel]
+                src_value = src_rgb[channel]
                 value = (
                     src_value * (1.0 - _SEPIA_MIX)
                     + _SEPIA_TARGET_RGB[channel] * _SEPIA_MIX
                 )
-                out[offset + channel] = int(round(value))
+                out[out_offset + channel] = int(round(value))
+            if use_transparent_background:
+                diff = max(
+                    abs(src_rgb[0] - bg_rgb[0]),
+                    abs(src_rgb[1] - bg_rgb[1]),
+                    abs(src_rgb[2] - bg_rgb[2]),
+                )
+                if diff <= 16:
+                    alpha = 0
+                elif diff >= 64:
+                    alpha = 255
+                else:
+                    alpha = int(round((diff - 16) * 255 / (64 - 16)))
+            else:
+                alpha = 255
+            out[out_offset + 3] = alpha
 
-    pix = fitz.Pixmap(fitz.csRGB, crop_width, crop_height, bytes(out), False)
+    pix = fitz.Pixmap(fitz.csRGB, crop_width, crop_height, bytes(out), True)
     return pix.tobytes("png")
 
 
@@ -166,6 +186,47 @@ def _tighten_to_content_bounds(
     bottom = min(crop_height - 1, bottom + pad_px)
 
     return _slice_crop_rgb(crop_rgb, crop_width, crop_height, left, top, right, bottom)
+
+
+def _average_corner_rgb(
+    crop_rgb: bytes,
+    crop_width: int,
+    crop_height: int,
+) -> tuple[int, int, int]:
+    def _rgb(x: int, y: int) -> tuple[int, int, int]:
+        off = (y * crop_width + x) * 3
+        return tuple(crop_rgb[off : off + 3])
+
+    return tuple(
+        round((a + b + c + d) / 4)
+        for a, b, c, d in zip(
+            _rgb(0, 0),
+            _rgb(crop_width - 1, 0),
+            _rgb(0, crop_height - 1),
+            _rgb(crop_width - 1, crop_height - 1),
+        )
+    )
+
+
+def _max_background_diff(
+    crop_rgb: bytes,
+    crop_width: int,
+    crop_height: int,
+    bg_rgb: tuple[int, int, int],
+) -> int:
+    max_diff = 0
+    for y in range(crop_height):
+        row_base = y * crop_width * 3
+        for x in range(crop_width):
+            off = row_base + x * 3
+            diff = max(
+                abs(crop_rgb[off] - bg_rgb[0]),
+                abs(crop_rgb[off + 1] - bg_rgb[1]),
+                abs(crop_rgb[off + 2] - bg_rgb[2]),
+            )
+            if diff > max_diff:
+                max_diff = diff
+    return max_diff
 
 
 def _trim_near_black_matte(
