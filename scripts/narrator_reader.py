@@ -1543,14 +1543,22 @@ def _build_composite_band_png(
     crop_y0 = 2 * cell_px_h  # after top border + extra row
     crop_target_w = image_cell_width * cell_px_w
     crop_target_h = image_cell_height * cell_px_h
+    # Keep a small transparent gutter around the pasted crop. The old
+    # dark matte used to fake this breathing room; once we made the
+    # letterbox area transparent, the page started reading as cramped
+    # unless we reserved a little real inset inside the image box.
+    crop_inner_pad_x = min(max(2, cell_px_w // 2), max(0, crop_target_w // 8))
+    crop_inner_pad_y = min(max(2, cell_px_h // 2), max(0, crop_target_h // 8))
+    inner_target_w = max(1, crop_target_w - 2 * crop_inner_pad_x)
+    inner_target_h = max(1, crop_target_h - 2 * crop_inner_pad_y)
 
     # Scale the crop to fit, centered in the image region.
     src_w, src_h = crop_pix.width, crop_pix.height
-    scale = min(crop_target_w / max(1, src_w), crop_target_h / max(1, src_h))
+    scale = min(inner_target_w / max(1, src_w), inner_target_h / max(1, src_h))
     scaled_w = max(1, int(src_w * scale))
     scaled_h = max(1, int(src_h * scale))
-    paste_x = crop_x0 + (crop_target_w - scaled_w) // 2
-    paste_y = crop_y0 + (crop_target_h - scaled_h) // 2
+    paste_x = crop_x0 + crop_inner_pad_x + (inner_target_w - scaled_w) // 2
+    paste_y = crop_y0 + crop_inner_pad_y + (inner_target_h - scaled_h) // 2
 
     # Use a PDF page to composite: background (texture) + foreground (crop).
     final_doc = fitz.open()

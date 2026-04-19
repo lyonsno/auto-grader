@@ -1553,6 +1553,40 @@ class NarratorReaderContract(unittest.TestCase):
             "unused space inside the image box should be transparent so the "
             "terminal background shows through cleanly",
         )
+
+    def test_focus_preview_kitty_composite_keeps_inner_gutter_transparent(self):
+        # Even when a crop would otherwise fill the image box cleanly, we
+        # still want a little transparent breathing room around it. Once
+        # the old dark matte went away, the page started reading as crowded
+        # because it visually slammed into the surround.
+        matching_aspect_png = self._make_png(width=500, height=400)
+        comp_png = _build_composite_band_png(
+            matching_aspect_png,
+            term_width=80,
+            image_cell_width=30,
+            image_cell_height=12,
+            image_id=1,
+            title="test",
+        )
+        comp = fitz.Pixmap(comp_png)
+
+        image_left = (80 - 30) // 2
+        crop_x0 = image_left * 8
+        crop_y0 = 2 * 16
+
+        # Probe just inside the image-box edge. Without a deliberate inset,
+        # this lands on the page itself for a matching-aspect crop.
+        probe_x = crop_x0 + 2
+        probe_y = crop_y0 + 2
+        off = (probe_y * comp.width + probe_x) * comp.n
+        rgba = tuple(comp.samples[off : off + comp.n])
+        self.assertEqual(
+            rgba,
+            (0, 0, 0, 0),
+            "the composite should keep a small transparent gutter around "
+            "the pasted crop so the preview breathes even when the aspect "
+            "ratio would otherwise fill the image box exactly",
+        )
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies
