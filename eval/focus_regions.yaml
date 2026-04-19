@@ -15,10 +15,10 @@ regions:
     source: operator_annotated
   15-blue/fr-10b:
     page: 3
-    x: 0.1075268817204301
-    y: 0.4263888888888889
-    width: 0.7777777777777777
-    height: 0.2555555555555556
+    x: 0.1
+    y: 0.555
+    width: 0.79
+    height: 0.115
     source: operator_annotated
   15-blue/fr-11a:
     page: 3
@@ -36,17 +36,17 @@ regions:
     source: operator_annotated
   15-blue/fr-11c:
     page: 3
-    x: 0.1039426523297491
-    y: 0.675
-    width: 0.8763440860215053
-    height: 0.24861111111111112
+    x: 0.09
+    y: 0.805
+    width: 0.6
+    height: 0.085
     source: operator_annotated
   15-blue/fr-12a:
     page: 4
-    x: 0.1093189964157706
-    y: 0.08194444444444444
-    width: 0.5250896057347669
-    height: 0.10277777777777779
+    x: 0.11
+    y: 0.055
+    width: 0.8
+    height: 0.145
     source: operator_annotated
   15-blue/fr-12b:
     page: 4
@@ -267,43 +267,43 @@ regions:
     source: operator_annotated
   27-blue-2023/fr-12a:
     page: 4
-    x: 0.16
-    y: 0.08
-    width: 0.46
-    height: 0.2
-    source: mock_tricky_plus
+    x: 0.11
+    y: 0.055
+    width: 0.8
+    height: 0.145
+    source: same_layout_carried_forward
   27-blue-2023/fr-3:
     page: 1
-    x: 0.14
-    y: 0.18
-    width: 0.66
-    height: 0.24
-    source: mock_tricky_plus
+    x: 0.1111111111111111
+    y: 0.3777777777777778
+    width: 0.8405017921146953
+    height: 0.12222222222222218
+    source: same_layout_carried_forward
   27-blue-2023/fr-5b:
     page: 1
-    x: 0.14
-    y: 0.42
-    width: 0.66
-    height: 0.28
-    source: mock_tricky_plus
+    x: 0.012544802867383511
+    y: 0.6000000000000001
+    width: 0.9784946236559139
+    height: 0.35
+    source: same_layout_carried_forward
   34-blue/fr-12a:
     page: 4
-    x: 0.18
-    y: 0.07
-    width: 0.5
-    height: 0.18
-    source: mock_tricky_plus
+    x: 0.11
+    y: 0.055
+    width: 0.8
+    height: 0.145
+    source: same_layout_carried_forward
   34-blue/fr-8:
     page: 2
-    x: 0.16
-    y: 0.32
-    width: 0.58
-    height: 0.24
-    source: mock_tricky_plus
+    x: 0.1111111111111111
+    y: 0.6055555555555556
+    width: 0.6935483870967742
+    height: 0.2597222222222223
+    source: same_layout_carried_forward
   39-blue-redacted/fr-10a:
     page: 3
-    x: 0.14
-    y: 0.2
-    width: 0.62
-    height: 0.24
-    source: mock_tricky_plus
+    x: 0.1093189964157706
+    y: 0.4236111111111111
+    width: 0.7759856630824372
+    height: 0.19027777777777782
+    source: same_layout_carried_forward

@@ -351,6 +351,72 @@ class FocusRegionsRoundTripContract(unittest.TestCase):
         # Spot-check a known entry.
         self.assertIn(("27-blue-2023", "fr-5b"), regions)
 
+    def test_smoke_pick_focus_regions_are_not_mock_placeholders(self):
+        # The smoke surface is supposed to show the actual answer region,
+        # not a stale placeholder box copied from a different question.
+        # A mock region here produces exactly the kind of "wrong chunk of
+        # page / giant cream border" regression the operator just caught.
+        default_path = (
+            Path(__file__).resolve().parent.parent
+            / "eval"
+            / "focus_regions.yaml"
+        )
+        if not default_path.exists():
+            self.skipTest(f"default focus regions file not present at {default_path}")
+        regions = load_focus_regions(default_path)
+        for key in (
+            ("27-blue-2023", "fr-3"),
+            ("27-blue-2023", "fr-5b"),
+            ("27-blue-2023", "fr-12a"),
+            ("34-blue", "fr-8"),
+            ("34-blue", "fr-12a"),
+            ("39-blue-redacted", "fr-10a"),
+        ):
+            self.assertIn(key, regions)
+            self.assertNotEqual(
+                regions[key].source,
+                "mock_tricky_plus",
+                f"{key[0]}/{key[1]} must not point at a mock smoke placeholder",
+            )
+
+    def test_follow_on_focus_regions_are_answer_focused(self):
+        # Tight follow-on items should not inherit the taller parent-question
+        # box wholesale. The operator wants the answer locus, not half the page.
+        default_path = (
+            Path(__file__).resolve().parent.parent
+            / "eval"
+            / "focus_regions.yaml"
+        )
+        if not default_path.exists():
+            self.skipTest(f"default focus regions file not present at {default_path}")
+        regions = load_focus_regions(default_path)
+
+        fr_10a = regions[("15-blue", "fr-10a")]
+        fr_10b = regions[("15-blue", "fr-10b")]
+        self.assertGreater(
+            fr_10b.y,
+            fr_10a.y,
+            "fr-10b should start below fr-10a rather than reboxing the whole block",
+        )
+        self.assertLess(
+            fr_10b.height,
+            fr_10a.height,
+            "fr-10b should be a tighter follow-on crop than fr-10a",
+        )
+
+        fr_11a = regions[("15-blue", "fr-11a")]
+        fr_11c = regions[("15-blue", "fr-11c")]
+        self.assertGreater(
+            fr_11c.y,
+            fr_11a.y,
+            "fr-11c should focus lower on the page than the broader fr-11a box",
+        )
+        self.assertLess(
+            fr_11c.height,
+            fr_11a.height,
+            "fr-11c should tighten to the follow-on answer rows",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
