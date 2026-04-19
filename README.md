@@ -642,8 +642,11 @@ local servers — one for the actual grader model (typically Qwen3.5 or
 Gemma-4 on the big-box machine, mDNS-resolved at
 `http://macbook-pro-2.local:8001`), and one for the "Project Paint Dry"
 narrator (Bonsai-8B-mlx-1bit on the local machine, served via a
-PRISM-patched `mlx-openai-server` at `http://localhost:8001`). They
-share a port number but live on different hosts.
+PRISM-patched `mlx-openai-server` on its own narrator surface, typically
+`http://nlm2pr.local:8002` when the remote Bonsai box is in use or
+`http://127.0.0.1:8002` on the local working box). They do not share a
+port, and the narrator stays separate from the main grader server on
+purpose.
 
 Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't
 support `bits=1` quantization. Setup, launch command, verification,
@@ -693,6 +696,12 @@ scroll keys remain active and any non-scroll key closes the window.
 Each run persists narrator output to `runs/<ts>-<model>/narrator.jsonl`
 (machine-replayable) and `runs/<ts>-<model>/narrator.txt` (human-readable
 transcript).
+
+The focus preview uses canonical focus-region data from
+`eval/focus_regions.yaml`. Those regions can be reviewed and adjusted
+with `scripts/annotate_focus_regions.py`, which gives the project one
+authoritative focus-box seam instead of ad hoc crop constants scattered
+through the smoke and narrator code.
 
 ## Project workflow
 
