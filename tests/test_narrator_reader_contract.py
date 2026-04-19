@@ -1694,6 +1694,35 @@ class NarratorReaderContract(unittest.TestCase):
             "inside the composite band",
         )
 
+    def test_trim_uniform_edge_margins_tolerates_minor_edge_noise(self):
+        width = 20
+        height = 14
+        border = 3
+        matte = (231, 221, 199)
+        body = (180, 150, 120)
+        channels = 3
+        rows = bytearray(width * height * channels)
+        for y in range(height):
+            for x in range(width):
+                rgb = matte if (
+                    x < border or x >= width - border or y < border or y >= height - border
+                ) else body
+                # Simulate faint scanner noise / pencil dust in the matte.
+                if rgb == matte and (x + y) % 11 == 0:
+                    rgb = (220, 209, 188)
+                off = (y * width + x) * channels
+                rows[off : off + channels] = bytes(rgb)
+        noisy = fitz.Pixmap(fitz.csRGB, width, height, bytes(rows), False).tobytes("png")
+        trimmed = _trim_uniform_edge_margins(noisy)
+        pix = fitz.Pixmap(trimmed)
+
+        self.assertEqual(
+            (pix.width, pix.height),
+            (14, 8),
+            "paper-colored edge trim should survive small matte noise so "
+            "real scanned page borders don't keep a visible cream frame",
+        )
+
     def test_focus_preview_kitty_composite_keeps_border_row_background_opaque(self):
         # The image-box negative space should be transparent, but the top
         # border/title row must stay opaque. If the border row is left

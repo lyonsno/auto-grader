@@ -1652,8 +1652,8 @@ def _trim_near_black_crop_margins(
 def _trim_uniform_edge_margins(
     crop_png_bytes: bytes,
     *,
-    color_tolerance: int = 18,
-    coverage: float = 0.985,
+    color_tolerance: int = 28,
+    coverage: float = 0.92,
 ) -> bytes:
     """Trim contiguous edge rows / columns matching the corner matte color.
 
