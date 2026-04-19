@@ -7,6 +7,7 @@ change the harness.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,29 @@ import yaml
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FocusRegion:
+    """Optional page-local focus box for display/cropping affordances.
+
+    Coordinates are normalized to the rendered page: x/y are the top-left
+    corner, width/height are box dimensions, all in the closed interval
+    [0, 1] with positive width/height.
+
+    This is intentionally a display seam, not an OCR or box-detection claim.
+    A focus region may come from hand-authored ground truth, template metadata,
+    or a temporary mock map while the detector path does not exist yet.
+    Consumers should treat it as "best available crop hint for this item", not
+    as proof that the crop was discovered automatically.
+    """
+
+    page: int
+    x: float
+    y: float
+    width: float
+    height: float
+    source: str = "ground_truth"
 
 
 @dataclass(frozen=True)
@@ -41,6 +65,7 @@ class EvalItem:
     professor_mark: str  # check | x | partial | unclear
     student_answer: str
     notes: str
+    focus_region: FocusRegion | None = None
     corrected_score: float | None = None
     correction_reason: str = ""
 
@@ -62,11 +87,15 @@ class EvalItem:
 class Prediction:
     """Model output for one eval item.
 
-    raw_assistant and raw_reasoning preserve the unparsed grader output so
-    a downstream critic pass can read the verbatim <think> trace where
-    consistency-rule violations actually live (the curated model_reasoning
-    field is too short to capture them). Both default to empty string for
-    backward compatibility with predictions constructed in tests.
+    score_basis is the terse literal basis for the awarded score: what
+    earned credit and what lost it. model_reasoning is the broader
+    interpretive reasoning around ambiguity, OCR, rescue logic, or human
+    review. raw_assistant and raw_reasoning preserve the unparsed grader
+    output so a downstream critic pass can read the verbatim <think>
+    trace where consistency-rule violations actually live (the curated
+    fields are intentionally shorter). Optional fields default to empty
+    string / None for backward compatibility with predictions
+    constructed in tests.
 
     **Truncation sentinel contract** (Operation Zilch Reaper, forward
     lane): when the grader did not commit to a score — either because
@@ -90,8 +119,11 @@ class Prediction:
     model_confidence: float | None  # 0-1, None on truncated rows
     model_reasoning: str
     model_read: str  # what model thinks student wrote
+    score_basis: str = ""
     raw_assistant: str = ""  # full assistant content string before JSON parse
     raw_reasoning: str = ""  # full reasoning_content stream (verbatim <think>)
+    is_obviously_fully_correct: bool | None = None
+    is_obviously_wrong: bool | None = None
     # Upstream-dependency forcing fields. The grader is required to fill
     # these in BEFORE committing to a score; their presence in the schema
     # is the structural lever for the consistency-rule failure mode that
@@ -131,9 +163,14 @@ class EvalReport:
     # score (VLM ran out of token budget, output was unparseable, etc.).
     # Mirrors unclear_excluded — items the scorer deliberately kept out
     # of the accuracy denominator. Surfaced so operators can see
-    # completion rate as a first-class number.
+    # completion rate as a first-class number instead of having to grep
+    # predictions.jsonl for a magic substring.
     truncated_excluded: int = 0
     total_points_possible: float = 0.0
+    obvious_full_credit_calls: int = 0
+    obvious_full_credit_precision: float | None = None
+    obvious_wrong_calls: int = 0
+    obvious_wrong_precision: float | None = None
     # total_points_truth is the sum of `EvalItem.truth_score` across all
     # scored items — this is the corrected-truth baseline the grader is
     # being measured against, NOT the historical prof mark total. When
@@ -178,11 +215,98 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
                     professor_mark=raw["professor_mark"],
                     student_answer=raw["student_answer"],
                     notes=raw["notes"],
+                    focus_region=_parse_focus_region(
+                        raw.get("focus_region"),
+                        page=int(raw["page"]),
+                        default_source="ground_truth",
+                    ),
                     corrected_score=corrected,
                     correction_reason=raw.get("correction_reason", ""),
                 )
             )
     return items
+
+
+def resolve_focus_region(
+    item: EvalItem,
+    template: Mapping[str, Any] | None = None,
+) -> FocusRegion | None:
+    """Return the best available focus region for an eval item.
+
+    Explicit item-level metadata wins. If absent, the resolver will look up a
+    question- or part-level ``focus_region`` block in the provided template and
+    attach it to the item's page.
+
+    This is a metadata seam for UI/display consumers. It is allowed to return
+    human-authored or mocked boxes while the real detector path is still
+    unbuilt; callers should not assume any particular provenance beyond the
+    ``source`` field on the returned region.
+    """
+    if item.focus_region is not None:
+        return item.focus_region
+    if template is None:
+        return None
+
+    raw_focus = _find_template_focus_region(
+        template.get("sections", []),
+        question_id=item.question_id,
+    )
+    return _parse_focus_region(
+        raw_focus,
+        page=item.page,
+        default_source="template",
+    )
+
+
+def _parse_focus_region(
+    raw_focus: Any,
+    *,
+    page: int,
+    default_source: str,
+) -> FocusRegion | None:
+    if raw_focus is None:
+        return None
+    if not isinstance(raw_focus, dict):
+        raise ValueError("focus_region must be a mapping when provided")
+
+    raw_page = raw_focus.get("page", page)
+    x = float(raw_focus["x"])
+    y = float(raw_focus["y"])
+    width = float(raw_focus["width"])
+    height = float(raw_focus["height"])
+    source = str(raw_focus.get("source", default_source))
+    return FocusRegion(
+        page=int(raw_page),
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        source=source,
+    )
+
+
+def _find_template_focus_region(
+    nodes: list[dict[str, Any]],
+    *,
+    question_id: str,
+) -> dict[str, Any] | None:
+    for node in nodes:
+        if node.get("id") == question_id and "focus_region" in node:
+            raw_focus = node["focus_region"]
+            if isinstance(raw_focus, dict):
+                return raw_focus
+            return None
+        parts = node.get("parts")
+        if isinstance(parts, list):
+            nested = _find_template_focus_region(parts, question_id=question_id)
+            if nested is not None:
+                return nested
+        questions = node.get("questions")
+        if isinstance(questions, list):
+            nested = _find_template_focus_region(questions, question_id=question_id)
+            if nested is not None:
+                return nested
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +365,10 @@ def score_predictions(
     false_positives = 0
     false_negatives = 0
     total_points_possible = 0.0
+    obvious_full_credit_calls = 0
+    obvious_full_credit_correct = 0
+    obvious_wrong_calls = 0
+    obvious_wrong_correct = 0
     total_points_truth = 0.0
 
     # Per-answer-type tracking
@@ -276,6 +404,16 @@ def score_predictions(
         total_points_possible += item.max_points
         total_points_truth += truth
 
+        if pred.is_obviously_fully_correct is True:
+            obvious_full_credit_calls += 1
+            if truth == item.max_points:
+                obvious_full_credit_correct += 1
+
+        if pred.is_obviously_wrong is True:
+            obvious_wrong_calls += 1
+            if truth == 0:
+                obvious_wrong_correct += 1
+
         # Per-type tracking
         atype = item.answer_type
         type_exact.setdefault(atype, []).append(exact)
@@ -297,6 +435,17 @@ def score_predictions(
         for atype, matches in type_tolerance.items()
     }
 
+    obvious_full_credit_precision = (
+        obvious_full_credit_correct / obvious_full_credit_calls
+        if obvious_full_credit_calls
+        else None
+    )
+    obvious_wrong_precision = (
+        obvious_wrong_correct / obvious_wrong_calls
+        if obvious_wrong_calls
+        else None
+    )
+
     calibration_bins = _compute_calibration_bins(calibration_data)
 
     return EvalReport(
@@ -310,6 +459,10 @@ def score_predictions(
         unclear_excluded=unclear_count,
         truncated_excluded=truncated_count,
         total_points_possible=total_points_possible,
+        obvious_full_credit_calls=obvious_full_credit_calls,
+        obvious_full_credit_precision=obvious_full_credit_precision,
+        obvious_wrong_calls=obvious_wrong_calls,
+        obvious_wrong_precision=obvious_wrong_precision,
         total_points_truth=total_points_truth,
         calibration_bins=calibration_bins,
     )

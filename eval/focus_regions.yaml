@@ -1,0 +1,309 @@
+regions:
+  15-blue/fr-1:
+    page: 1
+    x: 0.1075268817204301
+    y: 0.14027777777777778
+    width: 0.7777777777777777
+    height: 0.08472222222222225
+    source: operator_annotated
+  15-blue/fr-10a:
+    page: 3
+    x: 0.1093189964157706
+    y: 0.4236111111111111
+    width: 0.7759856630824372
+    height: 0.19027777777777782
+    source: operator_annotated
+  15-blue/fr-10b:
+    page: 3
+    x: 0.1
+    y: 0.575
+    width: 0.79
+    height: 0.095
+    source: operator_annotated
+  15-blue/fr-11a:
+    page: 3
+    x: 0.09318996415770608
+    y: 0.6722222222222223
+    width: 0.8817204301075268
+    height: 0.15555555555555556
+    source: operator_annotated
+  15-blue/fr-11b:
+    page: 3
+    x: 0.09318996415770608
+    y: 0.6722222222222223
+    width: 0.8853046594982078
+    height: 0.20277777777777772
+    source: operator_annotated
+  15-blue/fr-11c:
+    page: 3
+    x: 0.09
+    y: 0.805
+    width: 0.6
+    height: 0.085
+    source: operator_annotated
+  15-blue/fr-12a:
+    page: 4
+    x: 0.11
+    y: 0.055
+    width: 0.8
+    height: 0.145
+    source: operator_annotated
+  15-blue/fr-12b:
+    page: 4
+    x: 0.1093189964157706
+    y: 0.09027777777777779
+    width: 0.7706093189964158
+    height: 0.19444444444444442
+    source: operator_annotated
+  15-blue/fr-13a:
+    page: 4
+    x: 0.1146953405017921
+    y: 0.28611111111111115
+    width: 0.7956989247311828
+    height: 0.22638888888888892
+    source: operator_annotated
+  15-blue/fr-13b:
+    page: 4
+    x: 0.1075268817204301
+    y: 0.2777777777777778
+    width: 0.8154121863799282
+    height: 0.29861111111111116
+    source: operator_annotated
+  15-blue/fr-13c:
+    page: 4
+    x: 0.10573476702508959
+    y: 0.2777777777777778
+    width: 0.8225806451612903
+    height: 0.3569444444444445
+    source: operator_annotated
+  15-blue/fr-14a:
+    page: 4
+    x: 0.11290322580645161
+    y: 0.6333333333333333
+    width: 0.8870967741935484
+    height: 0.10277777777777786
+    source: operator_annotated
+  15-blue/fr-14b:
+    page: 4
+    x: 0.10573476702508959
+    y: 0.6319444444444444
+    width: 0.8942652329749105
+    height: 0.3027777777777779
+    source: operator_annotated
+  15-blue/fr-14c:
+    page: 4
+    x: 0.10573476702508959
+    y: 0.6319444444444444
+    width: 0.8942652329749103
+    height: 0.33472222222222225
+    source: operator_annotated
+  15-blue/fr-15a:
+    page: 5
+    x: 0.09685236333315962
+    y: 0.08194444444444444
+    width: 0.7945480917886983
+    height: 0.16944444444444445
+    source: operator_annotated
+  15-blue/fr-15b:
+    page: 5
+    x: 0.09685236333315962
+    y: 0.08194444444444444
+    width: 0.7784060312331716
+    height: 0.22638888888888886
+    source: operator_annotated
+  15-blue/fr-15c:
+    page: 5
+    x: 0.11299442388868622
+    y: 0.07777777777777779
+    width: 0.7766124689492244
+    height: 0.3083333333333334
+    source: operator_annotated
+  15-blue/fr-15d:
+    page: 5
+    x: 0.10582017475289662
+    y: 0.08611111111111111
+    width: 0.8842262059860683
+    height: 0.3763888888888889
+    source: operator_annotated
+  15-blue/fr-16a:
+    page: 5
+    x: 0.11120086160473883
+    y: 0.4430555555555556
+    width: 0.33360258481421645
+    height: 0.14861111111111108
+    source: operator_annotated
+  15-blue/fr-16b:
+    page: 5
+    x: 0.11120086160473883
+    y: 0.4444444444444445
+    width: 0.4412163218510604
+    height: 0.19305555555555548
+    source: operator_annotated
+  15-blue/fr-16c:
+    page: 5
+    x: 0.1094072993207914
+    y: 0.4430555555555556
+    width: 0.7855802803689613
+    height: 0.3277777777777778
+    source: operator_annotated
+  15-blue/fr-16d:
+    page: 5
+    x: 0.11120086160473883
+    y: 0.4430555555555556
+    width: 0.7873738426529087
+    height: 0.5222222222222221
+    source: operator_annotated
+  15-blue/fr-2:
+    page: 1
+    x: 0.1075268817204301
+    y: 0.22916666666666666
+    width: 0.7365591397849462
+    height: 0.09305555555555553
+    source: operator_annotated
+  15-blue/fr-3:
+    page: 1
+    x: 0.1111111111111111
+    y: 0.3777777777777778
+    width: 0.8405017921146953
+    height: 0.12222222222222218
+    source: operator_annotated
+  15-blue/fr-4:
+    page: 1
+    x: 0.11290322580645161
+    y: 0.5055555555555556
+    width: 0.6881720430107526
+    height: 0.10138888888888886
+    source: operator_annotated
+  15-blue/fr-5a:
+    page: 1
+    x: 0.008960573476702507
+    y: 0.6041666666666666
+    width: 0.9802867383512543
+    height: 0.35
+    source: operator_annotated
+  15-blue/fr-5b:
+    page: 1
+    x: 0.012544802867383511
+    y: 0.6000000000000001
+    width: 0.9784946236559139
+    height: 0.35
+    source: operator_annotated
+  15-blue/fr-5c:
+    page: 1
+    x: 0.017921146953405014
+    y: 0.5972222222222222
+    width: 0.9749103942652328
+    height: 0.34305555555555556
+    source: operator_annotated
+  15-blue/fr-6:
+    page: 2
+    x: 0.18996415770609318
+    y: 0.07500000000000001
+    width: 0.6971326164874552
+    height: 0.15000000000000002
+    source: operator_annotated
+  15-blue/fr-7a:
+    page: 2
+    x: 0.09318996415770608
+    y: 0.22916666666666666
+    width: 0.7652329749103941
+    height: 0.2041666666666667
+    source: operator_annotated
+  15-blue/fr-7b:
+    page: 2
+    x: 0.1075268817204301
+    y: 0.22361111111111112
+    width: 0.7347670250896057
+    height: 0.23611111111111113
+    source: operator_annotated
+  15-blue/fr-7c:
+    page: 2
+    x: 0.10035842293906809
+    y: 0.22222222222222224
+    width: 0.7455197132616487
+    height: 0.27222222222222225
+    source: operator_annotated
+  15-blue/fr-7d:
+    page: 2
+    x: 0.1021505376344086
+    y: 0.21805555555555559
+    width: 0.7491039426523297
+    height: 0.31666666666666665
+    source: operator_annotated
+  15-blue/fr-7e:
+    page: 2
+    x: 0.09856630824372759
+    y: 0.21805555555555559
+    width: 0.7437275985663082
+    height: 0.35
+    source: operator_annotated
+  15-blue/fr-8:
+    page: 2
+    x: 0.1111111111111111
+    y: 0.6055555555555556
+    width: 0.6935483870967742
+    height: 0.2597222222222223
+    source: operator_annotated
+  15-blue/fr-9a:
+    page: 3
+    x: 0.11290322580645161
+    y: 0.08888888888888889
+    width: 0.704301075268817
+    height: 0.18055555555555552
+    source: operator_annotated
+  15-blue/fr-9b:
+    page: 3
+    x: 0.1093189964157706
+    y: 0.08194444444444444
+    width: 0.7903225806451613
+    height: 0.2791666666666667
+    source: operator_annotated
+  15-blue/fr-9c:
+    page: 3
+    x: 0.1075268817204301
+    y: 0.0763888888888889
+    width: 0.8906810035842293
+    height: 0.3680555555555556
+    source: operator_annotated
+  27-blue-2023/fr-12a:
+    page: 4
+    x: 0.11
+    y: 0.055
+    width: 0.8
+    height: 0.145
+    source: same_layout_carried_forward
+  27-blue-2023/fr-3:
+    page: 1
+    x: 0.1111111111111111
+    y: 0.3777777777777778
+    width: 0.8405017921146953
+    height: 0.12222222222222218
+    source: same_layout_carried_forward
+  27-blue-2023/fr-5b:
+    page: 1
+    x: 0.012544802867383511
+    y: 0.6000000000000001
+    width: 0.9784946236559139
+    height: 0.35
+    source: same_layout_carried_forward
+  34-blue/fr-12a:
+    page: 4
+    x: 0.11
+    y: 0.055
+    width: 0.8
+    height: 0.145
+    source: same_layout_carried_forward
+  34-blue/fr-8:
+    page: 2
+    x: 0.1111111111111111
+    y: 0.6055555555555556
+    width: 0.6935483870967742
+    height: 0.2597222222222223
+    source: same_layout_carried_forward
+  39-blue-redacted/fr-10a:
+    page: 3
+    x: 0.1093189964157706
+    y: 0.4236111111111111
+    width: 0.7759856630824372
+    height: 0.19027777777777782
+    source: same_layout_carried_forward

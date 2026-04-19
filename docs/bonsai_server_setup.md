@@ -12,15 +12,24 @@ much-larger grader model on the same machine without resource
 contention.
 
 The narrator code lives in `auto_grader/thinking_narrator.py` and
-defaults to talking to the bonsai server at `http://localhost:8001`
-with the served model name `Bonsai-8B-mlx-1bit`. Both can be
-overridden on the smoke command line:
+the smoke runner currently defaults to talking to the bonsai server at
+`http://nlm2pr.local:8002`. On this box, the canonical local surface is
+the equivalent loopback URL `http://127.0.0.1:8002`.
+
+The operationally reliable narrator model id on this box is the full
+snapshot path returned by `/v1/models`, not the old short alias:
+
+```text
+/Users/noahlyons/.cache/huggingface/hub/models--prism-ml--bonsai-8b-mlx-1bit/snapshots/d95a01f5e78184d278e21c4cfd57ff417a60ae22
+```
+
+Be explicit on the smoke command line when in doubt:
 
 ```sh
 uv run python scripts/smoke_vlm.py \
   --narrate \
-  --narrator-url http://localhost:8001 \
-  --narrator-model Bonsai-8B-mlx-1bit \
+  --narrator-url http://127.0.0.1:8002 \
+  --narrator-model /Users/noahlyons/.cache/huggingface/hub/models--prism-ml--bonsai-8b-mlx-1bit/snapshots/d95a01f5e78184d278e21c4cfd57ff417a60ae22 \
   ...
 ```
 
@@ -30,15 +39,16 @@ There are **two OMLX servers** in play during a typical eval:
 
 | server                       | port             | model(s)                       | role           |
 |------------------------------|------------------|--------------------------------|----------------|
-| local bonsai                 | `localhost:8001` | `Bonsai-8B-mlx-1bit`           | live narrator  |
+| local bonsai                 | `127.0.0.1:8002` | full snapshot-path model id from `/v1/models` | live narrator  |
 | remote grader (the big box)  | `macbook-pro-2.local:8001` | `qwen3p5-35B-A3B`, `gemma-4-26b-a4b-it-bf16`, `Qwen3p5-122B-A10B-mlx-mixedp`, `step-3p5-flash-*`, etc. | the actual grader |
 
-They share a port number but live on different hosts, so they don't
-collide. The narrator client uses `--narrator-url` (default
-`http://localhost:8001`); the grader client uses `--base-url` (default
-`http://macbook-pro-2.local:8001` since the
-[`d439c0f`](#) "Default --base-url to mDNS" commit, so the grader
-URL automatically follows DHCP renewals on the big box).
+They no longer share a port number on this box, which is deliberate:
+the narrator stays on its own `8002` surface so it does not collide
+with the main grader server on `8001`. The narrator client uses
+`--narrator-url` (current default `http://nlm2pr.local:8002` in
+`scripts/smoke_vlm.py`); the grader client uses `--base-url` (default
+`http://macbook-pro-2.local:8001`, so the grader URL follows the big
+box across DHCP renewals).
 
 ## Why bonsai needs the PRISM-patched mlx-openai-server, not stock OMLX
 
@@ -61,33 +71,27 @@ machine, different setup.)
 
 ```sh
 ~/.local/bin/mlx-openai-server launch \
-  --model-path prism-ml/Bonsai-8B-mlx-1bit \
+  --model-path /Users/noahlyons/.cache/huggingface/hub/models--prism-ml--bonsai-8b-mlx-1bit/snapshots/d95a01f5e78184d278e21c4cfd57ff417a60ae22 \
   --model-type lm \
-  --port 8001 \
+  --port 8002 \
   --host 127.0.0.1 \
-  --served-model-name Bonsai-8B-mlx-1bit \
-  --prompt-cache-size 3
+  --prompt-cache-size 2
 ```
 
 Notes on the flags:
 
-- `--model-path prism-ml/Bonsai-8B-mlx-1bit` resolves from the local
-  Hugging Face cache at
-  `~/.cache/huggingface/hub/models--prism-ml--Bonsai-8B-mlx-1bit/`.
-  If the cache is missing the model, the first run downloads it
-  (~1.3 GB).
+- `--model-path .../d95a01f5e78184d278e21c4cfd57ff417a60ae22` is the
+  settled local snapshot path on `MacBook-Pro-2.local`. Using the
+  full path avoids ambiguity about model aliases and matches the model
+  id that the working server exposes in `/v1/models`.
 - `--model-type lm` is text-only; bonsai doesn't have a vision tower.
-- `--port 8001` matches the narrator client default.
-- `--served-model-name Bonsai-8B-mlx-1bit` is the name returned by
-  `/v1/models` and accepted in request `model:` fields. It must
-  match `_DEFAULT_NARRATOR_MODEL` in `thinking_narrator.py`
-  (currently `Bonsai-8B-mlx-1bit`).
-- `--prompt-cache-size 3` caps the prompt-KV LRU at 3 entries
-  (default is 10). The narrator's dispatch pattern is many short
+- `--port 8002` is the settled Bonsai narrator port on this box.
+- `--prompt-cache-size 2` is the current local recommendation. The
+  narrator's dispatch pattern is many short
   calls per grading item with per-call user content that varies
   enough that we never hit a fully-cached prompt — only the
   system-prompt prefix gets meaningful reuse, plus maybe one
-  in-flight session. Three entries is plenty for that and frees
+  in-flight session. Two entries is enough for that and frees
   up memory we'd otherwise hoard for prompt prefixes we'll never
   see again. **Lower this if you observe memory pressure on the
   local box; raise it only if you start seeing the same prompts
@@ -103,12 +107,11 @@ note the `disown` so the server survives the parent shell exiting):
 
 ```sh
 ~/.local/bin/mlx-openai-server launch \
-  --model-path prism-ml/Bonsai-8B-mlx-1bit \
+  --model-path /Users/noahlyons/.cache/huggingface/hub/models--prism-ml--bonsai-8b-mlx-1bit/snapshots/d95a01f5e78184d278e21c4cfd57ff417a60ae22 \
   --model-type lm \
-  --port 8001 \
+  --port 8002 \
   --host 127.0.0.1 \
-  --served-model-name Bonsai-8B-mlx-1bit \
-  --prompt-cache-size 3 \
+  --prompt-cache-size 2 \
   > /tmp/bonsai-server.log 2>&1 &
 disown
 ```
@@ -123,18 +126,19 @@ parent shell and the next narrator dispatch failed with
 ## How to verify it's up
 
 ```sh
-curl -s http://localhost:8001/v1/models | python3 -m json.tool
+curl -s http://127.0.0.1:8002/v1/models | python3 -m json.tool
 ```
 
-You should see exactly one model registered: `Bonsai-8B-mlx-1bit`.
+You should see exactly one model registered, and on this box it is
+normally the full snapshot path shown above rather than a short alias.
 A successful health check returns within a few hundred milliseconds.
 
 If `curl` hangs or returns connection refused, the server isn't
 running. Check `/tmp/bonsai-server.log` (or wherever you redirected
 stderr) for the failure mode. The most common ones:
 
-- **Port 8001 already in use** — another mlx-openai-server instance
-  or some other process is squatting on the port. `lsof -i :8001`
+- **Port 8002 already in use** — another mlx-openai-server instance
+  or some other process is squatting on the port. `lsof -i :8002`
   will tell you what.
 - **Model not in HF cache and no network** — first launch needs to
   download ~1.3 GB from HuggingFace.
@@ -165,13 +169,13 @@ is empty mid-run.
 ## Killing a stuck server
 
 ```sh
-pkill -f "mlx-openai-server.*Bonsai-8B-mlx-1bit"
+pkill -f "mlx-openai-server.*bonsai-8b-mlx-1bit"
 ```
 
 Or find the PID and `kill` it directly:
 
 ```sh
-lsof -i :8001 | grep LISTEN
+lsof -i :8002 | grep LISTEN
 kill <PID>
 ```
 
@@ -202,7 +206,7 @@ kill <PID>
   600s urlopen timeout fires. A liveness probe in the smoke loop
   would be a small improvement.
 - The bonsai server on `macbook-pro-2.local` (the big box) registers
-  models named `bonsai` and `pism-ml-bonsai-8b-mlx-1bit`, not
-  `Bonsai-8B-mlx-1bit`. So if you ever want to point the narrator
-  at the big box's bonsai instead of running it locally, you'll
-  need `--narrator-url http://macbook-pro-2.local:8001 --narrator-model bonsai`.
+  a full snapshot-path model id in `/v1/models` on the local `8002`
+  surface. If you ever repoint the narrator to a different Bonsai
+  host, trust that host's live `/v1/models` response over stale docs
+  or hard-coded aliases.

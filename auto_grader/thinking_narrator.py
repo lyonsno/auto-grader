@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_NARRATOR_MODEL = "Bonsai-8B-mlx-1bit"
+_DEFAULT_NARRATOR_BASE_URL = "http://nlm2pr.local:8002"
 
 _SYSTEM_PROMPT = """\
 You ARE a chemistry-grading AI thinking out loud, in real time, in \
@@ -51,6 +52,8 @@ I'm catching, I'm hesitating, I'm leaning toward, I'm tracing, I'm \
 counting, I'm doubling back, I'm squinting at, I'm second-guessing, \
 I'm plugging in, I'm checking, I'm trying, I'm wondering, etc.
 - Or use "I am" / "Let me" sparingly when the rhythm calls for it.
+- Do not default to "I'm noticing" or "I'm seeing"; use stronger verbs \
+unless the point is literal OCR or legibility.
 - Be specific: name the concrete numbers, units, or chemical species \
 from THIS question. Pull real details out of the reasoning excerpt.
 - Refer to the student's work in third person ("the student wrote", \
@@ -146,12 +149,39 @@ Rules:
 - ONE fragment or short sentence. 3-8 words.
 - Start with a present participle: Rechecking, Tracing, Revisiting, \
 Weighing, Comparing, Checking, Squinting at, Staying on, etc.
-- Do NOT use "I".
+- Never write I / I'm / I am.
 - Do NOT give a final verdict or score.
 - Be concrete: mention the actual issue, quantity, unit, species, or \
 rubric criterion when possible.
 - This is an IN-PROGRESS state line, not a new thought and not a conclusion.
 - No preamble, no quotes. Output ONLY the status line.
+
+Good examples:
+- Rechecking photon-energy formula.
+- Tracing valence-electron count.
+- Comparing net ionic form.
+
+Bad -> good rewrite:
+- Bad: "I'm rechecking the units."
+- Good: "Rechecking units."
+"""
+
+_CHECKPOINT_SYSTEM_PROMPT = """\
+You write compact history checkpoints for a chemistry-grading narrator.
+
+Summarize the current state of play as one neutral sentence that is worth
+keeping in durable history. This is not a live thought and not a status line.
+
+Rules:
+- ONE sentence. 8-18 words.
+- Do NOT use first person.
+- Start with a short label: "Core issue:", "Evidence:", or "Lean:".
+- Be specific to this exact item: mention the concrete chemistry issue,
+  quantity, unit, species, or rubric dimension when possible.
+- Prefer a small stable vocabulary over novelty. If the issue has already
+  been summarized recently, reuse the same canonical wording instead of
+  paraphrasing it.
+- No quotes, no bullet points, no preamble. Output ONLY the checkpoint line.
 """
 
 
@@ -195,6 +225,17 @@ _STATUS_SIMILARITY_THRESHOLD = 0.90  # status-mode lines are ALLOWED to stay
                                      # on the same semantic point; only drop
                                      # them when they are basically the exact
                                      # same line again
+_STATUS_CONTEXT_LIMIT = 5
+_THOUGHT_CONTEXT_LIMIT = 4
+_CHECKPOINT_CONTEXT_LIMIT = 4
+_CHECKPOINT_EVERY_ACCEPTED = 4
+_CHECKPOINT_TEMPERATURE = 0.5
+_CHECKPOINT_REPETITION_PENALTY = 1.0
+_CHECKPOINT_PRESENCE_PENALTY = 0.0
+_DEDUP_GROOMING_THRESHOLD = 2
+_PLAYBACK_CHUNK_DELAY_S = 0.03
+_IDLE_LEGIBILITY_DELAY_S = 1.0
+_MAX_LEGIBILITY_EXTRA_ROWS = 2
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -216,6 +257,112 @@ _SIMILARITY_STOP_WORDS = frozenset({
     "catching", "spotting", "reading", "noting", "checking", "calling",
     "eyeing", "weighing", "considering", "leaning", "hesitating",
 })
+
+_REVIEW_NEEDED_HINT_RE = re.compile(
+    r"\b(review (?:is )?(?:needed|warranted)|human review|ambigu(?:ity|ous)|uncertain)\b",
+    re.IGNORECASE,
+)
+
+_GRADER_SCORE_RE = re.compile(r"(Grader:\s*)([^ ]+)")
+_PROF_SCORE_RE = re.compile(r"(Prof:\s*)([^ ]+)")
+_TRUTH_SCORE_RE = re.compile(r"(Truth:\s*)([^ ]+)")
+_HISTORICAL_PROF_SCORE_RE = re.compile(r"(Historical\s+[Pp]rof:\s*)([^ ]+)")
+_STATUS_FIRST_PERSON_RE = re.compile(
+    r"\b(i|i'm|im|i am|i've|i'll)\b", re.IGNORECASE
+)
+
+
+def _format_score_with_denominator(score: float, max_points: float) -> str:
+    return f"{score:g}/{max_points:g}"
+
+
+def _normalize_after_action_scores(
+    text: str,
+    *,
+    grader_score: float,
+    truth_score: float,
+    max_points: float,
+    historical_professor_score: float | None = None,
+) -> str:
+    grader_display = _format_score_with_denominator(grader_score, max_points)
+    truth_display = _format_score_with_denominator(truth_score, max_points)
+    text = _GRADER_SCORE_RE.sub(
+        lambda match: f"{match.group(1)}{grader_display}",
+        text,
+        count=1,
+    )
+    if "Truth:" in text:
+        text = _TRUTH_SCORE_RE.sub(
+            lambda match: f"{match.group(1)}{truth_display}",
+            text,
+            count=1,
+        )
+        if historical_professor_score is not None:
+            historical_display = _format_score_with_denominator(
+                historical_professor_score, max_points
+            )
+            text = _HISTORICAL_PROF_SCORE_RE.sub(
+                lambda match: f"{match.group(1)}{historical_display}",
+                text,
+                count=1,
+            )
+    else:
+        text = _PROF_SCORE_RE.sub(
+            lambda match: f"{match.group(1)}{truth_display}",
+            text,
+            count=1,
+        )
+    return text
+
+
+def _sanitize_after_action_text(text: str) -> str:
+    """Clamp after-action output to one clean verdict line.
+
+    The after-action prompt asks for one line, but under load Bonsai can
+    sometimes emit repeated multiline verdicts or trail off into a partial
+    restart like a final bare ``Grader:``. We keep the first complete
+    grader/prof line and collapse internal whitespace so the reader never
+    receives a multiline topic blob.
+    """
+    lines = [line.strip() for line in text.replace("\r", "\n").splitlines()]
+    candidates = [line for line in lines if line]
+    if not candidates:
+        return ""
+
+    preferred = next(
+        (
+            line
+            for line in candidates
+            if "Grader:" in line and ("Prof:" in line or "Truth:" in line)
+        ),
+        candidates[0],
+    )
+    return " ".join(preferred.split())
+
+
+def _status_line_breaks_contract(text: str) -> bool:
+    # Status is its own contract surface: a non-first-person present-participle
+    # sticky lane, not a lightly edited thought. If the model returns first
+    # person here, that is a contract failure to drop, not text to salvage.
+    return bool(_STATUS_FIRST_PERSON_RE.search(text))
+
+def _reasoning_warrants_human_review(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "human review" in lowered
+        or "review warranted" in lowered
+        or "needs review" in lowered
+    )
+
+
+def _checkpoint_line_breaks_contract(text: str) -> bool:
+    stripped = ThinkingNarrator._canonicalize_checkpoint_text(text)
+    label, body = ThinkingNarrator._split_checkpoint_label(stripped)
+    if label not in {"core issue", "evidence", "lean"}:
+        return True
+    if not body:
+        return True
+    return bool(_STATUS_FIRST_PERSON_RE.search(body))
 
 
 def _rough_token_count(text: str) -> int:
@@ -347,11 +494,13 @@ class ThinkingNarrator:
     callback on a background thread.
     """
 
+    _PLAYBACK_CHUNK_DELAY_S = _PLAYBACK_CHUNK_DELAY_S
+
     def __init__(
         self,
         sink: "NarratorSink",
         *,
-        base_url: str = "http://localhost:8001",
+        base_url: str = _DEFAULT_NARRATOR_BASE_URL,
         model: str = _DEFAULT_NARRATOR_MODEL,
         api_key: str = "1234",
         wrap_up_base_url: str | None = None,
@@ -400,7 +549,15 @@ class ThinkingNarrator:
         # eventually unblocks (via the stream watchdog) won't clobber the
         # state of the dispatch that took its place.
         self._dispatch_generation = 0
-        self._prior_summaries: list[str] = []  # for dedup
+        self._prior_statuses: list[str] = []
+        self._current_status: str | None = None
+        self._thoughts_since_status: list[str] = []
+        self._prior_checkpoints: list[str] = []
+        self._accepted_since_checkpoint = 0
+        self._dedupe_streak = 0
+        self._legibility_jobs: list[dict] = []
+        self._idle_legibility_pending = False
+        self._idle_legibility_generation = 0
 
         # Lifetime stats (across all items)
         self._stats_lock = threading.Lock()
@@ -448,7 +605,15 @@ class ThinkingNarrator:
             # dispatch from the previous item can't clobber the new
             # item's state.
             self._dispatch_generation += 1
-            self._prior_summaries = []
+            self._prior_statuses = []
+            self._current_status = None
+            self._thoughts_since_status = []
+            self._prior_checkpoints = []
+            self._accepted_since_checkpoint = 0
+            self._dedupe_streak = 0
+            self._legibility_jobs = []
+            self._idle_legibility_pending = False
+            self._idle_legibility_generation += 1
         with self._stats_lock:
             # Roll the previous item's dispatch count into the lifetime
             # max-seen stat, then reset for the new item.
@@ -464,67 +629,225 @@ class ThinkingNarrator:
             return base + "\n\nCONTEXT for the play you're calling:\n" + self._item_header
         return base
 
-    @staticmethod
-    def _build_user_content(
+    def _build_thought_user_content(
+        self,
         chunk: str,
-        prior: list[str],
-        *,
-        status_mode: bool = False,
+        prior_thoughts: list[str],
     ) -> str:
-        if not prior:
-            return f"Current reasoning excerpt:\n\n{chunk}"
+        blocks = [f"Current reasoning excerpt:\n\n{chunk}"]
+        if self._current_status:
+            blocks.append(f"Current status lane:\n- {self._current_status}")
+        if prior_thoughts:
+            blocks.append(
+                "Recent first-person calls under this status "
+                "(do NOT repeat or paraphrase):\n"
+                + "\n".join(
+                    f"- {thought}"
+                    for thought in prior_thoughts[-_THOUGHT_CONTEXT_LIMIT:]
+                )
+            )
+        blocks.append(
+            "Write one short first-person thought about a NEW detail in this excerpt. "
+            "Stay on the current status lane, but move to a fresh angle, number, "
+            "unit, species, rubric criterion, or uncertainty."
+        )
+        return "\n\n".join(blocks)
 
-        if status_mode:
-            avoid_block = (
-                "\n\nRecent prior calls:\n"
-                + "\n".join(f"- {s}" for s in prior[-5:])
-                + "\n\nYou are still on the SAME point. Do not invent a new "
-                "angle. Compress the ongoing state into one short "
-                "present-participle status line."
+    @staticmethod
+    def _build_status_user_content(
+        chunk: str,
+        rejected_thought: str,
+        prior_statuses: list[str],
+    ) -> str:
+        blocks = [
+            "Rejected first-person line to compress:\n"
+            f"- {rejected_thought}"
+        ]
+        blocks.append(f"Current reasoning excerpt:\n\n{chunk}")
+        if prior_statuses:
+            blocks.append(
+                "Recent status lines:\n"
+                + "\n".join(
+                    f"- {status}"
+                    for status in prior_statuses[-_STATUS_CONTEXT_LIMIT:]
+                )
             )
-        else:
-            avoid_block = (
-                "\n\nYour previous calls (do NOT repeat or paraphrase):\n"
-                + "\n".join(f"- {s}" for s in prior[-5:])
-                + "\n\nYour next call MUST describe a NEW detail "
-                "from this excerpt — a different number, molecule, "
-                "step, or angle that you haven't called yet."
+        blocks.append(
+            "You are still on the SAME point. Do not invent a new angle. "
+            "Rewrite that same substance as one short non-first-person "
+            "present-participle status line."
+        )
+        blocks.append(
+            'If the rejected line begins with "I\'m" or "I am", remove that '
+            "first-person scaffolding and keep the participle."
+        )
+        return "\n\n".join(blocks)
+
+    def _build_checkpoint_user_content(
+        self,
+        chunk: str,
+        accepted_line: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+        prior_checkpoints: list[str],
+    ) -> str:
+        blocks = [f"Current reasoning excerpt:\n\n{chunk}"]
+        blocks.append(f"Latest accepted narrator line:\n- {accepted_line}")
+        if self._current_status:
+            blocks.append(f"Current status lane:\n- {self._current_status}")
+        if prior_thoughts:
+            blocks.append(
+                "Recent accepted first-person thoughts:\n"
+                + "\n".join(
+                    f"- {thought}"
+                    for thought in prior_thoughts[-_CHECKPOINT_CONTEXT_LIMIT:]
+                )
             )
-        return f"Current reasoning excerpt:\n\n{chunk}{avoid_block}"
+        if prior_statuses:
+            blocks.append(
+                "Recent status lines:\n"
+                + "\n".join(
+                    f"- {status}"
+                    for status in prior_statuses[-_CHECKPOINT_CONTEXT_LIMIT:]
+                )
+            )
+        if prior_checkpoints:
+            blocks.append(
+                "Recent checkpoints (reuse the same wording if the issue is the same; do not paraphrase it):\n"
+                + "\n".join(
+                    f"- {checkpoint}"
+                    for checkpoint in prior_checkpoints[-_CHECKPOINT_CONTEXT_LIMIT:]
+                )
+            )
+        blocks.append(
+            "Write one compact checkpoint line that captures the durable issue, "
+            "evidence, or likely direction of the grading call."
+        )
+        blocks.append(
+            "If the issue matches a recent checkpoint, reuse its wording instead of paraphrasing it."
+        )
+        return "\n\n".join(blocks)
+
+    def _emit_checkpoint_from_context(
+        self,
+        chunk: str,
+        accepted_line: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+        prior_checkpoints: list[str],
+    ) -> None:
+        checkpoint_user_content = self._build_checkpoint_user_content(
+            chunk,
+            accepted_line,
+            prior_thoughts,
+            prior_statuses,
+            prior_checkpoints,
+        )
+        checkpoint_messages = [
+            {"role": "system", "content": _CHECKPOINT_SYSTEM_PROMPT},
+            {"role": "user", "content": checkpoint_user_content},
+        ]
+        checkpoint_text = self._chat_completion(
+            checkpoint_messages,
+            temperature=_CHECKPOINT_TEMPERATURE,
+            repetition_penalty=_CHECKPOINT_REPETITION_PENALTY,
+            presence_penalty=_CHECKPOINT_PRESENCE_PENALTY,
+        ).strip()
+        if not checkpoint_text:
+            return
+        checkpoint_text = self._canonicalize_checkpoint_text(checkpoint_text)
+        if _checkpoint_line_breaks_contract(checkpoint_text):
+            self._sink.write_drop("contract-checkpoint", checkpoint_text)
+            return
+        if any(
+            self._checkpoint_lines_share_basin(
+                checkpoint_text,
+                prev,
+            )
+            for prev in prior_checkpoints
+        ):
+            self._sink.write_drop("dedup-checkpoint", checkpoint_text)
+            return
+        self._sink.write_checkpoint(checkpoint_text)
+        with self._lock:
+            self._prior_checkpoints.append(checkpoint_text)
+
+    def _maybe_groom_after_repeated_dedup(
+        self,
+        chunk: str,
+        prior_thoughts: list[str],
+        prior_statuses: list[str],
+    ) -> None:
+        with self._lock:
+            if self._dedupe_streak < _DEDUP_GROOMING_THRESHOLD:
+                return
+            accepted_line = (
+                self._current_status
+                or (prior_statuses[-1] if prior_statuses else "")
+                or (prior_thoughts[-1] if prior_thoughts else "")
+            )
+            prior_checkpoints = list(self._prior_checkpoints)
+        if not accepted_line:
+            return
+        self._emit_checkpoint_from_context(
+            chunk,
+            accepted_line,
+            prior_thoughts,
+            prior_statuses,
+            prior_checkpoints,
+        )
 
     def _retry_duplicate_as_status(
         self,
         chunk: str,
-        prior: list[str],
-    ) -> tuple[str | None, str]:
-        status_user_content = self._build_user_content(
-            chunk, prior, status_mode=True
+        rejected_thought: str,
+        prior_statuses: list[str],
+    ) -> tuple[str | None, str, str | None, str | None]:
+        """Retry a repetitive thought as a strict status line.
+
+        Important contract note: the status lane is not a repaired first-person
+        thought. The retry must already satisfy the non-first-person
+        present-participle form, or it is rejected as ``contract-status``.
+        """
+        status_user_content = self._build_status_user_content(
+            chunk, rejected_thought, prior_statuses
         )
-        with self._lock:
-            history_without_system = list(self._messages[1:-1])
         messages = [
             {"role": "system", "content": self._compose_system_prompt(status_mode=True)},
-            *history_without_system,
             {"role": "user", "content": status_user_content},
         ]
 
-        self._sink.rollback_live()
-        full = self._chat_completion_stream(messages, on_delta=self._sink.write_delta)
+        full = self._chat_completion_stream(messages, on_delta=lambda _delta: None)
         full = full.strip()
         if not full:
-            self._sink.rollback_live()
-            return None, status_user_content
+            return None, status_user_content, None, None
+        if _status_line_breaks_contract(full):
+            return None, status_user_content, "contract-status", full
 
         if any(
             self._lines_too_similar(
                 full, prev, threshold=_STATUS_SIMILARITY_THRESHOLD
             )
-            for prev in prior
+            for prev in prior_statuses
         ):
-            self._sink.rollback_live()
-            return None, status_user_content
+            return None, status_user_content, "dedup-status", full
 
-        return full, status_user_content
+        return full, status_user_content, None, None
+
+    @staticmethod
+    def _playback_chunks(text: str) -> list[str]:
+        chunks = re.findall(r"\S+\s*", text)
+        return chunks or ([text] if text else [])
+
+    def _play_accepted_line(self, text: str, *, mode: str = "thought") -> None:
+        chunks = self._playback_chunks(text)
+        if not chunks:
+            return
+        delay_s = self._PLAYBACK_CHUNK_DELAY_S
+        for index, chunk in enumerate(chunks):
+            self._sink.write_delta(chunk, mode=mode)
+            if delay_s > 0 and index < len(chunks) - 1:
+                time.sleep(delay_s)
 
     def stop(self) -> None:
         with self._lock:
@@ -648,7 +971,7 @@ class ThinkingNarrator:
             text = self._chat_completion(
                 messages,
                 max_tokens=16384,
-                temperature=0.85,
+                temperature=0.8,
                 base_url=self._wrap_up_base_url,
                 model=self._wrap_up_model,
                 api_key=self._wrap_up_api_key,
@@ -663,6 +986,212 @@ class ThinkingNarrator:
                 )
         except Exception:
             logger.exception("Wrap-up failed")
+
+    def _schedule_idle_legibility_if_needed(self) -> None:
+        with self._lock:
+            if self._idle_legibility_pending or not self._legibility_jobs:
+                return
+            generation = self._idle_legibility_generation
+            self._idle_legibility_pending = True
+
+        t = threading.Thread(
+            target=self._run_idle_legibility_after_delay,
+            args=(generation,),
+            daemon=True,
+        )
+        t.start()
+
+    def _run_idle_legibility_after_delay(self, generation: int) -> None:
+        emitted = False
+        try:
+            time.sleep(_IDLE_LEGIBILITY_DELAY_S)
+            emitted = self._flush_idle_legibility_once(generation)
+        except Exception:
+            logger.exception("Idle legibility flush failed")
+        finally:
+            with self._lock:
+                if self._idle_legibility_generation == generation:
+                    self._idle_legibility_pending = False
+                    should_reschedule = bool(self._legibility_jobs)
+                else:
+                    should_reschedule = False
+            if emitted and should_reschedule:
+                self._schedule_idle_legibility_if_needed()
+
+    def _flush_idle_legibility_once(
+        self,
+        generation: int | None = None,
+    ) -> bool:
+        with self._lock:
+            if generation is not None and generation != self._idle_legibility_generation:
+                return False
+            if self._pending_dispatch or self._buffer or not self._legibility_jobs:
+                return False
+            job = self._legibility_jobs.pop(0)
+            current_generation = self._idle_legibility_generation
+
+        if job["kind"] == "generated":
+            text = self._chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You write one compact structured history row for a chemistry-grading narrator. "
+                            "Return ONLY the row body, not the label."
+                        ),
+                    },
+                    {"role": "user", "content": job["prompt"]},
+                ],
+                max_tokens=80,
+                temperature=0.6,
+                repetition_penalty=1.0,
+                presence_penalty=0.0,
+                timeout=30,
+            ).strip()
+        else:
+            text = str(job["text"]).strip()
+
+        if not text:
+            return False
+
+        with self._lock:
+            if current_generation != self._idle_legibility_generation:
+                return False
+
+        writer = getattr(self._sink, f"write_{job['row_type']}", None)
+        if writer is None:
+            drop_writer = getattr(self._sink, "write_drop", None)
+            if drop_writer is not None:
+                drop_writer("missing-sink-row", f"{job['row_type']}: {text}")
+            logger.warning(
+                "Narrator sink missing writer for structured row type %s; dropping row",
+                job["row_type"],
+            )
+            return False
+        writer(text)
+        return True
+
+    def _enqueue_legibility_job(
+        self,
+        row_type: str,
+        *,
+        text: str | None = None,
+        prompt: str | None = None,
+    ) -> None:
+        if text is None and prompt is None:
+            return
+        kind = "generated" if prompt is not None else "literal"
+        payload = {"kind": kind, "row_type": row_type}
+        if text is not None:
+            payload["text"] = text.strip()
+        if prompt is not None:
+            payload["prompt"] = prompt
+        with self._lock:
+            self._legibility_jobs.append(payload)
+
+    @staticmethod
+    def _review_needed_text(prediction: Any) -> str | None:
+        reasoning = str(getattr(prediction, "model_reasoning", "")).strip()
+        confidence = float(getattr(prediction, "model_confidence", 1.0))
+        if not reasoning:
+            return None
+        if not _REVIEW_NEEDED_HINT_RE.search(reasoning) and confidence >= 0.6:
+            return None
+        return (
+            "Human review warranted because the cancellation handwriting "
+            "remains ambiguity-sensitive after a bounded pass."
+            if "ambigu" in reasoning.lower()
+            else "Human review warranted after a bounded ambiguity pass."
+        )
+
+    @staticmethod
+    def _professor_mismatch_text(item: Any) -> str | None:
+        corrected = getattr(item, "corrected_score", None)
+        if corrected is None or abs(corrected - item.professor_score) < 1e-9:
+            return None
+        return (
+            f"Historical professor awarded "
+            f"{_format_score_with_denominator(item.professor_score, item.max_points)}; "
+            f"corrected truth is "
+            f"{_format_score_with_denominator(corrected, item.max_points)}."
+        )
+
+    @staticmethod
+    def _should_emit_basis_row(
+        prediction: Any,
+        item: Any,
+        *,
+        review_needed: str | None,
+        professor_mismatch: str | None,
+    ) -> bool:
+        score_basis = str(getattr(prediction, "score_basis", "")).strip()
+        if not score_basis:
+            return False
+        if review_needed or professor_mismatch:
+            return True
+        if prediction.model_score < item.max_points:
+            return True
+        truth_score = getattr(item, "corrected_score", None)
+        if truth_score is None:
+            truth_score = getattr(item, "truth_score", item.professor_score)
+        return abs(prediction.model_score - truth_score) > 1e-9
+
+    def _write_legibility_row_now(self, row_type: str, text: str | None) -> bool:
+        body = str(text or "").strip()
+        if not body:
+            return False
+        writer = getattr(self._sink, f"write_{row_type}")
+        writer(body)
+        return True
+
+    def _handle_legibility_rows(self, prediction: Any, item: Any) -> None:
+        score_basis = str(getattr(prediction, "score_basis", "")).strip()
+        review_needed = self._review_needed_text(prediction)
+        professor_mismatch = self._professor_mismatch_text(item)
+
+        if self._should_emit_basis_row(
+            prediction,
+            item,
+            review_needed=review_needed,
+            professor_mismatch=professor_mismatch,
+        ):
+            self._write_legibility_row_now("basis", score_basis)
+
+        extras = 0
+
+        if review_needed and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+            self._write_legibility_row_now("review_marker", review_needed)
+            extras += 1
+
+        if professor_mismatch and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+            self._write_legibility_row_now("professor_mismatch", professor_mismatch)
+            extras += 1
+
+        if prediction.model_score < item.max_points and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+            if 0.0 < prediction.model_score < item.max_points:
+                self._enqueue_legibility_job(
+                    "credit_preserved",
+                    prompt=(
+                        "Write one short row body for 'Credit preserved for:'. "
+                        "Use the direct earned-credit basis only, not the deduction. "
+                        f"Question: {item.question_id}. "
+                        f"Score basis: {getattr(prediction, 'score_basis', '')} "
+                        f"Reasoning: {getattr(prediction, 'model_reasoning', '')}"
+                    ),
+                )
+                extras += 1
+            if extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+                self._enqueue_legibility_job(
+                    "deduction",
+                    prompt=(
+                        "Write one short row body for 'Deduction:'. "
+                        "Name the concrete thing that cost credit. "
+                        f"Question: {item.question_id}. "
+                        f"Score basis: {getattr(prediction, 'score_basis', '')} "
+                        f"Reasoning: {getattr(prediction, 'model_reasoning', '')}"
+                    ),
+                )
+                extras += 1
 
     def _produce_after_action(
         self,
@@ -682,8 +1211,8 @@ class ThinkingNarrator:
 
             # Truncated / unparseable rows are non-predictions — the
             # grader never committed to a score. Emit a distinct
-            # after-action shape instead of feeding None into the
-            # verdict comparison path (which would TypeError on
+            # after-action shape instead of feeding null scores into
+            # the verdict comparison path (which would TypeError on
             # None < float) or into bonsai's comparative-line prompt
             # (which would lie about the grader having scored zero).
             # Operation Zilch Reaper, forward lane.
@@ -715,17 +1244,29 @@ class ThinkingNarrator:
                     else:
                         expected = str(correct)
 
+            truth_score = getattr(item, "truth_score", item.professor_score)
+            corrected_truth = (
+                getattr(item, "corrected_score", None) is not None
+                and abs(truth_score - item.professor_score) > 1e-9
+            )
+
             # Verdict drives both the prompt context (which examples to
             # encourage) and the topic line color in the reader.
-            if prediction.model_score == item.professor_score:
+            if prediction.model_score == truth_score:
                 verdict = "MATCHED"
                 verdict_short = "match"
-            elif prediction.model_score > item.professor_score:
+            elif prediction.model_score > truth_score:
                 verdict = "GRADER OVERSHOT"
                 verdict_short = "overshoot"
             else:
                 verdict = "GRADER UNDERSHOT"
                 verdict_short = "undershoot"
+            grader_score_display = _format_score_with_denominator(
+                prediction.model_score, item.max_points
+            )
+            truth_score_display = _format_score_with_denominator(
+                truth_score, item.max_points
+            )
             payload = (
                 f"The grader just rendered a verdict on question "
                 f"{item.question_id}. Here's the after-action:\n\n"
@@ -738,11 +1279,29 @@ class ThinkingNarrator:
             payload += (
                 f"  Student wrote: \"{item.student_answer}\"\n"
                 f"  Grader read: \"{prediction.model_read}\"\n"
-                f"  Grader awarded: {prediction.model_score} pts\n"
+                f"  Grader awarded: {prediction.model_score} pts "
+                f"(display as {grader_score_display})\n"
                 f"  Grader reasoning: {prediction.model_reasoning[:300]}\n"
-                f"  Professor awarded: {item.professor_score} pts "
-                f"(mark: {item.professor_mark})\n"
-                f"  Professor's note: \"{item.notes}\"\n"
+            )
+            if corrected_truth:
+                professor_score_display = _format_score_with_denominator(
+                    item.professor_score, item.max_points
+                )
+                payload += (
+                    f"  Truth awarded: {truth_score} pts "
+                    f"(display as {truth_score_display})\n"
+                    f"  Historical professor awarded: {item.professor_score} pts "
+                    f"(display as {professor_score_display}, mark: {item.professor_mark})\n"
+                    f"  Historical professor's note: \"{item.notes}\"\n"
+                    f"  Correction reason: \"{getattr(item, 'correction_reason', '')}\"\n"
+                )
+            else:
+                payload += (
+                    f"  Professor awarded: {truth_score} pts "
+                    f"(display as {truth_score_display}, mark: {item.professor_mark})\n"
+                    f"  Professor's note: \"{item.notes}\"\n"
+                )
+            payload += (
                 f"  Verdict: {verdict}\n\n"
                 f"CRITICAL SEMANTICS: The grader and professor are JUDGES "
                 f"who score the STUDENT. When both judges give a low score "
@@ -755,32 +1314,38 @@ class ThinkingNarrator:
                 f"award credit. The judges only 'miss' something if "
                 f"they DISAGREE with each other (verdict = OVERSHOT or "
                 f"UNDERSHOT).\n\n"
-                f"Write ONE concise after-action line in this format:\n"
-                f'  "Grader: <score> (<one-clause reason>). '
-                f'Prof: <score> (<one-clause reason>). · '
-                f'<optional dry/arch one-line coda>"\n\n'
-                f"Examples:\n"
-                f'  "Grader: 2/2 (matched on density via m/V). '
-                f"Prof: 2/2 (clean check). · "
-                f'Even the 1-bit kid called this one."\n'
-                f'  "Grader: 0/4 (caught the wrong format — student wrote '
-                f'molecular instead of net ionic). Prof: 0/4 (same call). '
-                f'· Both judges agreeing the student earned the zero, not '
-                f'a tough draw at all."\n'
-                f'  "Grader: 0/2 (refused credit on consistent-with-wrong-'
-                f"premise mol calc). Prof: 2/2 (charitable). · "
-                f'Grader still missing the consistency rule, ouch."\n'
-                f'  "Grader: 1/2 (split partial on ozone Lewis). '
-                f"Prof: 1/2 (matched). · "
-                f'Both judges spotting one resonance form, neither catching the second."\n\n'
-                f"In the coda, when both judges agree on a low score, "
-                f"phrase it as 'judges agreeing the student earned X' "
-                f"or 'student plainly missed Y, judges in lockstep' — "
-                f"NEVER 'both judges missed' on low scores.\n\n"
-                f"Be matter-of-fact in the score+reason portion. "
-                f"The coda is optional but encouraged — dry, arch, "
-                f"sportscaster post-play tone. Output ONE line only, "
-                f"no preamble, no quotes around your output."
+            )
+            if corrected_truth:
+                payload += (
+                    "For corrected historical items, success means matching "
+                    "the corrected truth, not the historical professor mark. "
+                    "Mention the historical professor score only as provenance, "
+                    "not as the target.\n\n"
+                    "Write ONE concise after-action line in this format:\n"
+                    '  "Grader: <score> (<one-clause reason>). '
+                    'Truth: <score> (<one-clause reason>). · '
+                    'Historical prof: <score> (<one-clause provenance note>)"\n\n'
+                )
+            else:
+                payload += (
+                    "Write ONE concise after-action line in this format:\n"
+                    '  "Grader: <score> (<one-clause reason>). '
+                    'Prof: <score> (<one-clause reason>). · '
+                    '<optional short coda>"\n\n'
+                )
+            payload += (
+                f"Style rules:\n"
+                f"- The score+reason portion should be matter-of-fact and question-specific.\n"
+                f"- The optional coda should be fresh, concrete, and tied to this exact item.\n"
+                f"- Prefer no coda to a stock phrase.\n"
+                f"- Do not reuse canned taglines or recurring catchphrases.\n"
+                f"- Avoid slogan-like codas, victory laps, and recurring comic patter.\n"
+                f"- When the scores match, describe agreement plainly without celebratory catchphrases.\n"
+                f"- When the scores differ, explicitly describe the disagreement.\n"
+                f"- Never describe disagreement as agreement.\n"
+                f"- Never say the judges 'missed' something when they both assigned the student a low score; "
+                f"that means they both caught the student's error.\n\n"
+                f"Output ONE line only, no preamble, no quotes around your output."
             )
 
             messages = [
@@ -808,7 +1373,9 @@ class ThinkingNarrator:
                 text = self._chat_completion(
                     messages,
                     max_tokens=256,
-                    temperature=0.85,
+                    temperature=0.6,
+                    repetition_penalty=1.001,
+                    presence_penalty=0.0,
                     timeout=60,
                 )
             except Exception:
@@ -817,11 +1384,26 @@ class ThinkingNarrator:
                     item.exam_id, item.question_id,
                 )
             if text:
+                text = _sanitize_after_action_text(text)
+                text = _normalize_after_action_scores(
+                    text,
+                    grader_score=prediction.model_score,
+                    truth_score=truth_score,
+                    max_points=item.max_points,
+                    historical_professor_score=(
+                        item.professor_score if corrected_truth else None
+                    ),
+                )
                 logger.info("After-action: %s", text)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · {text}",
                     verdict=verdict_short,
+                    grader_score=prediction.model_score,
+                    truth_score=truth_score,
+                    max_points=item.max_points,
                 )
+                self._handle_legibility_rows(prediction, item)
+                self._schedule_idle_legibility_if_needed()
             else:
                 # Fallback: bonsai returned empty or raised. Always
                 # emit SOMETHING so the user can see the item finished
@@ -837,7 +1419,12 @@ class ThinkingNarrator:
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · (after-action unavailable)",
                     verdict=verdict_short,
+                    grader_score=prediction.model_score,
+                    truth_score=truth_score,
+                    max_points=item.max_points,
                 )
+                self._handle_legibility_rows(prediction, item)
+                self._schedule_idle_legibility_if_needed()
         except Exception:
             logger.exception("Failed to produce after-action summary")
 
@@ -915,85 +1502,106 @@ class ThinkingNarrator:
         with self._stats_lock:
             self._stat_dispatches_total += 1
         try:
-            # Inject explicit "don't repeat yourself" instruction with the
-            # actual prior summaries inline. Bonsai is a small model and
-            # needs the prior list spelled out, not just system-prompt rules.
             with self._lock:
-                prior = list(self._prior_summaries)
-            user_content = self._build_user_content(chunk, prior)
-            with self._lock:
-                self._messages.append(
-                    {"role": "user", "content": user_content}
-                )
-                messages = list(self._messages)
-
-            # Stream tokens DIRECTLY to the sink as they arrive — this gives
-            # the user the typewriter effect on the live row. We accumulate
-            # the full text in parallel for the post-stream dedup check.
-            # If the dedup catches it, we rollback_live (clear the live row)
-            # and emit a drop event. The user briefly sees the typed-out line
-            # before it gets rolled back, which actually communicates "the
-            # narrator tried this and rejected it" nicely.
-            captured = []
-
-            def _stream_to_sink(delta: str) -> None:
-                captured.append(delta)
-                self._sink.write_delta(delta)
+                prior_thoughts = list(self._thoughts_since_status)
+                prior_statuses = list(self._prior_statuses)
+            user_content = self._build_thought_user_content(chunk, prior_thoughts)
+            messages = [
+                {"role": "system", "content": self._compose_system_prompt()},
+                {"role": "user", "content": user_content},
+            ]
 
             full = self._chat_completion_stream(
-                messages, on_delta=_stream_to_sink
+                messages, on_delta=lambda _delta: None
             )
             full = full.strip()
 
             if not full:
                 with self._stats_lock:
                     self._stat_drops_empty += 1
-                self._sink.rollback_live()
                 self._sink.write_drop("empty", "")
-                with self._lock:
-                    if self._messages and self._messages[-1]["role"] == "user":
-                        self._messages.pop()
                 return
 
             # Dedup check
             if any(
                 self._lines_too_similar(full, prev)
-                for prev in prior
+                for prev in prior_thoughts
             ):
+                status_established = bool(prior_statuses)
                 logger.info(
                     "Narrator: first-person summary was repetitive, retrying in status mode: %s",
                     full,
                 )
-                status_full, status_user_content = self._retry_duplicate_as_status(
-                    chunk, prior
+                (
+                    status_full,
+                    _status_user_content,
+                    status_drop_reason,
+                    status_drop,
+                ) = self._retry_duplicate_as_status(
+                    chunk, full, prior_statuses
                 )
                 if not status_full:
-                    with self._stats_lock:
-                        self._stat_drops_dedup += 1
-                    self._sink.write_drop("dedup", full)
+                    if status_established:
+                        with self._stats_lock:
+                            self._stat_drops_dedup += 1
+                        self._sink.write_drop("dedup", full)
+                    if status_drop_reason and status_drop:
+                        self._sink.write_drop(status_drop_reason, status_drop)
                     logger.info("Narrator: dropped repetitive summary: %s", full)
                     with self._lock:
-                        if self._messages and self._messages[-1]["role"] == "user":
-                            self._messages.pop()
+                        self._dedupe_streak += 1
+                    self._maybe_groom_after_repeated_dedup(
+                        chunk,
+                        prior_thoughts,
+                        prior_statuses,
+                    )
                     return
                 full = status_full
-                with self._lock:
-                    if self._messages and self._messages[-1]["role"] == "user":
-                        self._messages[-1] = {
-                            "role": "user",
-                            "content": status_user_content,
-                        }
+                committed_mode = "status"
+            else:
+                committed_mode = "thought"
 
-            # Accept — commit the live line to history
-            self._sink.commit_live()
+            # Accept — now that dedup has settled, play the accepted line
+            # into the live row and then commit it.
+            self._play_accepted_line(full, mode=committed_mode)
+            self._sink.commit_live(mode=committed_mode)
 
+            checkpoint_context: tuple[str, str, list[str], list[str], list[str]] | None = None
             with self._lock:
-                self._messages.append(
-                    {"role": "assistant", "content": full}
-                )
-                self._prior_summaries.append(full)
+                self._dedupe_streak = 0
+                if committed_mode == "status":
+                    self._current_status = full
+                    self._prior_statuses.append(full)
+                    self._thoughts_since_status = []
+                else:
+                    self._thoughts_since_status.append(full)
+                self._accepted_since_checkpoint += 1
+                if self._accepted_since_checkpoint >= _CHECKPOINT_EVERY_ACCEPTED:
+                    checkpoint_context = (
+                        chunk,
+                        full,
+                        list(self._thoughts_since_status),
+                        list(self._prior_statuses),
+                        list(self._prior_checkpoints),
+                    )
+                    self._accepted_since_checkpoint = 0
             with self._stats_lock:
                 self._stat_summaries_emitted += 1
+            if checkpoint_context is not None:
+                (
+                    checkpoint_chunk,
+                    checkpoint_line,
+                    checkpoint_thoughts,
+                    checkpoint_statuses,
+                    checkpoint_prior,
+                ) = checkpoint_context
+                self._emit_checkpoint_from_context(
+                    checkpoint_chunk,
+                    checkpoint_line,
+                    checkpoint_thoughts,
+                    checkpoint_statuses,
+                    checkpoint_prior,
+                )
             logger.info("Narrator summary: %s", full)
         except Exception:
             logger.exception("Narrator dispatch failed")
@@ -1042,6 +1650,69 @@ class ThinkingNarrator:
         smaller = min(len(words_a), len(words_b))
         return (overlap / smaller) > threshold
 
+    @staticmethod
+    def _checkpoint_lines_share_basin(a: str, b: str) -> bool:
+        label_a, body_a = ThinkingNarrator._split_checkpoint_label(a)
+        label_b, body_b = ThinkingNarrator._split_checkpoint_label(b)
+        if label_a != label_b:
+            return False
+        norm_a = ThinkingNarrator._normalize_checkpoint_body(body_a)
+        norm_b = ThinkingNarrator._normalize_checkpoint_body(body_b)
+        if not norm_a or not norm_b:
+            return False
+        if norm_a == norm_b:
+            return True
+        return ThinkingNarrator._lines_too_similar(
+            norm_a,
+            norm_b,
+            threshold=0.70,
+        )
+
+    @staticmethod
+    def _split_checkpoint_label(text: str) -> tuple[str, str]:
+        match = re.match(
+            r"^(?:\*+|`+)?\s*(Core issue|Evidence|Lean)\s*:\s*(?:\*+|`+)?\s*(.*)$",
+            text.strip(),
+            re.IGNORECASE,
+        )
+        if not match:
+            return "", text.strip()
+        return match.group(1).lower(), match.group(2).strip()
+
+    @staticmethod
+    def _canonicalize_checkpoint_text(text: str) -> str:
+        label, body = ThinkingNarrator._split_checkpoint_label(text)
+        if label not in {"core issue", "evidence", "lean"} or not body:
+            return text.strip()
+        canonical_labels = {
+            "core issue": "Core issue",
+            "evidence": "Evidence",
+            "lean": "Lean",
+        }
+        return f"{canonical_labels[label]}: {body}"
+
+    @staticmethod
+    def _normalize_checkpoint_body(text: str) -> str:
+        normalized = text.lower()
+        replacements = {
+            "cm^3": "volume_unit",
+            "cm³": "volume_unit",
+            "cm3": "volume_unit",
+            "ml": "volume_unit",
+            "moles-versus-grams": "unit_mixup",
+            "moles vs grams": "unit_mixup",
+            "moles and grams": "unit_mixup",
+            "net ionic": "net_ionic",
+            "valence electrons": "valence_electrons",
+            "electron count": "valence_electrons",
+            "octet rule": "octet",
+        }
+        for old, new in replacements.items():
+            normalized = normalized.replace(old, new)
+        normalized = re.sub(r"[^a-z0-9_/ -]+", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
+
     def _chat_completion(
         self,
         messages: list[dict],
@@ -1052,7 +1723,7 @@ class ThinkingNarrator:
         top_k: int = 20,
         min_p: float = 0.002,
         repetition_penalty: float = 1.001,
-        presence_penalty: float = 1.0,
+        presence_penalty: float = 0.0,
         base_url: str | None = None,
         model: str | None = None,
         api_key: str | None = None,
@@ -1132,7 +1803,7 @@ class ThinkingNarrator:
         top_k: int = 20,
         min_p: float = 0.002,
         repetition_penalty: float = 1.001,
-        presence_penalty: float = 1.0,
+        presence_penalty: float = 0.0,
         max_chars: int = 350,
         max_seconds: float = 20.0,
     ) -> str:

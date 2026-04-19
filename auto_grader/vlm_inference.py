@@ -12,6 +12,7 @@ import hashlib
 import inspect
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,8 @@ class ServerConfig:
     at handwriting, doing the actual division 95/13.6, considering
     misprints) and then the stream closed without ever producing a
     content delta. Reasoning prose was fine, JSON emission was
-    blocked. Switching to the coding preset with presence_penalty=0
+    blocked. Switching to the coding preset with a low, bounded
+    presence penalty
     fixes the structured-output phase without giving up the
     exploration that the original temperature=0.1 was missing.
 
@@ -58,34 +60,31 @@ class ServerConfig:
          general, tried 2026-04-08 16:43): reasoning prose was clean
          and grounded, but JSON output was blocked entirely. Empty
          content, parser fail on every item.
-      3. temperature=0.6, presence_penalty=0 (current — Alibaba
-         thinking-mode coding): the right combination for our task
-         shape. 6x more exploration than (1) so reasoning loops
-         should dissolve, no presence penalty fighting JSON emission.
+      3. temperature=0.6, presence_penalty=0.75 (temporary bounded
+         experiment on top of Alibaba thinking-mode coding): kept the
+         coding preset structure, but added a moderate novelty gradient
+         to see whether Qwen escaped repetitive local loops without
+         collapsing JSON emission the way 1.5 did.
+      4. temperature=0.6, presence_penalty=0.0 (current): revert to the
+         coding preset after the bounded experiment. Structured JSON
+         emission remains the primary constraint, so we prefer the
+         simpler known-good zero-presence regime until there is clear
+         evidence the higher value helps more than it harms.
 
-    If (3) still produces repetitive reasoning, the next move is
-    raising temperature toward 0.8-1.0 while keeping presence_penalty
-    at 0. We do NOT raise presence_penalty for structured output.
+    We still do NOT jump to the general-mode 1.5 presence penalty for
+    structured output.
 
-    max_tokens=16384 is intentionally generous. Picking an intermediate
-    value (e.g. 4096) is the worst of all worlds: too low to reliably
-    accommodate the longest legitimate reasoning we have observed (fr-5b
-    was ~30K chars ≈ 7-8K tokens of reasoning_content), too high to
-    "fail fast" on a runaway loop. The cost of setting max_tokens high
-    is asymmetric — it is only paid when the model actually uses the
-    budget — so a high ceiling catches the long-reasoning case without
-    penalizing short-reasoning items. 16384 gives comfortable headroom
-    above the worst observed legitimate reasoning while still being a
-    finite safety net for true infinite loops. The optimization target
-    is "every item gets a definitive answer"; per-item wall clock up
-    to 3-4 minutes on the hardest items is acceptable for a 12-item
-    curated test set.
+    max_tokens=8192 keeps headroom for legitimately hard items without
+    letting one bad stall chew through the old 16384-token runway. The
+    longest useful traces we have seen were already in the ~7-8K token
+    band, so 8192 is still generous, but no longer gives pathological
+    items an enormous extra burn window.
     """
 
     base_url: str  # e.g. "http://192.168.68.128:8001"
     api_key: str = "1234"
     model: str = "qwen3p5-35B-A3B"
-    max_tokens: int = 16384
+    max_tokens: int = 8192
     temperature: float = 0.6
     top_p: float = 0.95
     top_k: int = 20
@@ -95,127 +94,30 @@ class ServerConfig:
 
 
 # ---------------------------------------------------------------------------
-# Per-model-family sampling presets
-# ---------------------------------------------------------------------------
-
-_MODEL_FAMILY_PATTERNS: dict[str, tuple[str, ...]] = {
-    "qwen": (
-        "qwen/",
-        "qwen3.5",
-        "qwen3-",
-        "qwen3p5-",
-    ),
-    "gemma-4": (
-        "gemma-4-",
-        "google/gemma-4-",
-    ),
-}
-
-_TASK_SAMPLING_PRESETS: dict[str, dict[str, dict[str, float | int]]] = {
-    "grading": {
-        "neutral": {
-            "temperature": 0.3,
-            "top_p": 0.95,
-            "top_k": 40,
-            "min_p": 0.0,
-            "presence_penalty": 0.0,
-            "repetition_penalty": 1.0,
-        },
-        "qwen": {
-            "temperature": 0.6,
-            "top_p": 0.95,
-            "top_k": 20,
-            "min_p": 0.0,
-            "presence_penalty": 0.0,
-            "repetition_penalty": 1.0,
-        },
-        "gemma-4": {
-            "temperature": 1.0,
-            "top_p": 0.95,
-            "top_k": 64,
-        },
-    },
-    "describe": {
-        "neutral": {
-            "temperature": 0.3,
-            "top_p": 0.95,
-            "top_k": 40,
-            "min_p": 0.0,
-            "presence_penalty": 0.0,
-            "repetition_penalty": 1.0,
-        },
-        "qwen": {
-            "temperature": 0.3,
-            "top_p": 0.95,
-            "top_k": 20,
-            "min_p": 0.0,
-            "presence_penalty": 0.0,
-            "repetition_penalty": 1.0,
-        },
-        "gemma-4": {
-            "temperature": 0.3,
-            "top_p": 0.95,
-            "top_k": 64,
-            "min_p": 0.0,
-            "presence_penalty": 0.0,
-            "repetition_penalty": 1.0,
-        },
-    },
-}
-
-
-def known_model_families() -> tuple[str, ...]:
-    return ("qwen", "gemma-4", "neutral")
-
-
-def resolve_model_family(model: str, requested_family: str | None = None) -> str:
-    """Resolve a model into a registered family or raise loudly."""
-    families = known_model_families()
-    if requested_family is not None:
-        family = requested_family.strip().lower()
-        if family not in families:
-            valid = ", ".join(families)
-            raise ValueError(
-                f"Unknown model-family '{requested_family}'. Valid values: {valid}."
-            )
-        return family
-
-    normalized = model.strip().lower()
-    for family, prefixes in _MODEL_FAMILY_PATTERNS.items():
-        if any(normalized.startswith(prefix) for prefix in prefixes):
-            return family
-
-    valid = ", ".join(families)
-    raise ValueError(
-        f"Unregistered model '{model}'. Pass --model-family "
-        f"{{{valid}}} to choose explicit sampling defaults."
-    )
-
-
-def apply_model_sampling_preset(
-    config: ServerConfig,
-    model: str | None = None,
-    *,
-    family: str | None = None,
-    task: str = "grading",
-) -> ServerConfig:
-    """Return a new ServerConfig with explicit family-based sampling."""
-    import dataclasses
-
-    if task not in _TASK_SAMPLING_PRESETS:
-        raise ValueError(f"Unknown sampling task '{task}'")
-    name = model or config.model
-    resolved_family = resolve_model_family(name, family)
-    preset = _TASK_SAMPLING_PRESETS[task][resolved_family]
-    return dataclasses.replace(config, **preset)
-
-
-# ---------------------------------------------------------------------------
 # PDF page extraction
 # ---------------------------------------------------------------------------
 
 
-def extract_page_image(pdf_path: Path, page_num: int, dpi: int = 200) -> bytes:
+#: DPI used for page images handed to the VLM grader. Kept modest so
+#: request payloads (base64-encoded PNGs) stay well under typical
+#: endpoint limits and rasterization latency stays tolerable per item.
+GRADER_PAGE_DPI = 200
+
+#: DPI used for page images handed to the focus-preview pipeline. The
+#: primary preview renderer on image-capable terminals (WezTerm, iTerm2)
+#: is the iTerm2 inline image path, which hands the full-resolution PNG
+#: directly to the terminal for pixel-for-pixel rasterization. That
+#: path benefits from maximum source resolution — the terminal will
+#: produce a sharper rendered image the more pixels it has to work with.
+#: The half-block fallback renderer (for terminals without image
+#: support) downsamples to terminal cells regardless of source DPI and
+#: doesn't benefit from the extra pixels, but doesn't suffer either.
+#: The grader does NOT see this higher-resolution image — it's
+#: rasterized into a separate cache at GRADER_PAGE_DPI.
+PREVIEW_PAGE_DPI = 800
+
+
+def extract_page_image(pdf_path: Path, page_num: int, dpi: int = GRADER_PAGE_DPI) -> bytes:
     """Extract a single page from a PDF as a PNG image (bytes).
 
     page_num is 1-indexed (matching ground truth schema).
@@ -239,62 +141,66 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # Prompt construction
 # ---------------------------------------------------------------------------
 
+# Grading philosophy, in project terms:
+#
+# - The grader's job is to award the highest score justified by the work
+#   actually on the page, not merely to mark errors.
+# - "Generous" here means lawful rescue, not speculative charity: actively
+#   search for rubric-grounded setup credit, method credit, carry-forward
+#   credit, and Lewis-structure partials, but do not imagine missing work.
+# - Answered-form requirements still bound rescue. If the requested form is the
+#   thing being graded, nearby chemical ingredients do not magically become the
+#   requested answer.
+# - Ambiguity should not turn into endless overthinking. After one careful pass,
+#   choose the best-supported reading, record uncertainty in model_reasoning,
+#   lower confidence when warranted, and stop.
+#
+# Keep this explanation next to the system prompt so future prompt edits do not
+# quietly drift back toward vague "be charitable" language.
 _SYSTEM_PROMPT = """\
-You are grading a chemistry exam. You will be shown a scanned page from a \
-student's exam and asked to grade a specific question.
-
-Grading philosophy:
-- Be charitable. If a reasonable reading supports correctness, give credit.
-- If the student shows correct method but makes an arithmetic slip, award \
-partial credit for the method.
-- Internal consistency rule: if this part depends on an earlier wrong answer \
-but the student applies their own earlier result correctly here, award full \
-credit for the method in this part. Do not double-penalize one earlier error.
-- Answered-form rule: if the question asks for a specific form, grade the \
-requested form. Example: a net ionic equation must actually be net ionic; a \
-full molecular or full ionic equation does not satisfy that criterion.
-
-For each question, you must:
-1. Read what the student wrote
-2. Compare it to the correct answer / rubric
-3. Decide whether this question depends on an earlier part of the same \
-problem. If yes, name that earlier part. If no, say "none".
-4. If it does depend on an earlier part, decide whether the student's work \
-here is internally consistent with their own earlier result.
-5. Award a score, erring on the side of generosity while respecting the \
-requested answer form.
-
-Respond in EXACTLY this JSON format (no other text). The
-upstream_dependency and if_dependent_then_consistent fields are
-REQUIRED — the grading process is not complete without them, and they
-must be filled in before model_score:
-
+You are grading a chemistry exam.
+Award the highest score justified by the student's written work under the rubric.
+Actively rescue as much lawful partial credit as possible.
+If the student's work supports a lawful full-credit interpretation, take it and stop.
+Be charitable toward handwriting and notation: if a student's marks admit a reasonable reading as correct, read them that way.
+Be strict toward errors you see. An error you notice is an error you grade, even if the student "demonstrated the core concept" — that is abandoning the rubric, not charity.
+Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.
+Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
+Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
+Treat mL and cm³ as equivalent unless the question explicitly tests form.
+If the student shows correct method but makes an arithmetic slip, award partial credit for the method.
+If setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
+Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
+Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.
+If the student's approach would still be wrong with perfect execution, do not award method credit.
+Internal consistency: if this part depends on an earlier wrong answer but the student applies their own earlier result correctly here, award full credit for the method in this part.
+On Lewis-structure questions, rescue partial credit for correct connectivity, valence electrons, or bond order even if octets, formal charges, or resonance are incomplete.
+Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
+Grade what is written, not a more favorable answer you can imagine.
+If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
+After one careful pass, if ambiguity still affects the score, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.
+score_basis = short literal basis for the awarded score: credit earned vs lost.
+model_reasoning = broader reasoning only: ambiguity, OCR, rescue logic, or review handoff.
+Do not restate score_basis in model_reasoning.
+Answered-form rule: grade the form the question asked for. A net ionic equation means net ionic only; molecular and full ionic equations answer a different question.
+When the requested form is the thing being graded, do not award rescue credit for nearby ingredients unless the rubric explicitly does so.
+If the requested answer form is plainly missing, stop and score only what is on the page.
+Use upstream_dependency = "none" unless carry-forward is clear.
+Respond with only the JSON object below. upstream_dependency and if_dependent_then_consistent are required fields and must be populated before model_score:
 {
   "model_read": "<what the student wrote, verbatim>",
-  "upstream_dependency": "<earlier part id this depends on, e.g. '5(a)', or 'none'>",
-  "if_dependent_then_consistent": <true | false | null if upstream_dependency is 'none'>,
-  "model_score": <numeric score you award>,
-  "model_confidence": <0.0 to 1.0, your confidence in the score>,
-  "model_reasoning": "<brief explanation of your grading, including how the upstream dependency was handled>"
+  "model_score": <number>,
+  "model_confidence": <0 to 1>,
+  "model_reasoning": "<brief justification>",
+  "upstream_dependency": "<earlier part id or 'none'>",
+  "if_dependent_then_consistent": <true | false | null>,
+  "score_basis": <string>,
+  "is_obviously_fully_correct": <true | false | null>,
+  "is_obviously_wrong": <true | false | null>
 }
 """
 
-GRADING_PROMPT_VERSION = "2026-04-08-condensed-v1"
-DESCRIBE_ONLY_PROMPT_VERSION = "2026-04-11-describe-only-v2"
-DESCRIBE_ONLY_PROMPT = (
-    "This is a page from a student's chemistry exam. The page may "
-    "contain multiple questions; describe everything visually "
-    "present on it.\n\n"
-    "For each distinct piece of writing or drawing, transcribe what "
-    "the student wrote as literally as possible — numbers, "
-    "equations, diagrams, marginal notes — and note where it sits "
-    "on the page (near which question number, in which margin). If "
-    "any handwriting or drawing is ambiguous and admits more than "
-    "one reasonable reading, list the alternatives.\n\n"
-    "Do not grade. Do not apply chemistry knowledge to judge "
-    "correctness. Describe what is visually present, nothing more."
-)
-
+GRADING_PROMPT_VERSION = "2026-04-11-positive-sweep-v1"
 
 def _build_grading_prompt(item: EvalItem, template_question: dict | None) -> str:
     """Build the user-facing grading prompt for one question."""
@@ -343,16 +249,6 @@ def grading_prompt_metadata() -> dict[str, str]:
     ).hexdigest()
     return {
         "version": GRADING_PROMPT_VERSION,
-        "content_hash": content_hash,
-    }
-
-
-def describe_prompt_metadata() -> dict[str, str]:
-    content_hash = hashlib.sha256(
-        DESCRIBE_ONLY_PROMPT.encode("utf-8")
-    ).hexdigest()
-    return {
-        "version": DESCRIBE_ONLY_PROMPT_VERSION,
         "content_hash": content_hash,
     }
 
@@ -415,14 +311,38 @@ def _parse_vlm_response(text: str) -> dict[str, Any]:
     score_m = re.search(r'"?model_score"?\s*:\s*([\d.]+)', text)
     conf_m = re.search(r'"?model_confidence"?\s*:\s*([\d.]+)', text)
     read_m = re.search(r'"?model_read"?\s*:\s*"([^"]*)"', text)
+    score_basis_m = re.search(r'"?score_basis"?\s*:\s*"([^"]*)"', text)
     reason_m = re.search(r'"?model_reasoning"?\s*:\s*"([^"]*)"', text)
+    obvious_full_m = re.search(
+        r'"?is_obviously_fully_correct"?\s*:\s*(true|false|null)',
+        text,
+        flags=re.IGNORECASE,
+    )
+    obvious_wrong_m = re.search(
+        r'"?is_obviously_wrong"?\s*:\s*(true|false|null)',
+        text,
+        flags=re.IGNORECASE,
+    )
 
     if score_m:
+        def _boolish(match):
+            if not match:
+                return None
+            value = match.group(1).lower()
+            if value == "true":
+                return True
+            if value == "false":
+                return False
+            return None
+
         return {
             "model_score": float(score_m.group(1)),
             "model_confidence": float(conf_m.group(1)) if conf_m else 0.5,
             "model_read": read_m.group(1) if read_m else "",
+            "score_basis": score_basis_m.group(1) if score_basis_m else "",
             "model_reasoning": reason_m.group(1) if reason_m else "",
+            "is_obviously_fully_correct": _boolish(obvious_full_m),
+            "is_obviously_wrong": _boolish(obvious_wrong_m),
         }
 
     raise ValueError(f"Could not parse VLM response as JSON: {text[:300]}")
@@ -442,7 +362,11 @@ def _failure_prediction(
     VLM ran out of its token budget before finishing the JSON, or
     because the emitted output was otherwise unparseable — so we record
     ``model_score=None`` / ``model_confidence=None`` / ``truncated=True``
-    per the Operation Zilch Reaper (forward lane) contract. See
+    per the Operation Zilch Reaper (forward lane) contract. Previously
+    this wrote ``model_score=0.0`` + ``model_confidence=0.0``, which
+    read downstream as "the model confidently scored zero" and
+    silently contaminated every aggregate metric on items whose ground
+    truth happened (or did not happen) to be zero. See
     ``attractors/auto-grader_zilch-reaper-forward_stop-recording-\
 truncated-grader-output-as-model-score-zero_2026-04-11.md``.
 
@@ -455,165 +379,17 @@ truncated-grader-output-as-model-score-zero_2026-04-11.md``.
         question_id=item.question_id,
         model_score=None,
         model_confidence=None,
+        score_basis="",
         model_reasoning=message,
         model_read="",
         raw_assistant=raw_assistant,
         raw_reasoning=raw_reasoning,
+        is_obviously_fully_correct=None,
+        is_obviously_wrong=None,
         upstream_dependency="none",
         if_dependent_then_consistent=None,
         truncated=True,
     )
-
-
-def _chat_completions_url(base_url: str) -> str:
-    root = base_url.rstrip("/")
-    if root.endswith("/v1"):
-        return f"{root}/chat/completions"
-    return f"{root}/v1/chat/completions"
-
-
-def _extract_reasoning_tokens(delta: dict[str, Any]) -> list[str]:
-    """Flatten provider-specific reasoning delta shapes into plain text."""
-    details = delta.get("reasoning_details")
-    if isinstance(details, list) and details:
-        tokens: list[str] = []
-        for detail in details:
-            if not isinstance(detail, dict):
-                continue
-            text = detail.get("text")
-            if isinstance(text, str) and text:
-                tokens.append(text)
-                continue
-            summary = detail.get("summary")
-            if isinstance(summary, str) and summary:
-                tokens.append(summary)
-        if tokens:
-            return tokens
-
-    for field_name in ("reasoning_content", "reasoning"):
-        value = delta.get(field_name)
-        if isinstance(value, str) and value:
-            return [value]
-
-    return []
-
-
-def stream_vision_completion(
-    *,
-    config: ServerConfig,
-    prompt_text: str,
-    page_image: bytes | None = None,
-    image_data_url: str | None = None,
-    system_prompt: str | None = None,
-    on_reasoning_delta: Any = None,
-    extra_body: dict[str, Any] | None = None,
-    raw_dump_path: Path | None = None,
-    timeout: float = 600,
-    retries: int = 3,
-    failure_context: str | None = None,
-) -> tuple[str, str]:
-    """Shared OpenAI-compatible vision call path for grading and smokes."""
-    import time
-    import urllib.error
-    import urllib.request
-
-    if image_data_url is None:
-        if page_image is None:
-            raise ValueError("page_image or image_data_url is required")
-        image_data_url = _image_to_data_url(page_image)
-
-    messages: list[dict[str, Any]] = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append(
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": image_data_url},
-                },
-                {"type": "text", "text": prompt_text},
-            ],
-        }
-    )
-
-    payload: dict[str, Any] = {
-        "model": config.model,
-        "messages": messages,
-        "max_tokens": config.max_tokens,
-        "temperature": config.temperature,
-        "top_p": config.top_p,
-        "top_k": config.top_k,
-        "min_p": config.min_p,
-        "presence_penalty": config.presence_penalty,
-        "repetition_penalty": config.repetition_penalty,
-        "stream": True,
-    }
-    if extra_body:
-        payload.update(extra_body)
-
-    body = json.dumps(payload).encode()
-    url = _chat_completions_url(config.base_url)
-
-    def _build_request():
-        headers = {"Content-Type": "application/json"}
-        if config.api_key:
-            headers["Authorization"] = f"Bearer {config.api_key}"
-        return urllib.request.Request(
-            url,
-            data=body,
-            headers=headers,
-        )
-
-    last_err: Exception | None = None
-    content = ""
-    reasoning = ""
-    for attempt in range(retries):
-        try:
-            req = _build_request()
-            resp = urllib.request.urlopen(req, timeout=timeout)
-            try:
-                content, reasoning = _consume_streaming_response(
-                    resp,
-                    on_reasoning_delta=on_reasoning_delta,
-                    raw_dump_path=raw_dump_path,
-                )
-            except KeyboardInterrupt:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-                raise
-            finally:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-            break
-        except KeyboardInterrupt:
-            raise
-        except (TimeoutError, OSError) as e:
-            last_err = e
-            if isinstance(e, urllib.error.HTTPError):
-                try:
-                    body_text = e.read().decode(
-                        "utf-8", errors="replace"
-                    )[:4096]
-                except Exception:
-                    body_text = "<could not read response body>"
-                last_err = RuntimeError(
-                    f"HTTP Error {e.code}: {e.reason} — server body: {body_text}"
-                )
-            if attempt < retries - 1:
-                time.sleep(2)
-    else:
-        context = f" for {failure_context}" if failure_context else ""
-        raise TimeoutError(
-            f"VLM request failed after {retries} attempts{context}: {last_err}"
-        )
-
-    return content, reasoning
 
 
 def grade_single_item(
@@ -631,29 +407,102 @@ def grade_single_item(
     stream is consumed silently and we just need the final content.
     Closing the response mid-stream tells OMLX to abort the inference.
     """
+    import urllib.request
+
     prompt_text = _build_grading_prompt(item, template_question)
-    content, reasoning = stream_vision_completion(
-        config=config,
-        prompt_text=prompt_text,
-        page_image=page_image,
-        system_prompt=_SYSTEM_PROMPT,
-        on_reasoning_delta=on_reasoning_delta,
-        failure_context=f"{item.exam_id}/{item.question_id}",
-    )
+    image_url = _image_to_data_url(page_image)
+
+    payload = {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url},
+                    },
+                    {"type": "text", "text": prompt_text},
+                ],
+            },
+        ],
+        "max_tokens": config.max_tokens,
+        "temperature": config.temperature,
+        "top_p": config.top_p,
+        "top_k": config.top_k,
+        "min_p": config.min_p,
+        "presence_penalty": config.presence_penalty,
+        "repetition_penalty": config.repetition_penalty,
+        "stream": True,
+    }
+
+    body = json.dumps(payload).encode()
+
+    def _build_request():
+        return urllib.request.Request(
+            f"{config.base_url}/v1/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {config.api_key}",
+            },
+        )
+
+    last_err = None
+    content = ""
+    reasoning = ""
+    finish_reason: str | None = None
+    for attempt in range(3):
+        try:
+            req = _build_request()
+            resp = urllib.request.urlopen(req, timeout=600)
+            try:
+                content, reasoning, finish_reason = _consume_streaming_response(
+                    resp, on_reasoning_delta
+                )
+            except KeyboardInterrupt:
+                # User hit Ctrl-C — close the socket so OMLX cancels
+                # the in-flight inference, then re-raise.
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            break
+        except KeyboardInterrupt:
+            raise
+        except (TimeoutError, OSError) as e:
+            last_err = e
+            if attempt < 2:
+                import time
+                time.sleep(2)
+    else:
+        raise TimeoutError(
+            f"VLM request failed after 3 attempts for "
+            f"{item.exam_id}/{item.question_id}: {last_err}"
+        )
 
     try:
         parsed = _parse_vlm_response(content)
     except ValueError:
-        # Operation Zilch Reaper (forward lane): degrade-instead-of-
-        # crash. The grader did not commit to a score, so we return a
-        # sentinel Prediction (null score, null confidence, truncated
-        # flag set) instead of raising and killing the whole run.
+        if finish_reason == "length":
+            message = (
+                "Grader output was truncated at the max token limit before it "
+                "finished the required JSON."
+            )
+        else:
+            message = (
+                "Grader output could not be parsed as the required JSON."
+            )
         return _failure_prediction(
             item,
-            message=(
-                "Grader output could not be parsed as the required "
-                "JSON (truncated or malformed)."
-            ),
+            message=message,
             raw_assistant=content,
             raw_reasoning=reasoning,
         )
@@ -681,10 +530,33 @@ def grade_single_item(
     else:
         if_dependent_then_consistent = None
 
+    def _coerce_optional_bool(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            s = value.strip().lower()
+            if s == "true":
+                return True
+            if s == "false":
+                return False
+        return None
+
+    is_obviously_fully_correct = _coerce_optional_bool(
+        parsed.get("is_obviously_fully_correct")
+    )
+    is_obviously_wrong = _coerce_optional_bool(
+        parsed.get("is_obviously_wrong")
+    )
+    if is_obviously_fully_correct and is_obviously_wrong:
+        is_obviously_fully_correct = None
+        is_obviously_wrong = None
+
     # Operation Zilch Reaper (forward lane): if the parsed JSON has no
     # model_score at all, the grader did not commit to a score — same
-    # category as the unparseable cases above. Fall through to the
-    # truncation sentinel instead of silently defaulting to 0.0.
+    # category as the length-truncation / unparseable cases above. Fall
+    # through to the truncation sentinel instead of silently defaulting
+    # to 0.0. The pre-fix `float(parsed.get("model_score", 0))` was a
+    # third source of "zero by default" flagged in the attractor.
     raw_model_score = parsed.get("model_score")
     if raw_model_score is None:
         return _failure_prediction(
@@ -702,18 +574,21 @@ def grade_single_item(
         question_id=item.question_id,
         model_score=float(raw_model_score),
         model_confidence=float(parsed.get("model_confidence", 0.5)),
+        score_basis=str(parsed.get("score_basis", "")),
         model_reasoning=str(parsed.get("model_reasoning", "")),
         model_read=str(parsed.get("model_read", "")),
         raw_assistant=content,
         raw_reasoning=reasoning,
+        is_obviously_fully_correct=is_obviously_fully_correct,
+        is_obviously_wrong=is_obviously_wrong,
         upstream_dependency=upstream_dependency,
         if_dependent_then_consistent=if_dependent_then_consistent,
     )
 
 
 def _consume_streaming_response(
-    resp, on_reasoning_delta=None, raw_dump_path: Path | None = None
-) -> tuple[str, str]:
+    resp, on_reasoning_delta
+) -> tuple[str, str, str | None]:
     """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
     through the callback as they arrive (when provided); returns
     (assistant_content, reasoning_content) for parsing AND for the
@@ -736,40 +611,119 @@ def _consume_streaming_response(
     """
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
-    dump_fh = open(raw_dump_path, "a") if raw_dump_path else None
-    try:
-        for raw_line in resp:
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if not line.startswith("data:"):
+    finish_reason: str | None = None
+    fallback_scan = ""
+    waiting_for_reasoning_colon = False
+    waiting_for_reasoning_quote = False
+    capturing_reasoning_string = False
+    pending_escape = False
+    pending_unicode_digits = 0
+    saw_reasoning_channel = False
+
+    def _extract_fallback_reasoning(content_delta: str) -> str:
+        nonlocal fallback_scan
+        nonlocal waiting_for_reasoning_colon
+        nonlocal waiting_for_reasoning_quote
+        nonlocal capturing_reasoning_string
+        nonlocal pending_escape
+        nonlocal pending_unicode_digits
+
+        if not content_delta:
+            return ""
+
+        extracted: list[str] = []
+        for ch in content_delta:
+            if capturing_reasoning_string:
+                if pending_unicode_digits > 0:
+                    pending_unicode_digits -= 1
+                    continue
+                if pending_escape:
+                    if ch in {"n", "r", "t"}:
+                        extracted.append(" ")
+                    elif ch == "u":
+                        pending_unicode_digits = 4
+                    else:
+                        extracted.append(ch)
+                    pending_escape = False
+                    continue
+                if ch == "\\":
+                    pending_escape = True
+                    continue
+                if ch == '"':
+                    capturing_reasoning_string = False
+                    continue
+                extracted.append(ch)
                 continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
+
+            fallback_scan = (fallback_scan + ch)[-64:]
+            if waiting_for_reasoning_colon:
+                if ch == ":":
+                    waiting_for_reasoning_colon = False
+                    waiting_for_reasoning_quote = True
                 continue
-            choices = chunk.get("choices") or []
-            if not choices:
+            if waiting_for_reasoning_quote:
+                if ch == '"':
+                    waiting_for_reasoning_quote = False
+                    capturing_reasoning_string = True
+                elif ch in " \t\r\n":
+                    continue
+                else:
+                    waiting_for_reasoning_quote = False
                 continue
-            delta = (choices[0] or {}).get("delta", {}) or {}
-            if dump_fh is not None:
-                dump_fh.write(json.dumps(delta, ensure_ascii=False) + "\n")
-            for token in _extract_reasoning_tokens(delta):
-                reasoning_parts.append(token)
-                if on_reasoning_delta is not None:
-                    try:
-                        on_reasoning_delta(token)
-                    except Exception:
-                        pass
-            # Final assistant content — accumulate for parsing
-            c_delta = delta.get("content", "")
-            if c_delta:
-                content_parts.append(c_delta)
-    finally:
-        if dump_fh is not None:
-            dump_fh.close()
-    return "".join(content_parts), "".join(reasoning_parts)
+            if fallback_scan.endswith('"model_reasoning"'):
+                waiting_for_reasoning_colon = True
+
+        return "".join(extracted)
+
+    for raw_line in resp:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        choice = chunk.get("choices", [{}])[0]
+        delta = choice.get("delta", {})
+        if choice.get("finish_reason") is not None:
+            finish_reason = str(choice.get("finish_reason"))
+        # Reasoning tokens — accumulate for the critic, and pump to
+        # narrator if wired.
+        rc_delta = delta.get("reasoning_content", "")
+        if rc_delta:
+            if rc_delta.strip():
+                saw_reasoning_channel = True
+                reasoning_parts.append(rc_delta)
+            elif not reasoning_parts:
+                # Ignore whitespace-only pseudo-deltas. Some streams emit
+                # a bare newline on the reasoning channel even though the
+                # actual reasoning only arrives inside the final JSON
+                # model_reasoning field. Treat that as "no real reasoning
+                # channel yet" so the fallback parser can still engage.
+                rc_delta = ""
+        if rc_delta and rc_delta.strip():
+            if on_reasoning_delta is not None:
+                try:
+                    on_reasoning_delta(rc_delta)
+                except Exception:
+                    pass
+        # Final assistant content — accumulate for parsing
+        c_delta = delta.get("content", "")
+        if c_delta:
+            content_parts.append(c_delta)
+            if not saw_reasoning_channel:
+                fallback_reasoning = _extract_fallback_reasoning(c_delta)
+                if fallback_reasoning:
+                    reasoning_parts.append(fallback_reasoning)
+                    if on_reasoning_delta is not None:
+                        try:
+                            on_reasoning_delta(fallback_reasoning)
+                        except Exception:
+                            pass
+    return "".join(content_parts), "".join(reasoning_parts), finish_reason
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +745,23 @@ _EXAM_PDF_MAP = {
 }
 
 
+def _report_focus_preview_failure(sink: Any, item: EvalItem, exc: Exception) -> None:
+    """Surface preview-pipeline failures without killing the grading run.
+
+    The focus preview is an operator affordance, not a reason to abort scoring.
+    But failures in that pipeline must not vanish silently, because the human
+    is actively evaluating the surface live in Paint Dry.
+    """
+    msg = (
+        f"{item.exam_id}/{item.question_id} · "
+        f"focus preview unavailable ({type(exc).__name__})"
+    )
+    try:
+        sink.write_drop("focus-preview-error", msg)
+    except Exception:
+        print(f"[focus-preview-error] {msg}", file=sys.stderr)
+
+
 def grade_all_items(
     ground_truth: list[EvalItem],
     scans_dir: Path,
@@ -799,6 +770,7 @@ def grade_all_items(
     progress_callback: Any = None,
     narrator: Any = None,
     sink: Any = None,
+    focus_preview_callback: Any = None,
 ) -> list[Prediction]:
     """Grade all ground truth items against VLM, returning predictions.
 
@@ -814,7 +786,13 @@ def grade_all_items(
         load_template_questions(template_path) if template_path else {}
     )
 
+    # Two separate caches at two separate resolutions. The grader cache
+    # feeds the VLM at GRADER_PAGE_DPI (payload-friendly). The preview
+    # cache feeds the focus-preview terminal renderer at PREVIEW_PAGE_DPI
+    # (high enough to survive the half-block Nyquist ceiling). Held one
+    # page at a time per exam, so memory overhead is bounded.
     page_cache: dict[tuple[str, int], bytes] = {}
+    preview_page_cache: dict[tuple[str, int], bytes] = {}
     predictions: list[Prediction] = []
 
     for i, item in enumerate(ground_truth):
@@ -826,7 +804,12 @@ def grade_all_items(
             pdf_path = scans_dir / pdf_name
             if not pdf_path.exists():
                 raise FileNotFoundError(f"Scan PDF not found: {pdf_path}")
-            page_cache[cache_key] = extract_page_image(pdf_path, item.page)
+            page_cache[cache_key] = extract_page_image(
+                pdf_path, item.page, dpi=GRADER_PAGE_DPI
+            )
+            preview_page_cache[cache_key] = extract_page_image(
+                pdf_path, item.page, dpi=PREVIEW_PAGE_DPI
+            )
 
         tq = template_questions.get(item.question_id)
 
@@ -865,6 +848,15 @@ def grade_all_items(
             )
             narrator_context = "\n".join(narrator_context_parts)
             sink.write_header(header)
+            if focus_preview_callback is not None:
+                try:
+                    focus_preview_callback(
+                        item=item,
+                        page_image=preview_page_cache[cache_key],
+                        template_question=tq,
+                    )
+                except Exception as exc:
+                    _report_focus_preview_failure(sink, item, exc)
             narrator.start(item_header=narrator_context)
             on_delta = narrator.feed
         else:
