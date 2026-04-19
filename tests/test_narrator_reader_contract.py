@@ -1576,8 +1576,8 @@ class NarratorReaderContract(unittest.TestCase):
 
         # Probe just inside the image-box edge. Without a deliberate inset,
         # this lands on the page itself for a matching-aspect crop.
-        probe_x = crop_x0 + 2
-        probe_y = crop_y0 + 2
+        probe_x = crop_x0 + 6
+        probe_y = crop_y0 + 10
         off = (probe_y * comp.width + probe_x) * comp.n
         rgba = tuple(comp.samples[off : off + comp.n])
         self.assertEqual(

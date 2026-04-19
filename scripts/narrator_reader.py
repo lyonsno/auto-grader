@@ -1547,8 +1547,8 @@ def _build_composite_band_png(
     # dark matte used to fake this breathing room; once we made the
     # letterbox area transparent, the page started reading as cramped
     # unless we reserved a little real inset inside the image box.
-    crop_inner_pad_x = min(max(2, cell_px_w // 2), max(0, crop_target_w // 8))
-    crop_inner_pad_y = min(max(2, cell_px_h // 2), max(0, crop_target_h // 8))
+    crop_inner_pad_x = min(max(2, cell_px_w), max(0, crop_target_w // 6))
+    crop_inner_pad_y = min(max(2, cell_px_h), max(0, crop_target_h // 6))
     inner_target_w = max(1, crop_target_w - 2 * crop_inner_pad_x)
     inner_target_h = max(1, crop_target_h - 2 * crop_inner_pad_y)
 
