@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -30,7 +32,19 @@ from auto_grader.focus_regions import (
 )
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import ThinkingNarrator
-from auto_grader.vlm_inference import ServerConfig, grade_all_items
+from auto_grader.vlm_inference import (
+    DESCRIBE_ONLY_PROMPT,
+    ServerConfig,
+    _EXAM_PDF_MAP,
+    apply_model_sampling_preset,
+    describe_prompt_metadata,
+    extract_page_image,
+    grade_all_items,
+    grading_prompt_metadata,
+    known_model_families,
+    resolve_model_family,
+    stream_vision_completion,
+)
 import yaml
 
 
@@ -53,6 +67,7 @@ _TRICKY_PICKS = [
     ("15-blue", "fr-11a"),  # ELECTRON CONFIG: orbital boxes, visual
     ("15-blue", "fr-12a"),  # LEWIS: visual + partial credit
 ]
+_TRICKY_TEST_SET_ID = "tricky-v1"
 
 _TRICKY_PLUS_PICKS = [
     ("27-blue-2023", "fr-3"),    # clean correct net ionic
@@ -63,6 +78,7 @@ _TRICKY_PLUS_PICKS = [
     ("34-blue", "fr-12a"),       # Lewis partial with setup credit
     *_TRICKY_PICKS,
 ]
+_TRICKY_PLUS_TEST_SET_ID = "tricky-plus-v1"
 
 _TRICKY_PLUS_PLUS_PICKS = [
     ("15-blue", "fr-10b"),   # FOLLOW-ON: tiny numeric continuation after partial fr-10a
@@ -70,12 +86,35 @@ _TRICKY_PLUS_PLUS_PICKS = [
     ("15-blue", "fr-12b"),   # RESONANCE: Lewis follow-on beyond basic structure
     *_TRICKY_PLUS_PICKS,
 ]
+_TRICKY_PLUS_PLUS_TEST_SET_ID = "tricky-plus-plus-v1"
 
 
 def _default_run_dir(model: str, *, now: datetime | None = None) -> Path:
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
     safe_model = model.replace("/", "_")
     return _DEFAULT_RUNS_ROOT / f"{stamp}-{safe_model}"
+
+
+def _is_openrouter_base_url(base_url: str) -> bool:
+    return "openrouter.ai" in base_url.lower()
+
+
+def _resolve_api_key(base_url: str) -> str:
+    if _is_openrouter_base_url(base_url):
+        key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if not key:
+            raise SystemExit(
+                "--base-url openrouter.ai requires OPENROUTER_API_KEY in the "
+                "environment. Set it and re-run."
+            )
+        return key
+    return "1234"
+
+
+def _describe_only_extra_body(base_url: str) -> dict[str, object] | None:
+    if _is_openrouter_base_url(base_url):
+        return {"reasoning": {"enabled": True}}
+    return None
 
 
 def _progress(i: int, total: int, item, pred):
@@ -306,9 +345,292 @@ class _PredictionWriter:
         return False  # never swallow exceptions
 
 
+class _RunManifest:
+    """Persist run identity + lifecycle for later comparison tooling."""
+
+    def __init__(self, path: Path, initial_data: dict[str, object]):
+        self.path = path
+        self._data = dict(initial_data)
+
+    def write_status(
+        self,
+        status: str,
+        *,
+        finished_at: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        self._data["status"] = status
+        if finished_at is not None:
+            self._data["finished_at"] = finished_at
+        if error is not None:
+            self._data["error"] = error
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.path.with_suffix(".tmp")
+        tmp_path.write_text(
+            json.dumps(self._data, indent=2, sort_keys=True) + "\n"
+        )
+        tmp_path.replace(self.path)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _iso_now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _git_output(*args: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=_repo_root(),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        return "unknown"
+    return completed.stdout.strip() or "unknown"
+
+
+def _run_identity(model: str, run_dir_override: str | None) -> tuple[str, Path]:
+    if run_dir_override:
+        run_dir = Path(run_dir_override)
+        return run_dir.name, run_dir
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe_model = model.replace("/", "_")
+    run_id = f"{ts}-{safe_model}"
+    run_dir = _DEFAULT_RUNS_ROOT / run_id
+    return run_id, run_dir
+
+
+def _select_subset(
+    args: argparse.Namespace,
+    ground_truth: list[EvalItem],
+) -> tuple[list[EvalItem], str]:
+    if args.pick:
+        wanted = []
+        for token in args.pick.split(","):
+            token = token.strip()
+            if not token or ":" not in token:
+                continue
+            exam_id, qid = token.split(":", 1)
+            wanted.append((exam_id.strip(), qid.strip()))
+        gt_index = {
+            (item.exam_id, item.question_id): item for item in ground_truth
+        }
+        subset = []
+        missing = []
+        for key in wanted:
+            if key in gt_index:
+                subset.append(gt_index[key])
+            else:
+                missing.append(key)
+        if missing:
+            print(
+                f"WARNING: --pick missing in ground truth: {missing}",
+                file=sys.stderr,
+            )
+        normalized = ",".join(f"{exam}:{qid}" for exam, qid in wanted)
+        return subset, f"pick-v1:{normalized}"
+
+    gt_index = {
+        (item.exam_id, item.question_id): item for item in ground_truth
+    }
+    if args.tricky_plus_plus:
+        subset = [gt_index[k] for k in _TRICKY_PLUS_PLUS_PICKS if k in gt_index]
+        return subset, _TRICKY_PLUS_PLUS_TEST_SET_ID
+    if args.tricky_plus:
+        subset = [gt_index[k] for k in _TRICKY_PLUS_PICKS if k in gt_index]
+        return subset, _TRICKY_PLUS_TEST_SET_ID
+    if args.tricky:
+        subset = [gt_index[k] for k in _TRICKY_PICKS if k in gt_index]
+        return subset, _TRICKY_TEST_SET_ID
+    if args.all:
+        return ground_truth, "all-v1"
+    return ground_truth[: args.items], f"first-{args.items}-v1"
+
+
+def _build_manifest(
+    *,
+    run_id: str,
+    run_dir: Path,
+    config: ServerConfig,
+    args: argparse.Namespace,
+    test_set_id: str,
+    item_count: int,
+) -> _RunManifest:
+    prompt_meta = grading_prompt_metadata()
+    manifest = _RunManifest(
+        run_dir / "manifest.json",
+        {
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+            "status": "running",
+            "started_at": _iso_now(),
+            "finished_at": None,
+            "git_commit": _git_output("rev-parse", "HEAD"),
+            "git_branch": _git_output("branch", "--show-current"),
+            "model": config.model,
+            "base_url": config.base_url,
+            "prompt_version": prompt_meta["version"],
+            "prompt_content_hash": prompt_meta["content_hash"],
+            "test_set_id": test_set_id,
+            "item_count": item_count,
+            "narrator_url": (
+                args.narrator_url
+                if (args.narrate or args.narrate_stderr)
+                else None
+            ),
+            "narrator_model": (
+                args.narrator_model
+                if (args.narrate or args.narrate_stderr)
+                else None
+            ),
+        },
+    )
+    manifest.write_status("running")
+    return manifest
+
+
+def run_describe_only_mode(
+    args: argparse.Namespace,
+    subset: list[EvalItem],
+    config: ServerConfig,
+    *,
+    model_family: str,
+) -> dict[str, object]:
+    """Describe selected pages without invoking the grading pipeline."""
+    run_id, run_dir = _run_identity(config.model, args.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    probe_path = run_dir / "probe.jsonl"
+    prompt_meta = describe_prompt_metadata()
+
+    with open(probe_path, "w") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "type": "header",
+                    "mode": "describe-only",
+                    "model": config.model,
+                    "model_family": model_family,
+                    "base_url": config.base_url,
+                    "run_id": run_id,
+                    "run_dir": str(run_dir),
+                    "prompt_version": prompt_meta["version"],
+                    "prompt_content_hash": prompt_meta["content_hash"],
+                    "prompt": DESCRIBE_ONLY_PROMPT,
+                    "started": _iso_now(),
+                }
+            )
+            + "\n"
+        )
+
+    page_cache: dict[tuple[str, int], bytes] = {}
+    n_ok = 0
+    n_err = 0
+    for i, item in enumerate(subset, start=1):
+        cache_key = (item.exam_id, item.page)
+        if cache_key not in page_cache:
+            pdf_name = _EXAM_PDF_MAP.get(item.exam_id)
+            if not pdf_name:
+                msg = f"No PDF mapping for exam_id: {item.exam_id}"
+                print(f"[{i}/{len(subset)}] {msg}", file=sys.stderr)
+                n_err += 1
+                continue
+            pdf_path = _SCANS_DIR / pdf_name
+            if not pdf_path.exists():
+                msg = f"Scan PDF not found: {pdf_path}"
+                print(f"[{i}/{len(subset)}] {msg}", file=sys.stderr)
+                n_err += 1
+                continue
+            page_cache[cache_key] = extract_page_image(pdf_path, item.page)
+
+        print(
+            f"[{i}/{len(subset)}] {item.exam_id}:{item.question_id} "
+            f"(page {item.page}) ...",
+            flush=True,
+        )
+        row: dict[str, object] = {
+            "type": "probe",
+            "mode": "describe-only",
+            "exam_id": item.exam_id,
+            "question_id": item.question_id,
+            "page": item.page,
+            "student_answer_for_reference": item.student_answer,
+            "model": config.model,
+            "model_family": model_family,
+        }
+        try:
+            t0 = time.time()
+            content, reasoning = stream_vision_completion(
+                config=config,
+                prompt_text=DESCRIBE_ONLY_PROMPT,
+                page_image=page_cache[cache_key],
+                extra_body=_describe_only_extra_body(config.base_url),
+                failure_context=f"{item.exam_id}/{item.question_id}",
+            )
+            elapsed = time.time() - t0
+            row["description"] = content
+            row["reasoning"] = reasoning
+            row["elapsed_sec"] = round(elapsed, 2)
+            row["error"] = None
+            n_ok += 1
+            preview = (content or "").strip().splitlines()[0:3]
+            for line in preview:
+                print(f"    {line[:140]}")
+            print(
+                f"    ({elapsed:.1f}s, {len(content)} chars content, "
+                f"{len(reasoning)} chars reasoning)"
+            )
+        except Exception as e:
+            row["description"] = ""
+            row["reasoning"] = ""
+            row["elapsed_sec"] = None
+            row["error"] = f"{type(e).__name__}: {e}"
+            n_err += 1
+            print(f"    {type(e).__name__}: {e}", file=sys.stderr)
+
+        with open(probe_path, "a") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    with open(probe_path, "a") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "type": "footer",
+                    "ended": _iso_now(),
+                    "count_ok": n_ok,
+                    "count_err": n_err,
+                }
+            )
+            + "\n"
+        )
+
+    print(f"Wrote {probe_path}")
+    return {
+        "run_id": run_id,
+        "run_dir": run_dir,
+        "records_path": probe_path,
+        "count_ok": n_ok,
+        "count_err": n_err,
+    }
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="qwen3p5-35B-A3B")
+    parser.add_argument(
+        "--model-family",
+        choices=known_model_families(),
+        default=None,
+        help=(
+            "Explicit sampling family override for unregistered models. "
+            "Required when --model does not match a known family prefix."
+        ),
+    )
     parser.add_argument("--items", type=int, default=8,
                         help="Number of items to grade (from first exam)")
     parser.add_argument(
@@ -337,6 +659,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Grade a curated set of known-tricky items: easy warmup + "
             "consistent-with-wrong-premise charity test + fractional "
             "partial credit + Lewis structure partial. Overrides --items."
+        ),
+    )
+    parser.add_argument(
+        "--describe-only",
+        action="store_true",
+        help=(
+            "Run a bare perception smoke against the selected pages instead "
+            "of the grading pipeline. Writes probe.jsonl in the run dir."
         ),
     )
     parser.add_argument(
@@ -400,67 +730,62 @@ def main():
         args.narrator_model = _validate_narrator_model(args.narrator_model)
 
     gt = load_ground_truth(_GROUND_TRUTH)
+    subset, test_set_id = _select_subset(args, gt)
+    resolved_family = resolve_model_family(args.model, args.model_family)
+    task = "describe" if args.describe_only else "grading"
     template_document = _load_template_document(_TEMPLATE)
     focus_region_overrides = load_focus_regions(
         args.focus_regions or DEFAULT_FOCUS_REGIONS_PATH
     )
 
-    if args.pick:
-        wanted = []
-        for token in args.pick.split(","):
-            token = token.strip()
-            if not token or ":" not in token:
-                continue
-            exam_id, qid = token.split(":", 1)
-            wanted.append((exam_id.strip(), qid.strip()))
-        gt_index = {(item.exam_id, item.question_id): item for item in gt}
-        subset = []
-        missing = []
-        for key in wanted:
-            if key in gt_index:
-                subset.append(gt_index[key])
-            else:
-                missing.append(key)
-        if missing:
-            print(
-                f"WARNING: --pick missing in ground truth: {missing}",
-                file=sys.stderr,
-            )
-    elif args.tricky:
-        gt_index = {(item.exam_id, item.question_id): item for item in gt}
-        subset = [gt_index[k] for k in _TRICKY_PICKS if k in gt_index]
-    elif args.tricky_plus:
-        gt_index = {(item.exam_id, item.question_id): item for item in gt}
-        subset = [gt_index[k] for k in _TRICKY_PLUS_PICKS if k in gt_index]
-    elif args.tricky_plus_plus:
-        gt_index = {(item.exam_id, item.question_id): item for item in gt}
-        subset = [gt_index[k] for k in _TRICKY_PLUS_PLUS_PICKS if k in gt_index]
-    elif args.all:
-        subset = gt
-    else:
-        subset = gt[: args.items]
-
     config = ServerConfig(
         base_url=args.base_url,
+        api_key=_resolve_api_key(args.base_url),
         model=args.model,
+    )
+    config = apply_model_sampling_preset(
+        config,
+        family=resolved_family,
+        task=task,
     )
 
     print(f"Model: {config.model}")
+    print(f"Family: {resolved_family}")
     print(f"Items: {len(subset)} of {len(gt)}")
     print(f"Server: {config.base_url}")
+    print(
+        f"Sampling: temp={config.temperature} top_p={config.top_p} "
+        f"top_k={config.top_k} min_p={config.min_p} "
+        f"presence={config.presence_penalty} rep={config.repetition_penalty}"
+    )
     print(f"Scans: {_SCANS_DIR}")
     print()
+
+    if args.describe_only:
+        print("Mode: describe-only")
+        result = run_describe_only_mode(
+            args,
+            subset,
+            config,
+            model_family=resolved_family,
+        )
+        return 0 if result["count_err"] == 0 else 1
 
     narrator_enabled = args.narrate or args.narrate_stderr
 
     # Run dir is always created (even without narrator) so predictions
     # persist for the post-hoc critic and cross-run comparison reports.
-    if args.run_dir:
-        run_dir = Path(args.run_dir)
-    else:
-        run_dir = _default_run_dir(config.model)
+    run_id, run_dir = _run_identity(config.model, args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Run dir: {run_dir}")
+    manifest = _build_manifest(
+        run_id=run_id,
+        run_dir=run_dir,
+        config=config,
+        args=args,
+        test_set_id=test_set_id,
+        item_count=len(subset),
+    )
 
     if narrator_enabled:
         sink_config = SinkConfig(
@@ -486,89 +811,93 @@ def main():
     narrator_stats = None
     predictions: list = []
     interrupted = False
-    with sink_cm as sink, pred_writer_cm as pred_writer:
-        # Wrap the progress callback so each completed prediction is
-        # written to predictions.jsonl as it lands. Crash-safe: an
-        # interrupt mid-loop still leaves the partial file usable.
-        # Per-item failures are tracked on the writer (not raised) so
-        # one bad item doesn't kill the whole grading run, but the
-        # final pred_writer.failures count is checked after the
-        # with-block and surfaced as a loud banner + non-zero exit.
-        def _on_item(i, total, item, pred):
-            pred_writer.write_one(item, pred)
-            _progress(i, total, item, pred)
+    try:
+        with sink_cm as sink, pred_writer_cm as pred_writer:
+            # Wrap the progress callback so each completed prediction is
+            # written to predictions.jsonl as it lands. Crash-safe: an
+            # interrupt mid-loop still leaves the partial file usable.
+            # Per-item failures are tracked on the writer (not raised) so
+            # one bad item doesn't kill the whole grading run, but the
+            # final pred_writer.failures count is checked after the
+            # with-block and surfaced as a loud banner + non-zero exit.
+            def _on_item(i, total, item, pred):
+                pred_writer.write_one(item, pred)
+                _progress(i, total, item, pred)
 
-        narrator = (
-            ThinkingNarrator(
-                sink,
-                base_url=args.narrator_url,
-                model=args.narrator_model,
-                wrap_up_base_url=args.wrap_up_url or args.base_url,
-                wrap_up_model=args.wrap_up_model or args.model,
-            )
-            if narrator_enabled
-            else None
-        )
-        focus_preview_callback = None
-        if narrator_enabled and sink is not None:
-            def focus_preview_callback(*, item, page_image, template_question=None):
-                _emit_focus_preview(
+            narrator = (
+                ThinkingNarrator(
                     sink,
-                    item=item,
-                    page_image=page_image,
-                    template_document=template_document,
-                    focus_region_overrides=focus_region_overrides,
+                    base_url=args.narrator_url,
+                    model=args.narrator_model,
+                    wrap_up_base_url=args.wrap_up_url or args.base_url,
+                    wrap_up_model=args.wrap_up_model or args.model,
                 )
-        try:
-            predictions = grade_all_items(
-                subset, _SCANS_DIR, config,
-                template_path=_TEMPLATE,
-                progress_callback=_on_item,
-                narrator=narrator,
-                sink=sink,
-                focus_preview_callback=focus_preview_callback,
+                if narrator_enabled
+                else None
             )
-        except KeyboardInterrupt:
-            interrupted = True
-            print(
-                f"\n\n[interrupted] Caught Ctrl-C — sent close to OMLX, "
-                f"completed {len(predictions)} of {len(subset)} items.",
-                file=sys.stderr,
-            )
-
-        # End-of-run wrap-up commentary from bonsai. Only fire if we have
-        # at least one prediction and we weren't interrupted during
-        # grading. Wrap-up itself is also interruptible via Ctrl-C —
-        # if the user bails out of the wrap-up call, we skip it and
-        # still print the eval report and tear down the sink cleanly.
-        elapsed_for_wrap = time.time() - t0
-        if (
-            narrator is not None
-            and predictions
-            and not interrupted
-        ):
+            focus_preview_callback = None
+            if narrator_enabled and sink is not None:
+                def focus_preview_callback(*, item, page_image, template_question=None):
+                    _emit_focus_preview(
+                        sink,
+                        item=item,
+                        page_image=page_image,
+                        template_document=template_document,
+                        focus_region_overrides=focus_region_overrides,
+                    )
             try:
-                wrap_subset = subset[: len(predictions)]
-                wrap_report = score_predictions(wrap_subset, predictions)
-                narrator.wrap_up(
-                    wrap_report,
-                    model_name=config.model,
-                    item_count=len(predictions),
-                    elapsed_seconds=elapsed_for_wrap,
+                predictions = grade_all_items(
+                    subset, _SCANS_DIR, config,
+                    template_path=_TEMPLATE,
+                    progress_callback=_on_item,
+                    narrator=narrator,
+                    sink=sink,
+                    focus_preview_callback=focus_preview_callback,
                 )
             except KeyboardInterrupt:
+                interrupted = True
                 print(
-                    "\n[wrap_up interrupted] skipped post-game commentary.",
+                    f"\n\n[interrupted] Caught Ctrl-C — sent close to OMLX, "
+                    f"completed {len(predictions)} of {len(subset)} items.",
                     file=sys.stderr,
                 )
-            except Exception as e:
-                print(f"[wrap_up failed] {e}", file=sys.stderr)
 
-        if narrator is not None:
-            narrator_stats = narrator.stats()
+            elapsed_for_wrap = time.time() - t0
+            if (
+                narrator is not None
+                and predictions
+                and not interrupted
+            ):
+                try:
+                    wrap_subset = subset[: len(predictions)]
+                    wrap_report = score_predictions(wrap_subset, predictions)
+                    narrator.wrap_up(
+                        wrap_report,
+                        model_name=config.model,
+                        item_count=len(predictions),
+                        elapsed_seconds=elapsed_for_wrap,
+                    )
+                except KeyboardInterrupt:
+                    print(
+                        "\n[wrap_up interrupted] skipped post-game commentary.",
+                        file=sys.stderr,
+                    )
+                except Exception as e:
+                    print(f"[wrap_up failed] {e}", file=sys.stderr)
+
+            if narrator is not None:
+                narrator_stats = narrator.stats()
+    except Exception as e:
+        manifest.write_status(
+            "failed",
+            finished_at=_iso_now(),
+            error=f"{type(e).__name__}: {e}",
+        )
+        raise
     elapsed = time.time() - t0
 
     if interrupted and not predictions:
+        manifest.write_status("interrupted", finished_at=_iso_now())
         print(
             "\nNo items completed before interrupt. Exiting without report.",
             file=sys.stderr,
@@ -622,7 +951,7 @@ def main():
         )
         if narrator_stats['dispatches_total']:
             drop_rate = total_drops / narrator_stats['dispatches_total']
-            print(f"  drop rate:            {drop_rate:.1%}")
+        print(f"  drop rate:            {drop_rate:.1%}")
 
     # Loud banner + non-zero exit if predictions.jsonl persistence had
     # any failures. The file is load-bearing for the post-hoc critic;
@@ -641,8 +970,17 @@ def main():
             f"{'!' * 60}",
             file=sys.stderr,
         )
+        manifest.write_status(
+            "failed",
+            finished_at=_iso_now(),
+            error=pred_writer_cm.last_failure_msg,
+        )
         return 2
 
+    manifest.write_status(
+        "interrupted" if interrupted else "completed",
+        finished_at=_iso_now(),
+    )
     return 130 if interrupted else 0
 
 
