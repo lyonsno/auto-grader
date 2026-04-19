@@ -1647,13 +1647,13 @@ def _paint_border_row(
             fitz.Rect(0, 0, row_w, cell_px_h),
             fill=bg_rgb_f,
         )
-        fontsize = max(6, cell_px_h * 0.65)
+        fontsize = max(10, cell_px_h * 1.05)
         txt_page.insert_text(
-            fitz.Point(0, cell_px_h * 0.75),
+            fitz.Point(0, cell_px_h * 0.92),
             border_text,
             fontsize=fontsize,
             color=text_rgb_f,
-            fontname="cour",
+            fontname="courier-bold",
         )
         txt_pix = txt_page.get_pixmap(alpha=False)
         txt_doc.close()

@@ -1733,6 +1733,12 @@ class NarratorReaderContract(unittest.TestCase):
             "a titled composite should visibly differ from an untitled one "
             "in the top strip; otherwise the title paint path is dead",
         )
+        self.assertGreater(
+            differing_pixels,
+            2400,
+            "the titled top strip should carry enough rasterized ink mass to "
+            "stay legible after terminal downscaling, not just a tiny hairline caption",
+        )
     def test_focus_preview_inline_image_renderable_declares_cell_height(self):
         # Rich's layout engine measures a renderable's vertical footprint
         # from what it yields. The inline image escape sequence occupies
