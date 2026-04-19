@@ -3311,6 +3311,26 @@ class NarratorReaderContract(unittest.TestCase):
             live_update,
             "the live paint loop should only send ESC[2J when the frame geometry changed or the first paint still needs a clean slate",
         )
+
+    def test_main_routes_message_refreshes_through_live_update(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        main_tail = source.split("with Live(", 1)[1]
+
+        self.assertNotIn(
+            "live.update(display.render(), refresh=True)",
+            main_tail,
+            "once the reader owns repaint semantics via _live_update(), "
+            "the fifo message loop must not bypass that helper with raw "
+            "live.update(display.render(), refresh=True) calls or frames "
+            "will stack instead of repainting in place",
+        )
+        self.assertIn(
+            "_live_update()",
+            main_tail,
+            "the fifo message loop should route immediate refreshes "
+            "through the manual live-update helper that owns cursor-home, "
+            "buffering, and Kitty sequencing",
+        )
     def test_session_end_stops_animation(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")

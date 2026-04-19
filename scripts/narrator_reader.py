@@ -4779,6 +4779,7 @@ def main() -> int:
         # Wakeup event: the animation thread sleeps on this instead
         # of time.sleep() so SIGWINCH can cut the sleep short.
         _animation_wake = threading.Event()
+        _paint_lock = threading.Lock()
 
         _prev_sigwinch = signal.getsignal(signal.SIGWINCH)
 
@@ -4811,62 +4812,70 @@ def main() -> int:
             never from the signal handler, so there is no interleaving.
             """
             nonlocal _last_paint_size
-            _resize_pending.clear()
-
-            # Drain any pending Kitty transmit from the event thread
-            # before painting so escape sequences don't interleave
-            # with Rich's output.
-            display.drain_pending_kitty_transmit()
-
-            cur_size = (console.size.width, console.size.height)
-            if (
-                _live_frame_requires_full_clear(_last_paint_size, cur_size)
-                and _last_paint_size is not None
-            ):
-                display.retransmit_kitty_image()
-            # Also retransmit if the composite was built at a different
-            # width than the current terminal — happens when
-            # on_focus_preview fires during a resize or the terminal
-            # was resized after the event thread read console.size.
-            else:
-                _krend = display.focus_preview_kitty_renderable
-                if (
-                    _krend is not None
-                    and _krend._band_cell_width != cur_size[0]
-                ):
-                    display.retransmit_kitty_image()
-
-            renderable = None
-            for _attempt in range(3):
-                size_before = (console.size.width, console.size.height)
-                renderable = display.render()
-                size_after = (console.size.width, console.size.height)
-                if size_before == size_after:
-                    break  # geometry stable — safe to paint
-
-            paint_size = (console.size.width, console.size.height)
-            if _live_frame_requires_full_clear(_last_paint_size, paint_size):
-                sys.stdout.write("\033[2J\033[H")
-            else:
-                sys.stdout.write("\033[H")
-            sys.stdout.flush()
-            # Buffer the entire frame into a single write so the
-            # terminal receives padding spaces and the deferred Kitty
-            # a=p placement atomically. Without buffering, Rich writes
-            # the padding in small chunks, the terminal clears image
-            # cells, and the a=p arrives in a later write — producing
-            # a visible flicker between the clear and the re-place.
-            _real_file = console.file
-            _real_write = _real_file.write
-            _frame_parts: list[str] = []
-            _real_file.write = _frame_parts.append  # type: ignore[assignment]
             try:
-                live.update(renderable, refresh=True)
+                with _paint_lock:
+                    _resize_pending.clear()
+
+                    # Drain any pending Kitty transmit from the event thread
+                    # before painting so escape sequences don't interleave
+                    # with Rich's output.
+                    display.drain_pending_kitty_transmit()
+
+                    cur_size = (console.size.width, console.size.height)
+                    if (
+                        _live_frame_requires_full_clear(
+                            _last_paint_size, cur_size
+                        )
+                        and _last_paint_size is not None
+                    ):
+                        display.retransmit_kitty_image()
+                    # Also retransmit if the composite was built at a different
+                    # width than the current terminal — happens when
+                    # on_focus_preview fires during a resize or the terminal
+                    # was resized after the event thread read console.size.
+                    else:
+                        _krend = display.focus_preview_kitty_renderable
+                        if (
+                            _krend is not None
+                            and _krend._band_cell_width != cur_size[0]
+                        ):
+                            display.retransmit_kitty_image()
+
+                    renderable = None
+                    for _attempt in range(3):
+                        size_before = (console.size.width, console.size.height)
+                        renderable = display.render()
+                        size_after = (console.size.width, console.size.height)
+                        if size_before == size_after:
+                            break  # geometry stable — safe to paint
+
+                    paint_size = (console.size.width, console.size.height)
+                    if _live_frame_requires_full_clear(
+                        _last_paint_size, paint_size
+                    ):
+                        sys.stdout.write("\033[2J\033[H")
+                    else:
+                        sys.stdout.write("\033[H")
+                    sys.stdout.flush()
+                    # Buffer the entire frame into a single write so the
+                    # terminal receives padding spaces and the deferred Kitty
+                    # a=p placement atomically. Without buffering, Rich writes
+                    # the padding in small chunks, the terminal clears image
+                    # cells, and the a=p arrives in a later write — producing
+                    # a visible flicker between the clear and the re-place.
+                    _real_file = console.file
+                    _real_write = _real_file.write
+                    _frame_parts: list[str] = []
+                    _real_file.write = _frame_parts.append  # type: ignore[assignment]
+                    try:
+                        live.update(renderable, refresh=True)
+                    finally:
+                        _real_file.write = _real_write  # type: ignore[assignment]
+                    _real_write("".join(_frame_parts))
+                    _real_file.flush()
+                    _last_paint_size = paint_size
             finally:
-                _real_file.write = _real_write  # type: ignore[assignment]
-            _real_write("".join(_frame_parts))
-            _real_file.flush()
-            _last_paint_size = paint_size
+                _animation_wake.clear()
 
         # Enter alt-screen manually.  We use screen=False on Live so
         # Rich doesn't wrap our renderable in Screen (which pads to a
@@ -5037,7 +5046,7 @@ def main() -> int:
                     elif msg_type == "end":
                         display.session_ended = True
                         display._session_ended_at = time.monotonic()
-                        live.update(display.render(), refresh=True)
+                        _live_update()
                         if stdin_fd is None:
                             session_exit.set()
                         session_exit.wait()
@@ -5048,7 +5057,7 @@ def main() -> int:
 
                     if _message_requires_immediate_refresh(msg_type):
                         try:
-                            live.update(display.render(), refresh=True)
+                            _live_update()
                         except Exception:
                             pass
     finally:
