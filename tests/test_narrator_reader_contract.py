@@ -863,6 +863,42 @@ class NarratorReaderContract(unittest.TestCase):
             "half-block cells should carry fg+bg style pairs representing the top and bottom sampled rows",
         )
 
+    def test_focus_preview_steady_state_keeps_paper_in_a_visible_parchment_family(self):
+        pixels = [[(228, 218, 204) for _ in range(24)] for _ in range(16)]
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        style_pairs = [
+            span.style
+            for row in renderable.renderables
+            for span in row.spans
+            if isinstance(span.style, str) and " on " in span.style
+        ]
+        self.assertTrue(style_pairs, "steady-state paper rows should emit styled image cells")
+        fg_hex, bg_hex = style_pairs[0].split(" on ")
+        fg = self._rgb_from_hex(fg_hex)
+        bg = self._rgb_from_hex(bg_hex)
+
+        for rgb in (fg, bg):
+            self.assertGreater(
+                rgb[0],
+                rgb[1],
+                "paper tone should stay red-led enough to read as parchment, not flat gray",
+            )
+            self.assertGreater(
+                rgb[1],
+                rgb[2],
+                "paper tone should stay warm through green>blue ordering, not collapse into neutral",
+            )
+            self.assertGreaterEqual(
+                rgb[0] - rgb[2],
+                28,
+                "paper tone should remain visibly sepia/warm once it hits the steady-state renderer",
+            )
+
     def test_focus_preview_dark_strokes_produce_spatial_variation(self):
         pixels = []
         for row in range(16):

@@ -75,11 +75,12 @@ _FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)  # used only by the transition
                                              # (pending) glyph overlay; the
                                              # steady-state renderer uses
                                              # the harder colors below
-# Legibility-first steady-state palette. High luminance delta against the
-# panel background so binary-thresholded cells read as page, not as mush.
-# Aesthetics are explicitly deferred — pick whatever reads cleanest first.
+# Legibility-first steady-state palette. Keep strong luminance delta against
+# the panel background so binary-thresholded cells still read cleanly, but
+# preserve enough parchment warmth that the opaque paper field doesn't flatten
+# back into a generic gray-beige slab on the dark Paint Dry panel.
 _FOCUS_PREVIEW_HARD_INK_RGB = (50, 54, 62)
-_FOCUS_PREVIEW_HARD_PAPER_RGB = (238, 232, 220)
+_FOCUS_PREVIEW_HARD_PAPER_RGB = (232, 214, 186)
 _FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
 _FOCUS_PREVIEW_OVERLAY_RGBS = (
     (108, 122, 154),
