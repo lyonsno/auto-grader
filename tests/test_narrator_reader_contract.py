@@ -78,10 +78,19 @@ class NarratorReaderContract(unittest.TestCase):
 
     def test_history_scroll_controller_binds_a_to_annotate_current_item(self):
         display = mock.Mock()
+        display.annotate_current_focus_item.return_value = True
         controller = HistoryScrollController(display)
 
         self.assertIn("a", controller.bindings())
         self.assertTrue(controller.handle_key("a"))
+        display.annotate_current_focus_item.assert_called_once_with()
+
+    def test_history_scroll_controller_propagates_annotation_failure(self):
+        display = mock.Mock()
+        display.annotate_current_focus_item.return_value = False
+        controller = HistoryScrollController(display)
+
+        self.assertFalse(controller.handle_key("a"))
         display.annotate_current_focus_item.assert_called_once_with()
 
     class _TTYBuffer(StringIO):
@@ -2502,6 +2511,11 @@ class NarratorReaderContract(unittest.TestCase):
         )
         cell_width = len(f" {expected_on_target[0]} ")
         separator_width = 2
+        # Gauge Saints II: TOTAL and TURN now sit leftmost in the
+        # big-value strip as their own scoreboard plates, so ON TARGET
+        # no longer starts at offset 0. This test only cares about the
+        # relative layout of the three grading plates, so it anchors
+        # on wherever ON TARGET lands and walks from there.
         on_target_start = tally_text_obj.plain.index("ON TARGET")
         left_start = tally_text_obj.plain.index("LEFT ON TABLE")
         bad_start = tally_text_obj.plain.index("BAD CALLS")
@@ -2629,6 +2643,10 @@ class NarratorReaderContract(unittest.TestCase):
             "the scorebug should still keep some row-to-row tonal drift in "
             "the numeral ink after the fill is removed",
         )
+        # Find the first two strong-stroke spans inside the ON TARGET
+        # cell by walking the tally_value_top spans from on_target_start
+        # rather than indexing by absolute span index (which would now
+        # point at the TOTAL/TURN plates' spans).
         on_target_spans = [
             span
             for span in tally_value_top.spans
@@ -2777,6 +2795,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.focus_preview_png, self._make_png(rgb=(40, 50, 60)))
         self.assertEqual(display.focus_preview_label, "15-blue/fr-11c")
         self.assertEqual(display.focus_preview_source, "operator_annotated")
+        self.assertEqual(display.status_line, "Updated focus preview for 15-blue/fr-11c.")
 
     def test_scorebug_rendered_four_uses_tapered_open_foot_in_context(self):
         display = self._make_display()
