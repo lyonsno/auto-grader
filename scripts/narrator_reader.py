@@ -2941,6 +2941,14 @@ class HistoryViewport:
     def at_live_edge(self) -> bool:
         return self._scroll_offset == 0
 
+    @property
+    def total_visual_rows(self) -> int:
+        return self._total_visual_rows()
+
+    @property
+    def has_overflow(self) -> bool:
+        return self._total_visual_rows() > self._visible_rows
+
     def entries_snapshot(self) -> list[tuple[str, str, int | None]]:
         return list(self._entries)
 
@@ -4489,12 +4497,27 @@ class PaintDryDisplay:
                 "(waiting for first summary...)", style="grey39"
             )
 
+        viewport = self.history_viewport()
+        if not viewport.at_live_edge:
+            history_subtitle = (
+                f"[grey42]{viewport.scroll_offset} rows back · "
+                "j/d forward · 0 latest[/grey42]"
+            )
+        elif viewport.has_overflow:
+            history_subtitle = (
+                "[grey42]live edge · k/u back · j/d forward · 0 latest[/grey42]"
+            )
+        else:
+            history_subtitle = "[grey42]live edge · no overflow yet[/grey42]"
+
         history_panel = Panel(
             history_text,
             border_style="#3d4458",
             padding=(0, 1),
             title="[grey50]history[/grey50]",
             title_align="left",
+            subtitle=history_subtitle,
+            subtitle_align="left",
         )
 
         # Drops panel — below everything else, including post-game.
