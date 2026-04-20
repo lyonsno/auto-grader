@@ -50,6 +50,7 @@ from scripts.narrator_reader import (
     _otsu_threshold,
     _undulation_hue_deg,
     _render_layer_index,
+    HistoryScrollController,
 )
 
 
@@ -91,6 +92,14 @@ class NarratorReaderContract(unittest.TestCase):
             "history controls share stdin with the live reader, so startup "
             "must not run terminal queries through that same input path",
         )
+
+    def test_history_scroll_controller_binds_a_to_annotate_current_item(self):
+        display = mock.Mock()
+        controller = HistoryScrollController(display)
+
+        self.assertIn("a", controller.bindings())
+        self.assertTrue(controller.handle_key("a"))
+        display.annotate_current_focus_item.assert_called_once_with()
 
     class _TTYBuffer(StringIO):
         def isatty(self) -> bool:
@@ -2587,11 +2596,6 @@ class NarratorReaderContract(unittest.TestCase):
         )
         cell_width = len(f" {expected_on_target[0]} ")
         separator_width = 2
-        # Gauge Saints II: TOTAL and TURN now sit leftmost in the
-        # big-value strip as their own scoreboard plates, so ON TARGET
-        # no longer starts at offset 0. This test only cares about the
-        # relative layout of the three grading plates, so it anchors
-        # on wherever ON TARGET lands and walks from there.
         on_target_start = tally_text_obj.plain.index("ON TARGET")
         left_start = tally_text_obj.plain.index("LEFT ON TABLE")
         bad_start = tally_text_obj.plain.index("BAD CALLS")
@@ -2605,6 +2609,7 @@ class NarratorReaderContract(unittest.TestCase):
             on_target_start + (2 * cell_width) + (2 * separator_width),
             "BAD CALLS label should start at the left edge of its score cell",
         )
+
         def _first_strong_style_in_cell(row: Text, start: int) -> str:
             end = start + cell_width
             for span in row.spans:
@@ -2617,6 +2622,7 @@ class NarratorReaderContract(unittest.TestCase):
             raise AssertionError(
                 f"no strong scorebug span found in cell range {start}:{end}"
             )
+
         on_target_styles = self._styles_in_range(
             tally_value_top,
             on_target_start,
@@ -2717,10 +2723,6 @@ class NarratorReaderContract(unittest.TestCase):
             "the scorebug should still keep some row-to-row tonal drift in "
             "the numeral ink after the fill is removed",
         )
-        # Find the first two strong-stroke spans inside the ON TARGET
-        # cell by walking the tally_value_top spans from on_target_start
-        # rather than indexing by absolute span index (which would now
-        # point at the TOTAL/TURN plates' spans).
         on_target_spans = [
             span
             for span in tally_value_top.spans
@@ -2807,6 +2809,68 @@ class NarratorReaderContract(unittest.TestCase):
             on_target_top_strong,
             "top-row horizontal bars should stay on the strong stroke tier so the numerals read chunkier",
         )
+
+    def test_annotate_current_focus_item_relaunches_annotator_and_refreshes_preview(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY++",
+            subset_count=15,
+            scans_dir="/tmp/scans",
+            focus_regions_path="/tmp/focus-regions.yaml",
+        )
+        display.on_focus_preview(
+            self._make_png(rgb=(10, 20, 30)),
+            label="15-blue/fr-11c",
+            source="operator_annotated",
+        )
+        gt_item = mock.Mock(exam_id="15-blue", question_id="fr-11c", page=3)
+        updated_region = mock.Mock(
+            page=3,
+            x=0.1,
+            y=0.2,
+            width=0.3,
+            height=0.4,
+            source="operator_annotated",
+        )
+
+        with (
+            mock.patch(
+                "scripts.narrator_reader.load_ground_truth",
+                return_value=[gt_item],
+            ),
+            mock.patch("pathlib.Path.exists", return_value=True),
+            mock.patch("scripts.narrator_reader.subprocess.run") as run_mock,
+            mock.patch(
+                "scripts.narrator_reader.load_focus_regions",
+                return_value={("15-blue", "fr-11c"): updated_region},
+            ),
+            mock.patch(
+                "scripts.narrator_reader.extract_page_image",
+                return_value=b"page-png",
+            ),
+            mock.patch(
+                "scripts.narrator_reader.render_focus_preview",
+                return_value=self._make_png(rgb=(40, 50, 60)),
+            ),
+        ):
+            refreshed = display.annotate_current_focus_item()
+
+        self.assertTrue(refreshed)
+        run_mock.assert_called_once()
+        cmd = run_mock.call_args.args[0]
+        self.assertIn("annotate_focus_regions.py", cmd[1])
+        self.assertIn("--pdf", cmd)
+        self.assertIn("/tmp/scans/15 blue.pdf", cmd)
+        self.assertIn("--page", cmd)
+        self.assertIn("3", cmd)
+        self.assertIn("--targets", cmd)
+        self.assertIn("15-blue/fr-11c", cmd)
+        self.assertIn("--config", cmd)
+        self.assertIn("/tmp/focus-regions.yaml", cmd)
+        self.assertEqual(display.focus_preview_png, self._make_png(rgb=(40, 50, 60)))
+        self.assertEqual(display.focus_preview_label, "15-blue/fr-11c")
+        self.assertEqual(display.focus_preview_source, "operator_annotated")
 
     def test_scorebug_rendered_four_uses_tapered_open_foot_in_context(self):
         display = self._make_display()

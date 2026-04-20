@@ -184,6 +184,8 @@ def _scorebug_session_meta(
         "model": model,
         "set_label": set_label,
         "subset_count": subset_count,
+        "scans_dir": str(_SCANS_DIR),
+        "focus_regions_path": str(args.focus_regions or DEFAULT_FOCUS_REGIONS_PATH),
     }
 
 

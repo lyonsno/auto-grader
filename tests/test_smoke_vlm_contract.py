@@ -88,6 +88,8 @@ class SmokeVlmContract(unittest.TestCase):
                 "model": "gemma-4-26b-a4b-it-bf16",
                 "set_label": "TRICKY",
                 "subset_count": 6,
+                "scans_dir": str(smoke_vlm._SCANS_DIR),
+                "focus_regions_path": str(smoke_vlm.DEFAULT_FOCUS_REGIONS_PATH),
             },
         )
 
@@ -184,6 +186,8 @@ class SmokeVlmContract(unittest.TestCase):
                 "model": "qwen3p5-35B-A3B",
                 "set_label": "TRICKY+",
                 "subset_count": 12,
+                "scans_dir": str(smoke_vlm._SCANS_DIR),
+                "focus_regions_path": str(smoke_vlm.DEFAULT_FOCUS_REGIONS_PATH),
             },
         )
 
@@ -205,8 +209,30 @@ class SmokeVlmContract(unittest.TestCase):
                 "model": "qwen3p5-35B-A3B",
                 "set_label": "TRICKY++",
                 "subset_count": 15,
+                "scans_dir": str(smoke_vlm._SCANS_DIR),
+                "focus_regions_path": str(smoke_vlm.DEFAULT_FOCUS_REGIONS_PATH),
             },
         )
+
+    def test_scorebug_session_meta_uses_focus_region_override_path(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--model",
+                "qwen3p5-35B-A3B",
+                "--tricky",
+                "--focus-regions",
+                "/tmp/custom-focus-regions.yaml",
+            ]
+        )
+
+        meta = smoke_vlm._scorebug_session_meta(
+            args=args,
+            model=args.model,
+            subset_count=6,
+        )
+
+        self.assertEqual(meta["focus_regions_path"], "/tmp/custom-focus-regions.yaml")
 
     def test_tricky_plus_runs_expansion_items_first(self) -> None:
         self.assertEqual(
