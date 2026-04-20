@@ -303,6 +303,35 @@ class FocusPreviewContract(unittest.TestCase):
             "paper-field knockout should not leave a semi-transparent halo band",
         )
 
+    def test_operator_annotated_preview_preserves_drawn_region_without_retightening(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        page_png = _content_box_png(
+            1600,
+            1200,
+            bg_rgb=(231, 221, 199),
+            box_rgb=(40, 35, 28),
+            box_x=600,
+            box_y=420,
+            box_w=400,
+            box_h=260,
+        )
+        focus = FocusRegion(
+            page=1,
+            x=0.0,
+            y=0.0,
+            width=1.0,
+            height=1.0,
+            source="operator_annotated",
+        )
+        preview = render_focus_preview(page_png, focus)
+
+        self.assertEqual(
+            _png_dimensions(preview),
+            (1600, 1200),
+            "operator-drawn boxes should preview the region the operator actually selected, not a re-tightened content island",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
