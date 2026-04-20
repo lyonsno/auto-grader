@@ -1654,7 +1654,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         image_left = (80 - 30) // 2
         crop_x0 = image_left * 8
-        crop_y0 = 2 * 16
+        crop_y0 = 1 * 16
         crop_target_w = 30 * 8
         probe_x = crop_x0 + crop_target_w // 2
         probe_y = crop_y0 + 8
@@ -1673,12 +1673,10 @@ class NarratorReaderContract(unittest.TestCase):
             "crop once the internal letterbox matte is removed",
         )
 
-    def test_focus_preview_kitty_composite_keeps_extra_rows_dark_not_gold(self):
-        # The preview band leaves one extra row above and below the image
-        # content for breathing room. Those spacer rows should not pick up
-        # the smooth gold fill that reads like a second frame, but they also
-        # don't need to be transparent. A plain dark strip is the safer
-        # presentation surface while the Kitty placement path remains live.
+    def test_focus_preview_kitty_composite_removes_internal_top_bottom_spacer_rows(self):
+        # The preview image should now sit directly between the two border
+        # rows. Internal top/bottom spacer rows were reading as a persistent
+        # letterbox in smoke.
         comp_png = _build_composite_band_png(
             self._make_png(width=500, height=400),
             term_width=80,
@@ -1693,17 +1691,23 @@ class NarratorReaderContract(unittest.TestCase):
         crop_x0 = image_left * 8
 
         probe_x = crop_x0 + (30 * 8) // 2
-        top_extra_probe_y = 1 * 16 + 8
-        bottom_extra_probe_y = (12 + 2) * 16 + 8
+        top_image_probe_y = 1 * 16 + 8
+        bottom_image_probe_y = 12 * 16 + 8
 
-        for probe_y in (top_extra_probe_y, bottom_extra_probe_y):
+        for probe_y in (top_image_probe_y, bottom_image_probe_y):
             off = (probe_y * comp.width + probe_x) * comp.n
             rgba = tuple(comp.samples[off : off + comp.n])
             self.assertEqual(
-                rgba,
-                (*_TEXTURE_BG_RGB, 255),
-                "rows inside the preview span should stay dark instead of "
-                "picking up a smooth gold fill",
+                rgba[3],
+                255,
+                "image rows should begin immediately below the top border "
+                "and run right up to the row above the bottom border",
+            )
+            self.assertNotEqual(
+                rgba[:3],
+                _TEXTURE_BG_RGB,
+                "the old internal top/bottom spacer rows should be gone; "
+                "probing those rows must hit image content now, not the dark matte",
             )
 
     def test_focus_preview_kitty_composite_matching_aspect_crop_reaches_image_box(self):

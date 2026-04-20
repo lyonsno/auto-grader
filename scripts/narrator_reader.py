@@ -941,7 +941,7 @@ _KITTY_CHUNK_SIZE = 4096
 #: Extra rows above and below the image inside the band. These rows
 #: run full terminal width with texture but no image content. Two
 #: means one row above the image and one row below.
-_BAND_EXTRA_ROWS = 2
+_BAND_EXTRA_ROWS = 0
 
 #: Number of solid-block columns hugging the image edge.
 #: Column 0 = █ (bright, matches the extra rows above/below),
@@ -1432,8 +1432,8 @@ def _build_composite_band_png(
 
     The resulting image covers the full band at ``term_width`` cells
     wide and ``(image_cell_height + _BAND_EXTRA_ROWS + 2)`` cells tall
-    (image rows + 1 extra row above + 1 extra row below + 2 border
-    rows). The texture, borders, and exam crop are all baked into one
+    (image rows + optional internal spacer rows + 2 border rows). The
+    texture, borders, and exam crop are all baked into one
     image so the terminal receives a single Kitty placement instead of
     hundreds of styled text segments per frame.
 
@@ -1446,6 +1446,8 @@ def _build_composite_band_png(
     image_left = max(0, (term_width - image_cell_width) // 2)
     image_right = image_left + image_cell_width
     band_cell_rows = image_cell_height + _BAND_EXTRA_ROWS + 2
+    image_row_start = 1 + (_BAND_EXTRA_ROWS // 2)
+    image_row_end = image_row_start + image_cell_height - 1
 
     px_w = term_width * cell_px_w
     px_h = band_cell_rows * cell_px_h
@@ -1483,16 +1485,16 @@ def _build_composite_band_png(
     dot_inset_y = max(0, (dot_h - max(1, dot_h * 2 // 3)) // 2)
 
     for cell_row in range(1, band_cell_rows - 1):
-        if cell_row == 1:
+        if cell_row < image_row_start:
             row_seed_id = 0
-        elif cell_row == band_cell_rows - 2:
+        elif cell_row > image_row_end:
             row_seed_id = 1 + image_cell_height
         else:
-            row_seed_id = cell_row - 1
+            row_seed_id = cell_row - image_row_start + 1
 
         for col in range(term_width):
             in_image_span = image_left <= col < image_right
-            is_image_row = 2 <= cell_row <= 1 + image_cell_height
+            is_image_row = image_row_start <= cell_row <= image_row_end
             if in_image_span and is_image_row:
                 continue
 
@@ -1571,7 +1573,7 @@ def _build_composite_band_png(
     # scaling and compositing natively.
     crop_pix = fitz.Pixmap(crop_png_bytes)
     crop_x0 = image_left * cell_px_w
-    crop_y0 = 2 * cell_px_h  # after top border + extra row
+    crop_y0 = image_row_start * cell_px_h
     crop_target_w = image_cell_width * cell_px_w
     crop_target_h = image_cell_height * cell_px_h
 
