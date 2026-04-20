@@ -188,8 +188,8 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # keeps the structural pulse visible all
                                 # the way down the stack instead of just
                                 # on the most recent few items
-_HISTORY_TIER_DIM_MIN = 0.58    # floor for within-item fade.
-_HISTORY_GROUP_DIM_STEP = 0.05  # each successive thought line under a header
+_HISTORY_TIER_DIM_MIN = 0.50    # floor for within-item fade.
+_HISTORY_GROUP_DIM_STEP = 0.06  # each successive thought line under a header
                                  # should visibly dim, but the fade should
                                  # take longer to settle so deeper within-item
                                  # stacks still read as a gradient instead of
@@ -982,16 +982,16 @@ _BAND_EXTRA_ROWS = 0
 #: column 2 = ▓, then braille starts. Three columns gives the
 #: sides enough visual weight to read as a continuous frame with
 #: the top/bottom extra rows.
-_SOLID_COLUMNS = 3
+_SOLID_COLUMNS = 2
 
 #: Faint floor for both braille density and color intensity at the
 #: terminal edges. 0.12 means the outermost cells carry ~12% of
 #: peak density/color — faintly visible rather than invisible.
-_TEXTURE_EDGE_FLOOR = 0.12
+_TEXTURE_EDGE_FLOOR = 0.08
 
 #: Texture accent color near the image edge — warm bone from the
 #: narrator's moss/bone palette, replacing the earlier sepia tone.
-_TEXTURE_ACCENT_RGB = (220, 205, 180)
+_TEXTURE_ACCENT_RGB = (206, 193, 174)
 
 #: Terminal background color the texture fades toward. Matches the
 #: panel background in focus_preview.py and the dark narrator UI.
@@ -1888,9 +1888,9 @@ def _paint_border_row(
             fitz.Rect(0, 0, row_w, cell_px_h),
             fill=bg_rgb_f,
         )
-        fontsize = max(10, cell_px_h * 1.05)
+        fontsize = max(10, cell_px_h * 1.0)
         txt_page.insert_text(
-            fitz.Point(0, cell_px_h * 0.82),
+            fitz.Point(0, cell_px_h * 0.70),
             border_text,
             fontsize=fontsize,
             color=text_rgb_f,

@@ -52,6 +52,7 @@ from scripts.narrator_reader import (
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
     _otsu_threshold,
+    _texture_cell,
     _undulation_hue_deg,
     _render_layer_index,
     _reader_debug,
@@ -1806,6 +1807,15 @@ class NarratorReaderContract(unittest.TestCase):
             "so the whole post-header block settles as it descends",
         )
 
+    def test_history_depth_fade_reaches_a_clearer_mid_stack_drop(self):
+        self.assertLess(
+            _history_tier_dim_factor(4),
+            0.70,
+            "mid-stack reasoning rows should settle more decisively below the "
+            "header instead of holding almost the same value and reading like "
+            "one dense wall of text",
+        )
+
     def test_history_alt_rows_keep_a_bright_bone_family(self):
         alt_text = Text()
         _apply_shimmer(alt_text, "A", "line_alt", 0, phase_override=0.0)
@@ -1828,6 +1838,20 @@ class NarratorReaderContract(unittest.TestCase):
             alt_rgb[2],
             "the alternating warm row should remain in a bone family with "
             "blue clearly trailing the red/green channels",
+        )
+
+    def test_focus_preview_side_texture_exits_solid_blocks_earlier(self):
+        glyph, _rgb = _texture_cell(
+            distance_from_image=2,
+            max_distance=12,
+            seed_key=("left", 2, 12),
+        )
+
+        self.assertNotIn(
+            glyph,
+            {"█", "▓"},
+            "the side rails should step out of the heavy solid-block phase "
+            "earlier so the texture frames the crop without overpowering it",
         )
 
     def test_trim_near_black_crop_margins_removes_dark_scan_frame(self):
