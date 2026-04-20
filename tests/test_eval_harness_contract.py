@@ -9,6 +9,7 @@ accuracy/calibration reports.  Tests are written before the implementation
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -177,6 +178,74 @@ class TestLoadGroundTruth(unittest.TestCase):
 
         with self.assertRaises(FileNotFoundError):
             load_ground_truth(Path("/nonexistent/path.yaml"))
+
+    def test_loads_sparse_acceptable_score_band_fields(self):
+        from auto_grader.eval_harness import load_ground_truth
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            truth_path = Path(tmpdir) / "ground_truth.yaml"
+            truth_path.write_text(
+                """
+exams:
+  - exam_id: 15-blue
+    items:
+      - question_id: fr-10a
+        answer_type: numeric
+        page: 3
+        professor_score: 1.5
+        max_points: 3
+        professor_mark: partial
+        student_answer: "v=-8.225 J/s"
+        notes: "setup correct but sign slip"
+        acceptable_score_floor: 1.0
+        acceptable_score_ceiling: 1.5
+        acceptable_score_reason: "prof often forgives sign-only slips when setup is sound"
+""".strip(),
+                encoding="utf-8",
+            )
+
+            result = load_ground_truth(truth_path)
+
+        self.assertEqual(len(result), 1)
+        item = result[0]
+        self.assertEqual(item.acceptable_score_floor, 1.0)
+        self.assertEqual(item.acceptable_score_ceiling, 1.5)
+        self.assertEqual(
+            item.acceptable_score_reason,
+            "prof often forgives sign-only slips when setup is sound",
+        )
+
+    def test_truth_score_ignores_acceptable_band(self):
+        from auto_grader.eval_harness import load_ground_truth
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            truth_path = Path(tmpdir) / "ground_truth.yaml"
+            truth_path.write_text(
+                """
+exams:
+  - exam_id: 15-blue
+    items:
+      - question_id: fr-10a
+        answer_type: numeric
+        page: 3
+        professor_score: 1.5
+        max_points: 3
+        professor_mark: partial
+        student_answer: "v=-8.225 J/s"
+        notes: "setup correct but sign slip"
+        acceptable_score_floor: 1.0
+        acceptable_score_ceiling: 1.5
+""".strip(),
+                encoding="utf-8",
+            )
+
+            item = load_ground_truth(truth_path)[0]
+
+        self.assertEqual(
+            item.truth_score,
+            1.5,
+            "acceptable band must not silently replace the primary truth_score baseline",
+        )
 
 
 # ---------------------------------------------------------------------------

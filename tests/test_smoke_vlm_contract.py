@@ -578,6 +578,64 @@ class SmokeVlmContract(unittest.TestCase):
             self.assertIn("correction_reason", record)
             self.assertEqual(record["correction_reason"], "")
 
+    def test_prediction_record_carries_sparse_acceptable_score_band(self):
+        """predictions.jsonl must preserve acceptable-band telemetry fields.
+
+        The acceptable band is not the primary truth target, but offline
+        drift analysis still needs it in the self-contained run record.
+        """
+        module = _load_smoke_vlm()
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            answer_type="numeric",
+            page=3,
+            professor_score=1.5,
+            max_points=3.0,
+            professor_mark="partial",
+            student_answer="v=-8.225 J/s",
+            notes="setup correct but execution wrong",
+            acceptable_score_floor=1.0,
+            acceptable_score_ceiling=1.5,
+            acceptable_score_reason=(
+                "prof often forgives sign-only slips when setup is otherwise sound"
+            ),
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            model_score=1.0,
+            model_confidence=0.8,
+            model_reasoning="setup credit only",
+            model_read="v=-8.225 J/s",
+            raw_assistant='{"model_score": 1.0}',
+            raw_reasoning="negative frequency is impossible",
+            upstream_dependency="none",
+            if_dependent_then_consistent=None,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir)
+            predictions_path = run_dir / "predictions.jsonl"
+            with module._PredictionWriter(
+                predictions_path, model="qwen-test", run_dir=run_dir
+            ) as writer:
+                writer.write_one(item, prediction)
+
+            records = [
+                json.loads(line)
+                for line in predictions_path.read_text().splitlines()
+                if line.strip()
+            ]
+            pred_record = next(r for r in records if r.get("type") == "prediction")
+
+        self.assertEqual(pred_record["acceptable_score_floor"], 1.0)
+        self.assertEqual(pred_record["acceptable_score_ceiling"], 1.5)
+        self.assertEqual(
+            pred_record["acceptable_score_reason"],
+            "prof often forgives sign-only slips when setup is otherwise sound",
+        )
+
     def test_main_handles_zero_narrator_dispatches_without_crashing(self):
         item = EvalItem(
             exam_id="15-blue",
