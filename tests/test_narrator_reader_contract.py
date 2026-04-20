@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import subprocess
 import signal as stdlib_signal
 import time
 import unittest
@@ -50,6 +51,7 @@ from scripts.narrator_reader import (
     _otsu_threshold,
     _undulation_hue_deg,
     _render_layer_index,
+    _reader_debug,
     HistoryScrollController,
 )
 
@@ -109,6 +111,13 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertFalse(controller.handle_key("a"))
         display.annotate_current_focus_item.assert_called_once_with()
+
+    def test_reader_debug_writes_to_stderr(self):
+        stderr = StringIO()
+        with mock.patch("sys.stderr", stderr):
+            _reader_debug("scroll thread started")
+
+        self.assertIn("scroll thread started", stderr.getvalue())
 
     class _TTYBuffer(StringIO):
         def isatty(self) -> bool:
@@ -2890,6 +2899,58 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.focus_preview_label, "15-blue/fr-11c")
         self.assertEqual(display.focus_preview_source, "operator_annotated")
         self.assertEqual(display.status_line, "Updated focus preview for 15-blue/fr-11c.")
+
+    def test_annotate_current_focus_item_reports_missing_focus_target(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY++",
+            subset_count=15,
+            scans_dir="/tmp/scans",
+        )
+
+        refreshed = display.annotate_current_focus_item()
+
+        self.assertFalse(refreshed)
+        self.assertEqual(
+            display.status_line,
+            "Annotate current item unavailable: no focus target.",
+        )
+
+    def test_annotate_current_focus_item_reports_annotator_failure(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY++",
+            subset_count=15,
+            scans_dir="/tmp/scans",
+            focus_regions_path="/tmp/focus-regions.yaml",
+        )
+        display.on_focus_preview(
+            self._make_png(rgb=(10, 20, 30)),
+            label="15-blue/fr-11c",
+            source="operator_annotated",
+        )
+        gt_item = mock.Mock(exam_id="15-blue", question_id="fr-11c", page=3)
+
+        with (
+            mock.patch(
+                "scripts.narrator_reader.load_ground_truth",
+                return_value=[gt_item],
+            ),
+            mock.patch("pathlib.Path.exists", return_value=True),
+            mock.patch(
+                "scripts.narrator_reader.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, ["annotate"]),
+            ),
+        ):
+            refreshed = display.annotate_current_focus_item()
+
+        self.assertFalse(refreshed)
+        self.assertEqual(
+            display.status_line,
+            "Annotate current item failed: annotator subprocess failed for 15-blue/fr-11c.",
+        )
 
     def test_scorebug_rendered_four_uses_tapered_open_foot_in_context(self):
         display = self._make_display()
