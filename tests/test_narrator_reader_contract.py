@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import subprocess
 import signal as stdlib_signal
+import tempfile
 import time
 import unittest
 from io import StringIO
@@ -118,6 +119,22 @@ class NarratorReaderContract(unittest.TestCase):
             _reader_debug("scroll thread started")
 
         self.assertIn("scroll thread started", stderr.getvalue())
+
+    def test_reader_debug_also_writes_to_run_local_debug_log(self):
+        stderr = StringIO()
+        with mock.patch("sys.stderr", stderr):
+            with self.subTest("writes explicit debug log"):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    debug_log = Path(tmpdir) / "reader.debug"
+                    with mock.patch.dict(
+                        "os.environ",
+                        {"PAINT_DRY_DEBUG_LOG": str(debug_log)},
+                        clear=False,
+                    ):
+                        _reader_debug("interactive tty ready")
+
+                    self.assertTrue(debug_log.exists())
+                    self.assertIn("interactive tty ready", debug_log.read_text())
 
     class _TTYBuffer(StringIO):
         def isatty(self) -> bool:

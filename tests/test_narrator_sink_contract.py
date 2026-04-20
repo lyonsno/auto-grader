@@ -165,6 +165,8 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertNotRegex(launch_line, r"(^|\\s)(?:1>|>)")
         self.assertNotIn(" 1>", launch_line)
         self.assertIn("2>", launch_line)
+        self.assertIn("PAINT_DRY_DEBUG_LOG", script)
+        self.assertIn("reader.debug", script)
 
     def test_spawn_runner_persists_reader_diagnostics_in_log_dir_when_available(self):
         with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as logdir:
@@ -184,6 +186,7 @@ class TestWezTermResolution(unittest.TestCase):
 
         self.assertIn(str(Path(logdir) / "reader.stderr"), script)
         self.assertIn(str(Path(logdir) / "reader.exit"), script)
+        self.assertIn(str(Path(logdir) / "reader.debug"), script)
         self.assertNotIn(str(fifo.parent / "reader.stderr"), script)
 
     def test_start_raises_if_reader_never_connects_to_fifo(self):

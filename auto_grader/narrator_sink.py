@@ -469,11 +469,13 @@ class NarratorSink:
         diagnostics_dir.mkdir(parents=True, exist_ok=True)
         reader_stderr = diagnostics_dir / "reader.stderr"
         reader_exit = diagnostics_dir / "reader.exit"
+        reader_debug = diagnostics_dir / "reader.debug"
         runner.write_text(
             "#!/bin/bash\n"
             "set -u\n"
             f"cd {project_root}\n"
             "unset PAINT_DRY_NO_INLINE_IMAGES\n"
+            f"export PAINT_DRY_DEBUG_LOG=\"{reader_debug}\"\n"
             "if [ -r /dev/tty ]; then\n"
             "  exec </dev/tty\n"
             "fi\n"

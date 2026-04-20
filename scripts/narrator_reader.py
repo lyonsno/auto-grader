@@ -82,7 +82,15 @@ def _reader_debug(message: str) -> None:
     even when the UI itself is unresponsive.
     """
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-    sys.stderr.write(f"[paint-dry-reader {stamp}] {message}\n")
+    line = f"[paint-dry-reader {stamp}] {message}\n"
+    debug_log = os.environ.get("PAINT_DRY_DEBUG_LOG", "").strip()
+    if debug_log:
+        try:
+            with open(debug_log, "a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:
+            pass
+    sys.stderr.write(line)
     sys.stderr.flush()
 
 
