@@ -5440,6 +5440,8 @@ def main() -> int:
                             model=msg.get("model"),
                             set_label=msg.get("set_label"),
                             subset_count=msg.get("subset_count"),
+                            scans_dir=msg.get("scans_dir"),
+                            focus_regions_path=msg.get("focus_regions_path"),
                         )
                     elif msg_type == "focus_preview":
                         try:

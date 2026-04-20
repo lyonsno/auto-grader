@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import math
 import subprocess
 import signal as stdlib_signal
@@ -16,6 +17,7 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.text import Text
 
+import scripts.narrator_reader as narrator_reader
 from scripts.narrator_reader import (
     _ACTIVE_ANIMATION_FPS,
     _DEFAULT_TERMINAL_CELL_ASPECT,
@@ -2916,6 +2918,23 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.focus_preview_label, "15-blue/fr-11c")
         self.assertEqual(display.focus_preview_source, "operator_annotated")
         self.assertEqual(display.status_line, "Updated focus preview for 15-blue/fr-11c.")
+
+    def test_session_meta_message_handler_preserves_scans_and_focus_region_paths(self):
+        source = inspect.getsource(narrator_reader.main)
+
+        self.assertIn(
+            'scans_dir=msg.get("scans_dir")',
+            source,
+            "the live reader must forward scans_dir from session_meta events "
+            "into on_session_meta() so annotate-current-item can find the PDFs",
+        )
+        self.assertIn(
+            'focus_regions_path=msg.get("focus_regions_path")',
+            source,
+            "the live reader must forward focus_regions_path from session_meta "
+            "events into on_session_meta() so in-window annotation refreshes "
+            "edit the right config file",
+        )
 
     def test_annotate_current_focus_item_reports_missing_focus_target(self):
         display = self._make_display()
