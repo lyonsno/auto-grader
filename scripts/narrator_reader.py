@@ -1492,6 +1492,7 @@ def _build_composite_band_png(
     image_cell_height: int,
     image_id: int,
     title: str,
+    preserve_aspect: bool = False,
     cell_px_w: int = 8,
     cell_px_h: int = 16,
 ) -> bytes:
@@ -1509,7 +1510,8 @@ def _build_composite_band_png(
     in the composite — the terminal scales the placed image to fit
     the cell footprint regardless of source resolution.
     """
-    crop_png_bytes = _trim_edge_crop_matte(crop_png_bytes)
+    if not preserve_aspect:
+        crop_png_bytes = _trim_edge_crop_matte(crop_png_bytes)
 
     image_left = max(0, (term_width - image_cell_width) // 2)
     image_right = image_left + image_cell_width
@@ -1653,6 +1655,55 @@ def _build_composite_band_png(
     scaled_w = max(1, int(src_w * scale))
     scaled_h = max(1, int(src_h * scale))
 
+    if preserve_aspect:
+        scale = min(crop_target_w / max(1, src_w), crop_target_h / max(1, src_h))
+        scaled_w = max(1, int(src_w * scale))
+        scaled_h = max(1, int(src_h * scale))
+        contain_x0 = crop_x0 + max(0, (crop_target_w - scaled_w) // 2)
+        contain_y0 = crop_y0 + max(0, (crop_target_h - scaled_h) // 2)
+
+        out = bytearray(comp.samples)
+        src_n = crop_pix.n
+        src_samples = crop_pix.samples
+
+        for dy in range(scaled_h):
+            sy = min(src_h - 1, int(dy * src_h / max(1, scaled_h)))
+            for dx in range(scaled_w):
+                sx = min(src_w - 1, int(dx * src_w / max(1, scaled_w)))
+                src_off = (sy * src_w + sx) * src_n
+                src_r = src_samples[src_off]
+                src_g = src_samples[src_off + 1]
+                src_b = src_samples[src_off + 2]
+                src_a = src_samples[src_off + 3] if src_n >= 4 else 255
+                if src_a == 0:
+                    continue
+
+                dest_x = contain_x0 + dx
+                dest_y = contain_y0 + dy
+                dest_off = (dest_y * px_w + dest_x) * 4
+                if src_a >= 255:
+                    out[dest_off] = src_r
+                    out[dest_off + 1] = src_g
+                    out[dest_off + 2] = src_b
+                    out[dest_off + 3] = 255
+                    continue
+
+                dest_a = out[dest_off + 3]
+                inv_alpha = 255 - src_a
+                out[dest_off] = (src_r * src_a + out[dest_off] * inv_alpha) // 255
+                out[dest_off + 1] = (
+                    src_g * src_a + out[dest_off + 1] * inv_alpha
+                ) // 255
+                out[dest_off + 2] = (
+                    src_b * src_a + out[dest_off + 2] * inv_alpha
+                ) // 255
+                out[dest_off + 3] = min(
+                    255,
+                    src_a + ((dest_a * inv_alpha) // 255),
+                )
+
+        return fitz.Pixmap(fitz.csRGB, px_w, px_h, bytes(out), True).tobytes("png")
+
     # Use a PDF page to composite: background (texture) + foreground (crop).
     final_doc = fitz.open()
     final_page = final_doc.new_page(width=px_w, height=px_h)
@@ -1676,7 +1727,12 @@ def _build_composite_band_png(
 
     # Insert the clipped exam crop on top at the computed position.
     final_page.insert_image(
-        fitz.Rect(crop_x0, crop_y0, crop_x0 + crop_target_w, crop_y0 + crop_target_h),
+        fitz.Rect(
+            crop_x0,
+            crop_y0,
+            crop_x0 + crop_target_w,
+            crop_y0 + crop_target_h,
+        ),
         stream=cover_png,
     )
     # Render the composited page to PNG.
@@ -3177,7 +3233,8 @@ class HistoryScrollController:
             self._display.scroll_history_to_live_edge()
             return True
         if key == "a":
-            return self._display.annotate_current_focus_item()
+            self._display.annotate_current_focus_item()
+            return True
         return False
 
 
@@ -4440,7 +4497,7 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._build_display_entries(wrap_width=wrap_width)
+        display_entries = self._viewport_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
         current_group_index = -1
@@ -5036,6 +5093,7 @@ class PaintDryDisplay:
                 image_cell_height=image_ch,
                 image_id=rend._image_id,
                 title=rend._title,
+                preserve_aspect=self.focus_preview_source == "operator_annotated",
             )
             image_id = self._allocate_kitty_image_id()
             for chunk in _build_kitty_transmit_chunks(composite_png, image_id):
@@ -5124,6 +5182,7 @@ class PaintDryDisplay:
                     image_cell_height=image_ch,
                     image_id=self._next_kitty_image_id,
                     title=title,
+                    preserve_aspect=source == "operator_annotated",
                 )
                 image_id = self._allocate_kitty_image_id()
                 # Don't transmit from the event thread — that interleaves

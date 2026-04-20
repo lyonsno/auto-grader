@@ -31,7 +31,10 @@ from auto_grader.focus_regions import (
     load_focus_regions,
 )
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
-from auto_grader.thinking_narrator import ThinkingNarrator
+from auto_grader.thinking_narrator import (
+    ThinkingNarrator,
+    _DEFAULT_NARRATOR_MODEL,
+)
 from auto_grader.vlm_inference import (
     DESCRIBE_ONLY_PROMPT,
     ServerConfig,
@@ -702,7 +705,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Plain-text narrator output to stderr (no Terminal window) — for dev")
     parser.add_argument("--narrator-url", default=_DEFAULT_NARRATOR_URL,
                         help="Bonsai narrator OMLX server URL")
-    parser.add_argument("--narrator-model", default="Bonsai-8B-mlx-1bit")
+    parser.add_argument("--narrator-model", default=_DEFAULT_NARRATOR_MODEL)
     parser.add_argument(
         "--wrap-up-url",
         default=None,

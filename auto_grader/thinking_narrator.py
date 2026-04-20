@@ -279,38 +279,12 @@ def _format_score_with_denominator(score: float, max_points: float) -> str:
 
 @dataclass(frozen=True)
 class _ScoreBandClassification:
+    truth: float
     floor: float
     ceiling: float
     band_present: bool
     verdict: str
     verdict_short: str
-
-
-@dataclass(frozen=True)
-class _TruthVerdict:
-    verdict: str
-    verdict_short: str
-
-
-def _classify_score_against_truth(
-    model_score: float,
-    item,
-) -> _TruthVerdict:
-    truth_score = getattr(item, "truth_score", item.professor_score)
-    if abs(model_score - truth_score) < 1e-9:
-        return _TruthVerdict(
-            verdict="MATCHED",
-            verdict_short="match",
-        )
-    if model_score > truth_score:
-        return _TruthVerdict(
-            verdict="GRADER OVERSHOT",
-            verdict_short="overshoot",
-        )
-    return _TruthVerdict(
-        verdict="GRADER UNDERSHOT",
-        verdict_short="undershoot",
-    )
 
 
 def _classify_score_against_band(
@@ -325,16 +299,19 @@ def _classify_score_against_band(
         float(ceiling_raw) if ceiling_raw is not None else float(truth_score)
     )
     band_present = floor_raw is not None or ceiling_raw is not None
-    if abs(model_score - ceiling) < 1e-9:
+    truth = float(truth_score)
+    if abs(model_score - truth) < 1e-9:
         return _ScoreBandClassification(
+            truth=truth,
             floor=floor,
             ceiling=ceiling,
             band_present=band_present,
-            verdict="AT CEILING",
-            verdict_short="ceiling",
+            verdict="MATCHED TRUTH",
+            verdict_short="match",
         )
     if floor <= model_score <= ceiling:
         return _ScoreBandClassification(
+            truth=truth,
             floor=floor,
             ceiling=ceiling,
             band_present=band_present,
@@ -343,6 +320,7 @@ def _classify_score_against_band(
         )
     if model_score > ceiling:
         return _ScoreBandClassification(
+            truth=truth,
             floor=floor,
             ceiling=ceiling,
             band_present=band_present,
@@ -350,6 +328,7 @@ def _classify_score_against_band(
             verdict_short="overshoot",
         )
     return _ScoreBandClassification(
+        truth=truth,
         floor=floor,
         ceiling=ceiling,
         band_present=band_present,
@@ -369,7 +348,14 @@ def _band_commentary_clause(
     ceiling_display = _format_score_with_denominator(
         classification.ceiling, max_points
     )
-    if classification.verdict_short == "ceiling":
+    if classification.verdict_short == "match":
+        if abs(classification.truth - classification.ceiling) < 1e-9:
+            position = "at the ceiling"
+        elif abs(classification.truth - classification.floor) < 1e-9:
+            position = "at the floor"
+        else:
+            position = "at the truth target"
+    elif classification.verdict_short == "ceiling":
         position = "at the ceiling"
     elif classification.verdict_short == "within_band":
         position = "within range, below ceiling"
@@ -1356,16 +1342,12 @@ class ThinkingNarrator:
                 getattr(item, "corrected_score", None) is not None
                 and abs(truth_score - item.professor_score) > 1e-9
             )
-            truth_verdict = _classify_score_against_truth(
-                prediction.model_score,
-                item,
-            )
             band_classification = _classify_score_against_band(
                 prediction.model_score,
                 item,
             )
-            verdict = truth_verdict.verdict
-            verdict_short = truth_verdict.verdict_short
+            verdict = band_classification.verdict
+            verdict_short = band_classification.verdict_short
             grader_score_display = _format_score_with_denominator(
                 prediction.model_score, item.max_points
             )
