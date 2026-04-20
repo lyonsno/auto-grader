@@ -33,6 +33,7 @@ import re
 import random
 import select
 import signal
+import subprocess
 import sys
 import termios
 import threading
@@ -59,6 +60,17 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from auto_grader.shimmer_phases import ShimmerPhaseState  # noqa: E402
+from auto_grader.eval_harness import load_ground_truth  # noqa: E402
+from auto_grader.focus_preview import render_focus_preview  # noqa: E402
+from auto_grader.focus_regions import (  # noqa: E402
+    DEFAULT_FOCUS_REGIONS_PATH,
+    load_focus_regions,
+)
+from auto_grader.vlm_inference import (  # noqa: E402
+    PREVIEW_PAGE_DPI,
+    _EXAM_PDF_MAP,
+    extract_page_image,
+)
 
 
 # Matches the elapsed-time prefix on after-action topic lines:
@@ -3007,6 +3019,19 @@ class HistoryViewport:
 
 
 _SCROLL_PAGE_ROWS = 10
+_GROUND_TRUTH_PATH = _REPO_ROOT / "eval" / "ground_truth.yaml"
+_ANNOTATE_FOCUS_REGIONS_SCRIPT = _REPO_ROOT / "scripts" / "annotate_focus_regions.py"
+
+
+def _parse_focus_target_label(label: str) -> tuple[str, str] | None:
+    if not label or "/" not in label:
+        return None
+    exam_id, question_id = label.split("/", 1)
+    exam_id = exam_id.strip()
+    question_id = question_id.strip()
+    if not exam_id or not question_id:
+        return None
+    return exam_id, question_id
 
 
 class HistoryScrollController:
@@ -3029,6 +3054,7 @@ class HistoryScrollController:
             "u": f"scroll history up {_SCROLL_PAGE_ROWS} rows (page up)",
             "d": f"scroll history down {_SCROLL_PAGE_ROWS} rows (page down)",
             "0": "return to live edge (newest history)",
+            "a": "annotate current item and refresh preview",
         }
 
     def handle_key(self, key: str) -> bool:
@@ -3050,6 +3076,9 @@ class HistoryScrollController:
         if key == "0":
             self._display.scroll_history_to_live_edge()
             return True
+        if key == "a":
+            self._display.annotate_current_focus_item()
+            return True
         return False
 
 
@@ -3064,6 +3093,8 @@ class PaintDryDisplay:
         self.current_set_label: str = ""
         self.current_subset_count: int | None = None
         self.current_item_bug: str = ""
+        self.current_scans_dir: Path | None = None
+        self.current_focus_regions_path: Path = DEFAULT_FOCUS_REGIONS_PATH
         self.score_on_target_points = 0.0
         self.score_points_possible = 0.0
         self.score_left_on_table_points = 0.0
@@ -4595,6 +4626,8 @@ class PaintDryDisplay:
         model: str | None = None,
         set_label: str | None = None,
         subset_count: int | None = None,
+        scans_dir: str | None = None,
+        focus_regions_path: str | None = None,
     ) -> None:
         if model:
             self.current_model = model
@@ -4602,6 +4635,65 @@ class PaintDryDisplay:
             self.current_set_label = set_label
         if subset_count is not None:
             self.current_subset_count = subset_count
+        if scans_dir:
+            self.current_scans_dir = Path(scans_dir)
+        if focus_regions_path:
+            self.current_focus_regions_path = Path(focus_regions_path)
+
+    def annotate_current_focus_item(self) -> bool:
+        target = _parse_focus_target_label(self.focus_preview_label)
+        if target is None or self.current_scans_dir is None:
+            return False
+        exam_id, question_id = target
+        item = next(
+            (
+                candidate
+                for candidate in load_ground_truth(_GROUND_TRUTH_PATH)
+                if candidate.exam_id == exam_id and candidate.question_id == question_id
+            ),
+            None,
+        )
+        if item is None:
+            return False
+        pdf_name = _EXAM_PDF_MAP.get(exam_id)
+        if pdf_name is None:
+            return False
+        pdf_path = self.current_scans_dir / pdf_name
+        if not pdf_path.exists():
+            return False
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(_ANNOTATE_FOCUS_REGIONS_SCRIPT),
+                    "--pdf",
+                    str(pdf_path),
+                    "--page",
+                    str(item.page),
+                    "--targets",
+                    f"{exam_id}/{question_id}",
+                    "--config",
+                    str(self.current_focus_regions_path),
+                ],
+                check=True,
+            )
+        except Exception:
+            return False
+
+        updated_region = load_focus_regions(self.current_focus_regions_path).get(
+            (exam_id, question_id)
+        )
+        if updated_region is None:
+            return False
+
+        page_png = extract_page_image(pdf_path, item.page, dpi=PREVIEW_PAGE_DPI)
+        refreshed_preview = render_focus_preview(page_png, updated_region)
+        self.on_focus_preview(
+            refreshed_preview,
+            label=f"{exam_id}/{question_id}",
+            source=updated_region.source,
+        )
+        return True
 
     def on_delta(self, text: str, mode: str = "thought") -> None:
         if mode == "status":
