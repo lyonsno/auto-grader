@@ -2905,6 +2905,15 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertTrue(refreshed)
         run_mock.assert_called_once()
         cmd = run_mock.call_args.args[0]
+        self.assertTrue(
+            run_mock.call_args.kwargs.get("capture_output"),
+            "annotate-current-item should capture annotator stdout/stderr so the "
+            "tool cannot scribble on the live Paint Dry terminal",
+        )
+        self.assertTrue(
+            run_mock.call_args.kwargs.get("text"),
+            "captured annotator output should be decoded for diagnostic logging",
+        )
         self.assertIn("annotate_focus_regions.py", cmd[1])
         self.assertIn("--pdf", cmd)
         self.assertIn("/tmp/scans/15 blue.pdf", cmd)
@@ -2987,6 +2996,7 @@ class NarratorReaderContract(unittest.TestCase):
             display.status_line,
             "Annotate current item failed: annotator subprocess failed for 15-blue/fr-11c.",
         )
+
 
     def test_scorebug_rendered_four_uses_tapered_open_foot_in_context(self):
         display = self._make_display()

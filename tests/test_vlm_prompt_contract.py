@@ -73,8 +73,10 @@ class GradingPromptContract(unittest.TestCase):
         )
         self.assertLess(
             len(prompt),
-            2200,
-            "system prompt should stay compact enough that easy items do not pay for repeated policy prose",
+            4500,
+            "the Qwen 3.6 structured scaffold may be longer than the earlier "
+            "compact prompt, but it still needs a real ceiling so we don't "
+            "silently drift into runaway policy prose",
         )
 
     def test_system_prompt_states_each_major_rule_once(self):
@@ -95,6 +97,20 @@ class GradingPromptContract(unittest.TestCase):
             prompt.count("consistency"),
             2,
             "consistency rule should be stated cleanly, not reiterated in multiple phrasings",
+        )
+
+    def test_system_prompt_uses_transcribe_method_score_scaffold(self):
+        from auto_grader import vlm_inference
+
+        prompt = vlm_inference._SYSTEM_PROMPT
+        self.assertIn("1. TRANSCRIBE:", prompt)
+        self.assertIn("2. IDENTIFY METHOD:", prompt)
+        self.assertIn("3. SCORE:", prompt)
+        self.assertIn(
+            "Structure your analysis in three steps:",
+            prompt,
+            "the Qwen 3.6 smoke surface should carry the structured scaffold "
+            "that prevents productive-but-unbounded exploration from spiraling",
         )
 
     def test_prompt_contract_publishes_version_and_hash(self):

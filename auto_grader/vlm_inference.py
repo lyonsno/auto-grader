@@ -267,41 +267,51 @@ def _image_to_data_url(png_bytes: bytes) -> str:
 # - Answered-form requirements still bound rescue. If the requested form is the
 #   thing being graded, nearby chemical ingredients do not magically become the
 #   requested answer.
-# - Ambiguity should not turn into endless overthinking. After one careful pass,
-#   choose the best-supported reading, record uncertainty in model_reasoning,
-#   lower confidence when warranted, and stop.
+# - Structure the reasoning: transcribe first, then identify method, then score.
+#   Separating "what does this say" from "what does this mean" prevents the two
+#   questions from tangling into a spiral.
 #
 # Keep this explanation next to the system prompt so future prompt edits do not
 # quietly drift back toward vague "be charitable" language.
 _SYSTEM_PROMPT = """\
 You are grading a chemistry exam.
-Award the highest score justified by the student's written work under the rubric.
-Actively rescue as much lawful partial credit as possible.
-If the student's work supports a lawful full-credit interpretation, take it and stop.
-Be charitable toward handwriting and notation: if a student's marks admit a reasonable reading as correct, read them that way.
-Be strict toward errors you see. An error you notice is an error you grade, even if the student "demonstrated the core concept" — that is abandoning the rubric, not charity.
-Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.
-Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
-Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
-Treat mL and cm³ as equivalent unless the question explicitly tests form.
-If the student shows correct method but makes an arithmetic slip, award partial credit for the method.
-If setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
-Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
-Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.
-If the student's approach would still be wrong with perfect execution, do not award method credit.
-Internal consistency: if this part depends on an earlier wrong answer but the student applies their own earlier result correctly here, award full credit for the method in this part.
-On Lewis-structure questions, rescue partial credit for correct connectivity, valence electrons, or bond order even if octets, formal charges, or resonance are incomplete.
-Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
-Grade what is written, not a more favorable answer you can imagine.
-If two readings are plausible and neither is clearly better supported, choose the best-supported reading and move on.
-After one careful pass, if ambiguity still affects the score, choose the best-supported reading, say in model_reasoning that human review is warranted, lower model_confidence, and stop.
-score_basis = short literal basis for the awarded score: credit earned vs lost.
-model_reasoning = broader reasoning only: ambiguity, OCR, rescue logic, or review handoff.
-Do not restate score_basis in model_reasoning.
+
+Structure your analysis in three steps:
+1. TRANSCRIBE: Read the student's work for this question. Write down exactly what you see — numbers, symbols, equations, crossouts, annotations. If any mark is ambiguous, note the plausible readings. Settle the transcription before moving on.
+2. IDENTIFY METHOD: What method or formula did the student attempt? Is it the correct method for the question asked? Check dimensional analysis and whether the approach would yield the right quantity with perfect execution.
+3. SCORE: Apply the rubric to what you transcribed and the method you identified. Award the highest score justified by the student's written work.
+
+Scoring principles:
+- Actively rescue as much lawful partial credit as possible.
+- Be charitable toward handwriting and notation: if a student's marks admit a reasonable reading as correct, read them that way.
+- Be strict toward errors you see. An error you notice is an error you grade, even if the student "demonstrated the core concept" — that is abandoning the rubric, not charity.
+- Grade what is written, not a more favorable answer you can imagine.
+- Use is_obviously_fully_correct = true only for clearly correct answers needing no human rescue.
+- Use is_obviously_wrong = true only for clearly wrong answers with no lawful rescue path.
+- Do not use is_obviously_wrong = true if any lawful partial-credit path remains.
+- Treat mL and cm³ as equivalent unless the question explicitly tests form.
+
+Partial credit rules:
+- If the student shows correct method but makes an arithmetic slip, award partial credit for the method.
+- If setup is chemically correct and the only miss is small arithmetic, truncation, or rounding, award full credit unless exact rounding or significant figures are being tested.
+- Right relation but later execution or unit miss: preserve nonzero setup credit unless the setup itself is wrong.
+- Wrong-concept vs wrong-execution: preserve method credit for right approach with bad arithmetic or units, but not for a wrong approach that only shares surface symbols with the right one.
+- If the student's approach would still be wrong with perfect execution, do not award method credit.
+- Internal consistency: if this part depends on an earlier wrong answer but the student applies their own earlier result correctly here, award full credit for the method in this part.
+- On Lewis-structure questions, rescue partial credit for correct connectivity, valence electrons, or bond order even if octets, formal charges, or resonance are incomplete.
+- Do not collapse a Lewis-structure answer to zero when connectivity or the valence-electron basis is clearly right and only bonding or octet completion is wrong.
+
 Answered-form rule: grade the form the question asked for. A net ionic equation means net ionic only; molecular and full ionic equations answer a different question.
 When the requested form is the thing being graded, do not award rescue credit for nearby ingredients unless the rubric explicitly does so.
 If the requested answer form is plainly missing, stop and score only what is on the page.
-Use upstream_dependency = "none" unless carry-forward is clear.
+
+Ambiguity: if you are uncertain between two scores after completing steps 1-3, choose the better-supported score. Note the uncertainty in model_reasoning and lower model_confidence.
+
+Output fields:
+- score_basis = short literal basis for the awarded score: credit earned vs lost.
+- model_reasoning = broader reasoning only: ambiguity, OCR, rescue logic, or review handoff. Do not restate score_basis.
+- Use upstream_dependency = "none" unless carry-forward is clear.
+
 Respond with only the JSON object below. upstream_dependency and if_dependent_then_consistent are required fields and must be populated before model_score:
 {
   "model_read": "<what the student wrote, verbatim>",
@@ -316,7 +326,7 @@ Respond with only the JSON object below. upstream_dependency and if_dependent_th
 }
 """
 
-GRADING_PROMPT_VERSION = "2026-04-11-positive-sweep-v1"
+GRADING_PROMPT_VERSION = "2026-04-20-structured-scaffold-v1"
 DESCRIBE_ONLY_PROMPT_VERSION = "2026-04-11-describe-only-v2"
 DESCRIBE_ONLY_PROMPT = (
     "This is a page from a student's chemistry exam. The page may "
