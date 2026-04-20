@@ -95,15 +95,15 @@ class ThinkingNarratorContract(unittest.TestCase):
             "Item",
             (),
             {
-                "truth_score": 1.5,
-                "professor_score": 1.5,
+                "truth_score": 1.0,
+                "professor_score": 1.0,
                 "acceptable_score_floor": 1.0,
                 "acceptable_score_ceiling": 1.5,
             },
         )()
 
-        exact = _classify_score_against_band(1.5, item)
-        ceiling = _classify_score_against_band(1.0, item)
+        exact = _classify_score_against_band(1.0, item)
+        ceiling = _classify_score_against_band(1.5, item)
         overshoot = _classify_score_against_band(2.0, item)
         undershoot = _classify_score_against_band(0.0, item)
 

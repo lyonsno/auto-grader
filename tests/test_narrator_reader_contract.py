@@ -1832,9 +1832,7 @@ class NarratorReaderContract(unittest.TestCase):
             comp.samples[(top_probe_y * comp.width + probe_x) * comp.n :][: comp.n]
         )
         bottom_rgba = tuple(
-            comp.samples[
-                (bottom_probe_y * comp.width + probe_x) * comp.n :
-            ][: comp.n]
+            comp.samples[(bottom_probe_y * comp.width + probe_x) * comp.n :][: comp.n]
         )
 
         self.assertEqual(
