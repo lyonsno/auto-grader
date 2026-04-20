@@ -51,6 +51,7 @@ from scripts.narrator_reader import (
     _scorebug_big_value_rows,
     _history_tier_dim_factor,
     _message_requires_immediate_refresh,
+    _live_frame_prefix,
     _otsu_threshold,
     _texture_cell,
     _undulation_hue_deg,
@@ -71,6 +72,23 @@ def _extract_plain(renderable) -> str:
 
 
 class NarratorReaderContract(unittest.TestCase):
+    def test_stable_live_paint_prefix_clears_tail_below_shorter_frame(self):
+        self.assertEqual(
+            _live_frame_prefix((120, 40), (120, 40)),
+            "\033[H\033[J",
+            "stable repaints must erase from the top of the frame to the end "
+            "of the screen so shorter refreshed frames do not leave stale UI "
+            "rows behind underneath the current Paint Dry layout",
+        )
+
+    def test_resized_live_paint_prefix_keeps_full_alt_screen_clear(self):
+        self.assertEqual(
+            _live_frame_prefix((120, 40), (121, 40)),
+            "\033[2J\033[H",
+            "geometry changes still need the full clear path so the alt "
+            "screen does not retain old compositor state across resizes",
+        )
+
     def test_reader_module_imports_signal_for_sigwinch_handler(self):
         import scripts.narrator_reader as narrator_reader
 
@@ -4175,9 +4193,11 @@ class NarratorReaderContract(unittest.TestCase):
             "steady preview mode should decide explicitly when a global alt-screen clear is necessary instead of hard-clearing every frame",
         )
         self.assertIn(
-            "if _live_frame_requires_full_clear(",
+            "_live_frame_prefix(_last_paint_size, paint_size)",
             live_update,
-            "the live paint loop should only send ESC[2J when the frame geometry changed or the first paint still needs a clean slate",
+            "the live paint loop should route its prefix escape sequence "
+            "through the helper that distinguishes full geometry clears from "
+            "stable-paint tail clears",
         )
 
     def test_main_routes_message_refreshes_through_live_update(self) -> None:

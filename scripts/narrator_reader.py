@@ -542,6 +542,22 @@ def _live_frame_requires_full_clear(
     return last_paint_size is None or current_size != last_paint_size
 
 
+def _live_frame_prefix(
+    last_paint_size: tuple[int, int] | None,
+    current_size: tuple[int, int],
+) -> str:
+    """Return the prefix escape sequence for the next live paint.
+
+    Geometry changes still get the full alt-screen clear. Stable paints
+    only need to home the cursor, but they must also erase from the top
+    of the frame to the end of the screen so stale rows from a taller
+    prior frame do not survive underneath a shorter refresh.
+    """
+    if _live_frame_requires_full_clear(last_paint_size, current_size):
+        return "\033[2J\033[H"
+    return "\033[H\033[J"
+
+
 def suppress_live_erase(live: "Live") -> None:
     """Neuter Rich Live's per-row CSI 2K erase so Kitty pixels survive.
 
@@ -5424,12 +5440,9 @@ def main() -> int:
                     _real_file = console.file
                     _real_write = _real_file.write
                     _frame_parts: list[str] = []
-                    if _live_frame_requires_full_clear(
-                        _last_paint_size, paint_size
-                    ):
-                        _frame_parts.append("\033[2J\033[H")
-                    else:
-                        _frame_parts.append("\033[H")
+                    _frame_parts.append(
+                        _live_frame_prefix(_last_paint_size, paint_size)
+                    )
                     _real_file.write = _frame_parts.append  # type: ignore[assignment]
                     try:
                         live.update(renderable, refresh=True)
