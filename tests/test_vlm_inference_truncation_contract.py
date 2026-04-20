@@ -29,10 +29,15 @@ truncation rate as a separate first-class metric — lives in
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from auto_grader.eval_harness import EvalItem
-from auto_grader.vlm_inference import ServerConfig, grade_single_item
+from auto_grader.vlm_inference import (
+    ServerConfig,
+    _consume_streaming_response,
+    grade_single_item,
+)
 
 
 class _DummyResponse:
@@ -74,6 +79,7 @@ class TruncatedGraderOutputContract(unittest.TestCase):
             return_value=(
                 '{"model_re',  # cut mid-key, unparseable
                 "very long reasoning that burned the whole budget",
+                "length",
             ),
         ):
             pred = grade_single_item(
@@ -99,7 +105,7 @@ class TruncatedGraderOutputContract(unittest.TestCase):
             return_value=_DummyResponse(),
         ), mock.patch(
             "auto_grader.vlm_inference._consume_streaming_response",
-            return_value=("", "reasoning"),
+            return_value=("", "reasoning", "length"),
         ):
             pred = grade_single_item(
                 _item(),
@@ -123,6 +129,7 @@ class TruncatedGraderOutputContract(unittest.TestCase):
             return_value=(
                 "",
                 "very long reasoning that burned the whole budget",
+                "length",
             ),
         ):
             pred = grade_single_item(
@@ -148,7 +155,7 @@ class TruncatedGraderOutputContract(unittest.TestCase):
             return_value=_DummyResponse(),
         ), mock.patch(
             "auto_grader.vlm_inference._consume_streaming_response",
-            return_value=("", "reasoning"),
+            return_value=("", "reasoning", "length"),
         ):
             try:
                 grade_single_item(
@@ -174,7 +181,7 @@ class TruncatedGraderOutputContract(unittest.TestCase):
             return_value=_DummyResponse(),
         ), mock.patch(
             "auto_grader.vlm_inference._consume_streaming_response",
-            return_value=("definitely not json", "reasoning"),
+            return_value=("definitely not json", "reasoning", "stop"),
         ):
             pred = grade_single_item(
                 _item(),
@@ -195,6 +202,24 @@ class TruncatedGraderOutputContract(unittest.TestCase):
             "garbage' does not matter for the data contract; both mean "
             "'the model did not commit to a score'",
         )
+
+    def test_stream_consumer_accepts_raw_dump_path_kwarg(self):
+        """The shared streamed path must not blow up on raw-dump callers."""
+
+        resp = [
+            b'data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n',
+            b"data: [DONE]\n",
+        ]
+
+        content, reasoning, finish_reason = _consume_streaming_response(
+            resp,
+            None,
+            raw_dump_path=Path("/tmp/raw-dump.jsonl"),
+        )
+
+        self.assertEqual(content, "{}")
+        self.assertEqual(reasoning, "")
+        self.assertEqual(finish_reason, "stop")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_NARRATOR_MODEL = "Bonsai-8B-mlx-1bit"
+_DEFAULT_NARRATOR_MODEL = (
+    "/Users/noahlyons/.cache/huggingface/hub/"
+    "models--prism-ml--bonsai-8b-mlx-1bit/snapshots/"
+    "d95a01f5e78184d278e21c4cfd57ff417a60ae22"
+)
 _DEFAULT_NARRATOR_BASE_URL = "http://nlm2pr.local:8002"
 
 _SYSTEM_PROMPT = """\

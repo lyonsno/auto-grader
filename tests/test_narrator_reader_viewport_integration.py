@@ -21,6 +21,8 @@ from __future__ import annotations
 import importlib.util
 import unittest
 from pathlib import Path
+from rich.console import Group
+from rich.text import Text
 
 
 def _load_narrator_reader():
@@ -43,6 +45,16 @@ def _commit_item(display, module, header: str, lines: list[str], topic: str) -> 
     for line in lines:
         display.history.append(("line", line, 0))
     display.history.append(("topic", topic, None))
+
+
+def _extract_plain(renderable) -> str:
+    if isinstance(renderable, Text):
+        return renderable.plain
+    if isinstance(renderable, Group):
+        return "\n".join(_extract_plain(child) for child in renderable.renderables)
+    if hasattr(renderable, "renderable"):
+        return _extract_plain(renderable.renderable)
+    return str(renderable)
 
 
 class PaintDryDisplayViewportIntegration(unittest.TestCase):
@@ -168,6 +180,31 @@ class PaintDryDisplayViewportIntegration(unittest.TestCase):
             self.assertIn(f"short-topic-{i}", visible_texts)
         self.assertIn("[item 1/5] chatty", visible_texts)
         self.assertIn("chatty-topic", visible_texts)
+
+    def test_rendered_history_panel_follows_scrolled_viewport(self):
+        module = _load_narrator_reader()
+        display = self._display(module)
+
+        for i in range(8):
+            _commit_item(
+                display,
+                module,
+                header=f"[item {i+1}/8] test-{i}",
+                lines=[],
+                topic=f"topic-{i}",
+            )
+
+        live_edge_text = _extract_plain(display.render().renderables[-1].renderable)
+        display.scroll_history_up(5)
+        scrolled_text = _extract_plain(display.render().renderables[-1].renderable)
+
+        self.assertNotEqual(
+            scrolled_text,
+            live_edge_text,
+            "render() must consult the viewport after scroll_history_up",
+        )
+        self.assertIn("[item 1/8] test-0", scrolled_text)
+        self.assertNotIn("[item 8/8] test-7", scrolled_text)
 
 
 if __name__ == "__main__":

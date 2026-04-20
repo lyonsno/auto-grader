@@ -812,7 +812,7 @@ def grade_single_item(
 
 
 def _consume_streaming_response(
-    resp, on_reasoning_delta
+    resp, on_reasoning_delta, raw_dump_path: Path | None = None
 ) -> tuple[str, str, str | None]:
     """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
     through the callback as they arrive (when provided); returns
@@ -844,6 +844,7 @@ def _consume_streaming_response(
     pending_escape = False
     pending_unicode_digits = 0
     saw_reasoning_channel = False
+    raw_dump_chunks: list[str] = []
 
     def _extract_fallback_reasoning(content_delta: str) -> str:
         nonlocal fallback_scan
@@ -911,6 +912,8 @@ def _consume_streaming_response(
             chunk = json.loads(data)
         except json.JSONDecodeError:
             continue
+        if raw_dump_path is not None:
+            raw_dump_chunks.append(json.dumps(chunk, ensure_ascii=False))
         choice = chunk.get("choices", [{}])[0]
         delta = choice.get("delta", {})
         if choice.get("finish_reason") is not None:
@@ -948,6 +951,12 @@ def _consume_streaming_response(
                             on_reasoning_delta(fallback_reasoning)
                         except Exception:
                             pass
+    if raw_dump_path is not None:
+        raw_dump_path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(raw_dump_chunks)
+        if text:
+            text += "\n"
+        raw_dump_path.write_text(text, encoding="utf-8")
     return "".join(content_parts), "".join(reasoning_parts), finish_reason
 
 

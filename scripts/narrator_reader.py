@@ -4261,7 +4261,7 @@ class PaintDryDisplay:
         # to multiple visual rows, the shimmer is computed by VISUAL
         # COLUMN (modulo wrap_width) so the wave stays in phase across
         # the wrap.
-        display_entries = self._build_display_entries(wrap_width=wrap_width)
+        display_entries = self._viewport_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
         current_group_index = -1
