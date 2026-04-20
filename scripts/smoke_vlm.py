@@ -959,6 +959,7 @@ def main():
         total_drops = (
             narrator_stats['drops_dedup'] + narrator_stats['drops_empty']
         )
+        drop_rate = 0.0
         if narrator_stats['dispatches_total']:
             drop_rate = total_drops / narrator_stats['dispatches_total']
         print(f"  drop rate:            {drop_rate:.1%}")
