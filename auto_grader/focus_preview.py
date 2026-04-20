@@ -26,16 +26,17 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
     entirely by the textured-band renderer in narrator_reader.
     """
     crop_rgb, crop_width, crop_height = _crop_focus_region(page_png, focus_region)
-    crop_rgb, crop_width, crop_height = _trim_edge_matte(
-        crop_rgb,
-        crop_width,
-        crop_height,
-    )
-    crop_rgb, crop_width, crop_height = _tighten_to_content_bounds(
-        crop_rgb,
-        crop_width,
-        crop_height,
-    )
+    if focus_region.source != "operator_annotated":
+        crop_rgb, crop_width, crop_height = _trim_edge_matte(
+            crop_rgb,
+            crop_width,
+            crop_height,
+        )
+        crop_rgb, crop_width, crop_height = _tighten_to_content_bounds(
+            crop_rgb,
+            crop_width,
+            crop_height,
+        )
     bg_rgb = _average_corner_rgb(crop_rgb, crop_width, crop_height)
     max_bg_diff = _max_background_diff(crop_rgb, crop_width, crop_height, bg_rgb)
     use_transparent_background = max_bg_diff >= 72
