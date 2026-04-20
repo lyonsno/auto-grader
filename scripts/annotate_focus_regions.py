@@ -57,6 +57,33 @@ _GROUND_TRUTH_PATH = _REPO_ROOT / "eval" / "ground_truth.yaml"
 
 _MAX_DISPLAY_WIDTH = 1400
 _MAX_DISPLAY_HEIGHT = 1600
+_DISPLAY_WIDTH_MARGIN = 80
+_DISPLAY_HEIGHT_MARGIN = 180
+
+
+def _display_bounds_for_screen(
+    screen_width: int,
+    screen_height: int,
+    *,
+    max_width: int = _MAX_DISPLAY_WIDTH,
+    max_height: int = _MAX_DISPLAY_HEIGHT,
+    width_margin: int = _DISPLAY_WIDTH_MARGIN,
+    height_margin: int = _DISPLAY_HEIGHT_MARGIN,
+) -> tuple[int, int]:
+    """Return raster/display bounds that fit comfortably on a screen.
+
+    The annotator window includes a status strip and normal window
+    chrome above the page canvas, so using the full screen height for
+    the image itself makes the lower part unreachable on shorter
+    displays. Reserve a little headroom and clamp to the annotator's
+    existing maximum bounds.
+    """
+    fitted_width = max(1, min(max_width, max(1, screen_width - width_margin)))
+    fitted_height = max(
+        1,
+        min(max_height, max(1, screen_height - height_margin)),
+    )
+    return (fitted_width, fitted_height)
 
 
 def _ditto_box_for(
@@ -211,6 +238,9 @@ def _normalize_drag_box(
 def _rasterize_page_for_display(
     pdf_path: Path,
     page_number: int,
+    *,
+    max_width: int = _MAX_DISPLAY_WIDTH,
+    max_height: int = _MAX_DISPLAY_HEIGHT,
 ) -> tuple[bytes, int, int]:
     """Rasterize a PDF page (1-indexed) at the display DPI computed
     from the page's native point dimensions. Returns
@@ -229,9 +259,27 @@ def _rasterize_page_for_display(
         # fitz wants an integer DPI; floor instead of round to make
         # sure we do not exceed the max display bounds on either axis
         # due to rounding up.
-        dpi = int(_compute_display_dpi(rect.width, rect.height))
+        dpi = int(
+            _compute_display_dpi(
+                rect.width,
+                rect.height,
+                max_width=max_width,
+                max_height=max_height,
+            )
+        )
         pix = page.get_pixmap(dpi=dpi)
         return pix.tobytes("png"), pix.width, pix.height
+
+
+def _screen_bounds_from_tk() -> tuple[int, int]:
+    """Return current screen pixel bounds from a temporary Tk root."""
+    root = tk.Tk()
+    try:
+        root.withdraw()
+        root.update_idletasks()
+        return (root.winfo_screenwidth(), root.winfo_screenheight())
+    finally:
+        root.destroy()
 
 
 class AnnotationApp:
@@ -518,7 +566,17 @@ def main() -> None:
 
     config_path = args.config or DEFAULT_FOCUS_REGIONS_PATH
     targets = _parse_targets(args.targets)
-    page_png, width_px, height_px = _rasterize_page_for_display(args.pdf, args.page)
+    screen_width, screen_height = _screen_bounds_from_tk()
+    display_max_width, display_max_height = _display_bounds_for_screen(
+        screen_width,
+        screen_height,
+    )
+    page_png, width_px, height_px = _rasterize_page_for_display(
+        args.pdf,
+        args.page,
+        max_width=display_max_width,
+        max_height=display_max_height,
+    )
     existing = load_focus_regions(config_path)
 
     print(
