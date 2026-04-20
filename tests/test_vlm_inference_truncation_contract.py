@@ -28,6 +28,7 @@ truncation rate as a separate first-class metric — lives in
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -203,23 +204,36 @@ class TruncatedGraderOutputContract(unittest.TestCase):
             "'the model did not commit to a score'",
         )
 
-    def test_stream_consumer_accepts_raw_dump_path_kwarg(self):
-        """The shared streamed path must not blow up on raw-dump callers."""
-
-        resp = [
-            b'data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n',
-            b"data: [DONE]\n",
-        ]
-
-        content, reasoning, finish_reason = _consume_streaming_response(
-            resp,
-            None,
-            raw_dump_path=Path("/tmp/raw-dump.jsonl"),
+    def test_stream_consumer_accepts_raw_dump_path_and_persists_sse_payloads(self):
+        resp = iter(
+            [
+                (
+                    'data: {"choices":[{"delta":{"content":"{\\"model_score\\":'
+                    ' 1}"},"finish_reason":null}]}\n'
+                ).encode("utf-8"),
+                b"data: [DONE]\n",
+            ]
         )
 
-        self.assertEqual(content, "{}")
-        self.assertEqual(reasoning, "")
-        self.assertEqual(finish_reason, "stop")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dump_path = Path(tmpdir) / "stream.jsonl"
+            content, reasoning, finish_reason = _consume_streaming_response(
+                resp,
+                None,
+                raw_dump_path=raw_dump_path,
+            )
+
+            self.assertEqual(content, '{"model_score": 1}')
+            self.assertEqual(reasoning, "")
+            self.assertIsNone(finish_reason)
+            self.assertTrue(
+                raw_dump_path.exists(),
+                "stream consumers that accept raw_dump_path must actually "
+                "leave a raw SSE dump behind for post-mortem debugging",
+            )
+            dumped = raw_dump_path.read_text(encoding="utf-8")
+            self.assertIn('"delta":{"content":"{\\"model_score\\": 1}"}', dumped)
+            self.assertIn("[DONE]", dumped)
 
 
 if __name__ == "__main__":

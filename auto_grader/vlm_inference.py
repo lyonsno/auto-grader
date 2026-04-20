@@ -812,7 +812,10 @@ def grade_single_item(
 
 
 def _consume_streaming_response(
-    resp, on_reasoning_delta, raw_dump_path: Path | None = None
+    resp,
+    on_reasoning_delta,
+    *,
+    raw_dump_path: Path | None = None,
 ) -> tuple[str, str, str | None]:
     """Read SSE chunks from the VLM stream. Pumps reasoning_content deltas
     through the callback as they arrive (when provided); returns
@@ -901,62 +904,66 @@ def _consume_streaming_response(
 
         return "".join(extracted)
 
-    for raw_line in resp:
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].strip()
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        if raw_dump_path is not None:
-            raw_dump_chunks.append(json.dumps(chunk, ensure_ascii=False))
-        choice = chunk.get("choices", [{}])[0]
-        delta = choice.get("delta", {})
-        if choice.get("finish_reason") is not None:
-            finish_reason = str(choice.get("finish_reason"))
-        # Reasoning tokens — accumulate for the critic, and pump to
-        # narrator if wired.
-        rc_delta = delta.get("reasoning_content", "")
-        if rc_delta:
-            if rc_delta.strip():
-                saw_reasoning_channel = True
-                reasoning_parts.append(rc_delta)
-            elif not reasoning_parts:
-                # Ignore whitespace-only pseudo-deltas. Some streams emit
-                # a bare newline on the reasoning channel even though the
-                # actual reasoning only arrives inside the final JSON
-                # model_reasoning field. Treat that as "no real reasoning
-                # channel yet" so the fallback parser can still engage.
-                rc_delta = ""
-        if rc_delta and rc_delta.strip():
-            if on_reasoning_delta is not None:
-                try:
-                    on_reasoning_delta(rc_delta)
-                except Exception:
-                    pass
-        # Final assistant content — accumulate for parsing
-        c_delta = delta.get("content", "")
-        if c_delta:
-            content_parts.append(c_delta)
-            if not saw_reasoning_channel:
-                fallback_reasoning = _extract_fallback_reasoning(c_delta)
-                if fallback_reasoning:
-                    reasoning_parts.append(fallback_reasoning)
-                    if on_reasoning_delta is not None:
-                        try:
-                            on_reasoning_delta(fallback_reasoning)
-                        except Exception:
-                            pass
+    raw_dump_fh = None
     if raw_dump_path is not None:
         raw_dump_path.parent.mkdir(parents=True, exist_ok=True)
-        text = "\n".join(raw_dump_chunks)
-        if text:
-            text += "\n"
-        raw_dump_path.write_text(text, encoding="utf-8")
+        raw_dump_fh = open(raw_dump_path, "w", encoding="utf-8")
+
+    try:
+        for raw_line in resp:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if raw_dump_fh is not None:
+                raw_dump_fh.write(data)
+                raw_dump_fh.write("\n")
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            choice = chunk.get("choices", [{}])[0]
+            delta = choice.get("delta", {})
+            if choice.get("finish_reason") is not None:
+                finish_reason = str(choice.get("finish_reason"))
+            # Reasoning tokens — accumulate for the critic, and pump to
+            # narrator if wired.
+            rc_delta = delta.get("reasoning_content", "")
+            if rc_delta:
+                if rc_delta.strip():
+                    saw_reasoning_channel = True
+                    reasoning_parts.append(rc_delta)
+                elif not reasoning_parts:
+                    # Ignore whitespace-only pseudo-deltas. Some streams emit
+                    # a bare newline on the reasoning channel even though the
+                    # actual reasoning only arrives inside the final JSON
+                    # model_reasoning field. Treat that as "no real reasoning
+                    # channel yet" so the fallback parser can still engage.
+                    rc_delta = ""
+            if rc_delta and rc_delta.strip():
+                if on_reasoning_delta is not None:
+                    try:
+                        on_reasoning_delta(rc_delta)
+                    except Exception:
+                        pass
+            # Final assistant content — accumulate for parsing
+            c_delta = delta.get("content", "")
+            if c_delta:
+                content_parts.append(c_delta)
+                if not saw_reasoning_channel:
+                    fallback_reasoning = _extract_fallback_reasoning(c_delta)
+                    if fallback_reasoning:
+                        reasoning_parts.append(fallback_reasoning)
+                        if on_reasoning_delta is not None:
+                            try:
+                                on_reasoning_delta(fallback_reasoning)
+                            except Exception:
+                                pass
+    finally:
+        if raw_dump_fh is not None:
+            raw_dump_fh.close()
     return "".join(content_parts), "".join(reasoning_parts), finish_reason
 
 
