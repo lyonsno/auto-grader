@@ -239,6 +239,9 @@ _BASE_RGB = {
                                           # darker than the header-index
                                           # blue so it harmonizes with
                                           # structure without duplicating it
+    "topic_within_band": (104, 142, 118), # celadon lawful-range hit —
+                                          # still a success color, but softer
+                                          # than the ceiling-hit indigo
     "checkpoint": (138, 156, 142),        # anchored moss checkpoint —
                                           # checkpoints should feel like
                                           # compressed descendants of the
@@ -278,6 +281,8 @@ _SHIMMER_KIND_INTENSITY = {
     "topic_match": 1.10,        # slight extra shimmer lift so agreement
                                 # gets its own pulse instead of reading
                                 # like a neutral fallback
+    "topic_within_band": 1.04,  # lawful-but-not-peak hits should shimmer
+                                # a little, but stay calmer than ceiling hits
     "checkpoint": 0.92,
     "checkpoint_alt": 0.92,
     "checkpoint_mark": 0.96,
@@ -317,6 +322,8 @@ _SHIMMER_KIND_PEAK_RGB = {
                                    # family instead of flashing ochre
     "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
                                         # agreement lines
+    "topic_within_band": (156, 206, 172), # glazed celadon crest for lawful
+                                          # in-range calls below the ceiling
     "checkpoint": (176, 204, 180),      # brighter celadon crest —
                                         # still in the history family, just
                                         # a touch more settled than live rows
@@ -349,6 +356,7 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "header_dash",
     "topic",
     "topic_match",
+    "topic_within_band",
     "checkpoint",
     "checkpoint_alt",
     "checkpoint_mark",
@@ -363,6 +371,16 @@ _SHIMMER_FLOORED_KINDS = frozenset({
 # top + bottom borders). When bonsai's output is longer than will
 # fit in that area, we tail-truncate (keep the most recent chars).
 _LIVE_PANEL_CONTENT_LINES = 3
+
+
+def _topic_kind_for_verdict(verdict: str | None) -> str:
+    return {
+        "ceiling": "topic_match",
+        "match": "topic_match",
+        "within_band": "topic_within_band",
+        "overshoot": "topic_overshoot",
+        "undershoot": "topic_undershoot",
+    }.get(verdict, "topic")
 _TOP_PANEL_CONTENT_LINES = _LIVE_PANEL_CONTENT_LINES + 1
 
 # Live-line undulation parameters — each character on the live line
@@ -3160,6 +3178,8 @@ class PaintDryDisplay:
         self.current_scans_dir: Path | None = None
         self.current_focus_regions_path: Path = DEFAULT_FOCUS_REGIONS_PATH
         self.score_on_target_points = 0.0
+        self.score_within_band_points = 0.0
+        self.score_within_band_potential = 0.0
         self.score_points_possible = 0.0
         self.score_left_on_table_points = 0.0
         self.score_left_on_table_potential = 0.0
@@ -3866,6 +3886,21 @@ class PaintDryDisplay:
                 "#697d8d",
                 "#617485",
             )
+            in_range_value_strong_styles = (
+                "bold #e2efe8",
+                "bold #d4e5dc",
+                "bold #c7dbd1",
+            )
+            in_range_value_mid_styles = (
+                "bold #a4bda9",
+                "bold #98b29d",
+                "bold #8ca791",
+            )
+            in_range_value_texture_styles = (
+                "#728c76",
+                "#68816c",
+                "#5f7663",
+            )
             left_table_value_strong_styles = (
                 "bold #efe2c4",
                 "bold #dbc08d",
@@ -4029,6 +4064,27 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
+                    "IN RANGE",
+                    (
+                        f"{self._format_scorebug_points(self.score_within_band_points)}"
+                        f"/{self._format_scorebug_points(self.score_within_band_potential)}"
+                    ),
+                    label_style=f"bold #a8bfac on {tally_label_bg}",
+                    value_row_styles=in_range_value_strong_styles,
+                    value_mid_row_styles=in_range_value_mid_styles,
+                    value_texture_styles=in_range_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
                     "LEFT ON TABLE",
                     (
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
@@ -4115,6 +4171,24 @@ class PaintDryDisplay:
                     value_row_styles=on_target_value_strong_styles,
                     value_mid_row_styles=on_target_value_mid_styles,
                     value_texture_styles=on_target_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "IN RANGE",
+                    "0.0/0.0",
+                    label_style=f"bold #a8bfac on {tally_label_bg}",
+                    value_row_styles=in_range_value_strong_styles,
+                    value_mid_row_styles=in_range_value_mid_styles,
+                    value_texture_styles=in_range_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -4444,11 +4518,7 @@ class PaintDryDisplay:
                 # entries). Deep indigo for matches, warm vermilion
                 # for grader-overshot, warm ochre for grader-undershot,
                 # bone fallback when verdict is unknown.
-                topic_kind = {
-                    "match": "topic_match",
-                    "overshoot": "topic_overshoot",
-                    "undershoot": "topic_undershoot",
-                }.get(parity, "topic")
+                topic_kind = _topic_kind_for_verdict(parity)
                 # Pull out the elapsed-time prefix and color it as a
                 # punchy warm accent (bold orange3 — same warm as the
                 # post-game border and header base) so it pops out
@@ -5130,6 +5200,8 @@ class PaintDryDisplay:
         grader_score: float | None = None,
         truth_score: float | None = None,
         max_points: float | None = None,
+        acceptable_score_floor: float | None = None,
+        acceptable_score_ceiling: float | None = None,
     ) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
         # buffers — frozen_line keeps showing the last bonsai line.
@@ -5143,17 +5215,31 @@ class PaintDryDisplay:
             or max_points is None
         ):
             return
+        floor = (
+            acceptable_score_floor
+            if acceptable_score_floor is not None
+            else truth_score
+        )
+        ceiling = (
+            acceptable_score_ceiling
+            if acceptable_score_ceiling is not None
+            else truth_score
+        )
         self.score_points_possible += max_points
-        if abs(grader_score - truth_score) < 1e-9:
-            self.score_on_target_points += truth_score
+        if abs(grader_score - ceiling) < 1e-9:
+            self.score_on_target_points += ceiling
             return
-        if grader_score < truth_score:
-            self.score_left_on_table_points += truth_score - grader_score
-            self.score_left_on_table_potential += truth_score
+        if floor <= grader_score <= ceiling:
+            self.score_within_band_points += grader_score
+            self.score_within_band_potential += ceiling
             return
-        if grader_score > truth_score:
-            self.score_bad_call_points += grader_score - truth_score
-            self.score_bad_call_potential += max(0.0, max_points - truth_score)
+        if grader_score < floor:
+            self.score_left_on_table_points += floor - grader_score
+            self.score_left_on_table_potential += floor
+            return
+        if grader_score > ceiling:
+            self.score_bad_call_points += grader_score - ceiling
+            self.score_bad_call_potential += max(0.0, max_points - ceiling)
 
     def on_checkpoint(self, text: str) -> None:
         checkpoint_parity = next(
@@ -5482,6 +5568,8 @@ def main() -> int:
                             grader_score=msg.get("grader_score"),
                             truth_score=msg.get("truth_score"),
                             max_points=msg.get("max_points"),
+                            acceptable_score_floor=msg.get("acceptable_score_floor"),
+                            acceptable_score_ceiling=msg.get("acceptable_score_ceiling"),
                         )
                     elif msg_type == "basis":
                         display.on_basis(msg.get("text", ""))

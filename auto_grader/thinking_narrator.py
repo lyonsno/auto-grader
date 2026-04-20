@@ -20,6 +20,7 @@ import re
 import threading
 import time
 import urllib.request
+from dataclasses import dataclass
 from typing import Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -274,6 +275,85 @@ _STATUS_FIRST_PERSON_RE = re.compile(
 
 def _format_score_with_denominator(score: float, max_points: float) -> str:
     return f"{score:g}/{max_points:g}"
+
+
+@dataclass(frozen=True)
+class _ScoreBandClassification:
+    floor: float
+    ceiling: float
+    band_present: bool
+    verdict: str
+    verdict_short: str
+
+
+def _classify_score_against_band(
+    model_score: float,
+    item,
+) -> _ScoreBandClassification:
+    truth_score = getattr(item, "truth_score", item.professor_score)
+    floor_raw = getattr(item, "acceptable_score_floor", None)
+    ceiling_raw = getattr(item, "acceptable_score_ceiling", None)
+    floor = float(floor_raw) if floor_raw is not None else float(truth_score)
+    ceiling = (
+        float(ceiling_raw) if ceiling_raw is not None else float(truth_score)
+    )
+    band_present = floor_raw is not None or ceiling_raw is not None
+    if abs(model_score - ceiling) < 1e-9:
+        return _ScoreBandClassification(
+            floor=floor,
+            ceiling=ceiling,
+            band_present=band_present,
+            verdict="AT CEILING",
+            verdict_short="ceiling",
+        )
+    if floor <= model_score <= ceiling:
+        return _ScoreBandClassification(
+            floor=floor,
+            ceiling=ceiling,
+            band_present=band_present,
+            verdict="WITHIN RANGE",
+            verdict_short="within_band",
+        )
+    if model_score > ceiling:
+        return _ScoreBandClassification(
+            floor=floor,
+            ceiling=ceiling,
+            band_present=band_present,
+            verdict="GRADER OVERSHOT",
+            verdict_short="overshoot",
+        )
+    return _ScoreBandClassification(
+        floor=floor,
+        ceiling=ceiling,
+        band_present=band_present,
+        verdict="GRADER UNDERSHOT",
+        verdict_short="undershoot",
+    )
+
+
+def _band_commentary_clause(
+    classification: _ScoreBandClassification,
+    *,
+    max_points: float,
+) -> str | None:
+    if not classification.band_present:
+        return None
+    floor_display = _format_score_with_denominator(classification.floor, max_points)
+    ceiling_display = _format_score_with_denominator(
+        classification.ceiling, max_points
+    )
+    if classification.verdict_short == "ceiling":
+        position = "at the ceiling"
+    elif classification.verdict_short == "within_band":
+        position = "within range, below ceiling"
+    elif classification.verdict_short == "overshoot":
+        position = "above range"
+    else:
+        position = "below range"
+    return (
+        f"Acceptable band: {floor_display} to {ceiling_display}; "
+        f"grader is {position}."
+    )
 
 
 def _normalize_after_action_scores(
@@ -1249,18 +1329,12 @@ class ThinkingNarrator:
                 getattr(item, "corrected_score", None) is not None
                 and abs(truth_score - item.professor_score) > 1e-9
             )
-
-            # Verdict drives both the prompt context (which examples to
-            # encourage) and the topic line color in the reader.
-            if prediction.model_score == truth_score:
-                verdict = "MATCHED"
-                verdict_short = "match"
-            elif prediction.model_score > truth_score:
-                verdict = "GRADER OVERSHOT"
-                verdict_short = "overshoot"
-            else:
-                verdict = "GRADER UNDERSHOT"
-                verdict_short = "undershoot"
+            band_classification = _classify_score_against_band(
+                prediction.model_score,
+                item,
+            )
+            verdict = band_classification.verdict
+            verdict_short = band_classification.verdict_short
             grader_score_display = _format_score_with_denominator(
                 prediction.model_score, item.max_points
             )
@@ -1301,6 +1375,12 @@ class ThinkingNarrator:
                     f"(display as {truth_score_display}, mark: {item.professor_mark})\n"
                     f"  Professor's note: \"{item.notes}\"\n"
                 )
+            band_commentary = _band_commentary_clause(
+                band_classification,
+                max_points=item.max_points,
+            )
+            if band_commentary is not None:
+                payload += f"  {band_commentary}\n"
             payload += (
                 f"  Verdict: {verdict}\n\n"
                 f"CRITICAL SEMANTICS: The grader and professor are JUDGES "
@@ -1342,6 +1422,7 @@ class ThinkingNarrator:
                 f"- Avoid slogan-like codas, victory laps, and recurring comic patter.\n"
                 f"- When the scores match, describe agreement plainly without celebratory catchphrases.\n"
                 f"- When the scores differ, explicitly describe the disagreement.\n"
+                f"- When an acceptable band is provided, say whether the grader is at the ceiling, within range below ceiling, above range, or below range.\n"
                 f"- Never describe disagreement as agreement.\n"
                 f"- Never say the judges 'missed' something when they both assigned the student a low score; "
                 f"that means they both caught the student's error.\n\n"
@@ -1394,6 +1475,8 @@ class ThinkingNarrator:
                         item.professor_score if corrected_truth else None
                     ),
                 )
+                if band_commentary is not None and band_commentary not in text:
+                    text = f"{text} · {band_commentary}"
                 logger.info("After-action: %s", text)
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · {text}",
@@ -1401,6 +1484,16 @@ class ThinkingNarrator:
                     grader_score=prediction.model_score,
                     truth_score=truth_score,
                     max_points=item.max_points,
+                    acceptable_score_floor=(
+                        band_classification.floor
+                        if band_classification.band_present
+                        else None
+                    ),
+                    acceptable_score_ceiling=(
+                        band_classification.ceiling
+                        if band_classification.band_present
+                        else None
+                    ),
                 )
                 self._handle_legibility_rows(prediction, item)
                 self._schedule_idle_legibility_if_needed()
@@ -1422,6 +1515,16 @@ class ThinkingNarrator:
                     grader_score=prediction.model_score,
                     truth_score=truth_score,
                     max_points=item.max_points,
+                    acceptable_score_floor=(
+                        band_classification.floor
+                        if band_classification.band_present
+                        else None
+                    ),
+                    acceptable_score_ceiling=(
+                        band_classification.ceiling
+                        if band_classification.band_present
+                        else None
+                    ),
                 )
                 self._handle_legibility_rows(prediction, item)
                 self._schedule_idle_legibility_if_needed()

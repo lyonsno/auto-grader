@@ -2543,10 +2543,19 @@ class NarratorReaderContract(unittest.TestCase):
         display.on_header("[item 4/6] 15-blue/fr-10a")
         display.on_topic(
             "35s · Grader: 2/2. Prof: 2/2.",
-            verdict="match",
+            verdict="ceiling",
             grader_score=2.0,
             truth_score=2.0,
             max_points=2.0,
+        )
+        display.on_topic(
+            "44s · Grader: 1/3. Prof: 1.5/3. · Within acceptable range, below ceiling.",
+            verdict="within_band",
+            grader_score=1.0,
+            truth_score=1.5,
+            max_points=3.0,
+            acceptable_score_floor=1.0,
+            acceptable_score_ceiling=1.5,
         )
         display.on_topic(
             "53s · Grader: 0/4. Prof: 1/4.",
@@ -2577,7 +2586,8 @@ class NarratorReaderContract(unittest.TestCase):
         tally_value_top = scorebug_renderable.renderables[3]
         tally_value_mid = scorebug_renderable.renderables[4]
         tally_value_bottom = scorebug_renderable.renderables[5]
-        expected_on_target = _scorebug_big_value_rows("2.0/9.0")
+        expected_on_target = _scorebug_big_value_rows("2.0/12.0")
+        expected_in_range = _scorebug_big_value_rows("1.0/1.5")
         expected_left = _scorebug_big_value_rows("1.0/1.0")
         expected_bad = _scorebug_big_value_rows("1.5/1.5")
 
@@ -2588,6 +2598,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("ITEM", scorebug_text)
         self.assertIn("4/6", scorebug_text)
         self.assertIn("ON TARGET", scorebug_text)
+        self.assertIn("IN RANGE", scorebug_text)
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
@@ -2597,6 +2608,9 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn(expected_on_target[0], normalized_top)
         self.assertIn(expected_on_target[1], normalized_mid)
         self.assertIn(expected_on_target[2], normalized_bottom)
+        self.assertIn(expected_in_range[0], normalized_top)
+        self.assertIn(expected_in_range[1], normalized_mid)
+        self.assertIn(expected_in_range[2], normalized_bottom)
         self.assertIn(expected_left[0], normalized_top)
         self.assertIn(expected_left[1], normalized_mid)
         self.assertIn(expected_left[2], normalized_bottom)
@@ -2634,13 +2648,15 @@ class NarratorReaderContract(unittest.TestCase):
             "scorebug metadata values should read closer to blocky white lettering than dim instrument text",
         )
         on_target_label_style = self._style_for_substring(tally_text_obj, "ON TARGET")
+        in_range_label_style = self._style_for_substring(tally_text_obj, "IN RANGE")
         left_label_style = self._style_for_substring(tally_text_obj, "LEFT ON TABLE")
         bad_label_style = self._style_for_substring(tally_text_obj, "BAD CALLS")
         on_target_label_bg = self._background_hex(on_target_label_style)
+        in_range_label_bg = self._background_hex(in_range_label_style)
         left_label_bg = self._background_hex(left_label_style)
         bad_label_bg = self._background_hex(bad_label_style)
         self.assertEqual(
-            {on_target_label_bg, left_label_bg, bad_label_bg},
+            {on_target_label_bg, in_range_label_bg, left_label_bg, bad_label_bg},
             {on_target_label_bg},
             "the tally labels should sit on one shared charcoal field instead of three color-coded boards",
         )
@@ -2648,6 +2664,7 @@ class NarratorReaderContract(unittest.TestCase):
             len(
                 {
                     self._foreground_hex(on_target_label_style),
+                    self._foreground_hex(in_range_label_style),
                     self._foreground_hex(left_label_style),
                     self._foreground_hex(bad_label_style),
                 }
@@ -2663,17 +2680,23 @@ class NarratorReaderContract(unittest.TestCase):
         # relative layout of the three grading plates, so it anchors
         # on wherever ON TARGET lands and walks from there.
         on_target_start = tally_text_obj.plain.index("ON TARGET")
+        in_range_start = tally_text_obj.plain.index("IN RANGE")
         left_start = tally_text_obj.plain.index("LEFT ON TABLE")
         bad_start = tally_text_obj.plain.index("BAD CALLS")
-        self.assertEqual(
-            left_start,
-            on_target_start + cell_width + separator_width,
-            "LEFT ON TABLE label should start at the left edge of its score cell",
+        self.assertGreater(
+            in_range_start,
+            on_target_start,
+            "IN RANGE should appear to the right of ON TARGET in the scorebug strip",
         )
-        self.assertEqual(
+        self.assertGreater(
+            left_start,
+            in_range_start,
+            "LEFT ON TABLE should appear to the right of IN RANGE in the scorebug strip",
+        )
+        self.assertGreater(
             bad_start,
-            on_target_start + (2 * cell_width) + (2 * separator_width),
-            "BAD CALLS label should start at the left edge of its score cell",
+            left_start,
+            "BAD CALLS should appear rightmost among the grading tally cells",
         )
 
         def _first_strong_style_in_cell(row: Text, start: int) -> str:
@@ -2702,6 +2725,10 @@ class NarratorReaderContract(unittest.TestCase):
         on_target_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
             expected_on_target[0].strip(),
+        )
+        in_range_top_style = self._style_for_normalized_scorebug_substring(
+            tally_value_top,
+            expected_in_range[0].strip(),
         )
         left_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
@@ -2837,32 +2864,35 @@ class NarratorReaderContract(unittest.TestCase):
         )
         top_board_styles = {
             _first_strong_style_in_cell(tally_value_top, on_target_start),
+            _first_strong_style_in_cell(tally_value_top, in_range_start),
             _first_strong_style_in_cell(tally_value_top, left_start),
             _first_strong_style_in_cell(tally_value_top, bad_start),
         }
         mid_board_styles = {
             _first_strong_style_in_cell(tally_value_mid, on_target_start),
+            _first_strong_style_in_cell(tally_value_mid, in_range_start),
             _first_strong_style_in_cell(tally_value_mid, left_start),
             _first_strong_style_in_cell(tally_value_mid, bad_start),
         }
         bottom_board_styles = {
             _first_strong_style_in_cell(tally_value_bottom, on_target_start),
+            _first_strong_style_in_cell(tally_value_bottom, in_range_start),
             _first_strong_style_in_cell(tally_value_bottom, left_start),
             _first_strong_style_in_cell(tally_value_bottom, bad_start),
         }
         self.assertEqual(
             len(top_board_styles),
-            3,
-            "ON TARGET, LEFT ON TABLE, and BAD CALLS should each keep a distinct top-row board family so the middle table plate still reads as its own bronze surface",
+            4,
+            "AT CEILING, IN RANGE, LEFT ON TABLE, and BAD CALLS should each keep a distinct top-row board family",
         )
         self.assertEqual(
             len(mid_board_styles),
-            3,
-            "the middle row should also keep distinct board families — otherwise the LEFT ON TABLE plate disappears into the same pale ink as its neighbors",
+            4,
+            "the middle row should also keep distinct board families so lawful-in-range calls do not collapse into either ceiling hits or miss buckets",
         )
         self.assertEqual(
             len(bottom_board_styles),
-            3,
+            4,
             "the bottom row should keep distinct board families too, not just row-to-row drift inside one shared palette",
         )
         self.assertTrue(
@@ -2870,7 +2900,12 @@ class NarratorReaderContract(unittest.TestCase):
                 self._hex_luminance(
                     self._foreground_hex(style)
                 ) > 635
-                for style in {on_target_top_strong, left_top_style, bad_top_style}
+                for style in {
+                    on_target_top_strong,
+                    in_range_top_style,
+                    left_top_style,
+                    bad_top_style,
+                }
             ),
             "the main numeral strokes should now carry more white weight so the scorebug can sit in the same bold white language as the surrounding interface",
         )
@@ -3172,6 +3207,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("SET", scorebug_text)
         self.assertIn("TRICKY", scorebug_text)
         self.assertIn("ON TARGET", scorebug_text)
+        self.assertIn("IN RANGE", scorebug_text)
         self.assertIn("LEFT ON TABLE", scorebug_text)
         self.assertIn("BAD CALLS", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
@@ -3195,6 +3231,19 @@ class NarratorReaderContract(unittest.TestCase):
             value_floor_gap.plain.strip(),
             "",
             "scorebug values should keep a blank gutter below the bottom numeral row so the strokes don't slam into the panel floor",
+        )
+
+    def test_topic_kind_helper_distinguishes_ceiling_and_within_band_success(self):
+        import scripts.narrator_reader as module
+
+        self.assertEqual(module._topic_kind_for_verdict("ceiling"), "topic_match")
+        self.assertEqual(
+            module._topic_kind_for_verdict("within_band"),
+            "topic_within_band",
+        )
+        self.assertEqual(
+            module._topic_kind_for_verdict("overshoot"),
+            "topic_overshoot",
         )
 
     def test_scorebug_slash_is_a_quieter_middle_row_divider(self):

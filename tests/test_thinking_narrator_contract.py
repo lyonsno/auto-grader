@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from auto_grader.thinking_narrator import ThinkingNarrator
+from auto_grader.thinking_narrator import (
+    ThinkingNarrator,
+    _classify_score_against_band,
+)
 
 
 class _DummySink:
@@ -12,13 +15,13 @@ class _DummySink:
         self.commits = 0
         self.drops: list[tuple[str, str]] = []
 
-    def write_delta(self, text: str) -> None:
+    def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
 
     def rollback_live(self) -> None:
         self.rollbacks += 1
 
-    def commit_live(self) -> None:
+    def commit_live(self, *, mode: str = "thought") -> None:
         self.commits += 1
 
     def write_drop(self, reason: str, text: str) -> None:
@@ -62,6 +65,30 @@ class ThinkingNarratorContract(unittest.TestCase):
             narrator._prior_summaries[-1],
             "Rechecking the same unit conversion.",
         )
+
+    def test_classify_score_against_band_distinguishes_ceiling_and_in_range(self):
+        item = type(
+            "Item",
+            (),
+            {
+                "truth_score": 1.5,
+                "professor_score": 1.5,
+                "acceptable_score_floor": 1.0,
+                "acceptable_score_ceiling": 1.5,
+            },
+        )()
+
+        ceiling = _classify_score_against_band(1.5, item)
+        in_range = _classify_score_against_band(1.0, item)
+        overshoot = _classify_score_against_band(2.0, item)
+        undershoot = _classify_score_against_band(0.0, item)
+
+        self.assertEqual(ceiling.verdict_short, "ceiling")
+        self.assertEqual(in_range.verdict_short, "within_band")
+        self.assertEqual(overshoot.verdict_short, "overshoot")
+        self.assertEqual(undershoot.verdict_short, "undershoot")
+        self.assertTrue(ceiling.band_present)
+        self.assertTrue(in_range.band_present)
 
 
 if __name__ == "__main__":
