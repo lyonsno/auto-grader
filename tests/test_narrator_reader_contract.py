@@ -380,6 +380,44 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertLess(status_live_idx, kitty_idx)
         self.assertLess(kitty_idx, history_idx)
 
+    def test_history_panel_reports_when_no_scroll_overflow_exists(self):
+        display = self._make_display()
+        display.on_header("[item 1/2] 15-blue/fr-10b (numeric, 1.0 pts)")
+        display.on_topic("31s · Grader: 0/1. Prof: 1/1.", verdict="undershoot")
+
+        group = display.render()
+        history_panel = next(
+            r for r in group.renderables if getattr(r, "title", None) == "[grey50]history[/grey50]"
+        )
+
+        self.assertEqual(
+            history_panel.subtitle,
+            "[grey42]live edge · no overflow yet[/grey42]",
+            "short runs should make it explicit that history is not scrollable yet "
+            "instead of leaving the operator to guess whether the controls failed",
+        )
+
+    def test_history_panel_reports_rows_back_when_scrolled(self):
+        display = self._make_display()
+        for i in range(24):
+            display.on_header(f"[item {i+1}/10] test-{i}")
+            display.on_topic(f"{i}s · topic-{i}", verdict="match")
+            display.on_basis(f"basis-{i}")
+            display.on_checkpoint(f"checkpoint-{i}")
+
+        display.scroll_history_up(7)
+        group = display.render()
+        history_panel = next(
+            r for r in group.renderables if getattr(r, "title", None) == "[grey50]history[/grey50]"
+        )
+
+        self.assertEqual(
+            history_panel.subtitle,
+            "[grey42]7 rows back · j/d forward · 0 latest[/grey42]",
+            "once the operator scrolls off the live edge, the panel should say "
+            "so explicitly instead of making the result invisible",
+        )
+
     def test_inline_focus_preview_renders_between_live_and_history(self):
         # Inline image path — same ordering invariant as above but
         # the renderable is a FocusPreviewInlineImage rather than a
