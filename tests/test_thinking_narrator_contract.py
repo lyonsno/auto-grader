@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from auto_grader.thinking_narrator import ThinkingNarrator
+from auto_grader.thinking_narrator import (
+    ThinkingNarrator,
+    _classify_score_against_band,
+)
 
 
 class _DummySink:
@@ -12,13 +15,13 @@ class _DummySink:
         self.commits = 0
         self.drops: list[tuple[str, str]] = []
 
-    def write_delta(self, text: str) -> None:
+    def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
 
     def rollback_live(self) -> None:
         self.rollbacks += 1
 
-    def commit_live(self) -> None:
+    def commit_live(self, *, mode: str = "thought") -> None:
         self.commits += 1
 
     def write_drop(self, reason: str, text: str) -> None:

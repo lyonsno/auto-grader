@@ -20,6 +20,7 @@ import re
 import threading
 import time
 import urllib.request
+from dataclasses import dataclass
 from typing import Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:

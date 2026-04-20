@@ -3220,6 +3220,8 @@ class PaintDryDisplay:
         self.current_scans_dir: Path | None = None
         self.current_focus_regions_path: Path = DEFAULT_FOCUS_REGIONS_PATH
         self.score_on_target_points = 0.0
+        self.score_within_band_points = 0.0
+        self.score_within_band_potential = 0.0
         self.score_points_possible = 0.0
         self.score_left_on_table_points = 0.0
         self.score_left_on_table_potential = 0.0
@@ -3926,6 +3928,21 @@ class PaintDryDisplay:
                 "#697d8d",
                 "#617485",
             )
+            in_range_value_strong_styles = (
+                "bold #e2efe8",
+                "bold #d4e5dc",
+                "bold #c7dbd1",
+            )
+            in_range_value_mid_styles = (
+                "bold #a4bda9",
+                "bold #98b29d",
+                "bold #8ca791",
+            )
+            in_range_value_texture_styles = (
+                "#728c76",
+                "#68816c",
+                "#5f7663",
+            )
             left_table_value_strong_styles = (
                 "bold #efe2c4",
                 "bold #dbc08d",
@@ -4089,6 +4106,27 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
+                    "IN RANGE",
+                    (
+                        f"{self._format_scorebug_points(self.score_within_band_points)}"
+                        f"/{self._format_scorebug_points(self.score_within_band_potential)}"
+                    ),
+                    label_style=f"bold #a8bfac on {tally_label_bg}",
+                    value_row_styles=in_range_value_strong_styles,
+                    value_mid_row_styles=in_range_value_mid_styles,
+                    value_texture_styles=in_range_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
                     "LEFT ON TABLE",
                     (
                         f"{self._format_scorebug_points(self.score_left_on_table_points)}"
@@ -4175,6 +4213,24 @@ class PaintDryDisplay:
                     value_row_styles=on_target_value_strong_styles,
                     value_mid_row_styles=on_target_value_mid_styles,
                     value_texture_styles=on_target_value_texture_styles,
+                    separator_styles=(
+                        tally_label_separator_style,
+                        tally_top_separator_style,
+                        tally_mid_separator_style,
+                        tally_bottom_separator_style,
+                    ),
+                )
+                self._append_scorebug_big_value_cell(
+                    scorebug_labels,
+                    scorebug_values_top,
+                    scorebug_values_middle,
+                    scorebug_values_bottom,
+                    "IN RANGE",
+                    "0.0/0.0",
+                    label_style=f"bold #a8bfac on {tally_label_bg}",
+                    value_row_styles=in_range_value_strong_styles,
+                    value_mid_row_styles=in_range_value_mid_styles,
+                    value_texture_styles=in_range_value_texture_styles,
                     separator_styles=(
                         tally_label_separator_style,
                         tally_top_separator_style,
@@ -5192,6 +5248,8 @@ class PaintDryDisplay:
         grader_score: float | None = None,
         truth_score: float | None = None,
         max_points: float | None = None,
+        acceptable_score_floor: float | None = None,
+        acceptable_score_ceiling: float | None = None,
     ) -> None:
         # Topic (after-action) lands in history. Doesn't touch live
         # buffers — frozen_line keeps showing the last bonsai line.
@@ -5205,17 +5263,31 @@ class PaintDryDisplay:
             or max_points is None
         ):
             return
+        floor = (
+            acceptable_score_floor
+            if acceptable_score_floor is not None
+            else truth_score
+        )
+        ceiling = (
+            acceptable_score_ceiling
+            if acceptable_score_ceiling is not None
+            else truth_score
+        )
         self.score_points_possible += max_points
         if abs(grader_score - truth_score) < 1e-9:
             self.score_on_target_points += truth_score
             return
-        if grader_score < truth_score:
-            self.score_left_on_table_points += truth_score - grader_score
-            self.score_left_on_table_potential += truth_score
+        if floor <= grader_score <= ceiling:
+            self.score_within_band_points += grader_score
+            self.score_within_band_potential += ceiling
             return
-        if grader_score > truth_score:
-            self.score_bad_call_points += grader_score - truth_score
-            self.score_bad_call_potential += max(0.0, max_points - truth_score)
+        if grader_score < floor:
+            self.score_left_on_table_points += floor - grader_score
+            self.score_left_on_table_potential += floor
+            return
+        if grader_score > ceiling:
+            self.score_bad_call_points += grader_score - ceiling
+            self.score_bad_call_potential += max(0.0, max_points - ceiling)
 
     def on_checkpoint(self, text: str) -> None:
         checkpoint_parity = next(
