@@ -219,6 +219,41 @@ class FocusRegionsRoundTripContract(unittest.TestCase):
             "display DPI should saturate one of the max bounds",
         )
 
+    def test_display_bounds_for_screen_reserve_vertical_headroom(self):
+        annotator = _load_annotator_module()
+        width_px, height_px = annotator._display_bounds_for_screen(
+            1512,
+            982,
+        )
+        self.assertEqual(
+            width_px,
+            annotator._MAX_DISPLAY_WIDTH,
+            "wide-enough screens should keep the annotator's existing max width",
+        )
+        self.assertLess(
+            height_px,
+            982,
+            "annotator display bounds must reserve vertical headroom for the status strip and window chrome",
+        )
+        self.assertLessEqual(
+            height_px,
+            annotator._MAX_DISPLAY_HEIGHT,
+            "runtime screen-fit logic must still respect the annotator's hard maximum display height",
+        )
+
+    def test_display_bounds_for_screen_clamps_to_smaller_screen(self):
+        annotator = _load_annotator_module()
+        width_px, height_px = annotator._display_bounds_for_screen(
+            1100,
+            900,
+        )
+        self.assertLessEqual(width_px, 1100)
+        self.assertLess(
+            height_px,
+            900,
+            "small screens still need vertical breathing room instead of a canvas as tall as the whole display",
+        )
+
     def test_rasterize_page_for_display_returns_exact_pixel_dimensions(self):
         # End-to-end contract: the PNG returned by
         # _rasterize_page_for_display must have pixel dimensions equal
