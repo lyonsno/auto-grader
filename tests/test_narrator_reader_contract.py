@@ -4038,7 +4038,7 @@ class NarratorReaderContract(unittest.TestCase):
         main_tail = source.split("def main() -> int:", 1)[1]
 
         self.assertIn(
-            "_read_tty_key(stdin_fd)",
+            "_read_tty_key(tty_fd)",
             main_tail,
             "the live history controls should read raw bytes from the tty file "
             "descriptor; relying on sys.stdin.read(1) through the buffered text "
@@ -4049,6 +4049,23 @@ class NarratorReaderContract(unittest.TestCase):
             main_tail,
             "the scroll thread should not use the buffered sys.stdin text path "
             "once the reader is in cbreak mode",
+        )
+
+    def test_main_opens_dev_tty_for_interactive_controls(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        main_tail = source.split("def main() -> int:", 1)[1]
+
+        self.assertIn(
+            'os.open("/dev/tty", os.O_RDONLY)',
+            main_tail,
+            "the live reader should acquire its interactive key path from "
+            "/dev/tty directly instead of trusting inherited stdin plumbing",
+        )
+        self.assertNotIn(
+            "stdin_fd = sys.stdin.fileno()",
+            main_tail,
+            "the live history controls should not rely on inherited "
+            "sys.stdin to discover the interactive TTY fd",
         )
 
     def test_session_end_stops_animation(self) -> None:
