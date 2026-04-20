@@ -3142,7 +3142,11 @@ class HistoryScrollController:
             self._display.scroll_history_to_live_edge()
             return True
         if key == "a":
-            return self._display.annotate_current_focus_item()
+            # The key was handled even when annotation reports a
+            # recoverable failure; the reader should keep the failure
+            # visible instead of treating `a` as an unhandled close key.
+            self._display.annotate_current_focus_item()
+            return True
         return False
 
 

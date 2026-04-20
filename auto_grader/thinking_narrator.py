@@ -280,6 +280,97 @@ def _format_score_with_denominator(score: float, max_points: float) -> str:
     return f"{score:g}/{max_points:g}"
 
 
+@dataclass(frozen=True)
+class _ScoreBandClassification:
+    truth: float
+    floor: float
+    ceiling: float
+    band_present: bool
+    verdict: str
+    verdict_short: str
+
+
+def _classify_score_against_band(
+    model_score: float,
+    item,
+) -> _ScoreBandClassification:
+    truth_score = getattr(item, "truth_score", item.professor_score)
+    floor_raw = getattr(item, "acceptable_score_floor", None)
+    ceiling_raw = getattr(item, "acceptable_score_ceiling", None)
+    floor = float(floor_raw) if floor_raw is not None else float(truth_score)
+    ceiling = (
+        float(ceiling_raw) if ceiling_raw is not None else float(truth_score)
+    )
+    band_present = floor_raw is not None or ceiling_raw is not None
+    truth = float(truth_score)
+    if abs(model_score - truth) < 1e-9:
+        return _ScoreBandClassification(
+            truth=truth,
+            floor=floor,
+            ceiling=ceiling,
+            band_present=band_present,
+            verdict="MATCHED TRUTH",
+            verdict_short="match",
+        )
+    if floor <= model_score <= ceiling:
+        return _ScoreBandClassification(
+            truth=truth,
+            floor=floor,
+            ceiling=ceiling,
+            band_present=band_present,
+            verdict="WITHIN RANGE",
+            verdict_short="within_band",
+        )
+    if model_score > ceiling:
+        return _ScoreBandClassification(
+            truth=truth,
+            floor=floor,
+            ceiling=ceiling,
+            band_present=band_present,
+            verdict="GRADER OVERSHOT",
+            verdict_short="overshoot",
+        )
+    return _ScoreBandClassification(
+        truth=truth,
+        floor=floor,
+        ceiling=ceiling,
+        band_present=band_present,
+        verdict="GRADER UNDERSHOT",
+        verdict_short="undershoot",
+    )
+
+
+def _band_commentary_clause(
+    classification: _ScoreBandClassification,
+    *,
+    max_points: float,
+) -> str | None:
+    if not classification.band_present:
+        return None
+    floor_display = _format_score_with_denominator(classification.floor, max_points)
+    ceiling_display = _format_score_with_denominator(
+        classification.ceiling, max_points
+    )
+    if classification.verdict_short == "match":
+        if abs(classification.truth - classification.ceiling) < 1e-9:
+            position = "at the ceiling"
+        elif abs(classification.truth - classification.floor) < 1e-9:
+            position = "at the floor"
+        else:
+            position = "at the truth target"
+    elif classification.verdict_short == "ceiling":
+        position = "at the ceiling"
+    elif classification.verdict_short == "within_band":
+        position = "within range, below ceiling"
+    elif classification.verdict_short == "overshoot":
+        position = "above range"
+    else:
+        position = "below range"
+    return (
+        f"Acceptable band: {floor_display} to {ceiling_display}; "
+        f"grader is {position}."
+    )
+
 def _normalize_after_action_scores(
     text: str,
     *,

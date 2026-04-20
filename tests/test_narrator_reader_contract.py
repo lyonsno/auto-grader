@@ -112,7 +112,7 @@ class NarratorReaderContract(unittest.TestCase):
         display.annotate_current_focus_item.return_value = False
         controller = HistoryScrollController(display)
 
-        self.assertFalse(controller.handle_key("a"))
+        self.assertTrue(controller.handle_key("a"))
         display.annotate_current_focus_item.assert_called_once_with()
 
     def test_reader_debug_writes_to_stderr(self):
@@ -1719,6 +1719,76 @@ class NarratorReaderContract(unittest.TestCase):
             "crop once the internal letterbox matte is removed",
         )
 
+    def test_operator_annotated_kitty_preview_preserves_selected_edge_content(self):
+        display = self._make_display()
+        display._kitty_graphics_supported = True
+        display._inline_images_supported = False
+
+        width = 400
+        height = 100
+        rows = bytearray(width * height * 3)
+        for y in range(height):
+            for x in range(width):
+                if x < 40:
+                    rgb = (210, 40, 40)
+                elif x >= width - 40:
+                    rgb = (40, 80, 210)
+                else:
+                    rgb = (120, 140, 110)
+                off = (y * width + x) * 3
+                rows[off : off + 3] = bytes(rgb)
+        operator_png = fitz.Pixmap(fitz.csRGB, width, height, bytes(rows), False).tobytes(
+            "png"
+        )
+
+        display.on_focus_preview(
+            operator_png,
+            label="15-blue/fr-11c",
+            source="operator_annotated",
+        )
+
+        self.assertIsNotNone(
+            display._pending_kitty_transmit,
+            "operator-annotated preview should still build a Kitty composite when Kitty is available",
+        )
+        comp = fitz.Pixmap(display._pending_kitty_transmit)
+
+        console_width = display._console.size.width
+        inner_budget = max(1, console_width - 2)
+        image_cw, image_ch = _compute_inline_image_cell_dimensions(
+            width,
+            height,
+            max_cell_height=narrator_reader._INLINE_IMAGE_CELL_HEIGHT,
+            max_cell_width=min(narrator_reader._INLINE_IMAGE_MAX_CELL_WIDTH, inner_budget),
+            terminal_cell_aspect=display._terminal_cell_aspect,
+        )
+        image_left = (console_width - image_cw) // 2
+        crop_x0 = image_left * 8
+        crop_y0 = 1 * 16
+        crop_target_w = image_cw * 8
+        crop_target_h = image_ch * 16
+        probe_y = crop_y0 + crop_target_h // 2
+        left_probe_x = crop_x0 + 8
+        right_probe_x = crop_x0 + crop_target_w - 9
+
+        left_rgba = tuple(
+            comp.samples[(probe_y * comp.width + left_probe_x) * comp.n :][: comp.n]
+        )
+        right_rgba = tuple(
+            comp.samples[(probe_y * comp.width + right_probe_x) * comp.n :][: comp.n]
+        )
+
+        self.assertEqual(
+            left_rgba[:3],
+            (210, 40, 40),
+            "operator-annotated preview should preserve the selected left edge instead of clipping it away to cover-fill the box",
+        )
+        self.assertEqual(
+            right_rgba[:3],
+            (40, 80, 210),
+            "operator-annotated preview should preserve the selected right edge instead of clipping it away to cover-fill the box",
+        )
+
     def test_focus_preview_kitty_composite_removes_internal_top_bottom_spacer_rows(self):
         # The preview image should now sit directly between the two border
         # rows. Internal top/bottom spacer rows were reading as a persistent
@@ -2854,6 +2924,59 @@ class NarratorReaderContract(unittest.TestCase):
             on_target_spans[2].style,
             on_target_top_strong,
             "top-row horizontal bars should stay on the strong stroke tier so the numerals read chunkier",
+        )
+
+    def test_scorebug_keeps_band_ceiling_hits_out_of_on_target(self):
+        display = self._make_display()
+
+        display.on_topic(
+            "44s · Grader: 1.5/2. Prof: 1/2. · Acceptable band: 1/2 to 1.5/2.",
+            verdict="within_band",
+            grader_score=1.5,
+            truth_score=1.0,
+            max_points=2.0,
+            acceptable_score_floor=1.0,
+            acceptable_score_ceiling=1.5,
+        )
+
+        self.assertEqual(
+            display.score_on_target_points,
+            0.0,
+            "acceptable-band ceiling hits are still overshoots against truth_score and must not land in ON TARGET",
+        )
+        self.assertEqual(
+            display.score_within_band_points,
+            1.5,
+            "lawful band hits should accrue in the IN RANGE bucket even when they sit at the acceptable ceiling",
+        )
+        self.assertEqual(
+            display.score_within_band_potential,
+            1.5,
+            "the IN RANGE bucket should still report the lawful ceiling as its potential when the exact truth stays lower",
+        )
+
+    def test_scorebug_counts_truth_match_as_on_target_even_with_band(self):
+        display = self._make_display()
+
+        display.on_topic(
+            "41s · Grader: 1/2. Prof: 1/2. · Acceptable band: 1/2 to 1.5/2.",
+            verdict="match",
+            grader_score=1.0,
+            truth_score=1.0,
+            max_points=2.0,
+            acceptable_score_floor=1.0,
+            acceptable_score_ceiling=1.5,
+        )
+
+        self.assertEqual(
+            display.score_on_target_points,
+            1.0,
+            "truth_score remains the exact-hit target even when a lawful acceptable band is also present",
+        )
+        self.assertEqual(
+            display.score_within_band_points,
+            0.0,
+            "exact truth matches should not be diverted into the lawful-band bucket",
         )
 
     def test_annotate_current_focus_item_relaunches_annotator_and_refreshes_preview(self):
