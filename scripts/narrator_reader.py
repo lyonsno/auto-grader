@@ -3121,8 +3121,7 @@ class HistoryScrollController:
             self._display.scroll_history_to_live_edge()
             return True
         if key == "a":
-            self._display.annotate_current_focus_item()
-            return True
+            return self._display.annotate_current_focus_item()
         return False
 
 
@@ -4695,6 +4694,7 @@ class PaintDryDisplay:
     def annotate_current_focus_item(self) -> bool:
         target = _parse_focus_target_label(self.focus_preview_label)
         if target is None or self.current_scans_dir is None:
+            self.status_line = "Annotate current item unavailable."
             return False
         exam_id, question_id = target
         item = next(
@@ -4706,12 +4706,15 @@ class PaintDryDisplay:
             None,
         )
         if item is None:
+            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
             return False
         pdf_name = _EXAM_PDF_MAP.get(exam_id)
         if pdf_name is None:
+            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
             return False
         pdf_path = self.current_scans_dir / pdf_name
         if not pdf_path.exists():
+            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
             return False
         try:
             subprocess.run(
@@ -4730,12 +4733,14 @@ class PaintDryDisplay:
                 check=True,
             )
         except Exception:
+            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
             return False
 
         updated_region = load_focus_regions(self.current_focus_regions_path).get(
             (exam_id, question_id)
         )
         if updated_region is None:
+            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
             return False
 
         page_png = extract_page_image(pdf_path, item.page, dpi=PREVIEW_PAGE_DPI)
@@ -4745,6 +4750,7 @@ class PaintDryDisplay:
             label=f"{exam_id}/{question_id}",
             source=updated_region.source,
         )
+        self.status_line = f"Updated focus preview for {exam_id}/{question_id}."
         return True
 
     def on_delta(self, text: str, mode: str = "thought") -> None:
