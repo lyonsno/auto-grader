@@ -33,6 +33,9 @@ class RunRecord:
     question_id: str
     professor_score: float
     corrected_score: float | None
+    acceptable_score_floor: float | None
+    acceptable_score_ceiling: float | None
+    acceptable_score_reason: str
     max_points: float
     answer_type: str
     # None on truncated / unparseable rows — see Operation Zilch Reaper
@@ -169,6 +172,8 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
             corrected_score = (
                 float(corrected_raw) if corrected_raw is not None else None
             )
+            acceptable_floor_raw = obj.get("acceptable_score_floor")
+            acceptable_ceiling_raw = obj.get("acceptable_score_ceiling")
             # Truncation sentinel fields. model_score and model_confidence
             # may be JSON null on predictions.jsonl files written by the
             # post-Zilch-Reaper grader. Legacy files from before the
@@ -182,6 +187,19 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
                 question_id=obj["question_id"],
                 professor_score=float(obj["professor_score"]),
                 corrected_score=corrected_score,
+                acceptable_score_floor=(
+                    float(acceptable_floor_raw)
+                    if acceptable_floor_raw is not None
+                    else None
+                ),
+                acceptable_score_ceiling=(
+                    float(acceptable_ceiling_raw)
+                    if acceptable_ceiling_raw is not None
+                    else None
+                ),
+                acceptable_score_reason=str(
+                    obj.get("acceptable_score_reason", "")
+                ),
                 max_points=float(obj["max_points"]),
                 answer_type=str(obj["answer_type"]),
                 model_score=(
@@ -231,6 +249,9 @@ def build_comparison_rows(
             # get the corrected accuracy baseline in the same CSV.
             "professor_score": exemplar.professor_score,
             "truth_score": exemplar.truth_score,
+            "acceptable_score_floor": exemplar.acceptable_score_floor,
+            "acceptable_score_ceiling": exemplar.acceptable_score_ceiling,
+            "acceptable_score_reason": exemplar.acceptable_score_reason,
         }
         for label, records in loaded:
             record = records.get((exam_id, question_id))

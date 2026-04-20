@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from auto_grader.eval_harness import EvalItem, FocusRegion, Prediction
@@ -645,6 +646,203 @@ class SmokeVlmContract(unittest.TestCase):
             self.assertIn("correction_reason", record)
             self.assertEqual(record["correction_reason"], "")
 
+    def test_prediction_record_carries_sparse_acceptable_score_band(self):
+        """predictions.jsonl must preserve acceptable-band telemetry fields.
+
+        The acceptable band is not the primary truth target, but offline
+        drift analysis still needs it in the self-contained run record.
+        """
+        module = _load_smoke_vlm()
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            answer_type="numeric",
+            page=3,
+            professor_score=1.5,
+            max_points=3.0,
+            professor_mark="partial",
+            student_answer="v=-8.225 J/s",
+            notes="setup correct but execution wrong",
+            acceptable_score_floor=1.0,
+            acceptable_score_ceiling=1.5,
+            acceptable_score_reason=(
+                "prof often forgives sign-only slips when setup is otherwise sound"
+            ),
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            model_score=1.0,
+            model_confidence=0.8,
+            model_reasoning="setup credit only",
+            model_read="v=-8.225 J/s",
+            raw_assistant='{"model_score": 1.0}',
+            raw_reasoning="negative frequency is impossible",
+            upstream_dependency="none",
+            if_dependent_then_consistent=None,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir)
+            predictions_path = run_dir / "predictions.jsonl"
+            with module._PredictionWriter(
+                predictions_path, model="qwen-test", run_dir=run_dir
+            ) as writer:
+                writer.write_one(item, prediction)
+
+            records = [
+                json.loads(line)
+                for line in predictions_path.read_text().splitlines()
+                if line.strip()
+            ]
+            pred_record = next(r for r in records if r.get("type") == "prediction")
+
+        self.assertEqual(pred_record["acceptable_score_floor"], 1.0)
+        self.assertEqual(pred_record["acceptable_score_ceiling"], 1.5)
+        self.assertEqual(
+            pred_record["acceptable_score_reason"],
+            "prof often forgives sign-only slips when setup is otherwise sound",
+        )
+
+    def test_main_handles_zero_narrator_dispatches_without_crashing(self):
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=1.0,
+            professor_mark="check",
+            student_answer="6.98 g/mL",
+            notes="",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-1",
+            model_score=1.0,
+            model_confidence=0.95,
+            model_reasoning="clean read",
+            model_read="6.98 g/mL",
+            raw_assistant='{"model_score": 1.0}',
+            raw_reasoning="",
+            upstream_dependency="none",
+            if_dependent_then_consistent=None,
+        )
+
+        class _FakeManifest:
+            def write_status(self, *_args, **_kwargs) -> None:
+                return None
+
+        class _FakeSink:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWriter:
+            failures = 0
+            last_failure_msg = ""
+            _count = 1
+
+            def __init__(self, path: Path, *, model: str, run_dir: Path):
+                self.path = path
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def write_one(self, item, pred) -> None:
+                return None
+
+        class _FakeNarrator:
+            def __init__(self, *_args, **_kwargs):
+                return None
+
+            def wrap_up(self, *_args, **_kwargs) -> None:
+                return None
+
+            def stats(self) -> dict[str, int]:
+                return {
+                    "items_started": 1,
+                    "dispatches_total": 0,
+                    "summaries_emitted": 0,
+                    "drops_dedup": 0,
+                    "drops_empty": 0,
+                    "max_dispatches_one_item": 0,
+                }
+
+        report = SimpleNamespace(
+            total_scored=1,
+            unclear_excluded=0,
+            overall_exact_accuracy=1.0,
+            overall_tolerance_accuracy=1.0,
+            false_positives=0,
+            false_negatives=0,
+            total_points_possible=1.0,
+            total_points_truth=1.0,
+            calibration_bins=[],
+            per_answer_type_exact={"numeric": 1.0},
+        )
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "run"
+            argv = [
+                "smoke_vlm.py",
+                "--narrate-stderr",
+                "--pick",
+                "15-blue:fr-1",
+                "--run-dir",
+                str(run_dir),
+            ]
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(sys, "argv", argv))
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "load_ground_truth", return_value=[item])
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "load_focus_regions", return_value={})
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        smoke_vlm,
+                        "apply_model_sampling_preset",
+                        side_effect=lambda config, **_: config,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "_load_template_document", return_value=None)
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "_run_identity", return_value=("run-1", run_dir))
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "_build_manifest", return_value=_FakeManifest())
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "NarratorSink", return_value=_FakeSink())
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "_PredictionWriter", _FakeWriter)
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "ThinkingNarrator", _FakeNarrator)
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "grade_all_items", return_value=[prediction])
+                )
+                stack.enter_context(
+                    mock.patch.object(smoke_vlm, "score_predictions", return_value=report)
+                )
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    code = smoke_vlm.main()
+
+        self.assertEqual(code, 0, stderr.getvalue())
+        self.assertIn("drop rate:            0.0%", stdout.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

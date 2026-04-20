@@ -68,6 +68,9 @@ class EvalItem:
     focus_region: FocusRegion | None = None
     corrected_score: float | None = None
     correction_reason: str = ""
+    acceptable_score_floor: float | None = None
+    acceptable_score_ceiling: float | None = None
+    acceptable_score_reason: str = ""
 
     @property
     def truth_score(self) -> float:
@@ -204,6 +207,8 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
             corrected = (
                 float(corrected_raw) if corrected_raw is not None else None
             )
+            acceptable_floor_raw = raw.get("acceptable_score_floor")
+            acceptable_ceiling_raw = raw.get("acceptable_score_ceiling")
             items.append(
                 EvalItem(
                     exam_id=exam_id,
@@ -222,6 +227,19 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
                     ),
                     corrected_score=corrected,
                     correction_reason=raw.get("correction_reason", ""),
+                    acceptable_score_floor=(
+                        float(acceptable_floor_raw)
+                        if acceptable_floor_raw is not None
+                        else None
+                    ),
+                    acceptable_score_ceiling=(
+                        float(acceptable_ceiling_raw)
+                        if acceptable_ceiling_raw is not None
+                        else None
+                    ),
+                    acceptable_score_reason=raw.get(
+                        "acceptable_score_reason", ""
+                    ),
                 )
             )
     return items

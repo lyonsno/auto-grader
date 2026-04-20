@@ -38,6 +38,9 @@ class CompareRunsContract(unittest.TestCase):
         score: float,
         corrected_score: float | None = None,
         correction_reason: str = "",
+        acceptable_score_floor: float | None = None,
+        acceptable_score_ceiling: float | None = None,
+        acceptable_score_reason: str = "",
     ) -> Path:
         run_dir = base / run_name
         run_dir.mkdir()
@@ -84,6 +87,16 @@ class CompareRunsContract(unittest.TestCase):
         if corrected_score is not None:
             prediction_record["corrected_score"] = corrected_score
             prediction_record["correction_reason"] = correction_reason
+        if acceptable_score_floor is not None:
+            prediction_record["acceptable_score_floor"] = acceptable_score_floor
+        if acceptable_score_ceiling is not None:
+            prediction_record["acceptable_score_ceiling"] = acceptable_score_ceiling
+        if (
+            acceptable_score_floor is not None
+            or acceptable_score_ceiling is not None
+            or acceptable_score_reason
+        ):
+            prediction_record["acceptable_score_reason"] = acceptable_score_reason
         (run_dir / "predictions.jsonl").write_text(
             "\n".join(
                 [
@@ -386,6 +399,59 @@ class CompareRunsContract(unittest.TestCase):
                 0.0,
                 "truth_score must reflect the corrected value when corrected_score is present",
             )
+
+    def test_load_run_records_picks_up_sparse_acceptable_score_band(self):
+        """compare_runs must round-trip acceptable-band telemetry fields."""
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            run_dir = self._write_run(
+                base,
+                run_name="banded-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=1.0,
+                acceptable_score_floor=1.0,
+                acceptable_score_ceiling=1.5,
+                acceptable_score_reason="sign-only slips may still receive generous setup credit",
+            )
+            records = module.load_run_records(run_dir)
+            record = records[("15-blue", "fr-1")]
+            self.assertEqual(record.acceptable_score_floor, 1.0)
+            self.assertEqual(record.acceptable_score_ceiling, 1.5)
+            self.assertEqual(
+                record.acceptable_score_reason,
+                "sign-only slips may still receive generous setup credit",
+            )
+
+    def test_build_comparison_rows_emits_acceptable_score_band_columns(self):
+        """CSV output must expose acceptable-band telemetry when present."""
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            run_dir = self._write_run(
+                base,
+                run_name="banded-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=1.0,
+                acceptable_score_floor=1.0,
+                acceptable_score_ceiling=1.5,
+                acceptable_score_reason="sign-only slips may still receive generous setup credit",
+            )
+            rows = module.build_comparison_rows([("only", run_dir)])
+            row = rows[0]
+
+        self.assertEqual(row["acceptable_score_floor"], 1.0)
+        self.assertEqual(row["acceptable_score_ceiling"], 1.5)
+        self.assertEqual(
+            row["acceptable_score_reason"],
+            "sign-only slips may still receive generous setup credit",
+        )
 
     def test_load_run_records_truth_score_falls_back_to_professor_score(self):
         """Without a correction, truth_score mirrors professor_score exactly.

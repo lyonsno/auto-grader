@@ -290,6 +290,14 @@ class _PredictionWriter:
                 # fields, so readers have an unambiguous signal.
                 "corrected_score": item.corrected_score,
                 "correction_reason": item.correction_reason,
+                # Acceptable-band telemetry is a second analysis surface,
+                # not the primary truth target. Persist it alongside the
+                # record so offline drift analysis can flag "within band"
+                # vs. "too generous" / "too harsh" without reopening the
+                # original ground_truth.yaml file.
+                "acceptable_score_floor": item.acceptable_score_floor,
+                "acceptable_score_ceiling": item.acceptable_score_ceiling,
+                "acceptable_score_reason": item.acceptable_score_reason,
                 "professor_mark": item.professor_mark,
                 "student_answer": item.student_answer,
                 # model_score and model_confidence serialize to JSON null
