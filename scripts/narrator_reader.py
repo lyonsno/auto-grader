@@ -1244,6 +1244,23 @@ def _query_terminal_cell_aspect(
             pass
 
 
+def _read_tty_key(fd: int) -> str | None:
+    """Read one raw key byte from a TTY file descriptor.
+
+    The history controls are single-byte bindings. Read from the file
+    descriptor directly rather than through ``sys.stdin``'s buffered text
+    wrapper so cbreak-mode input remains reliable under spawned-terminal
+    stdin plumbing.
+    """
+    try:
+        chunk = os.read(fd, 1)
+    except OSError:
+        return None
+    if not chunk:
+        return None
+    return chunk.decode("latin-1", errors="ignore")
+
+
 def _supports_kitty_graphics(term_program: str | None) -> bool:
     """Return True if the terminal supports the Kitty graphics
     protocol.
@@ -5203,10 +5220,9 @@ def main() -> int:
 
             def _scroll_tick():
                 while not scroll_stop.is_set():
-                    try:
-                        ch = sys.stdin.read(1)
-                    except Exception:
+                    if stdin_fd is None:
                         return
+                    ch = _read_tty_key(stdin_fd)
                     if not ch:
                         return
                     handled = scroll_controller.handle_key(ch)

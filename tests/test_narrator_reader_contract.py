@@ -3907,6 +3907,25 @@ class NarratorReaderContract(unittest.TestCase):
             "frame write; mixing raw sys.stdout writes with console.file writes "
             "can leak visible '[H' text instead of repainting in place",
         )
+
+    def test_scroll_thread_reads_raw_tty_bytes_instead_of_buffered_stdin_text(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        main_tail = source.split("def main() -> int:", 1)[1]
+
+        self.assertIn(
+            "_read_tty_key(stdin_fd)",
+            main_tail,
+            "the live history controls should read raw bytes from the tty file "
+            "descriptor; relying on sys.stdin.read(1) through the buffered text "
+            "wrapper is too fragile for spawned cbreak-mode terminals",
+        )
+        self.assertNotIn(
+            "sys.stdin.read(1)",
+            main_tail,
+            "the scroll thread should not use the buffered sys.stdin text path "
+            "once the reader is in cbreak mode",
+        )
+
     def test_session_end_stops_animation(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")
