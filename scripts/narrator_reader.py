@@ -5215,6 +5215,15 @@ class PaintDryDisplay:
             or max_points is None
         ):
             return
+        self.score_points_possible += max_points
+        if abs(grader_score - truth_score) < 1e-9:
+            self.score_on_target_points += truth_score
+            return
+
+        band_present = (
+            acceptable_score_floor is not None
+            or acceptable_score_ceiling is not None
+        )
         floor = (
             acceptable_score_floor
             if acceptable_score_floor is not None
@@ -5225,21 +5234,17 @@ class PaintDryDisplay:
             if acceptable_score_ceiling is not None
             else truth_score
         )
-        self.score_points_possible += max_points
-        if abs(grader_score - ceiling) < 1e-9:
-            self.score_on_target_points += ceiling
-            return
-        if floor <= grader_score <= ceiling:
+        if band_present and floor <= grader_score <= ceiling:
             self.score_within_band_points += grader_score
             self.score_within_band_potential += ceiling
             return
-        if grader_score < floor:
-            self.score_left_on_table_points += floor - grader_score
-            self.score_left_on_table_potential += floor
+        if grader_score < truth_score:
+            self.score_left_on_table_points += truth_score - grader_score
+            self.score_left_on_table_potential += truth_score
             return
-        if grader_score > ceiling:
-            self.score_bad_call_points += grader_score - ceiling
-            self.score_bad_call_potential += max(0.0, max_points - ceiling)
+        if grader_score > truth_score:
+            self.score_bad_call_points += grader_score - truth_score
+            self.score_bad_call_potential += max(0.0, max_points - truth_score)
 
     def on_checkpoint(self, text: str) -> None:
         checkpoint_parity = next(

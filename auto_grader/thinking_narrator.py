@@ -286,6 +286,33 @@ class _ScoreBandClassification:
     verdict_short: str
 
 
+@dataclass(frozen=True)
+class _TruthVerdict:
+    verdict: str
+    verdict_short: str
+
+
+def _classify_score_against_truth(
+    model_score: float,
+    item,
+) -> _TruthVerdict:
+    truth_score = getattr(item, "truth_score", item.professor_score)
+    if abs(model_score - truth_score) < 1e-9:
+        return _TruthVerdict(
+            verdict="MATCHED",
+            verdict_short="match",
+        )
+    if model_score > truth_score:
+        return _TruthVerdict(
+            verdict="GRADER OVERSHOT",
+            verdict_short="overshoot",
+        )
+    return _TruthVerdict(
+        verdict="GRADER UNDERSHOT",
+        verdict_short="undershoot",
+    )
+
+
 def _classify_score_against_band(
     model_score: float,
     item,
@@ -1329,12 +1356,16 @@ class ThinkingNarrator:
                 getattr(item, "corrected_score", None) is not None
                 and abs(truth_score - item.professor_score) > 1e-9
             )
+            truth_verdict = _classify_score_against_truth(
+                prediction.model_score,
+                item,
+            )
             band_classification = _classify_score_against_band(
                 prediction.model_score,
                 item,
             )
-            verdict = band_classification.verdict
-            verdict_short = band_classification.verdict_short
+            verdict = truth_verdict.verdict
+            verdict_short = truth_verdict.verdict_short
             grader_score_display = _format_score_with_denominator(
                 prediction.model_score, item.max_points
             )

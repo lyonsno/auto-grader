@@ -86,6 +86,34 @@ class RunManifest:
     raw: dict[str, object]
 
 
+def _has_value(value: object) -> bool:
+    return value is not None and value != ""
+
+
+def _resolve_shared_row_value(
+    *,
+    exam_id: str,
+    question_id: str,
+    field_name: str,
+    records: list[RunRecord],
+) -> object:
+    values = [
+        getattr(record, field_name)
+        for record in records
+        if _has_value(getattr(record, field_name))
+    ]
+    if not values:
+        return getattr(records[0], field_name)
+    first = values[0]
+    for value in values[1:]:
+        if value != first:
+            raise ValueError(
+                f"{exam_id}/{question_id}: conflicting {field_name} values "
+                f"across compared runs ({first!r} vs {value!r})"
+            )
+    return first
+
+
 def _resolve_predictions_path(run_dir: Path) -> Path:
     predictions_path = run_dir / "predictions.jsonl"
     if not predictions_path.is_file():
@@ -232,26 +260,61 @@ def build_comparison_rows(
 
     rows: list[dict[str, object]] = []
     for exam_id, question_id in all_keys:
-        exemplar = next(
+        present_records = [
             records[(exam_id, question_id)]
             for _, records in loaded
             if (exam_id, question_id) in records
-        )
+        ]
         row: dict[str, object] = {
             "exam_id": exam_id,
             "question_id": question_id,
-            "answer_type": exemplar.answer_type,
-            "max_points": exemplar.max_points,
+            "answer_type": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="answer_type",
+                records=present_records,
+            ),
+            "max_points": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="max_points",
+                records=present_records,
+            ),
             # professor_score is the historical prof mark; truth_score
             # is the corrected baseline (equal to professor_score when
             # no correction is recorded). Both columns are emitted so
             # operators can see the historical distinction and still
             # get the corrected accuracy baseline in the same CSV.
-            "professor_score": exemplar.professor_score,
-            "truth_score": exemplar.truth_score,
-            "acceptable_score_floor": exemplar.acceptable_score_floor,
-            "acceptable_score_ceiling": exemplar.acceptable_score_ceiling,
-            "acceptable_score_reason": exemplar.acceptable_score_reason,
+            "professor_score": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="professor_score",
+                records=present_records,
+            ),
+            "truth_score": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="truth_score",
+                records=present_records,
+            ),
+            "acceptable_score_floor": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="acceptable_score_floor",
+                records=present_records,
+            ),
+            "acceptable_score_ceiling": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="acceptable_score_ceiling",
+                records=present_records,
+            ),
+            "acceptable_score_reason": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="acceptable_score_reason",
+                records=present_records,
+            ),
         }
         for label, records in loaded:
             record = records.get((exam_id, question_id))

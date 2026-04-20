@@ -86,6 +86,22 @@ class EvalItem:
         )
 
 
+def _validate_acceptable_score_band(
+    *,
+    exam_id: str,
+    question_id: str,
+    floor: float | None,
+    ceiling: float | None,
+) -> None:
+    if floor is None or ceiling is None:
+        return
+    if floor > ceiling:
+        raise ValueError(
+            f"{exam_id}/{question_id}: acceptable_score_floor ({floor}) "
+            f"must be <= acceptable_score_ceiling ({ceiling})"
+        )
+
+
 @dataclass(frozen=True)
 class Prediction:
     """Model output for one eval item.
@@ -209,6 +225,22 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
             )
             acceptable_floor_raw = raw.get("acceptable_score_floor")
             acceptable_ceiling_raw = raw.get("acceptable_score_ceiling")
+            acceptable_floor = (
+                float(acceptable_floor_raw)
+                if acceptable_floor_raw is not None
+                else None
+            )
+            acceptable_ceiling = (
+                float(acceptable_ceiling_raw)
+                if acceptable_ceiling_raw is not None
+                else None
+            )
+            _validate_acceptable_score_band(
+                exam_id=exam_id,
+                question_id=raw["question_id"],
+                floor=acceptable_floor,
+                ceiling=acceptable_ceiling,
+            )
             items.append(
                 EvalItem(
                     exam_id=exam_id,
@@ -227,16 +259,8 @@ def load_ground_truth(yaml_path: Path) -> list[EvalItem]:
                     ),
                     corrected_score=corrected,
                     correction_reason=raw.get("correction_reason", ""),
-                    acceptable_score_floor=(
-                        float(acceptable_floor_raw)
-                        if acceptable_floor_raw is not None
-                        else None
-                    ),
-                    acceptable_score_ceiling=(
-                        float(acceptable_ceiling_raw)
-                        if acceptable_ceiling_raw is not None
-                        else None
-                    ),
+                    acceptable_score_floor=acceptable_floor,
+                    acceptable_score_ceiling=acceptable_ceiling,
                     acceptable_score_reason=raw.get(
                         "acceptable_score_reason", ""
                     ),

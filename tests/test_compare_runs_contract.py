@@ -453,6 +453,47 @@ class CompareRunsContract(unittest.TestCase):
             "sign-only slips may still receive generous setup credit",
         )
 
+    def test_acceptable_score_band_columns_do_not_depend_on_run_order(self):
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            legacy_run = self._write_run(
+                base,
+                run_name="legacy-run",
+                model="gemma-old",
+                prompt_version="prompt-v1",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T20:00:00",
+                score=1.0,
+            )
+            banded_run = self._write_run(
+                base,
+                run_name="banded-run",
+                model="gemma-new",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=1.5,
+                acceptable_score_floor=1.0,
+                acceptable_score_ceiling=1.5,
+                acceptable_score_reason="setup credit survives the sign slip",
+            )
+
+            legacy_first = module.build_comparison_rows(
+                [("legacy", legacy_run), ("banded", banded_run)]
+            )[0]
+            banded_first = module.build_comparison_rows(
+                [("banded", banded_run), ("legacy", legacy_run)]
+            )[0]
+
+        for row in (legacy_first, banded_first):
+            self.assertEqual(row["acceptable_score_floor"], 1.0)
+            self.assertEqual(row["acceptable_score_ceiling"], 1.5)
+            self.assertEqual(
+                row["acceptable_score_reason"],
+                "setup credit survives the sign slip",
+            )
+
     def test_load_run_records_truth_score_falls_back_to_professor_score(self):
         """Without a correction, truth_score mirrors professor_score exactly.
 

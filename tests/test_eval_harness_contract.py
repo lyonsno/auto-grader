@@ -247,6 +247,36 @@ exams:
             "acceptable band must not silently replace the primary truth_score baseline",
         )
 
+    def test_rejects_inverted_acceptable_score_band(self):
+        from auto_grader.eval_harness import load_ground_truth
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            truth_path = Path(tmpdir) / "ground_truth.yaml"
+            truth_path.write_text(
+                """
+exams:
+  - exam_id: 15-blue
+    items:
+      - question_id: fr-12b
+        answer_type: lewis_structure
+        page: 4
+        professor_score: 1.0
+        max_points: 2.0
+        professor_mark: partial
+        student_answer: "two resonance structures"
+        notes: "half annotation"
+        acceptable_score_floor: 2.0
+        acceptable_score_ceiling: 1.0
+""".strip(),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "acceptable_score_floor.*acceptable_score_ceiling",
+            ):
+                load_ground_truth(truth_path)
+
 
 # ---------------------------------------------------------------------------
 # Contract: score_predictions — perfect predictions
