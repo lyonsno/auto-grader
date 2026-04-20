@@ -473,6 +473,7 @@ def _apply_text_overlay(page: fitz.Page, overlay: Mapping[str, Any]) -> None:
     if "search_text" in overlay:
         search_text = str(overlay["search_text"])
         replacement_text = str(overlay["replacement_text"])
+        replacement_html = overlay.get("replacement_html")
         matches = page.search_for(search_text)
         if not matches:
             raise ValueError(f"Could not find source overlay text: {search_text!r}")
@@ -491,14 +492,22 @@ def _apply_text_overlay(page: fitz.Page, overlay: Mapping[str, Any]) -> None:
             rect.y1 + 2,
         )
         page.draw_rect(wipe_rect, color=(1, 1, 1), fill=(1, 1, 1), width=0, overlay=True)
-        page.insert_text(
-            fitz.Point(rect.x0, rect.y1 - 1),
-            replacement_text,
-            fontname="Times-Roman",
-            fontsize=font_size,
-            color=(0, 0, 0),
-            overlay=True,
-        )
+        if replacement_html is not None:
+            page.insert_htmlbox(
+                wipe_rect,
+                str(replacement_html),
+                css=f"* {{ font-family: Times New Roman; font-size: {font_size}pt; color: #000000; }}",
+                overlay=True,
+            )
+        else:
+            page.insert_text(
+                fitz.Point(rect.x0, rect.y1 - 1),
+                replacement_text,
+                fontname="Times-Roman",
+                fontsize=font_size,
+                color=(0, 0, 0),
+                overlay=True,
+            )
         return
     if "search_lines" in overlay:
         replacement_lines = list(overlay["replacement_lines"])

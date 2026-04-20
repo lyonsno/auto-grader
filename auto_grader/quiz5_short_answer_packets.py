@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import html
 import json
 from pathlib import Path
+import re
 import textwrap
 from typing import Any
 
@@ -549,6 +551,12 @@ def _quiz5_text_overlays(
                     prompt_index["q1a"]["prompt"],
                     final_line="Bronsted base in water.",
                 ),
+                "replacement_html": _chemistry_html(
+                    _extract_q1_first_line(
+                        prompt_index["q1a"]["prompt"],
+                        final_line="Bronsted base in water.",
+                    )
+                ),
                 "font_size": 11.5,
             },
             {
@@ -557,11 +565,20 @@ def _quiz5_text_overlays(
                     prompt_index["q1b"]["prompt"],
                     final_line="a Bronsted acid in water.",
                 ),
+                "replacement_html": _chemistry_html(
+                    _extract_q1_first_line(
+                        prompt_index["q1b"]["prompt"],
+                        final_line="a Bronsted acid in water.",
+                    )
+                ),
                 "font_size": 11.5,
             },
             {
                 "search_text": "What is the pH of an aqueous solution of 1.68×10-2 M hydroiodic acid?",
                 "replacement_text": prompt_index["q2"]["prompt"].replace(" x 10^-", "×10-"),
+                "replacement_html": _chemistry_html(
+                    prompt_index["q2"]["prompt"].replace(" x 10^-", "×10-")
+                ),
                 "font_size": 11.5,
             },
             {
@@ -611,6 +628,13 @@ def _extract_q1_first_line(prompt: str, *, final_line: str) -> str:
         raise ValueError(f"Prompt did not end with expected Q1 closing line: {final_line!r}")
     prefix = prompt[: -len(final_line)].rstrip()
     return prefix
+
+
+def _chemistry_html(text: str) -> str:
+    escaped = html.escape(text)
+    escaped = re.sub(r"(?<=[A-Za-z\)])(\d+)", r"<sub>\1</sub>", escaped)
+    escaped = re.sub(r"×10(-?\d+)", r"×10<sup>\1</sup>", escaped)
+    return escaped
 
 
 def _get_or_create_template_version(*, slug: str, source_yaml: str, connection: object) -> int:

@@ -206,14 +206,17 @@ class Quiz5ShortAnswerArtifactContractTests(unittest.TestCase):
             overlays[0]["replacement_text"],
             "Write a net ionic equation to show how methylamine CH3NH2 behaves as a",
         )
+        self.assertIn("CH<sub>3</sub>NH<sub>2</sub>", overlays[0]["replacement_html"])
         self.assertEqual(
             overlays[1]["replacement_text"],
             "Write a net ionic equation to show how acetic acid CH3COOH behaves as",
         )
+        self.assertIn("CH<sub>3</sub>COOH", overlays[1]["replacement_html"])
         self.assertEqual(
             overlays[2]["replacement_text"],
             "What is the pH of an aqueous solution of 9.74×10-3 M hydrochloric acid?",
         )
+        self.assertIn("9.74×10<sup>-3</sup>", overlays[2]["replacement_html"])
         self.assertEqual(overlays[3]["replacement_text"], "What is the pH of a 0.0339 M aqueous solution of sodium hydroxide?")
         self.assertEqual(overlays[4]["replacement_text"], "2.25?")
 
