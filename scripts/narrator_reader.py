@@ -73,6 +73,19 @@ from auto_grader.vlm_inference import (  # noqa: E402
 )
 
 
+def _reader_debug(message: str) -> None:
+    """Write a timestamped reader diagnostic to stderr.
+
+    The Paint Dry runner already redirects stderr to `reader.stderr`
+    inside the run directory, so this is the safest always-on custody
+    surface for live input / annotation breadcrumbs that should survive
+    even when the UI itself is unresponsive.
+    """
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    sys.stderr.write(f"[paint-dry-reader {stamp}] {message}\n")
+    sys.stderr.flush()
+
+
 # Matches the elapsed-time prefix on after-action topic lines:
 #   "47s · Grader: 2/2 (matched). Prof: 2/2. · Even the kid called this."
 # Group 1: the elapsed time ("47s"), group 2: the rest after the bullet.
@@ -4693,8 +4706,16 @@ class PaintDryDisplay:
 
     def annotate_current_focus_item(self) -> bool:
         target = _parse_focus_target_label(self.focus_preview_label)
-        if target is None or self.current_scans_dir is None:
-            self.status_line = "Annotate current item unavailable."
+        if target is None:
+            self.status_line = "Annotate current item unavailable: no focus target."
+            _reader_debug("annotate-current-item unavailable: no focus target")
+            return False
+        if self.current_scans_dir is None:
+            self.status_line = "Annotate current item unavailable: scans directory missing."
+            _reader_debug(
+                "annotate-current-item unavailable: scans directory missing "
+                f"for label={self.focus_preview_label!r}"
+            )
             return False
         exam_id, question_id = target
         item = next(
@@ -4706,17 +4727,41 @@ class PaintDryDisplay:
             None,
         )
         if item is None:
-            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
+            self.status_line = (
+                f"Annotate current item failed: ground truth missing for "
+                f"{exam_id}/{question_id}."
+            )
+            _reader_debug(
+                f"annotate-current-item failed: ground truth missing for "
+                f"{exam_id}/{question_id}"
+            )
             return False
         pdf_name = _EXAM_PDF_MAP.get(exam_id)
         if pdf_name is None:
-            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
+            self.status_line = (
+                f"Annotate current item failed: no PDF mapping for "
+                f"{exam_id}/{question_id}."
+            )
+            _reader_debug(
+                f"annotate-current-item failed: no PDF mapping for "
+                f"{exam_id}/{question_id}"
+            )
             return False
         pdf_path = self.current_scans_dir / pdf_name
         if not pdf_path.exists():
-            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
+            self.status_line = (
+                f"Annotate current item failed: scan PDF missing for "
+                f"{exam_id}/{question_id}."
+            )
+            _reader_debug(
+                f"annotate-current-item failed: scan PDF missing at {pdf_path}"
+            )
             return False
         try:
+            _reader_debug(
+                f"annotate-current-item running for {exam_id}/{question_id} "
+                f"pdf={pdf_path} page={item.page} config={self.current_focus_regions_path}"
+            )
             subprocess.run(
                 [
                     sys.executable,
@@ -4732,15 +4777,29 @@ class PaintDryDisplay:
                 ],
                 check=True,
             )
-        except Exception:
-            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
+        except Exception as exc:
+            self.status_line = (
+                f"Annotate current item failed: annotator subprocess failed for "
+                f"{exam_id}/{question_id}."
+            )
+            _reader_debug(
+                f"annotate-current-item subprocess failed for "
+                f"{exam_id}/{question_id}: {exc.__class__.__name__}: {exc}"
+            )
             return False
 
         updated_region = load_focus_regions(self.current_focus_regions_path).get(
             (exam_id, question_id)
         )
         if updated_region is None:
-            self.status_line = f"Annotate current item failed for {exam_id}/{question_id}."
+            self.status_line = (
+                f"Annotate current item failed: refreshed focus region missing for "
+                f"{exam_id}/{question_id}."
+            )
+            _reader_debug(
+                f"annotate-current-item failed: refreshed focus region missing for "
+                f"{exam_id}/{question_id}"
+            )
             return False
 
         page_png = extract_page_image(pdf_path, item.page, dpi=PREVIEW_PAGE_DPI)
@@ -4751,6 +4810,7 @@ class PaintDryDisplay:
             source=updated_region.source,
         )
         self.status_line = f"Updated focus preview for {exam_id}/{question_id}."
+        _reader_debug(f"annotate-current-item refreshed {exam_id}/{question_id}")
         return True
 
     def on_delta(self, text: str, mode: str = "thought") -> None:
@@ -5135,9 +5195,11 @@ def main() -> int:
         tty_fd = os.open("/dev/tty", os.O_RDONLY)
         saved_termios = termios.tcgetattr(tty_fd)
         tty.setcbreak(tty_fd)
+        _reader_debug("interactive tty ready via /dev/tty")
     except (termios.error, OSError, ValueError):
         tty_fd = None
         saved_termios = None
+        _reader_debug("interactive tty unavailable; live controls disabled")
 
     try:
         # auto_refresh=False — we drive the render manually from a
@@ -5326,14 +5388,18 @@ def main() -> int:
                         return
                     ch = _read_tty_key(tty_fd)
                     if not ch:
+                        _reader_debug("live scroll thread stopped: tty returned EOF")
                         return
+                    _reader_debug(f"live key received: {ch!r}")
                     handled = scroll_controller.handle_key(ch)
+                    _reader_debug(f"live key handled={handled} key={ch!r}")
                     if not handled and display.session_ended:
                         session_exit.set()
                         return
 
             scroll_thread: threading.Thread | None = None
             if tty_fd is not None:
+                _reader_debug("starting live scroll thread")
                 scroll_thread = threading.Thread(
                     target=_scroll_tick,
                     name="paint-dry-scroll",
