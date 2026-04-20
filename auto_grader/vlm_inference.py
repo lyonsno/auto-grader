@@ -278,8 +278,8 @@ You are grading a chemistry exam.
 
 Structure your analysis in three steps:
 1. TRANSCRIBE: Read the student's work for this question. Write down exactly what you see — numbers, symbols, equations, crossouts, annotations. If any mark is ambiguous, note the plausible readings. Settle the transcription before moving on.
-2. IDENTIFY METHOD: What method or formula did the student attempt? Is it the correct method for the question asked? Check dimensional analysis and whether the approach would yield the right quantity with perfect execution.
-3. SCORE: Apply the rubric to what you transcribed and the method you identified. Award the highest score justified by the student's written work.
+2. IDENTIFY METHOD: What method or formula did the student attempt? Is it the correct method for the question asked? Check dimensional analysis and whether the approach would yield the right quantity with perfect execution. Evaluate the method independently from the values plugged into it.
+3. SCORE: Apply the rubric to what you transcribed and the method you identified. Award the highest score justified by the student's written work. When scoring, separate method credit from input credit: if the student applied the correct procedure to a wrong value carried from an earlier step, credit the procedure fully. A wrong input does not make the method wrong — only a wrong operation does.
 
 Scoring principles:
 - Actively rescue as much lawful partial credit as possible.
@@ -326,7 +326,7 @@ Respond with only the JSON object below. upstream_dependency and if_dependent_th
 }
 """
 
-GRADING_PROMPT_VERSION = "2026-04-20-structured-scaffold-v1"
+GRADING_PROMPT_VERSION = "2026-04-20-structured-scaffold-v2"
 DESCRIBE_ONLY_PROMPT_VERSION = "2026-04-11-describe-only-v2"
 DESCRIBE_ONLY_PROMPT = (
     "This is a page from a student's chemistry exam. The page may "
