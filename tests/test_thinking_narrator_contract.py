@@ -90,29 +90,37 @@ class ThinkingNarratorContract(unittest.TestCase):
             "Rechecking the same unit conversion.",
         )
 
-    def test_classify_score_against_band_distinguishes_ceiling_and_in_range(self):
+    def test_classify_score_against_band_keeps_truth_as_exact_hit_target(self):
         item = type(
             "Item",
             (),
             {
-                "truth_score": 1.5,
-                "professor_score": 1.5,
+                "truth_score": 1.0,
+                "professor_score": 1.0,
                 "acceptable_score_floor": 1.0,
                 "acceptable_score_ceiling": 1.5,
             },
         )()
 
+        exact = _classify_score_against_band(1.0, item)
         ceiling = _classify_score_against_band(1.5, item)
-        in_range = _classify_score_against_band(1.0, item)
         overshoot = _classify_score_against_band(2.0, item)
         undershoot = _classify_score_against_band(0.0, item)
 
-        self.assertEqual(ceiling.verdict_short, "ceiling")
-        self.assertEqual(in_range.verdict_short, "within_band")
+        self.assertEqual(
+            exact.verdict_short,
+            "match",
+            "truth_score should remain the exact-hit target even when an acceptable band exists",
+        )
+        self.assertEqual(
+            ceiling.verdict_short,
+            "within_band",
+            "acceptable-band ceiling hits that exceed truth_score are lawful-range calls, not exact matches",
+        )
         self.assertEqual(overshoot.verdict_short, "overshoot")
         self.assertEqual(undershoot.verdict_short, "undershoot")
+        self.assertTrue(exact.band_present)
         self.assertTrue(ceiling.band_present)
-        self.assertTrue(in_range.band_present)
 
     def test_after_action_keeps_exact_truth_match_even_when_band_excludes_truth(self):
         sink = _DummySink()

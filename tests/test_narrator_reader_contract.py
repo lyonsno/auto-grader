@@ -131,7 +131,7 @@ class NarratorReaderContract(unittest.TestCase):
         display.annotate_current_focus_item.return_value = False
         controller = HistoryScrollController(display)
 
-        self.assertFalse(controller.handle_key("a"))
+        self.assertTrue(controller.handle_key("a"))
         display.annotate_current_focus_item.assert_called_once_with()
 
     def test_reader_debug_writes_to_stderr(self):
@@ -1736,6 +1736,79 @@ class NarratorReaderContract(unittest.TestCase):
             _TEXTURE_BG_RGB,
             "top-center pixels inside the image box should come from the "
             "crop once the internal letterbox matte is removed",
+        )
+
+    def test_operator_annotated_kitty_preview_preserves_selected_edge_content(self):
+        display = self._make_display()
+        display._kitty_graphics_supported = True
+        display._inline_images_supported = False
+
+        width = 100
+        height = 400
+        rows = bytearray(width * height * 3)
+        for y in range(height):
+            for x in range(width):
+                if y < 40:
+                    rgb = (210, 40, 40)
+                elif y >= height - 40:
+                    rgb = (40, 80, 210)
+                else:
+                    rgb = (120, 140, 110)
+                off = (y * width + x) * 3
+                rows[off : off + 3] = bytes(rgb)
+        operator_png = fitz.Pixmap(
+            fitz.csRGB, width, height, bytes(rows), False
+        ).tobytes("png")
+
+        display.on_focus_preview(
+            operator_png,
+            label="15-blue/fr-11c",
+            source="operator_annotated",
+        )
+
+        self.assertIsNotNone(
+            display._pending_kitty_transmit,
+            "operator-annotated preview should still build a Kitty composite when Kitty is available",
+        )
+        comp = fitz.Pixmap(display._pending_kitty_transmit)
+
+        console_width = display._console.size.width
+        inner_budget = max(1, console_width - 2)
+        image_cw, image_ch = _compute_inline_image_cell_dimensions(
+            width,
+            height,
+            max_cell_height=narrator_reader._INLINE_IMAGE_CELL_HEIGHT,
+            max_cell_width=min(
+                narrator_reader._INLINE_IMAGE_MAX_CELL_WIDTH,
+                inner_budget,
+            ),
+            terminal_cell_aspect=display._terminal_cell_aspect,
+        )
+        image_left = (console_width - image_cw) // 2
+        crop_x0 = image_left * 8
+        crop_y0 = 1 * 16
+        crop_target_w = image_cw * 8
+        crop_target_h = image_ch * 16
+        probe_x = crop_x0 + crop_target_w // 2
+        top_probe_y = crop_y0 + 8
+        bottom_probe_y = crop_y0 + crop_target_h - 9
+
+        top_rgba = tuple(
+            comp.samples[(top_probe_y * comp.width + probe_x) * comp.n :][: comp.n]
+        )
+        bottom_rgba = tuple(
+            comp.samples[(bottom_probe_y * comp.width + probe_x) * comp.n :][: comp.n]
+        )
+
+        self.assertEqual(
+            top_rgba[:3],
+            (210, 40, 40),
+            "operator-annotated preview should preserve the selected top edge instead of clipping it away to cover-fill the box",
+        )
+        self.assertEqual(
+            bottom_rgba[:3],
+            (40, 80, 210),
+            "operator-annotated preview should preserve the selected bottom edge instead of clipping it away to cover-fill the box",
         )
 
     def test_focus_preview_kitty_composite_removes_internal_top_bottom_spacer_rows(self):
