@@ -5121,20 +5121,22 @@ def main() -> int:
     fd = os.open(str(fifo_path), os.O_RDONLY)
     fifo = os.fdopen(fd, "r", buffering=1)
 
-    # Install cbreak mode on stdin so the interactive scroll loop can
-    # read one byte at a time without waiting for Enter. Best-effort:
-    # if stdin is not a TTY (e.g. the reader is smoke-tested from a
-    # pipe), skip the terminal plumbing and the scroll thread below.
-    # Raw-mode state is restored in the `finally` block so the user's
-    # shell is never left in a broken state on exit.
-    stdin_fd: int | None = None
+    # Install cbreak mode on an explicit controlling TTY so the
+    # interactive scroll loop does not depend on inherited stdin
+    # plumbing from the spawned terminal runner. Best-effort: if
+    # /dev/tty is unavailable (e.g. the reader is smoke-tested from a
+    # pipe without a controlling terminal), skip the terminal plumbing
+    # and the scroll thread below. Raw-mode state is restored and the
+    # fd is closed in the `finally` block so the user's shell is never
+    # left in a broken state on exit.
+    tty_fd: int | None = None
     saved_termios = None
     try:
-        stdin_fd = sys.stdin.fileno()
-        saved_termios = termios.tcgetattr(stdin_fd)
-        tty.setcbreak(stdin_fd)
+        tty_fd = os.open("/dev/tty", os.O_RDONLY)
+        saved_termios = termios.tcgetattr(tty_fd)
+        tty.setcbreak(tty_fd)
     except (termios.error, OSError, ValueError):
-        stdin_fd = None
+        tty_fd = None
         saved_termios = None
 
     try:
@@ -5286,29 +5288,6 @@ def main() -> int:
             # destroys Kitty image compositor pixels between frames.
             suppress_live_erase(live)
 
-            def _wait_for_manual_close() -> int:
-                while True:
-                    if not display.should_animate():
-                        try:
-                            _live_update()
-                        except Exception:
-                            pass
-                    try:
-                        ready, _, _ = select.select([sys.stdin], [], [], _IDLE_POLL_S)
-                    except Exception:
-                        time.sleep(_IDLE_POLL_S)
-                        continue
-                    if not ready:
-                        continue
-                    try:
-                        line = sys.stdin.readline()
-                    except Exception:
-                        line = ""
-                    if line:
-                        animation_stop.set()
-                        anim_thread.join(timeout=0.5)
-                        return 0
-
             def _animation_tick():
                 while not animation_stop.is_set():
                     if display.should_animate() or _resize_pending.is_set():
@@ -5343,9 +5322,9 @@ def main() -> int:
 
             def _scroll_tick():
                 while not scroll_stop.is_set():
-                    if stdin_fd is None:
+                    if tty_fd is None:
                         return
-                    ch = _read_tty_key(stdin_fd)
+                    ch = _read_tty_key(tty_fd)
                     if not ch:
                         return
                     handled = scroll_controller.handle_key(ch)
@@ -5354,7 +5333,7 @@ def main() -> int:
                         return
 
             scroll_thread: threading.Thread | None = None
-            if stdin_fd is not None:
+            if tty_fd is not None:
                 scroll_thread = threading.Thread(
                     target=_scroll_tick,
                     name="paint-dry-scroll",
@@ -5437,7 +5416,7 @@ def main() -> int:
                         display.session_ended = True
                         display._session_ended_at = time.monotonic()
                         _live_update()
-                        if stdin_fd is None:
+                        if tty_fd is None:
                             session_exit.set()
                         session_exit.wait()
                         animation_stop.set()
@@ -5460,9 +5439,14 @@ def main() -> int:
             fifo.close()
         except Exception:
             pass
-        if stdin_fd is not None and saved_termios is not None:
+        if tty_fd is not None and saved_termios is not None:
             try:
-                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_termios)
+                termios.tcsetattr(tty_fd, termios.TCSADRAIN, saved_termios)
+            except Exception:
+                pass
+        if tty_fd is not None:
+            try:
+                os.close(tty_fd)
             except Exception:
                 pass
 
