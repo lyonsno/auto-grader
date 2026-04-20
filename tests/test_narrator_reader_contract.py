@@ -1724,14 +1724,14 @@ class NarratorReaderContract(unittest.TestCase):
         display._kitty_graphics_supported = True
         display._inline_images_supported = False
 
-        width = 400
-        height = 100
+        width = 100
+        height = 400
         rows = bytearray(width * height * 3)
         for y in range(height):
             for x in range(width):
-                if x < 40:
+                if y < 40:
                     rgb = (210, 40, 40)
-                elif x >= width - 40:
+                elif y >= height - 40:
                     rgb = (40, 80, 210)
                 else:
                     rgb = (120, 140, 110)
@@ -1767,26 +1767,26 @@ class NarratorReaderContract(unittest.TestCase):
         crop_y0 = 1 * 16
         crop_target_w = image_cw * 8
         crop_target_h = image_ch * 16
-        probe_y = crop_y0 + crop_target_h // 2
-        left_probe_x = crop_x0 + 8
-        right_probe_x = crop_x0 + crop_target_w - 9
+        probe_x = crop_x0 + crop_target_w // 2
+        top_probe_y = crop_y0 + 8
+        bottom_probe_y = crop_y0 + crop_target_h - 9
 
-        left_rgba = tuple(
-            comp.samples[(probe_y * comp.width + left_probe_x) * comp.n :][: comp.n]
+        top_rgba = tuple(
+            comp.samples[(top_probe_y * comp.width + probe_x) * comp.n :][: comp.n]
         )
-        right_rgba = tuple(
-            comp.samples[(probe_y * comp.width + right_probe_x) * comp.n :][: comp.n]
+        bottom_rgba = tuple(
+            comp.samples[(bottom_probe_y * comp.width + probe_x) * comp.n :][: comp.n]
         )
 
         self.assertEqual(
-            left_rgba[:3],
+            top_rgba[:3],
             (210, 40, 40),
-            "operator-annotated preview should preserve the selected left edge instead of clipping it away to cover-fill the box",
+            "operator-annotated preview should preserve the selected top edge instead of clipping it away to cover-fill the box",
         )
         self.assertEqual(
-            right_rgba[:3],
+            bottom_rgba[:3],
             (40, 80, 210),
-            "operator-annotated preview should preserve the selected right edge instead of clipping it away to cover-fill the box",
+            "operator-annotated preview should preserve the selected bottom edge instead of clipping it away to cover-fill the box",
         )
 
     def test_focus_preview_kitty_composite_removes_internal_top_bottom_spacer_rows(self):
