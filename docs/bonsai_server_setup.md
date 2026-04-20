@@ -11,10 +11,13 @@ narrator model because it's cheap enough to run alongside the
 much-larger grader model on the same machine without resource
 contention.
 
-The narrator code lives in `auto_grader/thinking_narrator.py` and
-the smoke runner currently defaults to talking to the bonsai server at
-`http://nlm2pr.local:8002`. On this box, the canonical local surface is
-the equivalent loopback URL `http://127.0.0.1:8002`.
+The narrator code lives in `auto_grader/thinking_narrator.py`. The
+runtime default is the durable mDNS address `http://nlm2pr.local:8002`,
+and that is the address to prefer in normal use because it follows the
+intended Bonsai machine instead of depending on which box happens to be
+running the smoke command. On this box, `http://127.0.0.1:8002` is the
+explicit local override when you have intentionally launched Bonsai on
+the same machine and want to bypass the network hop.
 
 The operationally reliable narrator model id on this box is the full
 snapshot path returned by `/v1/models`, not the old short alias:
@@ -23,7 +26,10 @@ snapshot path returned by `/v1/models`, not the old short alias:
 /Users/noahlyons/.cache/huggingface/hub/models--prism-ml--bonsai-8b-mlx-1bit/snapshots/d95a01f5e78184d278e21c4cfd57ff417a60ae22
 ```
 
-Be explicit on the smoke command line when in doubt:
+In ordinary use you should be able to omit `--narrator-url` and let the
+default `http://nlm2pr.local:8002` stand. Be explicit only when you are
+overriding to a different narrator surface, most commonly the same-box
+loopback during local bring-up:
 
 ```sh
 uv run python scripts/smoke_vlm.py \
@@ -39,16 +45,19 @@ There are **two OMLX servers** in play during a typical eval:
 
 | server                       | port             | model(s)                       | role           |
 |------------------------------|------------------|--------------------------------|----------------|
-| local bonsai                 | `127.0.0.1:8002` | full snapshot-path model id from `/v1/models` | live narrator  |
+| default bonsai target        | `nlm2pr.local:8002` | full snapshot-path model id from `/v1/models` | live narrator  |
+| same-box bonsai override     | `127.0.0.1:8002` | same model, only when you intentionally launched Bonsai locally | live narrator  |
 | remote grader (the big box)  | `macbook-pro-2.local:8001` | `qwen3p5-35B-A3B`, `gemma-4-26b-a4b-it-bf16`, `Qwen3p5-122B-A10B-mlx-mixedp`, `step-3p5-flash-*`, etc. | the actual grader |
 
 They no longer share a port number on this box, which is deliberate:
 the narrator stays on its own `8002` surface so it does not collide
 with the main grader server on `8001`. The narrator client uses
-`--narrator-url` (current default `http://nlm2pr.local:8002` in
+`--narrator-url` (default `http://nlm2pr.local:8002` in
 `scripts/smoke_vlm.py`); the grader client uses `--base-url` (default
 `http://macbook-pro-2.local:8001`, so the grader URL follows the big
-box across DHCP renewals).
+box across DHCP renewals). Reach for `127.0.0.1:8002` only when you are
+deliberately overriding that narrator default to a same-box server you
+just started yourself.
 
 ## Why bonsai needs the PRISM-patched mlx-openai-server, not stock OMLX
 

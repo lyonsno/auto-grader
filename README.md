@@ -642,11 +642,14 @@ local servers — one for the actual grader model (typically Qwen3.5 or
 Gemma-4 on the big-box machine, mDNS-resolved at
 `http://macbook-pro-2.local:8001`), and one for the "Project Paint Dry"
 narrator (Bonsai-8B-mlx-1bit on the local machine, served via a
-PRISM-patched `mlx-openai-server` on its own narrator surface, typically
-`http://nlm2pr.local:8002` when the remote Bonsai box is in use or
-`http://127.0.0.1:8002` on the local working box). They do not share a
-port, and the narrator stays separate from the main grader server on
-purpose.
+PRISM-patched `mlx-openai-server` on its own narrator surface). The
+durable default narrator address is `http://nlm2pr.local:8002`; that
+mDNS name is what the runtime uses so the narrator follows the correct
+machine instead of depending on which box you happen to be sitting on.
+Use `http://127.0.0.1:8002` only as an explicit local-box override when
+you have intentionally launched Bonsai on the same machine running the
+smoke. They do not share a port, and the narrator stays separate from
+the main grader server on purpose.
 
 Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't
 support `bits=1` quantization. Setup, launch command, verification,
