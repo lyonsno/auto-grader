@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from auto_grader.eval_harness import EvalItem, FocusRegion, Prediction
