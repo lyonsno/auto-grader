@@ -332,6 +332,35 @@ class FocusPreviewContract(unittest.TestCase):
             "operator-drawn boxes should preview the region the operator actually selected, not a re-tightened content island",
         )
 
+    def test_operator_annotated_preview_keeps_paper_field_opaque(self):
+        from auto_grader.focus_preview import render_focus_preview
+
+        page_png = _content_box_png(
+            1600,
+            1200,
+            bg_rgb=(231, 221, 199),
+            box_rgb=(40, 35, 28),
+            box_x=600,
+            box_y=420,
+            box_w=400,
+            box_h=260,
+        )
+        focus = FocusRegion(
+            page=1,
+            x=0.0,
+            y=0.0,
+            width=1.0,
+            height=1.0,
+            source="operator_annotated",
+        )
+        preview = render_focus_preview(page_png, focus)
+
+        self.assertEqual(
+            _pixel_rgba_at(preview, 0, 0)[3],
+            255,
+            "operator-drawn previews should preserve the selected paper field so the rectangle the operator chose still reads as a visible crop",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

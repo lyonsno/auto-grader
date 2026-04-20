@@ -39,7 +39,9 @@ def render_focus_preview(page_png: bytes, focus_region: FocusRegion) -> bytes:
         )
     bg_rgb = _average_corner_rgb(crop_rgb, crop_width, crop_height)
     max_bg_diff = _max_background_diff(crop_rgb, crop_width, crop_height, bg_rgb)
-    use_transparent_background = max_bg_diff >= 72
+    use_transparent_background = (
+        focus_region.source != "operator_annotated" and max_bg_diff >= 72
+    )
     out = bytearray(crop_width * crop_height * 4)
 
     for y in range(crop_height):
