@@ -3183,19 +3183,12 @@ class PaintDryDisplay:
         self._pending_kitty_transmit: bytes | None = None
         self._pending_kitty_image_id: int | None = None
         self._next_kitty_image_id: int = _KITTY_IMAGE_ID
-        # Query the terminal for its real cell pixel dimensions once
-        # at init. Used by the Kitty renderer to compute correct
-        # cell boxes for images — hardcoding this is brittle across
-        # different fonts, terminal window sizes, and HiDPI settings,
-        # and a bad value produces visible letterbox. If the query
-        # fails (not a tty, terminal doesn't support CSI 16t,
-        # timeout), fall back to a sane default constant.
-        queried_aspect = _query_terminal_cell_aspect()
-        self._terminal_cell_aspect: float = (
-            queried_aspect
-            if queried_aspect is not None
-            else _DEFAULT_TERMINAL_CELL_ASPECT
-        )
+        # Do not probe stdin for terminal cell aspect during startup.
+        # The live history controls share that input path; a startup-time
+        # terminal query is the wrong tradeoff if it can wedge or poison
+        # interactive scrolling. Use the stable default here and leave any
+        # future terminal query work to a dedicated, better-tested path.
+        self._terminal_cell_aspect: float = _DEFAULT_TERMINAL_CELL_ASPECT
         # When True, render() shows the post-session footer and the
         # final frame stays static while waiting for Enter. This keeps
         # the non-Crispy end-of-session close affordance intact on the
