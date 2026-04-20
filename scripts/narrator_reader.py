@@ -4784,15 +4784,25 @@ class PaintDryDisplay:
                     str(self.current_focus_regions_path),
                 ],
                 check=True,
+                capture_output=True,
+                text=True,
             )
         except Exception as exc:
             self.status_line = (
                 f"Annotate current item failed: annotator subprocess failed for "
                 f"{exam_id}/{question_id}."
             )
+            detail = ""
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr_text = (exc.stderr or "").strip()
+                stdout_text = (exc.stdout or "").strip()
+                if stderr_text:
+                    detail = f" stderr={stderr_text!r}"
+                elif stdout_text:
+                    detail = f" stdout={stdout_text!r}"
             _reader_debug(
                 f"annotate-current-item subprocess failed for "
-                f"{exam_id}/{question_id}: {exc.__class__.__name__}: {exc}"
+                f"{exam_id}/{question_id}: {exc.__class__.__name__}: {exc}{detail}"
             )
             return False
 
