@@ -263,11 +263,13 @@ class TestWezTermResolution(unittest.TestCase):
             )
             sink.start()
             sink.write_topic(
-                "31s · Grader: 0/4. Prof: 0/4.",
-                verdict="match",
-                grader_score=0.0,
-                truth_score=0.0,
-                max_points=4.0,
+                "31s · Grader: 1/3. Prof: 1.5/3. · Within acceptable range, below ceiling.",
+                verdict="within_band",
+                grader_score=1.0,
+                truth_score=1.5,
+                max_points=3.0,
+                acceptable_score_floor=1.0,
+                acceptable_score_ceiling=1.5,
             )
             sink.close()
 
@@ -277,10 +279,12 @@ class TestWezTermResolution(unittest.TestCase):
             ]
 
         topic = next(event for event in events if event["type"] == "topic")
-        self.assertEqual(topic["verdict"], "match")
-        self.assertEqual(topic["grader_score"], 0.0)
-        self.assertEqual(topic["truth_score"], 0.0)
-        self.assertEqual(topic["max_points"], 4.0)
+        self.assertEqual(topic["verdict"], "within_band")
+        self.assertEqual(topic["grader_score"], 1.0)
+        self.assertEqual(topic["truth_score"], 1.5)
+        self.assertEqual(topic["max_points"], 3.0)
+        self.assertEqual(topic["acceptable_score_floor"], 1.0)
+        self.assertEqual(topic["acceptable_score_ceiling"], 1.5)
 
     def test_fifo_writer_drop_persists_diagnostic_in_log_dir(self):
         class _BrokenWriter:

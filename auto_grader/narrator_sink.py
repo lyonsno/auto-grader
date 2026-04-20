@@ -190,15 +190,17 @@ class NarratorSink:
         grader_score: float | None = None,
         truth_score: float | None = None,
         max_points: float | None = None,
+        acceptable_score_floor: float | None = None,
+        acceptable_score_ceiling: float | None = None,
     ) -> None:
         """Write the per-item collapsed 'Thought for Xs · topic' line.
 
-        verdict is one of "match", "overshoot", "undershoot", or None
-        (when unknown). The reader uses it to color the topic line —
-        cool sage for match, warm coral for overshoot, warm amber for
-        undershoot, dusty plum for unknown. Optional structured scoring
-        metadata lets the reader maintain a running scoreboard without
-        reverse-engineering numbers back out of the prose after-action line.
+        verdict is one of "ceiling", "within_band", "match",
+        "overshoot", "undershoot", or None (when unknown). The reader
+        uses it to color the topic line and choose the right lawful-band
+        tally bucket. Optional structured scoring metadata lets the
+        reader maintain a running scoreboard without reverse-engineering
+        numbers back out of the prose after-action line.
         """
         with self._lock:
             msg = {"type": "topic", "text": text}
@@ -210,6 +212,10 @@ class NarratorSink:
                 msg["truth_score"] = truth_score
             if max_points is not None:
                 msg["max_points"] = max_points
+            if acceptable_score_floor is not None:
+                msg["acceptable_score_floor"] = acceptable_score_floor
+            if acceptable_score_ceiling is not None:
+                msg["acceptable_score_ceiling"] = acceptable_score_ceiling
             self._emit(msg)
             if self._txt_file is not None:
                 self._txt_file.write(f"  -> {text}\n")
