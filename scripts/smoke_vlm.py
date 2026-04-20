@@ -34,6 +34,7 @@ from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import (
     ThinkingNarrator,
     _DEFAULT_NARRATOR_MODEL,
+    _classify_score_against_band,
 )
 from auto_grader.vlm_inference import (
     DESCRIBE_ONLY_PROMPT,
@@ -133,8 +134,21 @@ def _progress(i: int, total: int, item, pred):
     # Zilch Reaper (forward lane).
     if pred.truncated:
         mark = "—"
+        range_note = ""
     else:
-        mark = "=" if pred.model_score == truth else "X"
+        classification = _classify_score_against_band(pred.model_score, item)
+        if classification.verdict_short == "match":
+            mark = "="
+            range_note = ""
+        elif classification.verdict_short == "within_band":
+            mark = "~"
+            range_note = (
+                f" band={classification.floor:.1f}-{classification.ceiling:.1f}/"
+                f"{item.max_points:.1f} (lawful in range)"
+            )
+        else:
+            mark = "X"
+            range_note = ""
     # Display the truth baseline; when a correction is present, also show
     # the historical professor_score in parens so operators can see both
     # the original prof mark and the corrected value at a glance.
@@ -152,7 +166,7 @@ def _progress(i: int, total: int, item, pred):
         f"  [{i}/{total}] {item.exam_id}/{item.question_id} "
         f"({item.answer_type}) "
         f"{baseline} "
-        f"{model_str} [{mark}]"
+        f"{model_str}{range_note} [{mark}]"
     )
 
 

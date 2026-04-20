@@ -490,6 +490,64 @@ class SmokeVlmContract(unittest.TestCase):
             "live mark must not reward the model for matching a known prof error",
         )
 
+    def test_progress_marks_within_band_as_lawful_range_not_miss(self):
+        """Within-band scores should stop showing up as plain misses.
+
+        Exact truth is still better, but when an acceptable band is
+        present the terminal progress line should make lawful in-range
+        calls visible as such instead of lumping them into raw `X`.
+        """
+        module = _load_smoke_vlm()
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            answer_type="numeric",
+            page=3,
+            professor_score=1.5,
+            max_points=3.0,
+            professor_mark="partial",
+            student_answer="-6.17 x 10^14 s^-1",
+            notes="setup correct but errors in execution",
+            acceptable_score_floor=1.0,
+            acceptable_score_ceiling=1.5,
+            acceptable_score_reason=(
+                "Setup credit is discipline-faithful, but full credit is not."
+            ),
+        )
+        pred_within_band = Prediction(
+            exam_id="15-blue",
+            question_id="fr-10a",
+            model_score=1.0,
+            model_confidence=0.85,
+            model_reasoning="preserved setup credit but docked the bad substitution",
+            model_read="-6.17 x 10^14 s^-1",
+            raw_assistant='{"model_score": 1}',
+            raw_reasoning="",
+            upstream_dependency="none",
+            if_dependent_then_consistent=None,
+        )
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            module._progress(1, 1, item, pred_within_band)
+        output = stdout.getvalue()
+
+        self.assertIn(
+            "[~]",
+            output,
+            "a lawful within-band score should render as an in-range mark, not a miss",
+        )
+        self.assertIn(
+            "band=1.0-1.5/3.0",
+            output,
+            "terminal progress should surface the acceptable band explicitly for operator telemetry",
+        )
+        self.assertNotIn(
+            "[X]",
+            output,
+            "within-band calls should no longer be indistinguishable from true misses",
+        )
+
     def test_prediction_record_carries_corrected_score_and_reason(self):
         """predictions.jsonl must be self-contained for offline analysis.
 
