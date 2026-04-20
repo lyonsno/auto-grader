@@ -75,6 +75,23 @@ class NarratorReaderContract(unittest.TestCase):
             "Project Paint Dry launches",
         )
 
+    def test_display_init_does_not_probe_terminal_stdin_for_cell_aspect(self):
+        import scripts.narrator_reader as narrator_reader
+
+        with mock.patch.object(
+            narrator_reader,
+            "_query_terminal_cell_aspect",
+            side_effect=AssertionError("startup must not touch interactive stdin"),
+        ):
+            display = narrator_reader.PaintDryDisplay()
+
+        self.assertEqual(
+            display._terminal_cell_aspect,
+            narrator_reader._DEFAULT_TERMINAL_CELL_ASPECT,
+            "history controls share stdin with the live reader, so startup "
+            "must not run terminal queries through that same input path",
+        )
+
     class _TTYBuffer(StringIO):
         def isatty(self) -> bool:
             return True
