@@ -69,6 +69,30 @@ class TestWezTermResolution(unittest.TestCase):
         self.assertIn(".venv/bin/python", script)
         self.assertNotIn("uv run python", script)
 
+    def test_spawn_runner_reclaims_tty_stdin_for_history_controls(self):
+        sink = NarratorSink()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fifo = Path(tmpdir) / "narrator.fifo"
+            fifo.touch()
+
+            with mock.patch.object(
+                sink,
+                "_resolve_wezterm_executable",
+                return_value="/Applications/WezTerm.app/Contents/MacOS/wezterm",
+            ), mock.patch("subprocess.run"):
+                sink._spawn_terminal_window(fifo)
+
+            runner = fifo.parent / "run.sh"
+            script = runner.read_text()
+
+        self.assertIn(
+            "exec </dev/tty",
+            script,
+            "spawned Paint Dry windows must reattach stdin to the real terminal "
+            "so k/j/u/d/0 history controls still work even if the spawn path "
+            "hands the runner a non-tty stdin",
+        )
+
     def test_spawn_runner_clears_inline_preview_diagnostic_flag(self):
         sink = NarratorSink()
         with tempfile.TemporaryDirectory() as tmpdir:

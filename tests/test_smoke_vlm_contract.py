@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 from auto_grader.eval_harness import EvalItem, FocusRegion, Prediction
@@ -310,6 +309,65 @@ class SmokeVlmContract(unittest.TestCase):
             run_dir,
             Path.home() / "dev" / "auto-grader-runs" / "20260410-213045-qwen3p5-35B-A3B",
         )
+
+    def test_build_manifest_persists_manifest_json_in_run_dir(self) -> None:
+        parser = smoke_vlm._build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--model",
+                "qwen3p5-35B-A3B",
+                "--narrate",
+                "--narrator-url",
+                "http://nlm2pr.local:8002",
+                "--narrator-model",
+                "bonsai-test",
+            ]
+        )
+        config = smoke_vlm.ServerConfig(
+            base_url="http://macbook-pro-2.local:8001",
+            api_key="",
+            model="qwen3p5-35B-A3B",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            smoke_vlm,
+            "_git_output",
+            side_effect=["deadbeef", "cc/test-branch"],
+        ), mock.patch.object(
+            smoke_vlm,
+            "grading_prompt_metadata",
+            return_value={"version": "grading-v1", "content_hash": "abc123"},
+        ), mock.patch.object(
+            smoke_vlm,
+            "_iso_now",
+            return_value="2026-04-19T18:00:00",
+        ):
+            run_dir = Path(tmpdir)
+            manifest = smoke_vlm._build_manifest(
+                run_id="20260419-180000-qwen3p5-35B-A3B",
+                run_dir=run_dir,
+                config=config,
+                args=args,
+                test_set_id="tricky++-v1",
+                item_count=15,
+            )
+
+            manifest_path = run_dir / "manifest.json"
+            self.assertEqual(manifest.path, manifest_path)
+            self.assertTrue(
+                manifest_path.exists(),
+                "_build_manifest must leave a durable manifest.json in the run dir",
+            )
+            data = json.loads(manifest_path.read_text())
+
+        self.assertEqual(data["status"], "running")
+        self.assertEqual(data["run_dir"], str(run_dir))
+        self.assertEqual(data["git_commit"], "deadbeef")
+        self.assertEqual(data["git_branch"], "cc/test-branch")
+        self.assertEqual(data["prompt_version"], "grading-v1")
+        self.assertEqual(data["item_count"], 15)
+        self.assertEqual(data["narrator_url"], "http://nlm2pr.local:8002")
+        self.assertEqual(data["narrator_model"], "bonsai-test")
 
     def test_progress_marks_match_against_truth_score_not_professor_score(self):
         """_progress must compare model_score against truth_score, not professor_score.
