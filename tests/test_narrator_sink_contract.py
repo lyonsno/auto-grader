@@ -429,6 +429,65 @@ class TestWezTermResolution(unittest.TestCase):
         review = next(event for event in events if event["type"] == "review_marker")
         self.assertEqual(review["text"], "Human review warranted.")
 
+    def test_write_read_emits_read_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_read("Final mark likely intends a corrected 1.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        read = next(event for event in events if event["type"] == "read")
+        self.assertEqual(read["text"], "Final mark likely intends a corrected 1.")
+
+    def test_write_salvage_emits_salvage_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_salvage("The stoichiometric setup is still worth full method credit.")
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        salvage = next(event for event in events if event["type"] == "salvage")
+        self.assertEqual(
+            salvage["text"],
+            "The stoichiometric setup is still worth full method credit.",
+        )
+
+    def test_write_hinge_emits_hinge_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_hinge(
+                "The score depends on whether the crossed-out digit outweighs the coherent setup."
+            )
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        hinge = next(event for event in events if event["type"] == "hinge")
+        self.assertEqual(
+            hinge["text"],
+            "The score depends on whether the crossed-out digit outweighs the coherent setup.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

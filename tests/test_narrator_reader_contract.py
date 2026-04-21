@@ -2413,6 +2413,37 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_dossier_rows_render_directly_under_topic_before_checkpoints(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(
+            ("checkpoint", "Core issue: ozone drawing misses resonance.", None)
+        )
+        display.history.append(("topic", "topic line", "match"))
+        display.on_read("Final mark could be 1 or 2; context leans 1.")
+        display.on_salvage("Orbital-box method still supports one unpaired electron.")
+        display.on_hinge(
+            "The score turns on whether the glyph outweighs the coherent surrounding work."
+        )
+
+        entries = display._build_display_entries()
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("topic", "topic line"),
+                ("read", "Final mark could be 1 or 2; context leans 1."),
+                ("salvage", "Orbital-box method still supports one unpaired electron."),
+                (
+                    "hinge",
+                    "The score turns on whether the glyph outweighs the coherent surrounding work.",
+                ),
+                ("checkpoint", "Core issue: ozone drawing misses resonance."),
+            ],
+        )
+
     def test_display_no_longer_exposes_scrollback_snapshot_affordance(self):
         display = self._make_display()
         self.assertFalse(

@@ -17,6 +17,7 @@ class _DummySink:
         self.commits = 0
         self.drops: list[tuple[str, str]] = []
         self.topics: list[dict[str, object]] = []
+        self.structured_rows: list[tuple[str, str]] = []
 
     def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
@@ -38,6 +39,15 @@ class _DummySink:
 
     def write_review_marker(self, text: str) -> None:
         return None
+
+    def write_read(self, text: str) -> None:
+        self.structured_rows.append(("read", text))
+
+    def write_salvage(self, text: str) -> None:
+        self.structured_rows.append(("salvage", text))
+
+    def write_hinge(self, text: str) -> None:
+        self.structured_rows.append(("hinge", text))
 
 
 class _RetryNarrator(ThinkingNarrator):
@@ -64,6 +74,31 @@ class _AfterActionNarrator(ThinkingNarrator):
 
     def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
         return "Grader: 1 (exact truth). Prof: 1 (same score)."
+
+    def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
+        return None
+
+    def _schedule_idle_legibility_if_needed(self) -> None:  # type: ignore[override]
+        return None
+
+
+class _DossierAfterActionNarrator(ThinkingNarrator):
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        if "after-action line" in system:
+            return "Grader: 2 (exact truth). Prof: 2 (same score)."
+        if "background dossier" in system:
+            return json.dumps(
+                {
+                    "read": "Final mark could be a corrected 1 or a messy 2; context leans 1.",
+                    "salvage": "The student's setup still supports the intended chemistry method.",
+                    "hinge": "The score turns on whether the final handwritten glyph outweighs the surrounding coherent work.",
+                }
+            )
+        return ""
 
     def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
         return None
@@ -184,6 +219,94 @@ class ThinkingNarratorContract(unittest.TestCase):
         )
         self.assertEqual(sink.topics[0]["acceptable_score_floor"], 1.5)
         self.assertEqual(sink.topics[0]["acceptable_score_ceiling"], 2.0)
+
+    def test_after_action_enqueues_and_flushes_background_dossier_for_interesting_item(self):
+        sink = _DummySink()
+        narrator = _DossierAfterActionNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-11c",
+                "answer_type": "electron_config",
+                "max_points": 2.0,
+                "student_answer": "1",
+                "professor_score": 2.0,
+                "truth_score": 2.0,
+                "professor_mark": "correct",
+                "notes": "glyph ambiguity",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 2.0,
+                "model_read": "1",
+                "model_reasoning": (
+                    "The final glyph remains ambiguous between 1 and 2, "
+                    "but the surrounding chemistry work supports 1."
+                ),
+                "score_basis": "Accepted the coherent orbital-box work despite the ambiguous final digit.",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(95.0, prediction, item, template_question=None)
+
+        self.assertEqual(len(sink.topics), 1)
+        self.assertEqual(len(narrator._legibility_jobs), 1)
+        self.assertTrue(narrator._flush_idle_legibility_once())
+        self.assertEqual(
+            sink.structured_rows,
+            [
+                ("read", "Final mark could be a corrected 1 or a messy 2; context leans 1."),
+                ("salvage", "The student's setup still supports the intended chemistry method."),
+                ("hinge", "The score turns on whether the final handwritten glyph outweighs the surrounding coherent work."),
+            ],
+        )
+
+    def test_after_action_skips_background_dossier_for_quick_stable_item(self):
+        sink = _DummySink()
+        narrator = _DossierAfterActionNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-10a",
+                "answer_type": "numeric",
+                "max_points": 1.0,
+                "student_answer": "8.225e14",
+                "professor_score": 1.0,
+                "truth_score": 1.0,
+                "professor_mark": "correct",
+                "notes": "clean match",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 1.0,
+                "model_read": "8.225e14",
+                "model_reasoning": "The student's frequency calculation matches the expected value.",
+                "score_basis": "Correct setup, arithmetic, and final answer.",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(24.0, prediction, item, template_question=None)
+
+        self.assertEqual(len(sink.topics), 1)
+        self.assertEqual(narrator._legibility_jobs, [])
+        self.assertFalse(narrator._flush_idle_legibility_once())
+        self.assertEqual(sink.structured_rows, [])
 
     def test_qwen36_sync_narrator_requests_disable_thinking(self):
         sink = _DummySink()

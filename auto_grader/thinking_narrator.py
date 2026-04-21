@@ -246,6 +246,17 @@ _DEDUP_GROOMING_THRESHOLD = 2
 _PLAYBACK_CHUNK_DELAY_S = 0.03
 _IDLE_LEGIBILITY_DELAY_S = 1.0
 _MAX_LEGIBILITY_EXTRA_ROWS = 2
+_DOSSIER_ELAPSED_SECONDS = 60.0
+_DOSSIER_LONG_ELAPSED_SECONDS = 120.0
+_DOSSIER_DEDUPE_STREAK_THRESHOLD = 2
+_DOSSIER_REASONING_HINT_RE = re.compile(
+    r"\b("
+    r"ambigu(?:ity|ous)?|uncertain|unclear|illegible|handwriting|glyph|smudge|"
+    r"cross(?:ed)?[- ]out|scratch|looks like|could be|lean(?:s|ing)? toward|"
+    r"salvage|partial credit|charit(?:y|able)"
+    r")\b",
+    re.IGNORECASE,
+)
 
 # Stop words filtered out before computing similarity. Without this, two
 # lines about completely different chemistry topics still register ~50%
@@ -657,6 +668,8 @@ class ThinkingNarrator:
         self._prior_checkpoints: list[str] = []
         self._accepted_since_checkpoint = 0
         self._dedupe_streak = 0
+        self._item_token_count = 0
+        self._item_max_dedupe_streak = 0
         self._legibility_jobs: list[dict] = []
         self._idle_legibility_pending = False
         self._idle_legibility_generation = 0
@@ -713,6 +726,8 @@ class ThinkingNarrator:
             self._prior_checkpoints = []
             self._accepted_since_checkpoint = 0
             self._dedupe_streak = 0
+            self._item_token_count = 0
+            self._item_max_dedupe_streak = 0
             self._legibility_jobs = []
             self._idle_legibility_pending = False
             self._idle_legibility_generation += 1
@@ -1150,6 +1165,25 @@ class ThinkingNarrator:
                 presence_penalty=0.0,
                 timeout=30,
             ).strip()
+        elif job["kind"] == "generated_dossier":
+            text = self._chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You write a compact background dossier for one chemistry-grading item. "
+                            "Return ONLY a valid JSON object with string fields "
+                            '"read", "salvage", and "hinge".'
+                        ),
+                    },
+                    {"role": "user", "content": job["prompt"]},
+                ],
+                max_tokens=220,
+                temperature=0.6,
+                repetition_penalty=1.0,
+                presence_penalty=0.0,
+                timeout=30,
+            ).strip()
         else:
             text = str(job["text"]).strip()
 
@@ -1159,6 +1193,9 @@ class ThinkingNarrator:
         with self._lock:
             if current_generation != self._idle_legibility_generation:
                 return False
+
+        if job["kind"] == "generated_dossier":
+            return self._write_dossier_rows(text)
 
         writer = getattr(self._sink, f"write_{job['row_type']}", None)
         if writer is None:
@@ -1190,6 +1227,130 @@ class ThinkingNarrator:
             payload["prompt"] = prompt
         with self._lock:
             self._legibility_jobs.append(payload)
+
+    def _enqueue_dossier_job(self, prompt: str) -> None:
+        if not prompt.strip():
+            return
+        with self._lock:
+            self._legibility_jobs.append(
+                {"kind": "generated_dossier", "row_type": "dossier", "prompt": prompt}
+            )
+
+    @staticmethod
+    def _clean_json_response(text: str) -> str:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+        return cleaned.strip()
+
+    def _write_dossier_rows(self, text: str) -> bool:
+        try:
+            payload = json.loads(self._clean_json_response(text))
+        except json.JSONDecodeError:
+            drop_writer = getattr(self._sink, "write_drop", None)
+            if drop_writer is not None:
+                drop_writer("dossier-json", text)
+            logger.warning("Background dossier was not valid JSON; dropping")
+            return False
+
+        emitted = False
+        for row_type in ("read", "salvage", "hinge"):
+            body = str(payload.get(row_type, "")).strip()
+            if not body:
+                continue
+            writer = getattr(self._sink, f"write_{row_type}", None)
+            if writer is None:
+                drop_writer = getattr(self._sink, "write_drop", None)
+                if drop_writer is not None:
+                    drop_writer("missing-sink-row", f"{row_type}: {body}")
+                logger.warning(
+                    "Narrator sink missing writer for dossier row type %s; dropping row",
+                    row_type,
+                )
+                continue
+            writer(body)
+            emitted = True
+        return emitted
+
+    @staticmethod
+    def _reasoning_mentions_dossier_hints(prediction: Any) -> bool:
+        reasoning = str(getattr(prediction, "model_reasoning", "")).strip()
+        score_basis = str(getattr(prediction, "score_basis", "")).strip()
+        combined = "\n".join(part for part in (reasoning, score_basis) if part)
+        if not combined:
+            return False
+        return _DOSSIER_REASONING_HINT_RE.search(combined) is not None
+
+    def _should_enqueue_dossier(
+        self,
+        elapsed: float,
+        prediction: Any,
+        item: Any,
+    ) -> bool:
+        if getattr(prediction, "truncated", False):
+            return False
+        if elapsed >= _DOSSIER_LONG_ELAPSED_SECONDS:
+            return True
+
+        truth_score = getattr(item, "truth_score", item.professor_score)
+        score_disagreement = abs(prediction.model_score - truth_score) > 1e-9
+        partial_credit = 0.0 < prediction.model_score < item.max_points
+
+        with self._lock:
+            max_dedupe_streak = self._item_max_dedupe_streak
+
+        if max_dedupe_streak >= _DOSSIER_DEDUPE_STREAK_THRESHOLD:
+            return True
+        if elapsed < _DOSSIER_ELAPSED_SECONDS:
+            return False
+        return (
+            self._reasoning_mentions_dossier_hints(prediction)
+            or score_disagreement
+            or partial_credit
+        )
+
+    def _build_dossier_prompt(
+        self,
+        *,
+        elapsed: float,
+        prediction: Any,
+        item: Any,
+    ) -> str:
+        truth_score = getattr(item, "truth_score", item.professor_score)
+        with self._lock:
+            item_token_count = self._item_token_count
+            max_dedupe_streak = self._item_max_dedupe_streak
+
+        return (
+            "The item is finished. Build a compact trailing dossier for the operator.\n\n"
+            f"Item: {item.exam_id}/{item.question_id}\n"
+            f"Type: {item.answer_type}\n"
+            f"Elapsed seconds: {elapsed:.1f}\n"
+            f"Approx narrator token count observed: {item_token_count}\n"
+            f"Max dedupe streak observed: {max_dedupe_streak}\n"
+            f"Student answer: {item.student_answer}\n"
+            f"Model read: {getattr(prediction, 'model_read', '')}\n"
+            f"Model score: {prediction.model_score}/{item.max_points}\n"
+            f"Truth score: {truth_score}/{item.max_points}\n"
+            f"Professor mark: {item.professor_mark}\n"
+            f"Professor note: {item.notes}\n"
+            f"Score basis: {getattr(prediction, 'score_basis', '')}\n"
+            f"Model reasoning: {getattr(prediction, 'model_reasoning', '')}\n\n"
+            "Return JSON only with this shape:\n"
+            '{\n'
+            '  "read": "<what the student mark/work most plausibly seems to be saying; mention ambiguity if real>",\n'
+            '  "salvage": "<what reasoning, setup, or method is still lawfully salvageable>",\n'
+            '  "hinge": "<the actual unresolved issue that decides interpretation or score>"\n'
+            "}\n\n"
+            "Rules:\n"
+            "- Keep each value to one compact sentence.\n"
+            "- Ground every value in the specific item.\n"
+            "- If handwriting is not the issue, say what the student work appears to show instead.\n"
+            "- If little is salvageable, say that plainly rather than inventing credit.\n"
+            "- The hinge should name the contested deciding issue, not just repeat the score.\n"
+            "- No markdown, no prose outside the JSON object."
+        )
 
     @staticmethod
     def _review_needed_text(prediction: Any) -> str | None:
@@ -1518,6 +1679,14 @@ class ThinkingNarrator:
                     ),
                 )
                 self._handle_legibility_rows(prediction, item)
+                if self._should_enqueue_dossier(elapsed, prediction, item):
+                    self._enqueue_dossier_job(
+                        self._build_dossier_prompt(
+                            elapsed=elapsed,
+                            prediction=prediction,
+                            item=item,
+                        )
+                    )
                 self._schedule_idle_legibility_if_needed()
             else:
                 # Fallback: bonsai returned empty or raised. Always
@@ -1549,6 +1718,14 @@ class ThinkingNarrator:
                     ),
                 )
                 self._handle_legibility_rows(prediction, item)
+                if self._should_enqueue_dossier(elapsed, prediction, item):
+                    self._enqueue_dossier_job(
+                        self._build_dossier_prompt(
+                            elapsed=elapsed,
+                            prediction=prediction,
+                            item=item,
+                        )
+                    )
                 self._schedule_idle_legibility_if_needed()
         except Exception:
             logger.exception("Failed to produce after-action summary")
@@ -1567,6 +1744,7 @@ class ThinkingNarrator:
             if self._thinking_start == 0.0:
                 self._thinking_start = time.monotonic()
             self._buffer += token
+            self._item_token_count += max(1, _rough_token_count(token))
             now = time.monotonic()
             elapsed = now - self._last_dispatch
             tokens = _rough_token_count(self._buffer)
@@ -1675,6 +1853,8 @@ class ThinkingNarrator:
                     logger.info("Narrator: dropped repetitive summary: %s", full)
                     with self._lock:
                         self._dedupe_streak += 1
+                        if self._dedupe_streak > self._item_max_dedupe_streak:
+                            self._item_max_dedupe_streak = self._dedupe_streak
                     self._maybe_groom_after_repeated_dedup(
                         chunk,
                         prior_thoughts,
