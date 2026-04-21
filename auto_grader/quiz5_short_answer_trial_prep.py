@@ -131,6 +131,11 @@ def _workspace_group_regions(
     group: list[dict[str, Any]],
     workspace: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    workspace_key = _shared_workspace_key(str(group[0]["question_id"]))
+    if any(_shared_workspace_key(str(entry["question_id"])) != workspace_key for entry in group[1:]):
+        raise ValueError(
+            "Malformed response_boxes: shared-workspace followers must stay within the same question family"
+        )
     if len(group) == 1:
         only = group[0]
         return [
@@ -175,6 +180,10 @@ def _box_region(response_box: dict[str, Any]) -> dict[str, int]:
         "width": int(response_box["width"]),
         "height": int(response_box["height"]),
     }
+
+
+def _shared_workspace_key(question_id: str) -> str:
+    return question_id.split("-", 1)[0]
 
 
 def _image_crop_box(

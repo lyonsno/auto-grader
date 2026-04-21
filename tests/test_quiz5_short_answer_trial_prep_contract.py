@@ -144,7 +144,7 @@ class Quiz5ShortAnswerTrialPrepContractTests(unittest.TestCase):
             self.assertEqual(len(entries), 9)
             self.assertEqual(entries[0]["question_id"], "q1a")
             self.assertEqual(entries[-1]["question_id"], "q6-ch2cl2")
-            self.assertTrue(Path(entries[0]["crop_path"]).exists())
+            self.assertTrue(all(Path(entry["crop_path"]).exists() for entry in entries))
 
             q6_entries = [entry for entry in entries if entry["question_id"].startswith("q6-")]
             self.assertEqual([entry["question_id"] for entry in q6_entries], ["q6-ch4", "q6-ccl4", "q6-ch2cl2"])
@@ -180,6 +180,57 @@ class Quiz5ShortAnswerTrialPrepContractTests(unittest.TestCase):
                     manifest=manifest,
                     normalized_dir=Path(root) / "normalized_images",
                     output_dir=Path(root) / "trial_prep",
+                )
+
+    def test_trial_prep_rejects_malformed_shared_workspace_grouping(self) -> None:
+        from auto_grader.quiz5_short_answer_trial_prep import (
+            prepare_quiz5_short_answer_trial_crops,
+        )
+
+        artifact = self._artifact()
+        bad_page = artifact["pages"][1]
+        bad_page["response_boxes"] = [
+            bad_page["response_boxes"][0],
+            bad_page["response_boxes"][1],
+            {
+                "question_id": "q2",
+                "label": "2.",
+                "x": 440,
+                "y": 438,
+                "width": 116,
+                "height": 32,
+            },
+        ]
+        manifest = {
+            "opaque_instance_code": artifact["opaque_instance_code"],
+            "expected_page_codes": [bad_page["fallback_page_code"]],
+            "scan_results": [
+                {
+                    "scan_id": "quiz5-p2.png",
+                    "checksum": "checksum-p2",
+                    "status": "matched",
+                    "failure_reason": None,
+                    "page_number": 2,
+                    "fallback_page_code": bad_page["fallback_page_code"],
+                }
+            ],
+            "summary": {"total_scans": 1, "matched": 1, "unmatched": 0, "ambiguous": 0},
+        }
+
+        with tempfile.TemporaryDirectory(prefix="quiz5-trial-prep-malformed-") as root:
+            root_path = Path(root)
+            normalized_dir = root_path / "normalized_images"
+            normalized_dir.mkdir()
+            cv2.imwrite(
+                str(normalized_dir / "quiz5-p2.png"),
+                _render_synthetic_page(artifact["pages"][1]),
+            )
+            with self.assertRaisesRegex(ValueError, "shared-workspace followers"):
+                prepare_quiz5_short_answer_trial_crops(
+                    artifact=artifact,
+                    manifest=manifest,
+                    normalized_dir=normalized_dir,
+                    output_dir=root_path / "trial_prep",
                 )
 
 
