@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import unittest
+from unittest import mock
 
 from auto_grader.thinking_narrator import (
     ThinkingNarrator,
@@ -67,6 +69,25 @@ class _AfterActionNarrator(ThinkingNarrator):
         return None
 
     def _schedule_idle_legibility_if_needed(self) -> None:  # type: ignore[override]
+        return None
+
+
+class _FakeJSONResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = json.dumps(payload).encode()
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def close(self) -> None:
+        return None
+
+
+class _FakeStreamResponse:
+    def __iter__(self):
+        yield b"data: [DONE]\n\n"
+
+    def close(self) -> None:
         return None
 
 
@@ -163,6 +184,88 @@ class ThinkingNarratorContract(unittest.TestCase):
         )
         self.assertEqual(sink.topics[0]["acceptable_score_floor"], 1.5)
         self.assertEqual(sink.topics[0]["acceptable_score_ceiling"], 2.0)
+
+    def test_qwen36_sync_narrator_requests_disable_thinking(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink, model="Qwen3.6-35B-A3B-bf16")
+        captured_bodies: list[dict[str, object]] = []
+
+        def _capture_request(url, data=None, headers=None, method=None):
+            assert data is not None
+            captured_bodies.append(json.loads(data.decode()))
+            return object()
+
+        with (
+            mock.patch("urllib.request.Request", side_effect=_capture_request),
+            mock.patch(
+                "urllib.request.urlopen",
+                return_value=_FakeJSONResponse(
+                    {"choices": [{"message": {"content": "ok"}}]}
+                ),
+            ),
+        ):
+            text = narrator._chat_completion(
+                [{"role": "user", "content": "hello"}],
+            )
+
+        self.assertEqual(text, "ok")
+        self.assertEqual(
+            captured_bodies[-1]["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
+
+    def test_non_qwen_sync_narrator_requests_do_not_force_chat_template_kwargs(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink, model="Bonsai-8B-mlx-1bit")
+        captured_bodies: list[dict[str, object]] = []
+
+        def _capture_request(url, data=None, headers=None, method=None):
+            assert data is not None
+            captured_bodies.append(json.loads(data.decode()))
+            return object()
+
+        with (
+            mock.patch("urllib.request.Request", side_effect=_capture_request),
+            mock.patch(
+                "urllib.request.urlopen",
+                return_value=_FakeJSONResponse(
+                    {"choices": [{"message": {"content": "ok"}}]}
+                ),
+            ),
+        ):
+            narrator._chat_completion(
+                [{"role": "user", "content": "hello"}],
+            )
+
+        self.assertNotIn("chat_template_kwargs", captured_bodies[-1])
+
+    def test_qwen36_streaming_narrator_requests_disable_thinking(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink, model="Qwen3.6-35B-A3B-bf16")
+        captured_bodies: list[dict[str, object]] = []
+
+        def _capture_request(url, data=None, headers=None, method=None):
+            assert data is not None
+            captured_bodies.append(json.loads(data.decode()))
+            return object()
+
+        with (
+            mock.patch("urllib.request.Request", side_effect=_capture_request),
+            mock.patch(
+                "urllib.request.urlopen",
+                return_value=_FakeStreamResponse(),
+            ),
+        ):
+            text = narrator._chat_completion_stream(
+                [{"role": "user", "content": "hello"}],
+                on_delta=lambda _delta: None,
+            )
+
+        self.assertEqual(text, "")
+        self.assertEqual(
+            captured_bodies[-1]["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
 
 
 if __name__ == "__main__":

@@ -186,6 +186,15 @@ Rules:
 """
 
 
+def _qwen36_chat_template_kwargs(model: str | None) -> dict[str, bool] | None:
+    if not model:
+        return None
+    lowered = model.casefold()
+    if "qwen3.6" in lowered or "qwen3p6" in lowered:
+        return {"enable_thinking": False}
+    return None
+
+
 # Chunking parameters — denser than spoke's defaults so we get a real
 # play-by-play feel. The dedup + grounding fix means we can dispatch more
 # often without repetitive output. For a 30s VLM reasoning stream we want
@@ -1873,6 +1882,9 @@ class ThinkingNarrator:
             "presence_penalty": presence_penalty,
             "stream": False,
         }
+        chat_template_kwargs = _qwen36_chat_template_kwargs(eff_model)
+        if chat_template_kwargs is not None:
+            body["chat_template_kwargs"] = chat_template_kwargs
         headers = {"Content-Type": "application/json"}
         if eff_api_key:
             headers["Authorization"] = f"Bearer {eff_api_key}"
@@ -1958,6 +1970,9 @@ class ThinkingNarrator:
             "presence_penalty": presence_penalty,
             "stream": True,
         }
+        chat_template_kwargs = _qwen36_chat_template_kwargs(self._model)
+        if chat_template_kwargs is not None:
+            body["chat_template_kwargs"] = chat_template_kwargs
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
