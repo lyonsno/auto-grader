@@ -635,6 +635,27 @@ For each question:
 - The real value is reducing professor friction and avoiding the fill 60 configs by hand
   failure mode.
 
+## Local GUI and dev surfaces
+
+The primary human-facing surface in this repo is now the local web GUI:
+
+- author assessments
+- choose or create a grading target
+- ingest scans
+- inspect the review queue
+- persist manual resolutions
+- export results
+
+That is the normal operator entry point. The terminal-heavy tools still
+exist, but they are no longer the best description of the product
+surface.
+
+Alongside the web GUI, the repo also has a developer/operator
+observability surface for live short-answer grading: Project Paint Dry.
+That surface sits closer to the model and the smoke harness. It is for
+watching a run happen, diagnosing ambiguity, tuning prompts, and fixing
+focus regions without waiting for post-run artifacts.
+
 ## Eval harness model servers (dev only)
 
 The eval harness (`scripts/smoke_vlm.py`) talks to OpenAI-compatible
@@ -670,12 +691,12 @@ that file before trying to start the narrator from scratch.
 The grader server on the big box uses standard OMLX with non-1-bit
 models and is not covered by the Bonsai doc.
 
-## Project Paint Dry — live narrator (dev only)
+## Project Paint Dry — live grading view (dev only)
 
-When the eval harness runs with `--narrate`, it opens a second terminal
-window showing a live play-by-play of the grading VLM's reasoning.
-Paint Dry is the operator surface for watching short-answer grading
-happen in real time:
+When the eval harness runs with `--narrate`, it opens the Paint Dry
+reader: a live grading view over the model's reasoning and the current
+evidence crop. This is not the main professor GUI. It is the dev and
+operator surface for watching short-answer grading happen in real time:
 what the model is looking at, what evidence it is prioritizing, where
 it is getting stuck, and whether a hard case is genuinely ambiguous or
 just poorly cropped.
@@ -699,13 +720,13 @@ Paint Dry supports both:
 - or a single-model path where the same strong grader model also does
   the narration
 
-In both cases the reader surface is the same: a live terminal view over
-the narrator stream, score accounting, active focus crop, and retained
+In both cases the reader surface is the same: a live view over the
+narrator stream, score accounting, active focus crop, and retained
 history. In practice, the single-model path is not just a convenience
 mode; it is good enough to expose the actual shape of hard grading
 decisions instead of merely showing that the model is busy.
 
-The narrator window (top to bottom):
+The Paint Dry reader shows:
 
 - **Title bar**: project name, narrator status, and running counters
   for emitted / dedup-rejected / empty-rejected summaries.
