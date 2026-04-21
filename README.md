@@ -637,19 +637,30 @@ For each question:
 
 ## Eval harness model servers (dev only)
 
-The eval harness (`scripts/smoke_vlm.py`) talks to two OpenAI-compatible
-local servers — one for the actual grader model (typically Qwen3.5 or
-Gemma-4 on the big-box machine, mDNS-resolved at
-`http://macbook-pro-2.local:8001`), and one for the "Project Paint Dry"
-narrator (Bonsai-8B-mlx-1bit on the local machine, served via a
-PRISM-patched `mlx-openai-server` on its own narrator surface). The
-durable default narrator address is `http://nlm2pr.local:8002`; that
-mDNS name is what the runtime uses so the narrator follows the correct
-machine instead of depending on which box you happen to be sitting on.
-Use `http://127.0.0.1:8002` only as an explicit local-box override when
-you have intentionally launched Bonsai on the same machine running the
-smoke. They do not share a port, and the narrator stays separate from
-the main grader server on purpose.
+The eval harness (`scripts/smoke_vlm.py`) talks to OpenAI-compatible
+local servers for two logical roles:
+
+- the grader model
+- the "Project Paint Dry" narrator
+
+Those roles may run on separate servers or on the same server. The
+historical default is still:
+
+- grader on the big-box OMLX server at `http://macbook-pro-2.local:8001`
+- narrator on the dedicated Bonsai surface at `http://nlm2pr.local:8002`
+
+But the harness no longer assumes that split. For newer Qwen 3.6 smoke
+runs, the same strong model can now serve both the grader and the
+narrator by pointing `--narrator-url` and `--narrator-model` at the same
+backend as the grader. That single-model path is now a first-class
+experiment surface rather than an unsupported hack.
+
+The durable default narrator address for the separate Bonsai lane is
+still `http://nlm2pr.local:8002`; that mDNS name is what the runtime
+uses so the narrator follows the correct machine instead of depending on
+which box you happen to be sitting on. Use `http://127.0.0.1:8002` only
+as an explicit local-box override when you have intentionally launched
+Bonsai on the same machine running the smoke.
 
 Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't
 support `bits=1` quantization. Setup, launch command, verification,
@@ -658,15 +669,22 @@ and troubleshooting are documented in
 that file before trying to start the narrator from scratch.
 
 The grader server on the big box uses standard OMLX with non-1-bit
-models and isn't covered by the bonsai doc.
+models and isn't covered by the Bonsai doc.
 
 ## Project Paint Dry — live narrator (dev only)
 
 When the eval harness runs with `--narrate`, it opens a second terminal
 window showing a live play-by-play of the grading VLM's reasoning.
-A small local model (Bonsai 8B, 1-bit) watches the VLM's reasoning
-token stream and produces short running commentary as each item is
-graded — effectively narrating the grading process in real time.
+Historically that commentary came from a separate Bonsai sidecar, but
+the Paint Dry surface now supports both:
+
+- a dedicated narrator model on its own server
+- or a single-model path where the same strong grader model also does
+  the narration
+
+In both cases the reader surface is the same: a live terminal view over
+the narrator stream, score accounting, active focus crop, and retained
+history.
 
 The narrator window (top to bottom):
 
@@ -675,7 +693,7 @@ The narrator window (top to bottom):
 - **Scoreboard**: current model, exam set, item counter, and a row of
   tall-digit scoring dials — total elapsed, turn elapsed, on-target
   fraction, left-on-table, and bad calls.
-- **Status + live pane**: the current bonsai dispatch streaming
+- **Status + live pane**: the current narrator dispatch streaming
   character-by-character as the VLM thinks, with a one-line status
   label above it.
 - **Focus preview**: a cropped scan of the exam region currently being
@@ -692,9 +710,12 @@ The narrator window (top to bottom):
 The history pane is scrollable. Key bindings are shown in the footer
 after the session ends, but they are active throughout the run:
 `k`/`j` scroll up/down one row, `u`/`d` page up/down, `0` returns to
-the live edge. While scrolled up, new history continues to accumulate
-without yanking the viewport back to newest. After the session ends,
-scroll keys remain active and any non-scroll key closes the window.
+the live edge, and `a` reopens focus-region annotation for the current
+item. While scrolled up, new history continues to accumulate without
+yanking the viewport back to newest, and clipped live-edge rows remain
+recoverable through scrollback rather than disappearing once they fall
+out of the default viewport. After the session ends, scroll keys remain
+active and any non-scroll key closes the window.
 
 Each run persists narrator output to `runs/<ts>-<model>/narrator.jsonl`
 (machine-replayable) and `runs/<ts>-<model>/narrator.txt` (human-readable
@@ -704,7 +725,10 @@ The focus preview uses canonical focus-region data from
 `eval/focus_regions.yaml`. Those regions can be reviewed and adjusted
 with `scripts/annotate_focus_regions.py`, which gives the project one
 authoritative focus-box seam instead of ad hoc crop constants scattered
-through the smoke and narrator code.
+through the smoke and narrator code. The reader can now reopen that
+annotator directly for the active item from the live Paint Dry window
+via `a`, then refresh the preview in place when the operator saves the
+adjusted crop.
 
 ## Project workflow
 
