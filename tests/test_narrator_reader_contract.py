@@ -4497,24 +4497,27 @@ class NarratorReaderContract(unittest.TestCase):
         display = self._make_display()
         wrap_width = display._compute_wrap_width()
         self.assertIsNotNone(wrap_width)
-        secondary_head_col = int(round(
-            narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET
+        secondary_head_col = math.floor(
+            narrator_reader._history_secondary_phase(0.0)[1]
             * (wrap_width + narrator_reader._SHIMMER_WIDTH)
             - narrator_reader._SHIMMER_WIDTH
-        ))
-        header_index = "[item 2/2]"
-        header_content_col = len("─ ") + len(header_index) + 1
+        )
         line_content_col = len("    ")
-        header_filler = "x" * max(0, secondary_head_col - header_content_col)
         line_filler = "x" * max(0, secondary_head_col - line_content_col)
+
+        def _header_entry(index: str, title: str) -> str:
+            header_content_col = len("─ ") + len(index) + 1
+            header_filler = "x" * max(0, secondary_head_col - header_content_col)
+            return f"{index} {header_filler}{title}"
+
         display.history.append(
-            ("header", "[item 1/2] " + header_filler + "OLDERHDR", None)
+            ("header", _header_entry("[item 1/2]", "OLDERHDR"), None)
         )
         display.history.append(
             ("line", line_filler + "OLDERLINE", 0)
         )
         display.history.append(
-            ("header", "[item 2/2] " + header_filler + "NEWHDR", None)
+            ("header", _header_entry("[item 2/2]", "NEWHDR"), None)
         )
         display.history.append(
             ("line", line_filler + "NEWLINE", 0)
