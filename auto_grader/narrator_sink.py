@@ -236,6 +236,15 @@ class NarratorSink:
     def write_basis(self, text: str) -> None:
         self._write_structured_row("basis", "Basis", text)
 
+    def write_read(self, text: str) -> None:
+        self._write_structured_row("read", "Read", text)
+
+    def write_salvage(self, text: str) -> None:
+        self._write_structured_row("salvage", "Salvage", text)
+
+    def write_hinge(self, text: str) -> None:
+        self._write_structured_row("hinge", "Hinge", text)
+
     def write_ambiguity(self, text: str) -> None:
         self._write_structured_row("ambiguity", "Ambiguity", text)
 

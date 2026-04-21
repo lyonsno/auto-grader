@@ -112,6 +112,9 @@ _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 # archiving and in-pane rendering share one stable vocabulary.
 _LEGIBILITY_STRUCTURED_ROW_LABELS = {
     "basis": "Basis",
+    "read": "Read",
+    "salvage": "Salvage",
+    "hinge": "Hinge",
     "ambiguity": "Ambiguity",
     "credit_preserved": "Credit preserved for",
     "deduction": "Deduction",
@@ -120,11 +123,14 @@ _LEGIBILITY_STRUCTURED_ROW_LABELS = {
 }
 _LEGIBILITY_STRUCTURED_ROW_ORDER = {
     "basis": 1,
-    "ambiguity": 2,
-    "credit_preserved": 3,
-    "deduction": 4,
-    "review_marker": 5,
-    "professor_mismatch": 6,
+    "read": 2,
+    "salvage": 3,
+    "hinge": 4,
+    "ambiguity": 5,
+    "credit_preserved": 6,
+    "deduction": 7,
+    "review_marker": 8,
+    "professor_mismatch": 9,
 }
 _LEGIBILITY_STRUCTURED_ROW_KINDS = frozenset(_LEGIBILITY_STRUCTURED_ROW_LABELS)
 
@@ -3515,6 +3521,9 @@ class PaintDryDisplay:
             "rollback_live",
             "topic",
             "basis",
+            "read",
+            "salvage",
+            "hinge",
             "review_marker",
             "checkpoint",
             "drop",
@@ -3537,6 +3546,12 @@ class PaintDryDisplay:
             prefix_width = len("  · ")
         elif kind == "basis":
             prefix_width = len("  ≡ Basis: ")
+        elif kind == "read":
+            prefix_width = len("  ≡ Read: ")
+        elif kind == "salvage":
+            prefix_width = len("  ≡ Salvage: ")
+        elif kind == "hinge":
+            prefix_width = len("  ≡ Hinge: ")
         elif kind == "review_marker":
             prefix_width = len("  ! Review needed: ")
         else:
@@ -3604,7 +3619,16 @@ class PaintDryDisplay:
         # essentials drop first — but the deque cap should make this
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic", "basis", "review_marker", "checkpoint"):
+            if entry[0] in (
+                "header",
+                "topic",
+                "basis",
+                "read",
+                "salvage",
+                "hinge",
+                "review_marker",
+                "checkpoint",
+            ):
                 row_cost = self._entry_visual_rows(entry, wrap_width)
                 if used_rows >= budget:
                     break
@@ -3620,7 +3644,17 @@ class PaintDryDisplay:
         optionals = [
             (pos, entry, idx)
             for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic", "basis", "review_marker", "checkpoint")
+            if entry[0]
+            not in (
+                "header",
+                "topic",
+                "basis",
+                "read",
+                "salvage",
+                "hinge",
+                "review_marker",
+                "checkpoint",
+            )
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
 
@@ -3673,7 +3707,7 @@ class PaintDryDisplay:
             key=lambda pair: {
                 "topic": 0,
                 **_LEGIBILITY_STRUCTURED_ROW_ORDER,
-                "checkpoint": 7,
+                "checkpoint": 10,
             }.get(pair[0][0], 2)
         )
         return [*header, *rest, *reversed(lines)]
@@ -4650,6 +4684,23 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
+            elif kind in {"read", "salvage", "hinge"}:
+                indent = "  ≡ "
+                history_text.append(indent, style="grey50")
+                history_text.append(
+                    f"{_LEGIBILITY_STRUCTURED_ROW_LABELS[kind]}: ",
+                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                )
+                _apply_shimmer(
+                    history_text, text, "checkpoint_alt",
+                    layer_index=render_layer,
+                    indent_width=len(indent)
+                    + len(_LEGIBILITY_STRUCTURED_ROW_LABELS[kind])
+                    + len(": "),
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    phase_override=phase_override,
+                )
             elif kind == "review_marker":
                 indent = "  ! "
                 history_text.append(indent, style="grey50")
@@ -5348,6 +5399,15 @@ class PaintDryDisplay:
     def on_basis(self, text: str) -> None:
         self.history.append(("basis", text, None))
 
+    def on_read(self, text: str) -> None:
+        self.history.append(("read", text, None))
+
+    def on_salvage(self, text: str) -> None:
+        self.history.append(("salvage", text, None))
+
+    def on_hinge(self, text: str) -> None:
+        self.history.append(("hinge", text, None))
+
     def on_review_marker(self, text: str) -> None:
         self.history.append(("review_marker", text, None))
 
@@ -5663,6 +5723,12 @@ def main() -> int:
                         )
                     elif msg_type == "basis":
                         display.on_basis(msg.get("text", ""))
+                    elif msg_type == "read":
+                        display.on_read(msg.get("text", ""))
+                    elif msg_type == "salvage":
+                        display.on_salvage(msg.get("text", ""))
+                    elif msg_type == "hinge":
+                        display.on_hinge(msg.get("text", ""))
                     elif msg_type == "review_marker":
                         display.on_review_marker(msg.get("text", ""))
                     elif msg_type == "checkpoint":
