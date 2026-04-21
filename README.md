@@ -26,6 +26,44 @@ Set `DATABASE_URL` to point at your local Postgres instance:
 export DATABASE_URL="postgresql://postgres@localhost/auto_grader"
 ```
 
+## Main surfaces
+
+### Local web GUI
+
+The normal operator entry point for MC grading. An instructor or TA can:
+
+- create or select a grading target
+- ingest a batch of scans
+- review flagged MC cases
+- persist manual resolutions
+- export final results
+
+The GUI is intentionally thin over the same database-backed workflow the CLI
+and contracts use.
+
+### Project Paint Dry
+
+The live grading view for short-answer smoke and eval runs. Paint Dry is the
+surface you use when the question is not just "what score came out?" but "why
+did the model make that call?" It makes ambiguity, hesitation, evidence focus,
+and prompt behavior inspectable during a run.
+
+- **Scoreboard** with tall-digit dials: total elapsed, turn elapsed, on-target
+  fraction, left-on-table, and bad calls against the professor's ground truth
+- **Live pane** streaming the narrator's character-by-character dispatch as the
+  grader reasons through each item
+- **Focus preview** showing the actual student handwriting region being graded,
+  rendered inline via Kitty graphics protocol
+- **History pane** with structured narrator output per item: basis annotations
+  (what the grader credited), evidence lines, lean summaries, and verdict
+  comparisons (grader score vs. professor score with elapsed time)
+- **Rejected pane** for dedup-filtered and empty-filtered narrator output
+
+The history pane is scrollable (`k`/`j` row, `u`/`d` page, `0` live edge,
+`a` reopens focus-region annotation for the current item). Each run persists
+to `runs/<ts>-<model>/narrator.jsonl` (machine-replayable) and `narrator.txt`
+(human-readable transcript).
+
 ## What's here
 
 ### Two grading pipelines
@@ -37,13 +75,19 @@ export DATABASE_URL="postgresql://postgres@localhost/auto_grader"
 - Dominance arbitration for borderline marks (one strong fill beats faint traces)
 - DB-backed scan sessions with idempotent re-ingestion and divergence detection
 - Human review workflow for flagged questions (multiple marks, ambiguous fills)
-- Professor-facing local web GUI and CLI for the full ingest → review → export cycle
+- Local web GUI and CLI for the full ingest → review → export cycle
 
 **Short-answer (Quiz 5)** — in progress:
 - Canonical reconstruction of legacy quiz variants from PDF
 - Variant generation (A/B observed → C generated)
 - DB-backed scan session persistence
 - VLM-based grading pipeline (eval harness with ground truth scoring)
+- Project Paint Dry live grading view with focus preview, retained history,
+  ambiguity diagnosis, and in-window focus-region annotation
+- Split-model and single-model narrator/grader configurations for smoke and
+  prompt work
+- Run comparison and truth/backfill tooling for evaluating model behavior
+  over time
 
 ### Key modules
 
@@ -176,48 +220,34 @@ written, enforced by DB triggers.
 - Failed scans remain auditable artifacts with clear status and traceable
   provenance.
 
-## Eval harness and Project Paint Dry (dev)
+## Eval harness (dev)
 
 The eval harness (`scripts/smoke_vlm.py`) runs short-answer items through a
-VLM grading pipeline against ground truth. It talks to two local
-OpenAI-compatible servers:
+VLM grading pipeline against ground truth. It talks to local
+OpenAI-compatible servers in two supported configurations:
 
-- **Grader model** (Qwen3.5 / Gemma-4 on a second machine): the model being
-  evaluated
-- **Narrator** (Bonsai 8B 1-bit, local): a small model that watches the
-  grader's reasoning token stream and produces structured running commentary
+- **Split mode**: dedicated narrator (Bonsai 8B 1-bit) on its own surface,
+  separate grader backend (Qwen3.5 / Gemma-4 on a second machine)
+- **Single-model mode**: a strong Qwen backend handles both grading and
+  narration in the same smoke run
 
-**Project Paint Dry** is the live narrator terminal UI. When the eval harness
-runs with `--narrate`, it opens a second terminal window that renders the
-grading process in real time:
+Both are real working surfaces. Single-model narration is no longer a
+speculative path — it produces visibly better narrator quality on strong
+backends.
 
-- **Scoreboard** with tall-digit dials: total elapsed, turn elapsed, on-target
-  fraction, left-on-table, and bad calls against the professor's ground truth
-- **Live pane** streaming the narrator's character-by-character dispatch as the
-  grader reasons through each item
-- **Focus preview** showing the actual student handwriting region being graded,
-  rendered inline via Kitty graphics protocol
-- **History pane** with structured narrator output per item: basis annotations
-  (what the grader credited), evidence lines, lean summaries, and verdict
-  comparisons (grader score vs. professor score with elapsed time)
-- **Rejected pane** for dedup-filtered and empty-filtered narrator output
-
-The history pane is scrollable (`k`/`j` row, `u`/`d` page, `0` live edge).
-Each run persists to `runs/<ts>-<model>/narrator.jsonl` (machine-replayable)
-and `narrator.txt` (human-readable transcript). Focus regions are defined in
-`eval/focus_regions.yaml` and adjustable via `scripts/annotate_focus_regions.py`.
-
-The narrator requires the PRISM MLX fork for 1-bit quantization support.
-See [`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md) for server
-setup and [`docs/project_paint_dry.md`](docs/project_paint_dry.md) for the
-surface semantics, scorebug vocabulary, and checkpoint/history contract.
+Focus regions are defined in `eval/focus_regions.yaml` and adjustable via
+`scripts/annotate_focus_regions.py`. The narrator requires the PRISM MLX fork
+for 1-bit quantization support. See
+[`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md) for server setup
+and [`docs/project_paint_dry.md`](docs/project_paint_dry.md) for the surface
+semantics, scorebug vocabulary, and checkpoint/history contract.
 
 ## Project structure
 
 ```
-auto_grader/          # Core Python package
+auto_grader/          # Core grading, workflow, narrator, and eval code
 scripts/              # CLI entrypoints and dev tools
-tests/                # Contract test suites (61 files)
+tests/                # Contract suites for grading, DB, narrator, and eval surfaces
 templates/            # Exam templates (YAML)
 eval/                 # Ground truth and focus regions for VLM eval
 docs/                 # Decision records, setup guides, backlogs
