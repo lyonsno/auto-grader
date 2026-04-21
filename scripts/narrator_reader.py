@@ -3042,6 +3042,7 @@ class HistoryViewport:
         self._visible_rows = visible_rows
         self._wrap_width = wrap_width
         self._entries: list[tuple[str, str, int | None]] = []
+        self._live_edge_entries: list[tuple[str, str, int | None]] | None = None
         # scroll_offset counts *visual rows above the newest visual row*.
         self._scroll_offset = 0
 
@@ -3077,6 +3078,15 @@ class HistoryViewport:
 
     def entries_snapshot(self) -> list[tuple[str, str, int | None]]:
         return list(self._entries)
+
+    def set_live_edge_entries(
+        self,
+        entries: list[tuple[str, str, int | None]] | None,
+    ) -> None:
+        if entries is None:
+            self._live_edge_entries = None
+            return
+        self._live_edge_entries = list(entries)
 
     # -- Mutation ----------------------------------------------------
 
@@ -3126,6 +3136,8 @@ class HistoryViewport:
         window, in natural (oldest -> newest) order. Partial entries
         are never returned.
         """
+        if self._scroll_offset == 0 and self._live_edge_entries is not None:
+            return list(self._live_edge_entries)
         if not self._entries:
             return []
 
@@ -3673,32 +3685,23 @@ class PaintDryDisplay:
         *,
         wrap_width: int | None = None,
     ) -> list[tuple[tuple[str, str, int | None], bool]]:
-        """Return the live-edge history selection in oldest->newest group order.
+        """Return the full retained history stream in oldest->newest order.
 
-        The viewport should inherit the richer essentials-first and
-        structured-row-aware display semantics we already use on the smoke
-        surface, rather than downgrading back to a simpler header/topic-only
-        filter just to gain scrolling.
+        Unlike ``_build_display_entries()``, this is *not* budget-trimmed to
+        the live-edge panel height. The viewport needs the full retained
+        history so scrolling can recover rows that were sacrificed from the
+        live-edge fill to keep newer headers/topics visible.
         """
-        display_entries = self._build_display_entries(wrap_width=wrap_width)
-        if not display_entries:
+        history_list = list(self.history)
+        if not history_list:
             return []
-
-        groups: list[list[tuple[tuple[str, str, int | None], bool]]] = []
-        current_group: list[tuple[tuple[str, str, int | None], bool]] = []
-        for entry, is_most_recent, _group_depth in display_entries:
-            if entry[0] == "header":
-                if current_group:
-                    groups.append(current_group)
-                current_group = [(entry, is_most_recent)]
-            else:
-                current_group.append((entry, is_most_recent))
-        if current_group:
-            groups.append(current_group)
+        most_recent_idx = len(history_list) - 1
+        groups = self._history_groups_with_indices(history_list)
 
         out: list[tuple[tuple[str, str, int | None], bool]] = []
-        for group in reversed(groups):
-            out.extend(group)
+        for group in groups:
+            for entry, idx in self._ordered_group_pairs(group):
+                out.append((entry, idx == most_recent_idx))
         return out
 
     def _resolve_wrap_width(self) -> int:
@@ -3746,6 +3749,11 @@ class PaintDryDisplay:
             for entry in new_entries:
                 self._viewport.append(entry)
             self._viewport_synced_len = len(flat_entries)
+        live_edge_entries = [
+            entry for entry, _is_most_recent, _group_depth
+            in self._build_display_entries(wrap_width=wrap_width)
+        ]
+        self._viewport.set_live_edge_entries(live_edge_entries)
         return self._viewport
 
     def history_viewport(self) -> HistoryViewport:
@@ -3757,6 +3765,8 @@ class PaintDryDisplay:
     ) -> list[tuple[tuple[str, str, int | None], bool, int]]:
         """Return the viewport's visible slice in render order."""
         vp = self._sync_viewport()
+        if vp.at_live_edge:
+            return self._build_display_entries(wrap_width=self._resolve_wrap_width())
         visible = vp.visible_entries()
         if not visible:
             return []

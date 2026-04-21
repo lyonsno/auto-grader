@@ -181,6 +181,47 @@ class PaintDryDisplayViewportIntegration(unittest.TestCase):
         self.assertIn("[item 1/5] chatty", visible_texts)
         self.assertIn("chatty-topic", visible_texts)
 
+    def test_scrollback_can_recover_rows_trimmed_from_live_edge_fill(self):
+        module = _load_narrator_reader()
+        display = self._display(module)
+
+        _commit_item(
+            display,
+            module,
+            header="[item 1/6] chatty",
+            lines=[f"chatty-{i}" for i in range(30)],
+            topic="chatty-topic",
+        )
+        for i in range(2, 7):
+            _commit_item(
+                display,
+                module,
+                header=f"[item {i}/6] short-{i}",
+                lines=[f"short-line-{i}"],
+                topic=f"short-topic-{i}",
+            )
+
+        live_edge_texts = [e[1] for e in display.history_viewport().visible_entries()]
+        self.assertNotIn(
+            "chatty-0",
+            live_edge_texts,
+            "old optional narrator lines should be allowed to drop out of the "
+            "live-edge fill when newer essentials need the budget",
+        )
+
+        # Scroll back far enough to leave the curated live edge and
+        # enter the older retained narrator rows that were clipped
+        # from the default panel fill.
+        display.scroll_history_up(10)
+        scrolled_texts = [e[1] for e in display.history_viewport().visible_entries()]
+
+        self.assertIn(
+            "chatty-0",
+            scrolled_texts,
+            "scrollback must still be able to recover narrator rows that were "
+            "trimmed from the live-edge fill",
+        )
+
     def test_rendered_history_panel_follows_scrolled_viewport(self):
         module = _load_narrator_reader()
         display = self._display(module)
