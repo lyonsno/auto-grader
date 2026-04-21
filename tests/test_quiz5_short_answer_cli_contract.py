@@ -181,6 +181,93 @@ class Quiz5ShortAnswerCliContractTests(unittest.TestCase):
             self.assertEqual(manifest["summary"]["matched"], 2)
             self.assertEqual(manifest["summary"]["unmatched"], 0)
 
+    def test_trial_prep_probe_cli_writes_per_response_box_manifest_for_ingest_output(self) -> None:
+        stage_script_path = Path("scripts/stage_quiz5_short_answer_variants.py")
+        ingest_script_path = Path("scripts/ingest_quiz5_short_answer_scans.py")
+        probe_script_path = Path("scripts/probe_quiz5_short_answer_trial_prep.py")
+        self.assertTrue(
+            probe_script_path.exists(),
+            "Add `scripts/probe_quiz5_short_answer_trial_prep.py` so the Quiz #5 trial-prep seam is operable from staged artifact + ingest output paths.",
+        )
+
+        with tempfile.TemporaryDirectory(prefix="quiz5-trial-prep-cli-") as tempdir:
+            stage_dir = Path(tempdir) / "stage"
+            stage_dir.mkdir()
+            proc = subprocess.run(
+                [
+                    str(Path(".venv/bin/python")),
+                    str(stage_script_path),
+                    "--output-dir",
+                    str(stage_dir),
+                    "--pdf",
+                    str(_QUIZ_A),
+                    "--pdf",
+                    str(_QUIZ_B),
+                    "--generate-variant",
+                    "C",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            stage_result = json.loads(proc.stdout)
+
+            artifact = json.loads(
+                Path(stage_result["artifacts"]["C"]["artifact_json_path"]).read_text(encoding="utf-8")
+            )
+
+            scan_dir = Path(tempdir) / "scans"
+            scan_dir.mkdir()
+            for index, page in enumerate(artifact["pages"], start=1):
+                rendered = _render_synthetic_page(page)
+                import cv2
+
+                cv2.imwrite(str(scan_dir / f"quiz5-c-p{index}.png"), rendered)
+
+            ingest_dir = Path(tempdir) / "ingest"
+            proc = subprocess.run(
+                [
+                    str(Path(".venv/bin/python")),
+                    str(ingest_script_path),
+                    "--artifact-json",
+                    stage_result["artifacts"]["C"]["artifact_json_path"],
+                    "--scan-dir",
+                    str(scan_dir),
+                    "--output-dir",
+                    str(ingest_dir),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+            probe_dir = Path(tempdir) / "trial_prep"
+            proc = subprocess.run(
+                [
+                    str(Path(".venv/bin/python")),
+                    str(probe_script_path),
+                    "--artifact-json",
+                    stage_result["artifacts"]["C"]["artifact_json_path"],
+                    "--ingest-output-dir",
+                    str(ingest_dir),
+                    "--output-dir",
+                    str(probe_dir),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            probe_result = json.loads(proc.stdout)
+            manifest = json.loads(Path(probe_result["manifest_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["summary"]["matched_pages"], 2)
+            self.assertEqual(manifest["summary"]["response_box_crops"], 9)
+            self.assertTrue(
+                all(Path(entry["crop_path"]).exists() for entry in manifest["responses"])
+            )
+
 
 def _render_synthetic_page(artifact_page: dict, *, scale: float = 4.0) -> np.ndarray:
     from PIL import Image, ImageDraw
