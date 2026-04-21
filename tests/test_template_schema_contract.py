@@ -785,10 +785,8 @@ class TestNamespaceAndEdgeCases(unittest.TestCase):
         """A variable with min == max is degenerate (constant) but valid."""
         q = _minimal_numeric_question()
         q["variables"]["mass"] = {"type": "float", "min": 50.0, "max": 50.0, "step": 0.1}
-        # min >= max is rejected, but min == max is currently rejected too.
-        # This test documents the current behavior.
         errors = self._validate(_wrap_in_template([q]))
-        self.assertTrue(any("min" in e.lower() or "max" in e.lower() for e in errors))
+        self.assertEqual(errors, [])
 
     def test_load_empty_string_rejected(self):
         from auto_grader.template_schema import load_template

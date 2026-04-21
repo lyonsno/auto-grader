@@ -485,7 +485,7 @@ def _validate_variables(variables: dict, path: str, errors: list[str]) -> None:
         step = spec.get("step")
 
         if vmin is not None and vmax is not None:
-            if vmin >= vmax:
+            if vmin > vmax:
                 errors.append(f"{vpath}: min ({vmin}) must be less than max ({vmax})")
 
         if step is not None:
