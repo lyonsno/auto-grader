@@ -3217,7 +3217,7 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertIn("annotate_focus_regions.py", cmd[1])
         self.assertIn("--pdf", cmd)
-        self.assertIn("/tmp/scans/15 blue.pdf", cmd)
+        self.assertIn("/tmp/scans/15 blue_professor_markings_hidden.pdf", cmd)
         self.assertIn("--page", cmd)
         self.assertIn("3", cmd)
         self.assertIn("--targets", cmd)

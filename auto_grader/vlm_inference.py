@@ -981,7 +981,7 @@ def _consume_streaming_response(
 # ---------------------------------------------------------------------------
 
 _EXAM_PDF_MAP = {
-    "15-blue": "15 blue.pdf",
+    "15-blue": "15 blue_professor_markings_hidden.pdf",
     "27-blue-2023": "27 blue 2023.pdf",
     "34-blue": "34 blue.pdf",
     "39-blue": "39 blue_Redacted 1.pdf",

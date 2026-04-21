@@ -62,6 +62,12 @@ _TEMPLATE = (
 )
 
 _DEFAULT_NARRATOR_URL = "http://nlm2pr.local:8002"
+_KNOWN_CLEAN_EXAM_IDS = frozenset(
+    {
+        "15-blue",
+        "39-blue-redacted",
+    }
+)
 
 _TRICKY_PICKS = [
     ("15-blue", "fr-1"),    # easy warmup (numeric, density)
@@ -91,6 +97,21 @@ _TRICKY_PLUS_PLUS_PICKS = [
     *_TRICKY_PLUS_PICKS,
 ]
 _TRICKY_PLUS_PLUS_TEST_SET_ID = "tricky-plus-plus-v1"
+
+
+def _scan_contamination_warnings(subset: list[EvalItem]) -> list[str]:
+    subset_exam_ids = sorted({item.exam_id for item in subset})
+    contaminated = [
+        exam_id for exam_id in subset_exam_ids if exam_id not in _KNOWN_CLEAN_EXAM_IDS
+    ]
+    if not contaminated:
+        return []
+    return [
+        "WARNING: subset includes exam ids without a known clean scan mapping: "
+        + ", ".join(contaminated),
+        "WARNING: known clean exam ids currently mapped: "
+        + ", ".join(sorted(_KNOWN_CLEAN_EXAM_IDS)),
+    ]
 
 
 def _default_run_dir(model: str, *, now: datetime | None = None) -> Path:
@@ -786,6 +807,8 @@ def main():
         f"presence={config.presence_penalty} rep={config.repetition_penalty}"
     )
     print(f"Scans: {_SCANS_DIR}")
+    for warning in _scan_contamination_warnings(subset):
+        print(warning, file=sys.stderr)
     print()
 
     if args.describe_only:
