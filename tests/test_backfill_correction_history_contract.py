@@ -1,11 +1,14 @@
-"""Fail-first contract tests for historical correction backfill.
+"""Fail-first contract tests for historical truth-metadata backfill.
 
 This lane repairs archived ``predictions.jsonl`` files so they carry the
-current human-verified ``corrected_score`` / ``correction_reason`` values
-for items where the professor's original page mark is now believed to be
-wrong. Unlike the truncation-focused Zilch Reaper historical pass, this
-tool does not reinterpret model output; it only updates the persisted
-truth metadata on matching archived prediction rows.
+current human-verified truth metadata for items whose evaluation posture
+changed after investigation. That includes traditional corrected-score
+cases AND ambiguity reclassifications where a previously scored item is
+now marked ``unclear`` and must stop contributing to historical scoring.
+
+Unlike the truncation-focused Zilch Reaper historical pass, this tool
+does not reinterpret model output; it only updates the persisted truth
+metadata on matching archived prediction rows.
 
 The tool under test does not exist yet when these tests are introduced.
 Running this file before implementation MUST fail at import time. That is
@@ -13,8 +16,8 @@ the fail-first signal.
 
 Contract surface:
 
-* Load corrections from a supplied ground-truth YAML file, filtering to
-  rows where ``corrected_score`` is present.
+* Load backfillable truth metadata from a supplied ground-truth YAML file,
+  including corrected-score rows and ``professor_mark='unclear'`` rows.
 * Rewrite only matching archived prediction rows identified by
   ``(exam_id, question_id)``.
 * Preserve every other field verbatim, especially ``professor_score`` and
@@ -147,9 +150,9 @@ def _write_ground_truth(path: Path) -> None:
                     page: 3
                     professor_score: 0
                     max_points: 0.5
-                    professor_mark: x
+                    professor_mark: unclear
                     student_answer: "2"
-                    notes: "X. Should be 1."
+                    notes: "Ambiguous handwritten digit between 1 and 2; exclude from scored regression history."
             """
         ).strip()
         + "\n",
@@ -166,15 +169,23 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
         self.truth_path = self.root / "ground_truth.yaml"
         _write_ground_truth(self.truth_path)
 
-    def test_load_corrections_filters_to_corrected_items_only(self) -> None:
+    def test_load_truth_metadata_keeps_corrected_and_unclear_items(self) -> None:
         corrections = self.module.load_corrections(self.truth_path)
         self.assertEqual(
             corrections,
             {
                 ("34-blue", "fr-8"): {
+                    "professor_mark": "partial",
+                    "student_answer": "-186.2 kJ",
                     "corrected_score": 4.0,
                     "correction_reason": "Verified Hess's Law work is correct.",
-                }
+                },
+                ("15-blue", "fr-11c"): {
+                    "professor_mark": "unclear",
+                    "student_answer": "2",
+                    "corrected_score": None,
+                    "correction_reason": "",
+                },
             },
         )
 
@@ -193,6 +204,7 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
             rewritten["correction_reason"],
             "Verified Hess's Law work is correct.",
         )
+        self.assertEqual(rewritten["professor_mark"], "partial")
         self.assertEqual(
             rewritten["professor_score"],
             2.0,
@@ -217,6 +229,33 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
 
         self.assertEqual(row, snapshot)
 
+    def test_rewrite_row_updates_unclear_mark_metadata_without_touching_model_output(self) -> None:
+        row = _prediction_row(
+            exam_id="15-blue",
+            question_id="fr-11c",
+            professor_score=0.0,
+            correction_reason="",
+        )
+        row["professor_mark"] = "x"
+        row["student_answer"] = "2"
+        row["notes"] = "X. Should be 1."
+        corrections = self.module.load_corrections(self.truth_path)
+
+        rewritten = self.module.rewrite_prediction_row(row, corrections)
+
+        self.assertEqual(rewritten["professor_mark"], "unclear")
+        self.assertEqual(rewritten["student_answer"], "2")
+        self.assertEqual(
+            rewritten["professor_score"],
+            0.0,
+            "historical professor score must be preserved even when the row becomes unclear",
+        )
+        self.assertEqual(
+            rewritten["model_score"],
+            4.0,
+            "truth-metadata backfill must not rewrite model output",
+        )
+
     def test_dry_run_reports_updates_without_touching_disk(self) -> None:
         path = self.root / "run-a" / "predictions.jsonl"
         rows = [
@@ -239,8 +278,8 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
 
         report = self.module.backfill_file(path, corrections=corrections, commit=False)
 
-        self.assertEqual(report.rewritten, 1)
-        self.assertEqual(report.preserved, 3)
+        self.assertEqual(report.rewritten, 2)
+        self.assertEqual(report.preserved, 2)
         self.assertEqual(report.skipped, 0)
         self.assertEqual(path.read_bytes(), before)
         self.assertFalse(path.with_suffix(path.suffix + ".bak").exists())
@@ -267,7 +306,7 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
 
         report = self.module.backfill_file(path, corrections=corrections, commit=True)
 
-        self.assertEqual(report.rewritten, 1)
+        self.assertEqual(report.rewritten, 2)
         bak = path.with_suffix(path.suffix + ".bak")
         self.assertTrue(bak.exists())
         self.assertEqual(bak.read_bytes(), original)
@@ -280,11 +319,10 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
             corrected["correction_reason"],
             "Verified Hess's Law work is correct.",
         )
-        self.assertIsNone(
-            unrelated["corrected_score"],
-            "unrelated rows must stay untouched",
-        )
+        self.assertIsNone(unrelated["corrected_score"])
         self.assertEqual(unrelated["correction_reason"], "")
+        self.assertEqual(unrelated["professor_mark"], "unclear")
+        self.assertEqual(unrelated["student_answer"], "2")
 
     def test_backfill_is_idempotent_when_file_already_matches_truth(self) -> None:
         path = self.root / "run-c" / "predictions.jsonl"
@@ -363,7 +401,7 @@ class BackfillCorrectionHistoryContract(unittest.TestCase):
         )
 
         self.assertEqual(len(reports), 2)
-        self.assertEqual(sum(r.rewritten for r in reports), 1)
+        self.assertEqual(sum(r.rewritten for r in reports), 2)
 
     def test_commit_streams_archive_instead_of_slurping_with_read_text(self) -> None:
         path = self.root / "run-stream" / "predictions.jsonl"

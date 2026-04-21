@@ -31,6 +31,7 @@ class RunRecord:
     model: str
     exam_id: str
     question_id: str
+    professor_mark: str
     professor_score: float
     corrected_score: float | None
     acceptable_score_floor: float | None
@@ -213,6 +214,7 @@ def load_run_records(run_dir: Path) -> dict[tuple[str, str], RunRecord]:
                 model=model,
                 exam_id=obj["exam_id"],
                 question_id=obj["question_id"],
+                professor_mark=str(obj.get("professor_mark", "")),
                 professor_score=float(obj["professor_score"]),
                 corrected_score=corrected_score,
                 acceptable_score_floor=(
@@ -272,6 +274,12 @@ def build_comparison_rows(
                 exam_id=exam_id,
                 question_id=question_id,
                 field_name="answer_type",
+                records=present_records,
+            ),
+            "professor_mark": _resolve_shared_row_value(
+                exam_id=exam_id,
+                question_id=question_id,
+                field_name="professor_mark",
                 records=present_records,
             ),
             "max_points": _resolve_shared_row_value(

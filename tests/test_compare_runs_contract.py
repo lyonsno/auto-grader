@@ -569,6 +569,43 @@ class CompareRunsContract(unittest.TestCase):
                 "truth_score column must reflect the corrected value when corrected_score is present",
             )
 
+    def test_build_comparison_rows_carries_professor_mark_for_unclear_history(self):
+        module = _load_compare_runs()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            run_dir = self._write_run(
+                base,
+                run_name="unclear-run",
+                model="gemma-test",
+                prompt_version="prompt-v2",
+                test_set_id="tricky-v1",
+                started_at="2026-04-09T21:00:00",
+                score=0.0,
+            )
+            predictions_path = run_dir / "predictions.jsonl"
+            rows = [
+                json.loads(line)
+                for line in predictions_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for row in rows:
+                if row.get("type") == "prediction":
+                    row["professor_mark"] = "unclear"
+            predictions_path.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            comparison_rows = module.build_comparison_rows([("only", run_dir)])
+            self.assertEqual(len(comparison_rows), 1)
+            row = comparison_rows[0]
+            self.assertIn(
+                "professor_mark",
+                row,
+                "comparison rows should surface professor_mark so unclear historical items stop masquerading as score-bearing evidence",
+            )
+            self.assertEqual(row["professor_mark"], "unclear")
+
     def test_build_comparison_rows_truth_score_equals_professor_score_when_uncorrected(self):
         """Backwards-compat: no correction means the two columns match."""
         module = _load_compare_runs()

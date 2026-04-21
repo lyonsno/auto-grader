@@ -1,11 +1,11 @@
-"""Backfill corrected truth metadata into historical predictions archives.
+"""Backfill current truth metadata into historical predictions archives.
 
 Archived ``predictions.jsonl`` files are self-contained: comparison and
-analysis surfaces read ``corrected_score`` / ``correction_reason`` from each
-run artifact rather than reopening current ``eval/ground_truth.yaml``. When
-human investigation later discovers a professor grading error, new runs pick up
-that corrected truth automatically, but old archived runs stay stale until the
-archive is rewritten.
+analysis surfaces read truth metadata directly from each run artifact rather
+than reopening current ``eval/ground_truth.yaml``. When human investigation
+later discovers a professor grading error or reclassifies an item as
+``unclear``, new runs pick up that truth posture automatically, but old
+archived runs stay stale until the archive is rewritten.
 
 This script performs that historical repair pass.
 
@@ -53,8 +53,14 @@ class BackfillReport:
 
 def load_corrections(
     yaml_path: Path,
-) -> dict[tuple[str, str], dict[str, float | str]]:
-    """Load only the items with human-verified corrected truth."""
+) -> dict[tuple[str, str], dict[str, float | str | None]]:
+    """Load current truth metadata for historically mutable items.
+
+    Two classes currently qualify:
+
+    * rows with ``corrected_score`` (human-verified professor grading error)
+    * rows with ``professor_mark == "unclear"`` (excluded ambiguity specimen)
+    """
 
     yaml_path = Path(yaml_path)
     if not yaml_path.exists():
@@ -77,23 +83,26 @@ def load_corrections(
         raise GroundTruthLoadError(
             f"ground truth root must be a mapping: {yaml_path}"
         )
-    corrections: dict[tuple[str, str], dict[str, float | str]] = {}
+    corrections: dict[tuple[str, str], dict[str, float | str | None]] = {}
     for exam in raw.get("exams", []):
         exam_id = str(exam["exam_id"])
         for item in exam.get("items", []):
             corrected_raw = item.get("corrected_score")
-            if corrected_raw is None:
+            professor_mark = str(item.get("professor_mark", ""))
+            if corrected_raw is None and professor_mark != "unclear":
                 continue
             corrections[(exam_id, str(item["question_id"]))] = {
-                "corrected_score": float(corrected_raw),
-                "correction_reason": str(item.get("correction_reason", "")),
+                "professor_mark": professor_mark,
+                "student_answer": str(item.get("student_answer", "")),
+                "corrected_score": float(corrected_raw) if corrected_raw is not None else None,
+                "correction_reason": str(item.get("correction_reason", "")) if corrected_raw is not None else "",
             }
     return corrections
 
 
 def rewrite_prediction_row(
     row: dict[str, Any],
-    corrections: dict[tuple[str, str], dict[str, float | str]],
+    corrections: dict[tuple[str, str], dict[str, float | str | None]],
 ) -> dict[str, Any]:
     """Return a corrected copy of a prediction row.
 
@@ -107,6 +116,8 @@ def rewrite_prediction_row(
     correction = corrections.get(key)
     if correction is None:
         return rewritten
+    rewritten["professor_mark"] = correction["professor_mark"]
+    rewritten["student_answer"] = correction["student_answer"]
     rewritten["corrected_score"] = correction["corrected_score"]
     rewritten["correction_reason"] = correction["correction_reason"]
     return rewritten
@@ -116,7 +127,7 @@ def _process_line(
     lineno: int,
     raw: str,
     *,
-    corrections: dict[tuple[str, str], dict[str, float | str]],
+    corrections: dict[tuple[str, str], dict[str, float | str | None]],
     report: BackfillReport,
 ) -> tuple[str, bool]:
     stripped = raw.rstrip("\n")
@@ -162,7 +173,7 @@ def _process_line(
 def _classify_and_process(
     rows: list[tuple[int, str]],
     *,
-    corrections: dict[tuple[str, str], dict[str, float | str]],
+    corrections: dict[tuple[str, str], dict[str, float | str | None]],
 ) -> tuple[list[str], BackfillReport, bool]:
     report = BackfillReport(path=Path())
     out_lines: list[str] = []
@@ -184,7 +195,7 @@ def _classify_and_process(
 def backfill_file(
     path: Path,
     *,
-    corrections: dict[tuple[str, str], dict[str, float | str]],
+    corrections: dict[tuple[str, str], dict[str, float | str | None]],
     commit: bool,
 ) -> BackfillReport:
     """Backfill a single ``predictions.jsonl`` file."""
@@ -259,7 +270,7 @@ def backfill_file(
 def backfill_archive(
     root: Path,
     *,
-    corrections: dict[tuple[str, str], dict[str, float | str]],
+    corrections: dict[tuple[str, str], dict[str, float | str | None]],
     commit: bool,
 ) -> list[BackfillReport]:
     """Walk a runs root and backfill every ``predictions.jsonl`` found."""
@@ -320,7 +331,7 @@ def _format_report_summary(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Backfill current corrected truth metadata into historical "
+            "Backfill current truth metadata into historical "
             "auto-grader run archives."
         )
     )
