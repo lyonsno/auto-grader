@@ -644,23 +644,22 @@ local servers for two logical roles:
 - the "Project Paint Dry" narrator
 
 Those roles may run on separate servers or on the same server. The
-historical default is still:
+standard split configuration is:
 
 - grader on the big-box OMLX server at `http://macbook-pro-2.local:8001`
 - narrator on the dedicated Bonsai surface at `http://nlm2pr.local:8002`
 
-But the harness no longer assumes that split. For newer Qwen 3.6 smoke
-runs, the same strong model can now serve both the grader and the
-narrator by pointing `--narrator-url` and `--narrator-model` at the same
-backend as the grader. That single-model path is now a first-class
-experiment surface rather than an unsupported hack.
+The harness also supports a single-model configuration, where the same
+strong model serves both grading and narration. In that mode,
+`--narrator-url` and `--narrator-model` simply point at the same backend
+as the grader.
 
 The durable default narrator address for the separate Bonsai lane is
-still `http://nlm2pr.local:8002`; that mDNS name is what the runtime
-uses so the narrator follows the correct machine instead of depending on
-which box you happen to be sitting on. Use `http://127.0.0.1:8002` only
-as an explicit local-box override when you have intentionally launched
-Bonsai on the same machine running the smoke.
+`http://nlm2pr.local:8002`; that mDNS name lets the narrator follow the
+correct machine instead of depending on which box you happen to be
+sitting on. Use `http://127.0.0.1:8002` only as an explicit local-box
+override when you have intentionally launched Bonsai on the same machine
+running the smoke.
 
 Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't
 support `bits=1` quantization. Setup, launch command, verification,
@@ -669,14 +668,14 @@ and troubleshooting are documented in
 that file before trying to start the narrator from scratch.
 
 The grader server on the big box uses standard OMLX with non-1-bit
-models and isn't covered by the Bonsai doc.
+models and is not covered by the Bonsai doc.
 
 ## Project Paint Dry — live narrator (dev only)
 
 When the eval harness runs with `--narrate`, it opens a second terminal
 window showing a live play-by-play of the grading VLM's reasoning.
-Paint Dry is not just a pretty tail on the smoke harness. It is the
-operator surface for watching short-answer grading happen in real time:
+Paint Dry is the operator surface for watching short-answer grading
+happen in real time:
 what the model is looking at, what evidence it is prioritizing, where
 it is getting stuck, and whether a hard case is genuinely ambiguous or
 just poorly cropped.
@@ -694,8 +693,7 @@ live commentary, the active focus crop, the scoring state, and retained
 history in one surface instead of reconstructing the run from logs after
 the fact.
 
-Historically that commentary came from a separate Bonsai sidecar, but
-the Paint Dry surface now supports both:
+Paint Dry supports both:
 
 - a dedicated narrator model on its own server
 - or a single-model path where the same strong grader model also does
@@ -703,10 +701,9 @@ the Paint Dry surface now supports both:
 
 In both cases the reader surface is the same: a live terminal view over
 the narrator stream, score accounting, active focus crop, and retained
-history. The stronger single-model path has also turned out to be
-meaningfully better than a cosmetic narrator upgrade: it makes the
-reader good enough to expose the actual shape of hard grading decisions,
-not just that "the model is thinking for a while."
+history. In practice, the single-model path is not just a convenience
+mode; it is good enough to expose the actual shape of hard grading
+decisions instead of merely showing that the model is busy.
 
 The narrator window (top to bottom):
 
@@ -729,7 +726,7 @@ The narrator window (top to bottom):
 - **Rejected pane**: summaries dropped by the dedup or empty filters,
   shown with strikethrough. Debug surface only.
 
-In practice, the surface is useful for four distinct jobs:
+What Paint Dry is good for:
 
 - **Smoke visibility**: see whether the run is healthy without waiting
   for the full artifact bundle.
@@ -754,14 +751,14 @@ active and any non-scroll key closes the window.
 Each run persists narrator output to `runs/<ts>-<model>/narrator.jsonl`
 (machine-replayable) and `runs/<ts>-<model>/narrator.txt` (human-readable
 transcript). The smoke runner also persists the ordinary grading
-artifacts alongside that narration, so Paint Dry is a live observability
-surface over a run that still leaves durable custody behind.
+artifacts alongside that narration, so Paint Dry is a live surface over
+a run that still leaves durable custody behind.
 
 The focus preview uses canonical focus-region data from
 `eval/focus_regions.yaml`. Those regions can be reviewed and adjusted
 with `scripts/annotate_focus_regions.py`, which gives the project one
 authoritative focus-box seam instead of ad hoc crop constants scattered
-through the smoke and narrator code. The reader can now reopen that
+through the smoke and narrator code. The reader can reopen that
 annotator directly for the active item from the live Paint Dry window
 via `a`, then refresh the preview in place when the operator saves the
 adjusted crop.
