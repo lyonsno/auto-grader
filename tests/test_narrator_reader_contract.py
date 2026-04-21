@@ -4443,8 +4443,11 @@ class NarratorReaderContract(unittest.TestCase):
             * (wrap_width + narrator_reader._SHIMMER_WIDTH)
             - narrator_reader._SHIMMER_WIDTH
         ))
-        header_filler = "x" * max(0, secondary_head_col - 13)
-        line_filler = "x" * max(0, secondary_head_col - 4)
+        header_index = "[item 2/2]"
+        header_content_col = len("─ ") + len(header_index) + 1
+        line_content_col = len("    ")
+        header_filler = "x" * max(0, secondary_head_col - header_content_col)
+        line_filler = "x" * max(0, secondary_head_col - line_content_col)
         display.history.append(
             ("header", "[item 1/2] " + header_filler + "OLDERHDR", None)
         )
