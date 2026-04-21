@@ -675,6 +675,25 @@ models and isn't covered by the Bonsai doc.
 
 When the eval harness runs with `--narrate`, it opens a second terminal
 window showing a live play-by-play of the grading VLM's reasoning.
+Paint Dry is not just a pretty tail on the smoke harness. It is the
+operator surface for watching short-answer grading happen in real time:
+what the model is looking at, what evidence it is prioritizing, where
+it is getting stuck, and whether a hard case is genuinely ambiguous or
+just poorly cropped.
+
+That becomes especially useful on the kinds of items that are painful to
+debug from final JSON alone:
+
+- a scribbled digit that could plausibly be read two ways
+- a Lewis structure that is locally wrong but contextually salvageable
+- a grading disagreement where the question is not "what score came
+  out?" but "what exactly was the model defending?"
+
+Paint Dry is the place where those questions become visible. You get the
+live commentary, the active focus crop, the scoring state, and retained
+history in one surface instead of reconstructing the run from logs after
+the fact.
+
 Historically that commentary came from a separate Bonsai sidecar, but
 the Paint Dry surface now supports both:
 
@@ -684,7 +703,10 @@ the Paint Dry surface now supports both:
 
 In both cases the reader surface is the same: a live terminal view over
 the narrator stream, score accounting, active focus crop, and retained
-history.
+history. The stronger single-model path has also turned out to be
+meaningfully better than a cosmetic narrator upgrade: it makes the
+reader good enough to expose the actual shape of hard grading decisions,
+not just that "the model is thinking for a while."
 
 The narrator window (top to bottom):
 
@@ -707,6 +729,18 @@ The narrator window (top to bottom):
 - **Rejected pane**: summaries dropped by the dedup or empty filters,
   shown with strikethrough. Debug surface only.
 
+In practice, the surface is useful for four distinct jobs:
+
+- **Smoke visibility**: see whether the run is healthy without waiting
+  for the full artifact bundle.
+- **Ambiguity diagnosis**: tell the difference between a model error and
+  a genuinely underdetermined handwritten mark.
+- **Prompt tuning**: watch where the model burns time, loops, or rescues
+  credit in a way that suggests a better prompt stance.
+- **Operator correction**: jump directly into focus-region annotation for
+  the current item and refresh the preview in place without leaving the
+  live run.
+
 The history pane is scrollable. Key bindings are shown in the footer
 after the session ends, but they are active throughout the run:
 `k`/`j` scroll up/down one row, `u`/`d` page up/down, `0` returns to
@@ -719,7 +753,9 @@ active and any non-scroll key closes the window.
 
 Each run persists narrator output to `runs/<ts>-<model>/narrator.jsonl`
 (machine-replayable) and `runs/<ts>-<model>/narrator.txt` (human-readable
-transcript).
+transcript). The smoke runner also persists the ordinary grading
+artifacts alongside that narration, so Paint Dry is a live observability
+surface over a run that still leaves durable custody behind.
 
 The focus preview uses canonical focus-region data from
 `eval/focus_regions.yaml`. Those regions can be reviewed and adjusted
