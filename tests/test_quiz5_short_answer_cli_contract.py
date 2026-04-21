@@ -76,6 +76,69 @@ class Quiz5ShortAnswerCliArgumentContractTests(unittest.TestCase):
             "The staging CLI should reject unsupported generated variants at argument-parse time.",
         )
 
+    def test_trial_prep_probe_cli_rejects_mismatched_artifact_and_ingest_manifest(self) -> None:
+        script_path = Path("scripts/probe_quiz5_short_answer_trial_prep.py")
+
+        with tempfile.TemporaryDirectory(prefix="quiz5-trial-prep-cli-mismatch-") as tempdir:
+            root = Path(tempdir)
+            artifact_path = root / "artifact.json"
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "opaque_instance_code": "QUIZ5-C-DEMO",
+                        "variant_id": "C",
+                        "pages": [
+                            {
+                                "fallback_page_code": "quiz5-c-p1",
+                                "page_number": 1,
+                                "width": 100,
+                                "height": 100,
+                                "prompt_blocks": [],
+                                "response_boxes": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            ingest_dir = root / "ingest"
+            (ingest_dir / "normalized_images").mkdir(parents=True)
+            (ingest_dir / "session_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "scan_results": [
+                            {
+                                "scan_id": "scan-1.png",
+                                "status": "matched",
+                                "fallback_page_code": "quiz5-other-p1",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                [
+                    str(Path(".venv/bin/python")),
+                    str(script_path),
+                    "--artifact-json",
+                    str(artifact_path),
+                    "--ingest-output-dir",
+                    str(ingest_dir),
+                    "--output-dir",
+                    str(root / "trial_prep"),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Artifact/ingest mismatch", proc.stderr)
+        self.assertNotIn("KeyError", proc.stderr)
+
 
 @unittest.skipUnless(_QUIZ_A.exists() and _QUIZ_B.exists(), "Quiz #5 legacy PDFs are required for this contract")
 class Quiz5ShortAnswerCliContractTests(unittest.TestCase):

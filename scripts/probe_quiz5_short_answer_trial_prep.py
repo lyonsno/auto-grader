@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 from auto_grader.quiz5_short_answer_trial_prep import (
     prepare_quiz5_short_answer_trial_crops,
@@ -40,12 +41,16 @@ def main() -> int:
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     manifest_path = ingest_output_dir / "session_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    result = prepare_quiz5_short_answer_trial_crops(
-        artifact=artifact,
-        manifest=manifest,
-        normalized_dir=ingest_output_dir / "normalized_images",
-        output_dir=output_dir,
-    )
+    try:
+        result = prepare_quiz5_short_answer_trial_crops(
+            artifact=artifact,
+            manifest=manifest,
+            normalized_dir=ingest_output_dir / "normalized_images",
+            output_dir=output_dir,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(json.dumps(result, indent=2))
     return 0
 

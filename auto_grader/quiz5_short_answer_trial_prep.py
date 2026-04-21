@@ -32,7 +32,11 @@ def prepare_quiz5_short_answer_trial_crops(
 
         matched_pages += 1
         page_code = str(scan_result["fallback_page_code"])
-        page = page_index[page_code]
+        page = _artifact_page_for_matched_scan(
+            page_index=page_index,
+            page_code=page_code,
+            scan_id=str(scan_result["scan_id"]),
+        )
         image_path = normalized_path / str(scan_result["scan_id"])
         if not image_path.exists():
             raise ValueError(f"Missing normalized image for matched page: {image_path}")
@@ -92,6 +96,23 @@ def _page_index(artifact: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if not isinstance(pages, list):
         raise TypeError("artifact.pages must be a list")
     return {str(page["fallback_page_code"]): dict(page) for page in pages}
+
+
+def _artifact_page_for_matched_scan(
+    *,
+    page_index: dict[str, dict[str, Any]],
+    page_code: str,
+    scan_id: str,
+) -> dict[str, Any]:
+    try:
+        return page_index[page_code]
+    except KeyError as exc:
+        available_codes = ", ".join(sorted(page_index))
+        raise ValueError(
+            "Artifact/ingest mismatch: matched scan "
+            f"{scan_id!r} references fallback_page_code {page_code!r}, "
+            f"but artifact pages are [{available_codes}]"
+        ) from exc
 
 
 def _response_regions(page: dict[str, Any]) -> list[dict[str, Any]]:
