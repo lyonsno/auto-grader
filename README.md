@@ -1,471 +1,292 @@
-# Personalized Exam Generator + Local Auto-Grading
+# Auto-Grader
 
-Project README / Scope Spec
+Local-first exam generation and grading for chemistry courses.
 
-## What this is
+This project is built for a very specific workflow: a professor authors an
+assessment, prints individualized paper artifacts, ingests batch scans, reviews
+the few things the machine is not entitled to guess, and exports results
+without handing custody to a cloud service.
 
-This project is a local-first system for generating per-student variants of chemistry exams
-(Chem 101 / Orgo 101 style) from reusable question templates, then grading them
-automatically from scanned paper submissions using a robust, intentionally boring
-computer-vision pipeline.
+The system is optimized for operational sanity rather than theatrical AI:
 
-The point is exam integrity (each student gets their own numerical variant and answer-key
-mapping) and operational sanity (grading becomes fast, auditable, and resilient to the
-ordinary weirdness of paper/scanner workflows without assuming chaotic inputs).
+- each student can receive a distinct variant
+- paper artifacts remain traceable and auditable
+- scan ingestion is idempotent and explicit about ambiguity
+- grading prefers visible uncertainty over silent guessing
+- the local machine remains the source of truth
 
-This README started as a scope/spec document, but it now also needs to stay honest about
-the slices that already exist. It still emphasizes problem space, invariants, workflow,
-and favorable constraints, but the MC/OpenCV sections below describe real implemented
-surfaces rather than a purely aspirational plan.
+## What the user actually touches
 
-## Non-goals
+There are two real surfaces here.
 
-These are here to keep the project from exploding.
+### 1. The local web GUI
 
-- No full question-type library with polished end-to-end GUI support. The
-  landed professor-facing authoring surface now covers the real MC workflow and
-  assessment-authoring path, but unsupported or more advanced question types
-  still require schema-level work and follow-on implementation.
-- No LMS integration (Canvas, Blackboard, etc.) in v1. CSV in and out is sufficient.
-- No cloud dependency required for the core workflow. The system should run on a
-  professor's laptop.
-- No attempt to solve all chemistry. v1 focuses on numeric parameterization and
-  multiple-choice grading, with a path to expand later.
-- No cross-platform support requirement in early versions. Initial development and
-  deployment target recent Apple Silicon Macs only.
+This is the normal front door.
 
-## Core ideas and decisions already locked in
+The GUI lets an instructor or operator:
 
-- Database-backed spine: the system is stateful and auditable; it uses a database to
-  preserve identity, reproducibility, and workflow state.
-- Template-driven exam generation: exams are built from a schema describing templates and
-  variable parameterization.
-- Per-student exam instances: each student receives a unique variant with unique
-  answer-key mapping.
-- Page-level identity markers on paper: printed artifacts include duplicated QR codes and
-  human-readable fallback codes for reliable scan association and manual recovery.
-- Local scan ingestion and grading: the grading pipeline operates on scanned photographic
-  copies (batch scans) using local CV tooling.
-- Local LLM-assisted template inference (optional helper): a local model can assist in
-  inferring templated configs from historical exam variants, but outputs must be
-  reviewable and verifiable. The model is not a source of truth.
-- Tamper-evident, auditable workflow: the system is designed so anomalies are surfaced,
-  quarantined, and traceable rather than silently guessed away.
+- author assessments
+- choose or create a grading target
+- ingest a batch of scans
+- inspect the review queue
+- persist manual resolutions
+- export final results
 
-## Why a database is not optional here
+It is intentionally thin over the durable workflow and database model. The GUI
+is not its own application brain; it is the practical operator surface over the
+same underlying truth the CLI and contracts use.
 
-This system interacts with the physical world. Paper moves, pages get shuffled, scans
-duplicate, files get re-uploaded, and mistakes happen. The database exists to:
+### 2. Project Paint Dry
 
-- map paper artifacts back to canonical exam instances
-- preserve what happened for audit and dispute resolution
-- enforce invariants like no two finalized grades for the same student plus exam attempt
-- support idempotent ingestion so re-scans do not corrupt state
-- enable reconciliation between the expected set of exam artifacts and the observed set of
-  scanned artifacts
+Paint Dry is the live grading view used during short-answer smoke runs and
+model work. It is not the professor-facing front door. It is the operator and
+developer surface for watching a run happen while it is happening.
 
-The database should not be treated as a dumping ground for blobs. It is the spine of truth
-and process.
+Paint Dry is useful when the interesting question is not just "what score came
+out?" but:
 
-## System overview
+- what evidence is the model looking at?
+- why is it hesitating?
+- is this a real ambiguity or just a bad crop?
+- is the prompt pushing the model toward the right kind of caution?
 
-### 1. Authoring (Templates)
+The Paint Dry reader combines:
 
-The durable authored representation is still YAML/JSON, but the project now
-has a professor-facing local GUI for the first real authoring and workflow
-surfaces. Professors no longer need to start from blank YAML just to create an
-assessment, create/select a grading target, or drive the MC grading workflow.
-The underlying format remains structured, explicit, validated, and reviewable.
+- live narration of the grading run
+- a focus preview of the current handwritten evidence
+- score accounting
+- retained history with scrollback
+- in-window focus-region annotation for the active item
 
-Key properties:
+That turns hard short-answer cases into something inspectable instead of
+forcing the operator to reconstruct everything from logs afterward.
 
-- templates represent "same question, different numbers"
-- variables are typed (`int` or `float`), constrained (ranges, step), and formatted
-  (significant figures and rounding rules)
-- questions define correct answers and distractor generation strategies, or allow explicit
-  distractor lists
-- template versions are immutable once used to generate student exams
+## What the system does
 
-Current implementation status on this authoring surface:
+At a high level, the product has six jobs.
 
-- `auto_grader.mc_workflow_gui` plus
-  `scripts/launch_mc_workflow_gui.py` now provide a thin local web GUI for:
-  - creating assessments through a professor-facing authoring flow
-  - creating or selecting the exam to grade without exposing raw database ids
-  - ingesting scans, reviewing flagged questions, persisting decisions, and
-    exporting results
-- the GUI intentionally remains thin over the landed durable model and DB-backed
-  workflow surfaces instead of inventing a second source of truth
-- static-choice multiple-choice authoring is landed and validated before
-  persistence
-- computed-distractor authoring is intentionally fenced off until the
-  generation/rendering path supports it end to end
+### Author assessments
 
-### 2. Generation (Per-student exams)
+Assessments are defined from structured templates instead of one-off documents.
+Questions can vary numerically per student while remaining reproducible and
+reviewable.
 
-Given:
+The durable authored format remains structured and strict. The GUI sits over
+that model so the user does not have to begin from blank YAML just to create an
+assessment or pick something to grade.
 
-- a roster
-- an exam definition (template set plus configuration)
+### Generate individualized paper artifacts
 
-The system generates:
+From a roster and an assessment definition, the system generates per-student
+instances with stable identity, answer-key mapping, and printable paper
+artifacts.
 
-- per-student exam instances
-- per-student answer keys (mapping correct choice to bubble position)
-- printable PDFs (exam pages and answer sheets, depending on layout)
+Reproducibility is a hard requirement. The system must be able to answer, later,
+"what exactly did this student receive?"
 
-A central requirement is reproducibility. It must always be possible to reconstruct what a
-given student received, even later.
+### Put stable identity on paper
 
-Initial contract slice for the deterministic MC lane:
+Printed pages carry enough information to survive copier reality:
 
-- generation must be able to emit a per-student MC answer-sheet artifact before the full
-  PDF pipeline exists
-- the artifact must include a stable, non-semantic `opaque_instance_code` that does not
-  expose student or template identifiers
-- it must include a per-page fallback code for paper recovery
-- it must include rendered MC questions with any shuffled choice order made explicit
-- variableized MC rendering must be stable across equivalent variable declaration order
-- it must include the answer-key mapping from logical choice key to physical bubble label
-- it must include canonical page-space bubble rectangles for each rendered bubble
-- it must declare the layout coordinate contract explicitly (`units`, `origin`, `y_axis`,
-  `layout_version`) so later PDF and OpenCV stages do not invent a second layout truth
+- duplicated QR identity markers
+- human-readable fallback identifiers
+- registration markers for scan normalization
 
-This narrow artifact is the handoff between generation and deterministic OpenCV grading.
-Later PDF rendering should consume the same contract rather than inventing a second layout
-truth.
+The goal is not a beautiful publishing pipeline. The goal is reliable recovery
+under ordinary institutional scanning conditions.
 
-Current implementation status on the generated-exam demo surface:
+### Ingest scans without guessing
 
-- `auto_grader.generated_exam_demo` and
-  `scripts/render_generated_mc_exam_demo.py` can now load a real exam template
-  such as `templates/chm141-final-fall2023.yaml`, build one printable MC-only
-  answer-sheet artifact for a named student through the canonical generation
-  path, and write the resulting PDF plus artifact/metadata JSON bundle to disk
-- this surface deliberately reuses `load_template(...)`,
-  `build_mc_answer_sheet(...)`, and `render_mc_answer_sheet_pdf(...)` instead
-  of inventing a packet-local generation fork, so the later paper demo can run
-  against a real generated exam rather than only the calibration packets
-- that generated artifact shape is also now pinned against the landed
-  `auto_grader.mc_opencv_demo` runner, so a real chemistry-template packet can
-  already flow through the same end-to-end ingest/scoring surface used by the
-  earlier calibration-packet demo
+The ingest path:
 
-### 3. Paper artifacts (Identification + Layout)
+- accepts scan images
+- reads identity markers where possible
+- normalizes pages back into canonical page space
+- associates pages with the right exam instance
+- records clear outcomes for matched, unmatched, and ambiguous cases
 
-Printed artifacts include:
+Idempotence matters here. Re-ingesting the same material must not corrupt state,
+and failure cases must remain visible instead of disappearing into best-effort
+heuristics.
 
-- duplicated QR codes encoding an opaque exam-instance identifier plus page number
-- human-readable fallback identifiers for manual recovery
-- alignment markers and registration aids for scan normalization
+### Grade and surface uncertainty
 
-The goal is not fancy. The goal is "works under copier reality."
+Once a page is identified and registered, the system reads responses, applies
+the correct per-student key, and scores what it can score lawfully.
 
-Current implementation status on the MC/OpenCV prerequisite lane:
+The grading design goal is simple:
 
-- `auto_grader.generation` produces the canonical answer-sheet artifact
-- `auto_grader.pdf_rendering` now renders a minimal answer-sheet PDF directly
-  from that artifact
-- each rendered page now carries two duplicated QR codes encoding the page
-  fallback code from the same artifact contract
-- the rendered PDF currently carries visible instance/page recovery codes,
-  rendered prompt text, filled registration markers for scan normalization,
-  duplicated QR identity markers, circular answer bubbles with direct `A/B/C/D`
-  labels, and a vertically stacked choice list placed underneath each prompt to
-  the left of the bubble row, with larger question typography and human-markable
-  bubble sizing, all still derived from the same page contract
-- dense MC sheets now paginate across multiple pages instead of forcing a fake
-  one-page contract, and long prompts wrap within the question block rather
-  than bleeding across the sheet
-- `auto_grader.scan_readback` now performs the first OpenCV-facing readback
-  slice by decoding duplicated page-identity QR payloads from scan images and
-  rejecting mismatched payload pairs as ambiguous
-- `auto_grader.scan_registration` now performs the first page-registration
-  slice by using the filled corner markers to normalize a skewed page back into
-  canonical page aspect and marker-aligned page space while preserving practical
-  scan resolution
-- `auto_grader.bubble_interpretation` now performs the first bubble-readback
-  slice by reading filled bubble labels from the normalized page image while
-  keeping blanks explicit and preserving multiple marks as visible ambiguity
-  instead of collapsing them into fake single answers; that layer has also now
-  survived a first real-paper calibration pass, and its `marked` versus
-  `illegible` boundary has been retuned against actual scanned pencil fills
-  rather than only procedural probes
+- clear answers should be scored automatically
+- ambiguous answers should be surfaced
+- the system should not fake certainty it does not have
 
-### 4. Ingestion (Scans -> Identified pages)
+That applies both to deterministic MC grading and to the short-answer VLM
+surfaces.
 
-The ingestion pipeline:
+### Review and export
 
-- accepts scanned page images produced by the institutional batch scanning system
-- decodes identity markers where possible
-- registers and normalizes the page to a canonical coordinate space
-- associates each scan with the correct exam instance and page number
-- stores ingestion outcomes (`matched`, `unmatched`, `ambiguous`, `duplicate`) without
-  silent corruption
+The final operator workflow includes:
 
-Importantly:
-
-- ingestion must be idempotent
-- failed identification attempts must still be recorded as tracked artifacts with explicit
-  failure reasons
-- ingestion must never silently drop pages
-- ingestion must never silently guess identity
-
-For the initial schema contract, the supported scan status vocabulary is `matched`,
-`unmatched`, and `ambiguous`. `matched` is treated as a success state and should not carry
-a failure reason. `unmatched` and `ambiguous` are treated as supported tracked failure
-states and must record an explicit, non-blank failure reason. Exact re-ingestion of the
-same file should be idempotent via a unique checksum key. Richer `duplicate` artifact
-linkage is deferred until there is canonical-artifact linkage to point at.
-
-Current implementation status on this ingest surface:
-
-- scan-level MC ingest packaging is implemented via `auto_grader.mc_scan_ingest`
-  so one batch of scanned page images plus a known exam artifact can now produce
-  explicit `matched`, `unmatched`, and `ambiguous` outcomes without forcing
-  downstream callers to hand-compose QR readback, page matching, and matched-page
-  extraction
-- unique matched scans carry the full normalized/scored page bundle from
-  `auto_grader.mc_page_extraction`
-- duplicate claims on the same page code stay explicit `ambiguous` outcomes
-  instead of silently picking a canonical scan
-- unreadable scans remain tracked `unmatched` artifacts with explicit failure
-  reasons
-- durable on-disk scan-session persistence is implemented via
-  `auto_grader.mc_scan_session`; it writes one `session_manifest.json` plus
-  per-scan normalized page images for matched scans, keeps exact re-runs
-  idempotent at the artifact identity level, rejects unsafe `scan_id` values
-  before they become output paths, and now treats normalized-image write
-  failures as real errors instead of silently replacing output files with
-  corrupt temp data
-- a thin prototype demo runner is implemented via `auto_grader.mc_opencv_demo`
-  plus `scripts/run_mc_opencv_demo.py`; it takes one known artifact JSON plus
-  one directory of scans, runs the landed ingest surface, writes a sanitized
-  `ingest_result.json`, writes per-scan normalized page images for matched
-  pages, and emits a small human-readable summary so the lane can be smoked end
-  to end without inventing a second persistence format; that runner has now
-  also survived a first real-paper smoke against the durable two-page
-  pencil-and-scanner calibration packet, and the only bug it exposed was a
-  page-local scoring-accounting issue that has since been fixed in
-  `auto_grader.mc_page_extraction`
-
-### 5. Grading (Bubbles -> Responses -> Score)
-
-Once pages are identified and registered:
-
-- bubble regions are interpreted
-- responses are recorded with confidence and ambiguity flags
-- answer keys are applied per-student variant
-- scores are computed
-- ambiguous cases are flagged for review rather than guessed
-
-Current implementation status on this grading surface:
-
-- page-identity QR readback is implemented via `auto_grader.scan_readback`
-- page registration is implemented via `auto_grader.scan_registration`
-- first-pass bubble readback is implemented via `auto_grader.bubble_interpretation`
-- first-pass scoring decisions are implemented via `auto_grader.mc_scoring`
-  for the core MC statuses `correct`, `incorrect`, `blank`, `multiple_marked`,
-  `ambiguous_mark`, and `illegible_mark`; that scorer now also performs a
-  narrow question-level dominance arbitration pass so one clearly stronger
-  deliberate fill can beat much weaker secondary traces without forcing routine
-  manual review, while genuinely substantial co-equal fills still remain
-  explicit review work
-- matched-page extraction packaging is implemented via `auto_grader.mc_page_extraction`
-  so downstream callers can consume one bundle containing the normalized page,
-  marked bubble labels, per-bubble evidence, and scored MC outcomes for an
-  already-matched page
-- a synthetic student-mark smoke harness is implemented via
-  `auto_grader.mark_profile_smoke`; it renders plausible filled, scribbled,
-  off-center, smudged, faint, double-marked, hostile-glance, glancing-stray-only,
-  tiny-center-dot, correct-plus-wrong-dot, ambiguous-patchy, and
-  scratchout-illegible bubbles, runs them through a small ladder of
-  realistic scan variants (`clean_scan`, `office_scan`, `stressed_scan`) on the
-  real QR/readback/registration/scoring path, and records both the observed
-  behavior band (`grade`, `review`, `ignore`, or outright pipeline failure) and
-  the current strongest-handled boundary without requiring an immediate
-  pen-and-scanner loop
-- that same harness now also reports an explicit incidental-mark pathology line
-  on the ordinary `office_scan` tier: the strongest specimen still ignored as
-  non-attempt noise, and the first stronger specimen that the current pipeline
-  no longer feels safe ignoring; today that line sits between a short interior
-  slash that is still ignored and a compact dark interior scribble that is
-  treated as a real fill attempt
-- a dedicated printable paper-calibration packet is implemented via
-  `auto_grader.paper_calibration_packet`; the first real pencil-and-scanner
-  pass on that packet exposed an over-aggressive `illegible` heuristic, and the
-  follow-on retune brought the same two scanned pages from 3/12 page-local
-  matches to 12/12 without weakening the existing scratchout-to-`illegible`
-  contract
-- a human review-override surface is implemented via
-  `auto_grader.mc_review_override`; reviewers can now resolve flagged
-  `multiple_marked`, `ambiguous_mark`, and `illegible_mark` cases to a final
-  bubble choice or blank result while preserving the original machine status as
-  provenance in the corrected scoring record
-- database-backed MC scan session persistence is implemented via
-  `auto_grader.mc_scan_db`; scan sessions, per-page match status, and
-  per-question scored outcomes are written atomically into the DB spine with
-  idempotent re-run semantics, append-only supersession for re-scans, and
-  divergence detection when overlapping scans carry different outcomes across
-  sessions
-- database-backed MC review-resolution persistence is implemented via
-  `auto_grader.mc_review_db`; human override decisions are now recorded
-  durably against persisted machine question outcomes with original-status
-  provenance, current resolved bubble or blank outcome, idempotent re-apply
-  semantics for identical decisions, and audit-event history when a reviewer
-  later changes the decision
-- database-backed current-final MC truth reads are implemented via
-  `auto_grader.mc_results_db`; callers can now ask for one authoritative
-  current result surface per `exam_instance_id`, with the latest scan session,
-  persisted machine outcomes, latest human review resolutions, and still-open
-  review-required questions composed together instead of reconstructed ad hoc
-- a compact DB-backed demo/export surface is implemented via
-  `auto_grader.mc_results_demo_export` plus
-  `scripts/export_mc_results_demo.py`; this intentionally sits downstream of
-  the authoritative read model and writes one compact JSON bundle plus one
-  human-readable summary file instead of re-inventing result semantics in the
-  script layer
-
-### 6. Review + Export
-
-The system needs a minimal workflow for:
-
-- resolving unmatched scans by manual entry of fallback identifiers
-- reviewing ambiguous marks
+- resolving unmatched or ambiguous cases
+- reviewing flagged marks
 - finalizing grades
-- exporting results as CSV
+- exporting results
 
-A rough, cheap GUI is acceptable. A local web UI served from the app is acceptable. The UI
-is a tool, not the product.
+That workflow exists in the local web GUI and remains backed by the same
+database truth as the rest of the system.
 
-Current implementation status on this review surface:
+## Current shape of the product
 
-- `auto_grader.mc_review_override` now provides the first explicit human
-  resolution seam for flagged MC questions
-- `auto_grader.mc_review_db` now persists those review resolutions into the
-  database spine without mutating away the underlying machine-scored outcome;
-  the current row stores the latest reviewed answer while audit events preserve
-  create/update history
-- `auto_grader.mc_results_db` now exposes the authoritative DB-backed current
-  MC truth surface for one exam instance, combining the latest persisted scan
-  session with any persisted review resolutions while keeping unresolved
-  review-required questions explicit
-- `auto_grader.mc_db_round_trip` now composes the landed DB primitives into
-  one thin workflow seam that persists a scan manifest, optionally persists
-  human review resolutions by scan, and returns the authoritative current-final
-  MC truth without redefining read-model semantics
-- `auto_grader.mc_results_demo_export` now turns that DB-backed current truth
-  into a compact demo/export bundle for one exam instance, with a small text
-  summary that is suitable for same-day operator/demo use without a GUI
-- `auto_grader.mc_workflow` now provides a professor-facing workflow surface
-  that composes the landed MC/OpenCV and DB-backed primitives into four
-  operations: ingest a directory of scan images into the DB-backed workflow,
-  show the review queue, resolve flagged questions using a simple
-  `{question_id: bubble_label}` map, and export final results as
-  JSON/CSV/text
-- `scripts/mc_workflow.py` exposes those operations as CLI subcommands
-  (`ingest`, `review`, `resolve`, `export`) so the professor does not need to
-  know about internal module boundaries or prepare complex JSON
+Today the strongest completed lane is the multiple-choice paper workflow:
 
-Example same-day DB-backed round-trip invocation:
+- authored assessments in the local web GUI
+- generated answer-sheet artifacts and printable PDFs
+- QR-backed paper identity and scan normalization
+- batch scan ingest with explicit ambiguity outcomes
+- deterministic MC grading with a review queue
+- database-backed result persistence and export
 
-```bash
-python scripts/run_mc_db_round_trip.py \
-  --manifest-json /tmp/mc-session/manifest.json \
-  --exam-instance-id 123 \
-  --output-dir /tmp/mc-db-round-trip
-```
+The repo also contains a real short-answer grading and observability lane:
 
-Example same-day export invocation:
+- VLM-backed grading smoke harness
+- Project Paint Dry live grading view
+- focus-region annotation and refresh
+- run comparison and truth/backfill tooling
 
-```bash
-python scripts/export_mc_results_demo.py \
-  --exam-instance-id 123 \
-  --output-dir /tmp/mc-results-demo
-```
+That short-answer lane is where most of the active model and prompt work lives.
 
-Example professor-facing workflow (ingest + review + resolve + export):
+## Local GUI and dev surfaces
 
-```bash
-# Ingest scans from a directory into the DB-backed MC/OpenCV workflow
-python scripts/mc_workflow.py ingest \
-  --exam-instance-id 123 \
-  --artifact-json /tmp/mc-generated-exam-demo-artifact.json \
-  --scan-dir /tmp/mc-scans \
-  --output-dir /tmp/mc-ingest
+The primary human-facing surface is the local web GUI.
 
-# See what needs review
-python scripts/mc_workflow.py review \
-  --exam-instance-id 123 \
-  --output-dir /tmp/mc-review
+The developer and operator-facing surface for live short-answer work is Paint
+Dry.
 
-# Resolve flagged questions (simple JSON: question_id -> bubble label or null)
-echo '{"mc-1": "B", "mc-3": null}' > /tmp/resolutions.json
-python scripts/mc_workflow.py resolve \
-  --exam-instance-id 123 \
-  --resolutions-json /tmp/resolutions.json \
-  --output-dir /tmp/mc-resolve
+Both matter, but they solve different problems:
 
-# Export final results as CSV
-python scripts/mc_workflow.py export \
-  --exam-instance-id 123 \
-  --format csv \
-  --output-dir /tmp/mc-export
-```
+- the GUI is the product workflow
+- Paint Dry is the live observability and intervention surface
 
-Example first-pass professor GUI:
+## Eval harness model servers (dev only)
 
-```bash
-python scripts/launch_mc_workflow_gui.py \
-  --open-browser \
-  --database-url postgresql:///postgres \
-  --artifact-json /tmp/mc-generated-exam-demo-artifact.json \
-  --scan-dir /tmp/mc-scans \
-  --output-dir /tmp/mc-gui-output
-```
+The eval harness (`scripts/smoke_vlm.py`) talks to OpenAI-compatible local
+servers for two logical roles:
 
-The GUI is intentionally thin over the landed workflow: it lets an operator
-ingest scans, inspect the review queue, persist resolutions, and export final
-results without re-owning any of the underlying DB truth or MC/OpenCV logic.
-It now also supports a more professor-shaped grading-target flow:
+- the grader model
+- the Paint Dry narrator
 
-- a primary `Grade Scans` section for choosing an existing exam and ingesting
-  scans into it
-- a separate `Need a Different Exam?` section for creating a new exam from an
-  existing assessment template when the desired target is not already listed
-- the GUI keeps internal database ids behind the curtain and exposes the
-  creation flow in the same local web surface instead of requiring raw YAML,
-  SQL, or ad hoc terminal glue just to pick or create the grading target
+Those roles may run on separate servers or on the same server.
 
-## Near-term forcing case
+The standard split configuration is:
 
-The next concrete forcing case is not another MC packet. It is a real
-short-answer quiz family already sitting in `auto-grader-assets/exams/`:
+- grader on the big-box OMLX server at `http://macbook-pro-2.local:8001`
+- narrator on the dedicated Bonsai surface at `http://nlm2pr.local:8002`
+
+The harness also supports a single-model configuration, where the same strong
+model serves both grading and narration. In that mode, `--narrator-url` and
+`--narrator-model` point at the same backend as the grader.
+
+The durable default narrator address for the separate Bonsai lane is
+`http://nlm2pr.local:8002`; that mDNS name lets the narrator follow the correct
+machine instead of depending on which box you happen to be sitting on. Use
+`http://127.0.0.1:8002` only as an explicit local-box override when you have
+intentionally launched Bonsai on the same machine running the smoke.
+
+Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't support
+`bits=1` quantization. Setup, launch command, verification, and troubleshooting
+are documented in [`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md).
+
+## Project Paint Dry — live grading view (dev only)
+
+When the eval harness runs with `--narrate`, it opens the Paint Dry reader: a
+live grading view over the model's reasoning and the current evidence crop.
+
+Paint Dry is where short-answer grading becomes inspectable. It is especially
+useful on the cases that are annoying to reason about from final artifacts
+alone:
+
+- a scribbled digit that could be read two ways
+- a structure that is locally wrong but contextually salvageable
+- a disagreement where the real question is what the model is defending
+
+Paint Dry supports both:
+
+- a dedicated narrator model on its own server
+- a single-model path where the same strong grader model also narrates
+
+The reader shows:
+
+- live narration
+- the active focus preview
+- score accounting
+- retained history with scrollback
+- a rejected-summary/debug surface
+
+What it is good for:
+
+- smoke visibility
+- ambiguity diagnosis
+- prompt tuning
+- operator correction during a live run
+
+The history pane is scrollable throughout the run:
+
+- `k` / `j` move one row
+- `u` / `d` page up/down
+- `0` returns to the live edge
+- `a` reopens focus-region annotation for the current item
+
+While scrolled up, new history continues to accumulate without yanking the
+viewport back to newest, and rows that fall out of the default live-edge view
+remain recoverable through scrollback.
+
+Each run persists narrator output to `runs/<ts>-<model>/narrator.jsonl`
+(machine-replayable) and `runs/<ts>-<model>/narrator.txt` (human-readable
+transcript), alongside the ordinary grading artifacts.
+
+The focus preview uses canonical focus-region data from
+`eval/focus_regions.yaml`. Those regions can be reviewed and adjusted with
+`scripts/annotate_focus_regions.py`, and the reader can reopen that annotator
+directly for the active item via `a`, then refresh the preview in place.
+
+## Workflow
+
+### Professor flow
+
+1. Create or open a project.
+2. Import a roster.
+3. Author or select an assessment in the local web GUI.
+4. Generate printable paper artifacts.
+5. Print and administer the assessment.
+6. Ingest the scan batch.
+7. Review the flagged cases.
+8. Finalize and export results.
+
+### Failure modes the system is expected to survive
+
+- duplicate scans or rescans
+- unreadable QR codes
+- missing pages
+- ambiguous marks
+- unexpected pages in a scan batch
+- accidental reruns of ingest or grading
+- roster changes between runs
+
+These are not edge-case fantasies. They are normal workflow hazards, and the
+system should surface them explicitly instead of quietly improvising around
+them.
+
+## Current frontier
+
+The next forcing case is the real short-answer Quiz 5 family in
+`auto-grader-assets/exams/`:
 
 - `260326_Quiz _5 A.pdf`
 - `260326_Quiz _5 B.pdf`
 
-These are fixed-layout short-answer chemistry quizzes with typed prompts and
-boxed final-answer fields. The observed `A/B` differences appear structured
-enough that the project should be able to:
-
-- reconstruct a canonical authored quiz family from the legacy variant PDFs
-- generate a reviewable sibling variant `C`
-- render QR-/identity-bearing tracked artifacts for `A`, `B`, and `C`
-- and run a DB-backed VLM-facing trial against the real student scripts that
-  arrive next week
-
-The first part of that chapter is now landed:
-
-- canonical reconstruction of the observed `Quiz 5 A/B` family
-- a repo-local CLI for reconstructing the family from the legacy PDFs
-- generation of a reviewable sibling variant `C`
-
-The immediate frontier is now the next layer on top of that foundation:
-
-- render QR-/identity-bearing tracked artifacts for `A`, `B`, and `C`
-- and run a DB-backed VLM-facing trial against the real student scripts that
-  arrive next week
+That lane is about reconstructing a canonical authored family from the legacy
+variants, generating a sibling `C`, and then running a DB-backed VLM-facing
+trial against the real student scripts.
 
 ## Data model
 
@@ -634,184 +455,6 @@ For each question:
 - Portfolio relevance is a nice side benefit.
 - The real value is reducing professor friction and avoiding the fill 60 configs by hand
   failure mode.
-
-## Local GUI and dev surfaces
-
-The primary human-facing surface in this repo is now the local web GUI:
-
-- author assessments
-- choose or create a grading target
-- ingest scans
-- inspect the review queue
-- persist manual resolutions
-- export results
-
-That is the normal operator entry point. The terminal-heavy tools still
-exist, but they are no longer the best description of the product
-surface.
-
-Alongside the web GUI, the repo also has a developer/operator
-observability surface for live short-answer grading: Project Paint Dry.
-That surface sits closer to the model and the smoke harness. It is for
-watching a run happen, diagnosing ambiguity, tuning prompts, and fixing
-focus regions without waiting for post-run artifacts.
-
-## Eval harness model servers (dev only)
-
-The eval harness (`scripts/smoke_vlm.py`) talks to OpenAI-compatible
-local servers for two logical roles:
-
-- the grader model
-- the "Project Paint Dry" narrator
-
-Those roles may run on separate servers or on the same server. The
-standard split configuration is:
-
-- grader on the big-box OMLX server at `http://macbook-pro-2.local:8001`
-- narrator on the dedicated Bonsai surface at `http://nlm2pr.local:8002`
-
-The harness also supports a single-model configuration, where the same
-strong model serves both grading and narration. In that mode,
-`--narrator-url` and `--narrator-model` simply point at the same backend
-as the grader.
-
-The durable default narrator address for the separate Bonsai lane is
-`http://nlm2pr.local:8002`; that mDNS name lets the narrator follow the
-correct machine instead of depending on which box you happen to be
-sitting on. Use `http://127.0.0.1:8002` only as an explicit local-box
-override when you have intentionally launched Bonsai on the same machine
-running the smoke.
-
-Bonsai needs the PRISM MLX fork specifically — stock MLX doesn't
-support `bits=1` quantization. Setup, launch command, verification,
-and troubleshooting are documented in
-[`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md). Read
-that file before trying to start the narrator from scratch.
-
-The grader server on the big box uses standard OMLX with non-1-bit
-models and is not covered by the Bonsai doc.
-
-## Project Paint Dry — live grading view (dev only)
-
-When the eval harness runs with `--narrate`, it opens the Paint Dry
-reader: a live grading view over the model's reasoning and the current
-evidence crop. This is not the main professor GUI. It is the dev and
-operator surface for watching short-answer grading happen in real time:
-what the model is looking at, what evidence it is prioritizing, where
-it is getting stuck, and whether a hard case is genuinely ambiguous or
-just poorly cropped.
-
-That becomes especially useful on the kinds of items that are painful to
-debug from final JSON alone:
-
-- a scribbled digit that could plausibly be read two ways
-- a Lewis structure that is locally wrong but contextually salvageable
-- a grading disagreement where the question is not "what score came
-  out?" but "what exactly was the model defending?"
-
-Paint Dry is the place where those questions become visible. You get the
-live commentary, the active focus crop, the scoring state, and retained
-history in one surface instead of reconstructing the run from logs after
-the fact.
-
-Paint Dry supports both:
-
-- a dedicated narrator model on its own server
-- or a single-model path where the same strong grader model also does
-  the narration
-
-In both cases the reader surface is the same: a live view over the
-narrator stream, score accounting, active focus crop, and retained
-history. In practice, the single-model path is not just a convenience
-mode; it is good enough to expose the actual shape of hard grading
-decisions instead of merely showing that the model is busy.
-
-The Paint Dry reader shows:
-
-- **Title bar**: project name, narrator status, and running counters
-  for emitted / dedup-rejected / empty-rejected summaries.
-- **Scoreboard**: current model, exam set, item counter, and a row of
-  tall-digit scoring dials — total elapsed, turn elapsed, on-target
-  fraction, left-on-table, and bad calls.
-- **Status + live pane**: the current narrator dispatch streaming
-  character-by-character as the VLM thinks, with a one-line status
-  label above it.
-- **Focus preview**: a cropped scan of the exam region currently being
-  graded, rendered inline via Kitty graphics protocol. Shows the
-  student's actual handwritten answer for the active item.
-- **History pane**: completed narrator summaries grouped by grading
-  item, newest at top. Each item shows a header (item ID, question
-  type, point value), any accepted narrator lines (core-issue flags,
-  basis summaries), and a verdict line with elapsed time, grader
-  score vs professor score, and a brief comparison.
-- **Rejected pane**: summaries dropped by the dedup or empty filters,
-  shown with strikethrough. Debug surface only.
-
-What Paint Dry is good for:
-
-- **Smoke visibility**: see whether the run is healthy without waiting
-  for the full artifact bundle.
-- **Ambiguity diagnosis**: tell the difference between a model error and
-  a genuinely underdetermined handwritten mark.
-- **Prompt tuning**: watch where the model burns time, loops, or rescues
-  credit in a way that suggests a better prompt stance.
-- **Operator correction**: jump directly into focus-region annotation for
-  the current item and refresh the preview in place without leaving the
-  live run.
-
-The history pane is scrollable. Key bindings are shown in the footer
-after the session ends, but they are active throughout the run:
-`k`/`j` scroll up/down one row, `u`/`d` page up/down, `0` returns to
-the live edge, and `a` reopens focus-region annotation for the current
-item. While scrolled up, new history continues to accumulate without
-yanking the viewport back to newest, and clipped live-edge rows remain
-recoverable through scrollback rather than disappearing once they fall
-out of the default viewport. After the session ends, scroll keys remain
-active and any non-scroll key closes the window.
-
-Each run persists narrator output to `runs/<ts>-<model>/narrator.jsonl`
-(machine-replayable) and `runs/<ts>-<model>/narrator.txt` (human-readable
-transcript). The smoke runner also persists the ordinary grading
-artifacts alongside that narration, so Paint Dry is a live surface over
-a run that still leaves durable custody behind.
-
-The focus preview uses canonical focus-region data from
-`eval/focus_regions.yaml`. Those regions can be reviewed and adjusted
-with `scripts/annotate_focus_regions.py`, which gives the project one
-authoritative focus-box seam instead of ad hoc crop constants scattered
-through the smoke and narrator code. The reader can reopen that
-annotator directly for the active item from the live Paint Dry window
-via `a`, then refresh the preview in place when the operator saves the
-adjusted crop.
-
-## Project workflow
-
-### Professor flow (happy path)
-
-1. Create or open a project folder.
-2. Import roster CSV.
-3. Create or edit assessments through the local authoring surface, or run the
-   skeletonizer / LLM inferencer and review drafts.
-4. Validate templates.
-5. Preview a few generated variants.
-6. Generate exam PDFs.
-7. Print and administer exams.
-8. Drop scan files into an ingestion folder, or import them.
-9. Run grading and review flagged items.
-10. Finalize and export grades CSV.
-
-### Failure modes that must be supported
-
-These are expected tail cases, not assumed common-case behavior.
-
-- Scans contain duplicates or rescans.
-- Some pages have unreadable QR codes.
-- Some pages are missing.
-- Some bubble marks are ambiguous.
-- A scan batch contains unexpected pages.
-- A professor reruns ingestion or grading by accident.
-- The roster changes between runs and the system must respond with explicit, logged
-  behavior.
 
 ## Known favorable constraints
 
