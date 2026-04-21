@@ -4403,6 +4403,91 @@ class NarratorReaderContract(unittest.TestCase):
             "the alternating overlay should stay quieter than the main shimmer pass instead of competing with it",
         )
 
+    def test_secondary_history_overlay_targets_header_group_and_child_rows(self):
+        display = self._make_display()
+        wrap_width = display._compute_wrap_width()
+        self.assertIsNotNone(wrap_width)
+        secondary_head_col = int(round(
+            narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET
+            * (wrap_width + narrator_reader._SHIMMER_WIDTH)
+            - narrator_reader._SHIMMER_WIDTH
+        ))
+        header_filler = "x" * max(0, secondary_head_col - 13)
+        line_filler = "x" * max(0, secondary_head_col - 4)
+        display.history.append(
+            ("header", "[item 1/2] " + header_filler + "OLDERHDR", None)
+        )
+        display.history.append(
+            ("line", line_filler + "OLDERLINE", 0)
+        )
+        display.history.append(
+            ("header", "[item 2/2] " + header_filler + "NEWHDR", None)
+        )
+        display.history.append(
+            ("line", line_filler + "NEWLINE", 0)
+        )
+
+        def _render_history_at(now_s: float) -> Text:
+            with mock.patch.object(
+                narrator_reader.time,
+                "monotonic",
+                return_value=now_s,
+            ):
+                group = display.render()
+            history_panel = group.renderables[-1]
+            return history_panel.renderable
+
+        first_pass = _render_history_at(0.0)
+        second_pass = _render_history_at(
+            narrator_reader._HISTORY_GROUP_SECONDARY_CYCLE_S
+        )
+
+        new_header_first = self._hex_luminance(
+            self._style_for_substring(first_pass, "NEWHDR")
+        )
+        new_header_second = self._hex_luminance(
+            self._style_for_substring(second_pass, "NEWHDR")
+        )
+        new_line_first = self._hex_luminance(
+            self._style_for_substring(first_pass, "NEWLINE")
+        )
+        new_line_second = self._hex_luminance(
+            self._style_for_substring(second_pass, "NEWLINE")
+        )
+        old_header_first = self._hex_luminance(
+            self._style_for_substring(first_pass, "OLDERHDR")
+        )
+        old_header_second = self._hex_luminance(
+            self._style_for_substring(second_pass, "OLDERHDR")
+        )
+        old_line_first = self._hex_luminance(
+            self._style_for_substring(first_pass, "OLDERLINE")
+        )
+        old_line_second = self._hex_luminance(
+            self._style_for_substring(second_pass, "OLDERLINE")
+        )
+
+        self.assertGreater(
+            new_header_first,
+            new_header_second,
+            "the first secondary pass should brighten the targeted heading group's header more than the same header on the opposite-parity pass",
+        )
+        self.assertGreater(
+            new_line_first,
+            new_line_second,
+            "the selected heading group's subordinate row should ride along with the secondary pass instead of leaving the effect stranded on the header only",
+        )
+        self.assertGreater(
+            old_header_second,
+            old_header_first,
+            "when the parity flips, the neighboring heading group's header should take the quieter second pass instead",
+        )
+        self.assertGreater(
+            old_line_second,
+            old_line_first,
+            "the parity flip should also carry across the neighboring heading group's child row, not just its header",
+        )
+
     def test_wrapped_history_line_only_privileges_first_visual_row(self) -> None:
         wrapped_text = Text()
         _apply_shimmer(
