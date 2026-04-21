@@ -527,6 +527,18 @@ _HISTORY_GROUP_RAKE = 0.022        # gentler within-item rake than the last pass
 _HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
                                    # shared across even/odd item groups
 _HISTORY_GROUP_ALT_RATE = 0.55     # slower than the primary history field
+_HISTORY_GROUP_SECONDARY_CYCLE_S = _SHIMMER_DEFAULT_CYCLE_S
+                                   # the new quieter pass alternates one
+                                   # heading-group parity per sweep, then
+                                   # flips to the other on the next cycle
+_HISTORY_GROUP_SECONDARY_PHASE_OFFSET = 0.46
+                                   # keep the second pass offset from the
+                                   # primary shimmer so it reads as a
+                                   # companion field, not a duplicate
+_HISTORY_GROUP_SECONDARY_BLEND = 0.32
+                                   # quieter than the primary pass; enough
+                                   # to separate adjacent heading blocks
+                                   # without taking over the stack
 _HISTORY_CONTINUATION_ROW_STEP = 0.09  # wrapped continuation rows should step
                                        # down in authority below the first
                                        # visual row of an entry
@@ -670,6 +682,30 @@ def _history_entry_phase(
     """
     group_phase = _history_group_phase(base_phase, secondary_phase, group_index)
     return (group_phase - (group_depth * _HISTORY_GROUP_RAKE)) % 1.0
+
+
+def _history_secondary_phase(now_s: float) -> tuple[int, float]:
+    """Return the current secondary-pass index and offset phase.
+
+    The second shimmer layer sweeps once per cycle, but only one
+    heading-group parity is eligible during that sweep. On the next
+    cycle, the active parity flips.
+    """
+    cycle = _HISTORY_GROUP_SECONDARY_CYCLE_S
+    pass_index = int(now_s // cycle)
+    phase = (((now_s % cycle) / cycle) + _HISTORY_GROUP_SECONDARY_PHASE_OFFSET) % 1.0
+    return pass_index, phase
+
+
+def _history_secondary_group_weight(group_index: int, pass_index: int) -> float:
+    """Return the quiet secondary-overlay weight for one heading group."""
+    if group_index < 0:
+        return 0.0
+    return (
+        _HISTORY_GROUP_SECONDARY_BLEND
+        if (group_index % 2) == (pass_index % 2)
+        else 0.0
+    )
 
 
 def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
@@ -2585,6 +2621,9 @@ def _apply_shimmer(
     wrap_width: int | None = None,
     cycle_s: float | None = None,
     phase_override: float | None = None,
+    secondary_phase_override: float | None = None,
+    secondary_peak_weight: float = 0.0,
+    secondary_peak_rgb: tuple[int, int, int] | None = None,
 ) -> Text:
     """Append content to text_obj with a moving shimmer overlay.
 
@@ -2600,6 +2639,11 @@ def _apply_shimmer(
     so the layers can have weakly-coupled drifting periods that orbit
     the ideal stack instead of marching in lockstep. The override is
     expected to already account for the per-layer offset.
+
+    secondary_phase_override / secondary_peak_weight: optional quieter
+    companion shimmer pass layered on top of the main one. Used by the
+    history renderer to give alternating heading groups a second, subtler
+    sweep without redefining the primary field geometry.
 
     indent_width: how many visual columns are taken by an indent already
     appended before this content (e.g. "    " is 4). Used to compute
@@ -2624,6 +2668,11 @@ def _apply_shimmer(
     peak_rgb = _scale_rgb(
         _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB),
         tier_dim,
+    )
+    secondary_target_rgb = (
+        peak_rgb
+        if secondary_peak_rgb is None
+        else _scale_rgb(secondary_peak_rgb, tier_dim)
     )
     kind_intensity = _SHIMMER_KIND_INTENSITY.get(kind, 1.0)
 
@@ -2659,12 +2708,23 @@ def _apply_shimmer(
         now = time.monotonic()
         base_phase = (now % cycle) / cycle
         phase = (base_phase + layer_phase_offset) % 1.0
+    secondary_phase = (
+        secondary_phase_override % 1.0
+        if secondary_phase_override is not None
+        and secondary_peak_weight > 0.0
+        else None
+    )
 
     if wrap_width is not None and wrap_width > _SHIMMER_WIDTH:
         # Visual-column sweep: head moves across the panel's interior
         # width and chars at the same visual column on different
         # visual rows of a wrapped line are in phase with each other.
         head = phase * (wrap_width + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        secondary_head = (
+            (secondary_phase * (wrap_width + _SHIMMER_WIDTH)) - _SHIMMER_WIDTH
+            if secondary_phase is not None
+            else None
+        )
         for i, ch in enumerate(content):
             absolute_col = indent_width + i
             visual_col = absolute_col % wrap_width
@@ -2678,16 +2738,31 @@ def _apply_shimmer(
             row_peak_rgb = _scale_rgb(peak_rgb, row_dim)
             _append_shimmer_char(
                 text_obj, ch, distance, row_base_rgb, row_peak_rgb,
-                layer_recency, layer_index
+                layer_recency, layer_index,
+                secondary_distance=(
+                    None if secondary_head is None else secondary_head - visual_col
+                ),
+                secondary_peak_rgb=secondary_target_rgb,
+                secondary_peak_weight=secondary_peak_weight,
             )
     else:
         # Fallback character-index sweep (when no wrap_width given)
         head = phase * (len(content) + _SHIMMER_WIDTH) - _SHIMMER_WIDTH
+        secondary_head = (
+            (secondary_phase * (len(content) + _SHIMMER_WIDTH)) - _SHIMMER_WIDTH
+            if secondary_phase is not None
+            else None
+        )
         for i, ch in enumerate(content):
             distance = head - i
             _append_shimmer_char(
                 text_obj, ch, distance, base_rgb, peak_rgb,
-                layer_recency, layer_index
+                layer_recency, layer_index,
+                secondary_distance=(
+                    None if secondary_head is None else secondary_head - i
+                ),
+                secondary_peak_rgb=secondary_target_rgb,
+                secondary_peak_weight=secondary_peak_weight,
             )
 
     return text_obj
@@ -2986,6 +3061,13 @@ def _render_status_undulating(
     return text_obj
 
 
+def _shimmer_intensity(distance: float, layer_recency: float) -> float:
+    """Return shimmer intensity for one character at a given head distance."""
+    if distance < 0 or distance > _SHIMMER_WIDTH:
+        return 0.0
+    return (1.0 - (distance / _SHIMMER_WIDTH)) * layer_recency
+
+
 def _append_shimmer_char(
     text_obj: Text,
     ch: str,
@@ -2994,18 +3076,31 @@ def _append_shimmer_char(
     peak_rgb: tuple[int, int, int],
     layer_recency: float,
     layer_index: int,
+    secondary_distance: float | None = None,
+    secondary_peak_rgb: tuple[int, int, int] | None = None,
+    secondary_peak_weight: float = 0.0,
 ) -> None:
     """Append one shimmered character with the right style based on
     its distance from the shimmer head. peak_rgb may be a per-kind
     override (e.g. orange for live) or the global yellow peak."""
-    if distance < 0 or distance > _SHIMMER_WIDTH:
+    intensity = _shimmer_intensity(distance, layer_recency)
+    if intensity <= 0.0:
         color_rgb = base_rgb
         bold_head = False
     else:
-        raw_intensity = 1.0 - (distance / _SHIMMER_WIDTH)
-        intensity = raw_intensity * layer_recency
         color_rgb = _interp_rgb(base_rgb, peak_rgb, intensity)
         bold_head = (layer_index == 0 and -0.5 <= distance < 1.5)
+    if secondary_distance is not None and secondary_peak_weight > 0.0:
+        secondary_intensity = (
+            _shimmer_intensity(secondary_distance, layer_recency)
+            * secondary_peak_weight
+        )
+        if secondary_intensity > 0.0:
+            color_rgb = _interp_rgb(
+                color_rgb,
+                secondary_peak_rgb or peak_rgb,
+                secondary_intensity,
+            )
     style = _rgb_to_hex(color_rgb)
     if bold_head:
         style = f"bold {style}"
@@ -4546,6 +4641,9 @@ class PaintDryDisplay:
         display_entries = self._viewport_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
+        secondary_pass_index, secondary_phase = _history_secondary_phase(
+            time.monotonic()
+        )
         current_group_index = -1
         current_group_base_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
@@ -4576,6 +4674,9 @@ class PaintDryDisplay:
                 current_group_index,
                 group_depth,
             )
+            secondary_peak_weight = _history_secondary_group_weight(
+                current_group_index, secondary_pass_index
+            )
 
             if kind == "header":
                 indent = "─ "
@@ -4590,6 +4691,8 @@ class PaintDryDisplay:
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
                 # Split the [item N/M] index marker from the rest of
                 # the title so the index can be rendered in cool steel
@@ -4610,6 +4713,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
@@ -4619,6 +4724,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
                 else:
                     _apply_shimmer(
@@ -4628,6 +4735,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
             elif kind == "topic":
                 indent = "  · "
@@ -4659,6 +4768,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
                 else:
                     _apply_shimmer(
@@ -4668,6 +4779,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
             elif kind == "basis":
                 indent = "  ≡ "
@@ -4683,6 +4796,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
             elif kind in {"read", "salvage", "hinge"}:
                 indent = "  ≡ "
@@ -4715,6 +4830,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
             elif kind == "checkpoint":
                 indent = "  ≈ "
@@ -4725,6 +4842,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
                 checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 _apply_shimmer(
@@ -4734,6 +4853,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
             else:
                 indent = "    "
@@ -4750,6 +4871,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
 
         if not display_entries:

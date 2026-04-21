@@ -4263,6 +4263,60 @@ class NarratorReaderContract(unittest.TestCase):
             msg="alternating groups should not all ride the exact same header setback",
         )
 
+    def test_secondary_history_overlay_flips_target_group_parity_each_pass(self):
+        import scripts.narrator_reader as module
+
+        self.assertTrue(
+            hasattr(module, "_history_secondary_phase"),
+            "history shimmer should expose a helper for the quieter second pass so parity-flip timing can stay explicit and testable",
+        )
+        self.assertTrue(
+            hasattr(module, "_history_secondary_group_weight"),
+            "history shimmer should expose a helper that selects which heading-group parity gets the secondary pass on a given cycle",
+        )
+
+        pass0_index, pass0_phase = module._history_secondary_phase(0.0)
+        pass1_index, _pass1_phase = module._history_secondary_phase(
+            module._HISTORY_GROUP_SECONDARY_CYCLE_S
+        )
+
+        self.assertEqual(
+            pass0_index,
+            0,
+            "the secondary pass should begin on its first parity at time zero",
+        )
+        self.assertNotAlmostEqual(
+            pass0_phase,
+            0.0,
+            places=6,
+            msg="the secondary pass should be phase-offset from the primary shimmer instead of riding exactly on top of it",
+        )
+        self.assertEqual(
+            module._history_secondary_group_weight(0, pass0_index),
+            module._HISTORY_GROUP_SECONDARY_BLEND,
+            "the first secondary pass should favor the first heading-group parity",
+        )
+        self.assertEqual(
+            module._history_secondary_group_weight(1, pass0_index),
+            0.0,
+            "neighboring heading groups should not both get the quieter second pass in the same cycle",
+        )
+        self.assertEqual(
+            pass1_index,
+            1,
+            "one full secondary cycle later, the opposite parity should be active",
+        )
+        self.assertEqual(
+            module._history_secondary_group_weight(0, pass1_index),
+            0.0,
+            "the previously favored parity should stand down on the next pass",
+        )
+        self.assertEqual(
+            module._history_secondary_group_weight(1, pass1_index),
+            module._HISTORY_GROUP_SECONDARY_BLEND,
+            "the alternating secondary pass should flip to the neighboring heading-group parity on the next cycle",
+        )
+
     def test_stream_events_do_not_force_immediate_repaint(self):
         for msg_type in (
             "header",
@@ -4346,6 +4400,39 @@ class NarratorReaderContract(unittest.TestCase):
         ) - self._hex_luminance(lower_static.spans[0].style)
 
         self.assertGreater(top_boost, lower_boost)
+
+    def test_secondary_history_overlay_is_present_but_quieter_than_primary(self):
+        base_text = Text()
+        _apply_shimmer(base_text, "A", "header", 0, phase_override=0.0)
+
+        primary_text = Text()
+        _apply_shimmer(primary_text, "A", "header", 0, phase_override=(12 / 13))
+
+        secondary_text = Text()
+        _apply_shimmer(
+            secondary_text,
+            "A",
+            "header",
+            0,
+            phase_override=0.0,
+            secondary_phase_override=(12 / 13),
+            secondary_peak_weight=narrator_reader._HISTORY_GROUP_SECONDARY_BLEND,
+        )
+
+        base_luma = self._hex_luminance(base_text.spans[0].style)
+        primary_boost = self._hex_luminance(primary_text.spans[0].style) - base_luma
+        secondary_boost = self._hex_luminance(secondary_text.spans[0].style) - base_luma
+
+        self.assertGreater(
+            secondary_boost,
+            0.0,
+            "the alternating overlay should create a real visible lift when its own pass is on the character",
+        )
+        self.assertLess(
+            secondary_boost,
+            primary_boost,
+            "the alternating overlay should stay quieter than the main shimmer pass instead of competing with it",
+        )
 
     def test_wrapped_history_line_only_privileges_first_visual_row(self) -> None:
         wrapped_text = Text()
