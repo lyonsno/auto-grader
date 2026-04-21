@@ -457,7 +457,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(
             history_panel.subtitle,
-            "[grey42]live edge · no overflow yet[/grey42]",
+            "[grey35]live edge · no overflow yet[/grey35]",
             "short runs should make it explicit that history is not scrollable yet "
             "instead of leaving the operator to guess whether the controls failed",
         )
@@ -478,7 +478,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertEqual(
             history_panel.subtitle,
-            "[grey42]7 rows back · j/d forward · 0 latest[/grey42]",
+            "[grey35]7 rows back · j/d forward · 0 latest[/grey35]",
             "once the operator scrolls off the live edge, the panel should say "
             "so explicitly instead of making the result invisible",
         )
@@ -1938,7 +1938,7 @@ class NarratorReaderContract(unittest.TestCase):
     def test_history_depth_fade_reaches_a_clearer_mid_stack_drop(self):
         self.assertLess(
             _history_tier_dim_factor(4),
-            0.70,
+            0.67,
             "mid-stack reasoning rows should settle more decisively below the "
             "header instead of holding almost the same value and reading like "
             "one dense wall of text",
@@ -2659,6 +2659,31 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertFalse(
             any("#" in style for style in title_styles),
             "PROJECT PAINT DRY should not carry lacquer-color spans in the rebuilt reference-led surface",
+        )
+
+    def test_header_subtitle_uses_generic_narrator_label(self):
+        display = self._make_display()
+        display.current_model = "Qwen3.6-35B-A3B-oQ8"
+        display.on_header("[item 4/6] 15-blue/fr-10a")
+
+        group = display.render()
+
+        header_panel = group.renderables[0]
+        header_renderable = header_panel.renderable
+        if isinstance(header_renderable, Align):
+            header_renderable = header_renderable.renderable
+
+        self.assertIn(
+            "thinking narrator · live",
+            header_renderable.plain,
+            "the top chrome should stop hard-coding the old Bonsai-specific "
+            "label now that Paint Dry regularly runs other narrator backends",
+        )
+        self.assertNotIn(
+            "bonsai narrator",
+            header_renderable.plain,
+            "the subtitle should be truthful or generic, not claim Bonsai "
+            "when the session is running another model surface",
         )
 
     def test_scorebug_can_render_set_and_running_tally_cells(self):

@@ -189,8 +189,8 @@ _SHIMMER_FLOOR_RECENCY = 0.40  # bumped from 0.15 — older headers and
                                 # keeps the structural pulse visible all
                                 # the way down the stack instead of just
                                 # on the most recent few items
-_HISTORY_TIER_DIM_MIN = 0.50    # floor for within-item fade.
-_HISTORY_GROUP_DIM_STEP = 0.06  # each successive thought line under a header
+_HISTORY_TIER_DIM_MIN = 0.46    # floor for within-item fade.
+_HISTORY_GROUP_DIM_STEP = 0.07  # each successive thought line under a header
                                  # should visibly dim, but the fade should
                                  # take longer to settle so deeper within-item
                                  # stacks still read as a gradient instead of
@@ -521,10 +521,10 @@ _HISTORY_GROUP_RAKE = 0.022        # gentler within-item rake than the last pass
 _HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
                                    # shared across even/odd item groups
 _HISTORY_GROUP_ALT_RATE = 0.55     # slower than the primary history field
-_HISTORY_CONTINUATION_ROW_STEP = 0.08  # wrapped continuation rows should step
+_HISTORY_CONTINUATION_ROW_STEP = 0.09  # wrapped continuation rows should step
                                        # down in authority below the first
                                        # visual row of an entry
-_HISTORY_CONTINUATION_ROW_MIN = 0.78   # keep deeper wrapped rows visible, but
+_HISTORY_CONTINUATION_ROW_MIN = 0.72   # keep deeper wrapped rows visible, but
                                        # clearly subordinate to the first row
 
 
@@ -1017,16 +1017,16 @@ _BAND_EXTRA_ROWS = 0
 #: column 2 = ▓, then braille starts. Three columns gives the
 #: sides enough visual weight to read as a continuous frame with
 #: the top/bottom extra rows.
-_SOLID_COLUMNS = 2
+_SOLID_COLUMNS = 1
 
 #: Faint floor for both braille density and color intensity at the
 #: terminal edges. 0.12 means the outermost cells carry ~12% of
 #: peak density/color — faintly visible rather than invisible.
-_TEXTURE_EDGE_FLOOR = 0.08
+_TEXTURE_EDGE_FLOOR = 0.06
 
 #: Texture accent color near the image edge — warm bone from the
 #: narrator's moss/bone palette, replacing the earlier sepia tone.
-_TEXTURE_ACCENT_RGB = (206, 193, 174)
+_TEXTURE_ACCENT_RGB = (194, 182, 165)
 
 #: Terminal background color the texture fades toward. Matches the
 #: panel background in focus_preview.py and the dark narrator UI.
@@ -3258,7 +3258,7 @@ class PaintDryDisplay:
     def __init__(self, console: Console | None = None):
         self._console = console
         self.title = "PROJECT PAINT DRY · sumi-e"
-        self.subtitle = "bonsai narrator · live"
+        self.subtitle = "thinking narrator · live"
         self.current_model: str = ""
         self.current_set_label: str = ""
         self.current_subset_count: int | None = None
@@ -3857,7 +3857,7 @@ class PaintDryDisplay:
         header_text = Text()
         _append_header_title(header_text, self.title, self._shimmer_phases.phase(0))
         header_text.append("   ", style="dim")
-        header_text.append(self.subtitle, style="#5a73b4")
+        header_text.append(self.subtitle, style="#506793")
         header_text.append("   ", style="dim")
         total_elapsed_s = (
             int(max(0.0, now - self._session_started_at))
@@ -4709,15 +4709,15 @@ class PaintDryDisplay:
         viewport = self.history_viewport()
         if not viewport.at_live_edge:
             history_subtitle = (
-                f"[grey42]{viewport.scroll_offset} rows back · "
-                "j/d forward · 0 latest[/grey42]"
+                f"[grey35]{viewport.scroll_offset} rows back · "
+                "j/d forward · 0 latest[/grey35]"
             )
         elif viewport.has_overflow:
             history_subtitle = (
-                "[grey42]live edge · k/u back · j/d forward · 0 latest[/grey42]"
+                "[grey35]live edge · k/u back · j/d forward · 0 latest[/grey35]"
             )
         else:
-            history_subtitle = "[grey42]live edge · no overflow yet[/grey42]"
+            history_subtitle = "[grey35]live edge · no overflow yet[/grey35]"
 
         history_panel = Panel(
             history_text,
