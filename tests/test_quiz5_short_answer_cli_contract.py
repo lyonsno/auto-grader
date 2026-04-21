@@ -262,11 +262,23 @@ class Quiz5ShortAnswerCliContractTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             probe_result = json.loads(proc.stdout)
             manifest = json.loads(Path(probe_result["manifest_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(manifest["summary"]["matched_pages"], 2)
-            self.assertEqual(manifest["summary"]["response_box_crops"], 9)
-            self.assertTrue(
-                all(Path(entry["crop_path"]).exists() for entry in manifest["responses"])
-            )
+            expected_pages = len(artifact["pages"])
+            expected_crops = sum(len(page["response_boxes"]) for page in artifact["pages"])
+            self.assertEqual(manifest["summary"]["matched_pages"], expected_pages)
+            self.assertEqual(manifest["summary"]["response_box_crops"], expected_crops)
+            self.assertEqual(len(manifest["responses"]), expected_crops)
+
+            import cv2
+
+            for entry in manifest["responses"]:
+                crop_path = Path(entry["crop_path"])
+                self.assertTrue(crop_path.exists())
+                crop = cv2.imread(str(crop_path), cv2.IMREAD_COLOR)
+                self.assertIsNotNone(crop, str(crop_path))
+                self.assertGreater(crop.shape[0], 0)
+                self.assertGreater(crop.shape[1], 0)
+                self.assertEqual(crop.shape[0], entry["crop_box"]["height"])
+                self.assertEqual(crop.shape[1], entry["crop_box"]["width"])
 
 
 def _render_synthetic_page(artifact_page: dict, *, scale: float = 4.0) -> np.ndarray:
