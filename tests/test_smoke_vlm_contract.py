@@ -303,6 +303,91 @@ class SmokeVlmContract(unittest.TestCase):
             smoke_vlm._EXAM_PDF_MAP["15-blue"],
             "15 blue_professor_markings_hidden.pdf",
         )
+    def test_contamination_warnings_surface_non_clean_exam_ids(self) -> None:
+        subset = [
+            EvalItem(
+                exam_id="15-blue",
+                question_id="fr-1",
+                answer_type="numeric",
+                page=1,
+                professor_score=1.0,
+                max_points=1.0,
+                professor_mark="check",
+                student_answer="mock",
+                notes="mock",
+            ),
+            EvalItem(
+                exam_id="27-blue-2023",
+                question_id="fr-3",
+                answer_type="balanced_equation",
+                page=1,
+                professor_score=4.0,
+                max_points=4.0,
+                professor_mark="check",
+                student_answer="mock",
+                notes="mock",
+            ),
+            EvalItem(
+                exam_id="39-blue-redacted",
+                question_id="fr-10a",
+                answer_type="numeric",
+                page=1,
+                professor_score=3.0,
+                max_points=3.0,
+                professor_mark="check",
+                student_answer="mock",
+                notes="mock",
+            ),
+            EvalItem(
+                exam_id="34-blue",
+                question_id="fr-8",
+                answer_type="numeric",
+                page=1,
+                professor_score=4.0,
+                max_points=4.0,
+                professor_mark="partial",
+                student_answer="mock",
+                notes="mock",
+            ),
+        ]
+
+        warnings = smoke_vlm._scan_contamination_warnings(subset)
+
+        self.assertEqual(
+            warnings,
+            [
+                "WARNING: subset includes exam ids without a known clean scan mapping: 27-blue-2023, 34-blue",
+                "WARNING: known clean exam ids currently mapped: 15-blue, 39-blue-redacted",
+            ],
+        )
+
+    def test_contamination_warnings_stay_quiet_for_known_clean_subset(self) -> None:
+        subset = [
+            EvalItem(
+                exam_id="15-blue",
+                question_id="fr-1",
+                answer_type="numeric",
+                page=1,
+                professor_score=1.0,
+                max_points=1.0,
+                professor_mark="check",
+                student_answer="mock",
+                notes="mock",
+            ),
+            EvalItem(
+                exam_id="39-blue-redacted",
+                question_id="fr-10a",
+                answer_type="numeric",
+                page=1,
+                professor_score=3.0,
+                max_points=3.0,
+                professor_mark="check",
+                student_answer="mock",
+                notes="mock",
+            ),
+        ]
+
+        self.assertEqual(smoke_vlm._scan_contamination_warnings(subset), [])
 
     def test_describe_only_mode_rejects_contaminated_legacy_fifteen_blue_scan(self) -> None:
         item = EvalItem(
