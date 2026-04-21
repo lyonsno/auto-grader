@@ -303,6 +303,7 @@ class SmokeVlmContract(unittest.TestCase):
             smoke_vlm._EXAM_PDF_MAP["15-blue"],
             "15 blue_professor_markings_hidden.pdf",
         )
+
     def test_contamination_warnings_surface_non_clean_exam_ids(self) -> None:
         subset = [
             EvalItem(
@@ -388,7 +389,6 @@ class SmokeVlmContract(unittest.TestCase):
         ]
 
         self.assertEqual(smoke_vlm._scan_contamination_warnings(subset), [])
-
     def test_describe_only_mode_rejects_contaminated_legacy_fifteen_blue_scan(self) -> None:
         item = EvalItem(
             exam_id="15-blue",
