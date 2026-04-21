@@ -3199,16 +3199,21 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.status_line, "Updated focus preview for 15-blue/fr-11c.")
 
     def test_session_meta_message_handler_preserves_scans_and_focus_region_paths(self):
-        source = inspect.getsource(narrator_reader.main)
+        source = "\n".join(
+            [
+                inspect.getsource(narrator_reader.main),
+                inspect.getsource(narrator_reader.dispatch_message),
+            ]
+        )
 
         self.assertIn(
-            'scans_dir=msg.get("scans_dir")',
+            'msg.get("scans_dir")',
             source,
             "the live reader must forward scans_dir from session_meta events "
             "into on_session_meta() so annotate-current-item can find the PDFs",
         )
         self.assertIn(
-            'focus_regions_path=msg.get("focus_regions_path")',
+            'msg.get("focus_regions_path")',
             source,
             "the live reader must forward focus_regions_path from session_meta "
             "events into on_session_meta() so in-window annotation refreshes "

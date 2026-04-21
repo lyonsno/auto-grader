@@ -129,6 +129,13 @@ _LEGIBILITY_STRUCTURED_ROW_ORDER = {
 _LEGIBILITY_STRUCTURED_ROW_KINDS = frozenset(_LEGIBILITY_STRUCTURED_ROW_LABELS)
 
 
+def _structured_row_prefix(kind: str) -> tuple[str, str]:
+    label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind]
+    if kind == "review_marker":
+        return "  ! ", f"{label}: "
+    return "  ≡ ", f"{label}: "
+
+
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
 _VISIBLE_HISTORY_ROWS = 30  # visible history budget in WRAPPED visual rows,
                             # not logical entries. Keep the old overall
@@ -793,8 +800,7 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
         "session_meta",
         "focus_preview",
         "wrap_up",
-        "basis",
-        "review_marker",
+        *_LEGIBILITY_STRUCTURED_ROW_KINDS,
         "end",
     }
 
@@ -3514,8 +3520,7 @@ class PaintDryDisplay:
             "commit",
             "rollback_live",
             "topic",
-            "basis",
-            "review_marker",
+            *_LEGIBILITY_STRUCTURED_ROW_KINDS,
             "checkpoint",
             "drop",
             "wrap_up_pending",
@@ -3535,10 +3540,9 @@ class PaintDryDisplay:
             prefix_width = len("─ ")
         elif kind == "topic":
             prefix_width = len("  · ")
-        elif kind == "basis":
-            prefix_width = len("  ≡ Basis: ")
-        elif kind == "review_marker":
-            prefix_width = len("  ! Review needed: ")
+        elif kind in _LEGIBILITY_STRUCTURED_ROW_KINDS:
+            indent, label = _structured_row_prefix(kind)
+            prefix_width = len(indent) + len(label)
         else:
             prefix_width = len("    ")
 
@@ -3604,7 +3608,7 @@ class PaintDryDisplay:
         # essentials drop first — but the deque cap should make this
         # rare in practice.
         for pos, (entry, _idx) in enumerate(flat):
-            if entry[0] in ("header", "topic", "basis", "review_marker", "checkpoint"):
+            if entry[0] in ("header", "topic", "checkpoint") or entry[0] in _LEGIBILITY_STRUCTURED_ROW_KINDS:
                 row_cost = self._entry_visual_rows(entry, wrap_width)
                 if used_rows >= budget:
                     break
@@ -3620,7 +3624,10 @@ class PaintDryDisplay:
         optionals = [
             (pos, entry, idx)
             for pos, (entry, idx) in enumerate(flat)
-            if entry[0] not in ("header", "topic", "basis", "review_marker", "checkpoint")
+            if (
+                entry[0] not in ("header", "topic", "checkpoint")
+                and entry[0] not in _LEGIBILITY_STRUCTURED_ROW_KINDS
+            )
         ]
         optionals.sort(key=lambda t: -t[2])  # newest first
 
@@ -4635,32 +4642,24 @@ class PaintDryDisplay:
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                     )
-            elif kind == "basis":
-                indent = "  ≡ "
+            elif kind in _LEGIBILITY_STRUCTURED_ROW_KINDS:
+                indent, label = _structured_row_prefix(kind)
                 history_text.append(indent, style="grey50")
                 history_text.append(
-                    "Basis: ",
+                    label,
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                 )
-                _apply_shimmer(
-                    history_text, text, "checkpoint_alt",
-                    layer_index=render_layer,
-                    indent_width=len(indent) + len("Basis: "),
-                    wrap_width=wrap_width,
-                    cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                )
-            elif kind == "review_marker":
-                indent = "  ! "
-                history_text.append(indent, style="grey50")
-                history_text.append(
-                    "Review needed: ",
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                shimmer_kind = (
+                    "checkpoint"
+                    if kind in {"review_marker", "professor_mismatch", "deduction"}
+                    else "checkpoint_alt"
                 )
                 _apply_shimmer(
-                    history_text, text, "checkpoint",
+                    history_text,
+                    text,
+                    shimmer_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent) + len("Review needed: "),
+                    indent_width=len(indent) + len(label),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -5345,11 +5344,101 @@ class PaintDryDisplay:
         )
         self.history.append(("checkpoint", text, checkpoint_parity))
 
+    def on_structured_row(self, kind: str, text: str) -> None:
+        if kind not in _LEGIBILITY_STRUCTURED_ROW_KINDS:
+            raise ValueError(f"unknown structured row kind: {kind}")
+        self.history.append((kind, text, None))
+
     def on_basis(self, text: str) -> None:
-        self.history.append(("basis", text, None))
+        self.on_structured_row("basis", text)
+
+    def on_ambiguity(self, text: str) -> None:
+        self.on_structured_row("ambiguity", text)
+
+    def on_credit_preserved(self, text: str) -> None:
+        self.on_structured_row("credit_preserved", text)
+
+    def on_deduction(self, text: str) -> None:
+        self.on_structured_row("deduction", text)
 
     def on_review_marker(self, text: str) -> None:
-        self.history.append(("review_marker", text, None))
+        self.on_structured_row("review_marker", text)
+
+    def on_professor_mismatch(self, text: str) -> None:
+        self.on_structured_row("professor_mismatch", text)
+
+
+def dispatch_message(display: PaintDryDisplay, msg: dict[str, object]) -> str:
+    msg_type = str(msg.get("type", ""))
+    if msg_type == "header":
+        display.on_header(str(msg.get("text", "")))
+    elif msg_type == "session_meta":
+        display.on_session_meta(
+            model=msg.get("model") if isinstance(msg.get("model"), str) else None,
+            set_label=msg.get("set_label") if isinstance(msg.get("set_label"), str) else None,
+            subset_count=msg.get("subset_count") if isinstance(msg.get("subset_count"), int) else None,
+            scans_dir=msg.get("scans_dir") if isinstance(msg.get("scans_dir"), str) else None,
+            focus_regions_path=(
+                msg.get("focus_regions_path")
+                if isinstance(msg.get("focus_regions_path"), str)
+                else None
+            ),
+        )
+    elif msg_type == "focus_preview":
+        try:
+            png_bytes = base64.b64decode(str(msg.get("png_base64", "")))
+        except Exception:
+            png_bytes = b""
+        if png_bytes:
+            display.on_focus_preview(
+                png_bytes,
+                label=str(msg.get("label", "")),
+                source=str(msg.get("source", "")),
+            )
+    elif msg_type == "delta":
+        display.on_delta(
+            str(msg.get("text", "")),
+            mode=str(msg.get("mode", "thought")),
+        )
+    elif msg_type == "commit":
+        display.on_commit(str(msg.get("mode", "thought")))
+    elif msg_type == "rollback_live":
+        display.on_rollback_live()
+    elif msg_type == "topic":
+        display.on_topic(
+            str(msg.get("text", "")),
+            verdict=msg.get("verdict") if isinstance(msg.get("verdict"), str) else None,
+            grader_score=float(msg["grader_score"]) if isinstance(msg.get("grader_score"), (int, float)) else None,
+            truth_score=float(msg["truth_score"]) if isinstance(msg.get("truth_score"), (int, float)) else None,
+            max_points=float(msg["max_points"]) if isinstance(msg.get("max_points"), (int, float)) else None,
+            acceptable_score_floor=(
+                float(msg["acceptable_score_floor"])
+                if isinstance(msg.get("acceptable_score_floor"), (int, float))
+                else None
+            ),
+            acceptable_score_ceiling=(
+                float(msg["acceptable_score_ceiling"])
+                if isinstance(msg.get("acceptable_score_ceiling"), (int, float))
+                else None
+            ),
+        )
+    elif msg_type in _LEGIBILITY_STRUCTURED_ROW_KINDS:
+        display.on_structured_row(msg_type, str(msg.get("text", "")))
+    elif msg_type == "checkpoint":
+        display.on_checkpoint(str(msg.get("text", "")))
+    elif msg_type == "drop":
+        display.on_drop(
+            str(msg.get("reason", "unknown")),
+            str(msg.get("text", "")),
+        )
+    elif msg_type == "wrap_up_pending":
+        display.on_wrap_up_pending()
+    elif msg_type == "wrap_up":
+        display.on_wrap_up(str(msg.get("text", "")))
+    elif msg_type == "end":
+        display.session_ended = True
+        display._session_ended_at = time.monotonic()
+    return msg_type
 
 
 def main() -> int:
@@ -5618,67 +5707,8 @@ def main() -> int:
                     except json.JSONDecodeError:
                         continue
 
-                    msg_type = msg.get("type")
-                    if msg_type == "header":
-                        display.on_header(msg.get("text", ""))
-                    elif msg_type == "session_meta":
-                        display.on_session_meta(
-                            model=msg.get("model"),
-                            set_label=msg.get("set_label"),
-                            subset_count=msg.get("subset_count"),
-                            scans_dir=msg.get("scans_dir"),
-                            focus_regions_path=msg.get("focus_regions_path"),
-                        )
-                    elif msg_type == "focus_preview":
-                        try:
-                            png_bytes = base64.b64decode(
-                                msg.get("png_base64", ""),
-                            )
-                        except Exception:
-                            png_bytes = b""
-                        if png_bytes:
-                            display.on_focus_preview(
-                                png_bytes,
-                                label=msg.get("label", ""),
-                                source=msg.get("source", ""),
-                            )
-                    elif msg_type == "delta":
-                        display.on_delta(
-                            msg.get("text", ""),
-                            mode=msg.get("mode", "thought"),
-                        )
-                    elif msg_type == "commit":
-                        display.on_commit(msg.get("mode", "thought"))
-                    elif msg_type == "rollback_live":
-                        display.on_rollback_live()
-                    elif msg_type == "topic":
-                        display.on_topic(
-                            msg.get("text", ""),
-                            verdict=msg.get("verdict"),
-                            grader_score=msg.get("grader_score"),
-                            truth_score=msg.get("truth_score"),
-                            max_points=msg.get("max_points"),
-                            acceptable_score_floor=msg.get("acceptable_score_floor"),
-                            acceptable_score_ceiling=msg.get("acceptable_score_ceiling"),
-                        )
-                    elif msg_type == "basis":
-                        display.on_basis(msg.get("text", ""))
-                    elif msg_type == "review_marker":
-                        display.on_review_marker(msg.get("text", ""))
-                    elif msg_type == "checkpoint":
-                        display.on_checkpoint(msg.get("text", ""))
-                    elif msg_type == "drop":
-                        display.on_drop(
-                            msg.get("reason", "unknown"),
-                            msg.get("text", ""),
-                        )
-                    elif msg_type == "wrap_up_pending":
-                        display.on_wrap_up_pending()
-                    elif msg_type == "wrap_up":
-                        display.on_wrap_up(msg.get("text", ""))
-                    elif msg_type == "end":
-                        display.session_ended = True
-                        display._session_ended_at = time.monotonic()
+                    msg_type = dispatch_message(display, msg)
+                    if msg_type == "end":
                         _live_update()
                         if tty_fd is None:
                             session_exit.set()
