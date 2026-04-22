@@ -305,6 +305,24 @@ class NarratorReaderContract(unittest.TestCase):
             styles.add(span.style)
         return styles
 
+    def _average_luminance_for_substring(self, text: Text, needle: str) -> float:
+        start = text.plain.index(needle)
+        total = 0
+        count = 0
+        for offset in range(len(needle)):
+            idx = start + offset
+            for span in text.spans:
+                if (
+                    isinstance(span.style, str)
+                    and span.start <= idx < span.end
+                ):
+                    total += self._hex_luminance(span.style)
+                    count += 1
+                    break
+        if count == 0:
+            raise AssertionError(f"no styled characters found for {needle!r}")
+        return total / count
+
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
         display = PaintDryDisplay()
         display.on_delta("I'm tracing the stoichiometry.")
@@ -4582,6 +4600,46 @@ class NarratorReaderContract(unittest.TestCase):
             old_line_second,
             old_line_first,
             "the parity flip should also carry across the neighboring heading group's child row, not just its header",
+        )
+
+    def test_secondary_history_overlay_gives_selected_child_row_a_visible_lift(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/4] acids and salts", None))
+        display.history.append(("topic", "0.3s acid block", "match"))
+        display.history.append(("line", "first supporting line", 0))
+        display.history.append(("line", "second supporting line", 1))
+        display.history.append(("header", "[item 2/4] bases and buffers", None))
+        display.history.append(("topic", "0.4s base block", "match"))
+        display.history.append(("line", "neighboring block line", 0))
+
+        def _render_history_at(now_s: float) -> Text:
+            with mock.patch.object(
+                narrator_reader.time,
+                "monotonic",
+                return_value=now_s,
+            ):
+                group = display.render()
+            history_panel = group.renderables[-1]
+            return history_panel.renderable
+
+        active_pass = _render_history_at(
+            narrator_reader._HISTORY_GROUP_SECONDARY_CYCLE_S
+        )
+        inactive_pass = _render_history_at(0.0)
+
+        active_child_lift = (
+            self._average_luminance_for_substring(
+                active_pass, "first supporting line"
+            )
+            - self._average_luminance_for_substring(
+                inactive_pass, "first supporting line"
+            )
+        )
+
+        self.assertGreater(
+            active_child_lift,
+            8.0,
+            "the selected group's child row should get a clearly visible row-level lift from the secondary pass, not just a barely detectable witness on one or two characters",
         )
 
     def test_wrapped_history_line_only_privileges_first_visual_row(self) -> None:
