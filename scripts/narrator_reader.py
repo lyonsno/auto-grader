@@ -71,6 +71,7 @@ from auto_grader.vlm_inference import (  # noqa: E402
     PREVIEW_PAGE_DPI,
     _EXAM_PDF_MAP,
     extract_page_image,
+    resolve_scan_pdf_path,
 )
 
 
@@ -5125,8 +5126,7 @@ class PaintDryDisplay:
                 f"{exam_id}/{question_id}"
             )
             return False
-        pdf_name = _EXAM_PDF_MAP.get(exam_id)
-        if pdf_name is None:
+        if _EXAM_PDF_MAP.get(exam_id) is None:
             self.status_line = (
                 f"Annotate current item failed: no PDF mapping for "
                 f"{exam_id}/{question_id}."
@@ -5136,14 +5136,15 @@ class PaintDryDisplay:
                 f"{exam_id}/{question_id}"
             )
             return False
-        pdf_path = self.current_scans_dir / pdf_name
-        if not pdf_path.exists():
+        try:
+            pdf_path = resolve_scan_pdf_path(self.current_scans_dir, exam_id)
+        except FileNotFoundError:
             self.status_line = (
                 f"Annotate current item failed: scan PDF missing for "
                 f"{exam_id}/{question_id}."
             )
             _reader_debug(
-                f"annotate-current-item failed: scan PDF missing at {pdf_path}"
+                f"annotate-current-item failed: scan PDF missing for {exam_id}/{question_id}"
             )
             return False
         try:

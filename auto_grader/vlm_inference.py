@@ -993,6 +993,33 @@ _EXAM_PDF_MAP = {
     # be trusted. See the contamination spike on 2026-04-08 for context.
     "39-blue-redacted": "39 blue_Redacted_grading_marks_removed.pdf",
 }
+_EXAM_PDF_FALLBACKS = {
+    # The clean hidden scan is preferred, but older local corpora may still
+    # only carry the pre-redaction filename.
+    "15-blue": ("15 blue.pdf",),
+}
+
+
+def resolve_scan_pdf_path(scans_dir: Path, exam_id: str) -> Path:
+    """Resolve an exam scan path, preferring canonical names over aliases."""
+    pdf_name = _EXAM_PDF_MAP.get(exam_id)
+    if not pdf_name:
+        raise ValueError(f"No PDF mapping for exam_id: {exam_id}")
+
+    candidate_names = (pdf_name, *_EXAM_PDF_FALLBACKS.get(exam_id, ()))
+    tried_paths: list[str] = []
+    for candidate_name in candidate_names:
+        pdf_path = scans_dir / candidate_name
+        if pdf_path.exists():
+            return pdf_path
+        tried_paths.append(str(pdf_path))
+
+    if len(tried_paths) == 1:
+        raise FileNotFoundError(f"Scan PDF not found: {tried_paths[0]}")
+    raise FileNotFoundError(
+        f"Scan PDF not found for exam_id {exam_id}; tried: "
+        + ", ".join(tried_paths)
+    )
 
 
 def _report_focus_preview_failure(sink: Any, item: EvalItem, exc: Exception) -> None:
@@ -1048,12 +1075,7 @@ def grade_all_items(
     for i, item in enumerate(ground_truth):
         cache_key = (item.exam_id, item.page)
         if cache_key not in page_cache:
-            pdf_name = _EXAM_PDF_MAP.get(item.exam_id)
-            if not pdf_name:
-                raise ValueError(f"No PDF mapping for exam_id: {item.exam_id}")
-            pdf_path = scans_dir / pdf_name
-            if not pdf_path.exists():
-                raise FileNotFoundError(f"Scan PDF not found: {pdf_path}")
+            pdf_path = resolve_scan_pdf_path(scans_dir, item.exam_id)
             page_cache[cache_key] = extract_page_image(
                 pdf_path, item.page, dpi=GRADER_PAGE_DPI
             )

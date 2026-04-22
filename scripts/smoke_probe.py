@@ -60,6 +60,7 @@ from auto_grader.vlm_inference import (
     apply_model_sampling_preset,
     extract_page_image,
     known_model_families,
+    resolve_scan_pdf_path,
     resolve_model_family,
     stream_vision_completion,
 )
@@ -345,8 +346,9 @@ def main() -> int:
     for i, item in enumerate(items, start=1):
         key = (item.exam_id, item.page)
         if key not in page_cache:
-            pdf_name = _EXAM_PDF_MAP.get(item.exam_id)
-            if not pdf_name:
+            try:
+                pdf_path = resolve_scan_pdf_path(_SCANS_DIR, item.exam_id)
+            except ValueError:
                 print(
                     f"[{i}/{len(items)}] {item.exam_id}:{item.question_id}"
                     f" — no PDF mapping, skipping",
@@ -354,11 +356,10 @@ def main() -> int:
                 )
                 n_err += 1
                 continue
-            pdf_path = _SCANS_DIR / pdf_name
-            if not pdf_path.exists():
+            except FileNotFoundError as exc:
                 print(
                     f"[{i}/{len(items)}] {item.exam_id}:{item.question_id}"
-                    f" — scan not found ({pdf_path}), skipping",
+                    f" — scan not found ({exc}), skipping",
                     file=sys.stderr,
                 )
                 n_err += 1
