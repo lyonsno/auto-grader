@@ -2444,6 +2444,41 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_professor_mismatch_renders_directly_under_topic_before_checkpoints(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(
+            ("checkpoint", "Core issue: ozone drawing misses resonance.", None)
+        )
+        display.history.append(("topic", "topic line", "match"))
+        display.history.append(
+            ("review_marker", "Human review warranted.", None)
+        )
+        display.history.append(
+            (
+                "professor_mismatch",
+                "Professor overcredited a chemically invalid boxed answer.",
+                None,
+            )
+        )
+
+        entries = display._build_display_entries()
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("topic", "topic line"),
+                ("review_marker", "Human review warranted."),
+                (
+                    "professor_mismatch",
+                    "Professor overcredited a chemically invalid boxed answer.",
+                ),
+                ("checkpoint", "Core issue: ozone drawing misses resonance."),
+            ],
+        )
+
     def test_dossier_rows_render_directly_under_topic_before_checkpoints(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))
@@ -2473,6 +2508,80 @@ class NarratorReaderContract(unittest.TestCase):
                 ),
                 ("checkpoint", "Core issue: ozone drawing misses resonance."),
             ],
+        )
+
+    def test_alert_labels_use_distinct_alert_accent(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "topic line", "match"))
+        display.history.append(("basis", "Correct setup, wrong units.", None))
+        display.history.append(("review_marker", "Human review warranted.", None))
+        display.history.append(
+            (
+                "professor_mismatch",
+                "Professor overcredited a chemically invalid boxed answer.",
+                None,
+            )
+        )
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            history_text = display.render().renderables[-1].renderable
+
+        basis_style = self._foreground_hex(
+            self._style_for_substring(history_text, "Basis:")
+        )
+        review_style = self._foreground_hex(
+            self._style_for_substring(history_text, "Review needed:")
+        )
+        mismatch_style = self._foreground_hex(
+            self._style_for_substring(history_text, "Professor mismatch:")
+        )
+
+        self.assertEqual(review_style, mismatch_style)
+        self.assertNotEqual(
+            review_style,
+            basis_style,
+            "alert rows should carry their own warmer accent instead of reusing the ordinary explanation-label ember",
+        )
+
+    def test_match_topic_stays_within_readable_band_of_basis_row(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(
+            (
+                "topic",
+                "42s · Grader: 4/4 (Correct net ionic equation with proper states and balance.)",
+                "match",
+            )
+        )
+        display.history.append(
+            (
+                "basis",
+                "Full credit: Correct net ionic equation with states and stoichiometry.",
+                None,
+            )
+        )
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            history_text = display.render().renderables[-1].renderable
+
+        topic_style = self._foreground_hex(
+            self._style_for_substring(
+                history_text,
+                "Grader: 4/4 (Correct net ionic equation with proper states and balance.)",
+            )
+        )
+        basis_style = self._foreground_hex(
+            self._style_for_substring(
+                history_text,
+                "Full credit: Correct net ionic equation with states and stoichiometry.",
+            )
+        )
+
+        self.assertLess(
+            self._hex_luminance(basis_style) - self._hex_luminance(topic_style),
+            80,
+            "ordinary match topics should stay in a readable indigo band instead of collapsing into a much darker blue haze than the structured rows beneath them",
         )
 
     def test_display_no_longer_exposes_scrollback_snapshot_affordance(self):
