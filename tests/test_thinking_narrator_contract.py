@@ -70,8 +70,14 @@ class _RetryNarrator(ThinkingNarrator):
 
 
 class _AfterActionNarrator(ThinkingNarrator):
-    def __init__(self, sink: _DummySink) -> None:
+    def __init__(self, sink: _DummySink, *, response: str = "") -> None:
         super().__init__(sink)
+        self._response = response
+        self.chat_calls: list[dict[str, object]] = []
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        self.chat_calls.append({"messages": messages, "kwargs": kwargs})
+        return self._response
 
     def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
         return None
@@ -191,7 +197,13 @@ class ThinkingNarratorContract(unittest.TestCase):
 
     def test_after_action_keeps_exact_truth_match_even_when_band_excludes_truth(self):
         sink = _DummySink()
-        narrator = _AfterActionNarrator(sink)
+        narrator = _AfterActionNarrator(
+            sink,
+            response=(
+                "Grader: 1/2 (same partial resonance credit). "
+                "Prof: 1/2 (same half-credit read)."
+            ),
+        )
         item = type(
             "Item",
             (),
@@ -223,6 +235,7 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator._produce_after_action(12.0, prediction, item, template_question=None)
 
         self.assertEqual(len(sink.topics), 1)
+        self.assertEqual(len(narrator.chat_calls), 1)
         self.assertEqual(
             sink.topics[0]["verdict"],
             "match",
@@ -230,14 +243,21 @@ class ThinkingNarratorContract(unittest.TestCase):
         )
         self.assertEqual(
             sink.topics[0]["text"],
-            "12s · Grader: 1/2 · Prof: 1/2\nBand: 1.5/2 to 2/2",
+            "12s · Grader: 1/2 (same partial resonance credit). Prof: 1/2 (same half-credit read). · Acceptable band: 1.5/2 to 2/2; grader is at the truth target.",
         )
         self.assertEqual(sink.topics[0]["acceptable_score_floor"], 1.5)
         self.assertEqual(sink.topics[0]["acceptable_score_ceiling"], 2.0)
 
-    def test_after_action_uses_truth_and_historical_prof_on_corrected_items(self):
+    def test_after_action_keeps_llm_narrative_line_for_corrected_items(self):
         sink = _DummySink()
-        narrator = _AfterActionNarrator(sink)
+        narrator = _AfterActionNarrator(
+            sink,
+            response=(
+                "Grader: 0/2 (methodology is invalid). "
+                "Truth: 0/2 (corrected after review). "
+                "· Historical prof: 2/2 (overcredit on the boxed answer)."
+            ),
+        )
         item = type(
             "Item",
             (),
@@ -270,9 +290,10 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator._produce_after_action(72.0, prediction, item, template_question=None)
 
         self.assertEqual(len(sink.topics), 1)
+        self.assertEqual(len(narrator.chat_calls), 1)
         self.assertEqual(
             sink.topics[0]["text"],
-            "72s · Grader: 0/2 · Truth: 0/2\nHistorical prof: 2/2",
+            "72s · Grader: 0/2 (methodology is invalid). Truth: 0/2 (corrected after review). · Historical prof: 2/2 (overcredit on the boxed answer).",
         )
 
     def test_after_action_enqueues_and_flushes_background_dossier_for_interesting_item(self):
@@ -323,6 +344,55 @@ class ThinkingNarratorContract(unittest.TestCase):
                 ("hinge", "The score turns on whether the final handwritten glyph outweighs the surrounding coherent work."),
             ],
         )
+
+    def test_start_flushes_pending_background_dossier_before_resetting_item_state(self):
+        sink = _DummySink()
+        narrator = _DossierAfterActionNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-11c",
+                "answer_type": "electron_config",
+                "max_points": 2.0,
+                "student_answer": "1",
+                "professor_score": 2.0,
+                "truth_score": 2.0,
+                "professor_mark": "correct",
+                "notes": "glyph ambiguity",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 2.0,
+                "model_read": "1",
+                "model_reasoning": (
+                    "The final glyph remains ambiguous between 1 and 2, "
+                    "but the surrounding chemistry work supports 1."
+                ),
+                "score_basis": "Accepted the coherent orbital-box work despite the ambiguous final digit.",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(95.0, prediction, item, template_question=None)
+        narrator.start(item_header="15-blue/fr-12a")
+
+        self.assertEqual(
+            sink.structured_rows,
+            [
+                ("read", "Final mark could be a corrected 1 or a messy 2; context leans 1."),
+                ("salvage", "The student's setup still supports the intended chemistry method."),
+                ("hinge", "The score turns on whether the final handwritten glyph outweighs the surrounding coherent work."),
+            ],
+            "starting the next item should not discard the previous item's queued dossier rows",
+        )
+        self.assertEqual(narrator._legibility_jobs, [])
 
     def test_after_action_skips_background_dossier_for_quick_stable_item(self):
         sink = _DummySink()
