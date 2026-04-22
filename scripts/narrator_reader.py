@@ -255,10 +255,11 @@ _BASE_RGB = {
     # narration rows above use desaturated cousins of these, so the
     # eye reads "muted family below, vivid accent here" and the
     # verdict still encodes meaning at a glance.
-    "topic_match": (70, 92, 156),         # deep indigo agreement —
-                                          # darker than the header-index
-                                          # blue so it harmonizes with
-                                          # structure without duplicating it
+    "topic_match": (98, 118, 178),        # smoke-indigo agreement —
+                                          # still cool and clearly distinct
+                                          # from the warm body rows, but
+                                          # lifted enough that match topics
+                                          # no longer collapse into a dark haze
     "topic_within_band": (104, 142, 118), # celadon lawful-range hit —
                                           # still a success color, but softer
                                           # than the ceiling-hit indigo
@@ -298,9 +299,8 @@ _SHIMMER_KIND_INTENSITY = {
                           # coupled-oscillator phase ripple more
                           # presence on the largest visual surface
     "topic": 1.00,
-    "topic_match": 1.10,        # slight extra shimmer lift so agreement
-                                # gets its own pulse instead of reading
-                                # like a neutral fallback
+    "topic_match": 1.06,        # keep the cool pulse, but back off a touch
+                                # so the line reads as inked prose first
     "topic_within_band": 1.04,  # lawful-but-not-peak hits should shimmer
                                 # a little, but stay calmer than ceiling hits
     "checkpoint": 0.92,
@@ -340,8 +340,9 @@ _SHIMMER_KIND_PEAK_RGB = {
     "line_alt": (232, 220, 198),  # lit bone crest — the warm alternating
                                    # row should brighten within the bone
                                    # family instead of flashing ochre
-    "topic_match": (132, 160, 224),     # rain-lit deep-indigo crest for
-                                        # agreement lines
+    "topic_match": (160, 186, 238),     # rain-lit smoke-indigo crest for
+                                        # agreement lines — brighter than
+                                        # before so the pane breathes more
     "topic_within_band": (156, 206, 172), # glazed celadon crest for lawful
                                           # in-range calls below the ceiling
     "checkpoint": (176, 204, 180),      # brighter celadon crest —
@@ -514,6 +515,10 @@ _SHIMMER_PEAK_RGB = (235, 215, 175)
 _EMBER_ACCENT_RGB = (232, 136, 102)  # the lighter orange note used where
                                      # we want warm structural emphasis
                                      # without a full verdict signal
+_ALERT_ACCENT_RGB = (220, 100, 72)   # warmer vermilion for alert labels
+                                     # (Review needed, Professor mismatch)
+                                     # so operator-attention rows do not
+                                     # visually collapse into explanation rows
 
 _SCOREBUG_BIG_DIGITS = {
     "0": ("╔═╗", "╠ ╣", "╚═╝"),
@@ -3672,6 +3677,7 @@ class PaintDryDisplay:
             "salvage",
             "hinge",
             "review_marker",
+            "professor_mismatch",
             "checkpoint",
             "drop",
             "wrap_up_pending",
@@ -3701,6 +3707,8 @@ class PaintDryDisplay:
             prefix_width = len("  ≡ Hinge: ")
         elif kind == "review_marker":
             prefix_width = len("  ! Review needed: ")
+        elif kind == "professor_mismatch":
+            prefix_width = len("  ! Professor mismatch: ")
         else:
             prefix_width = len("    ")
 
@@ -3774,6 +3782,7 @@ class PaintDryDisplay:
                 "salvage",
                 "hinge",
                 "review_marker",
+                "professor_mismatch",
                 "checkpoint",
             ):
                 row_cost = self._entry_visual_rows(entry, wrap_width)
@@ -3800,6 +3809,7 @@ class PaintDryDisplay:
                 "salvage",
                 "hinge",
                 "review_marker",
+                "professor_mismatch",
                 "checkpoint",
             )
         ]
@@ -4872,17 +4882,19 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
                 )
-            elif kind == "review_marker":
+            elif kind in {"review_marker", "professor_mismatch"}:
                 indent = "  ! "
+                label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
+                label_rgb = _ALERT_ACCENT_RGB
                 history_text.append(indent, style="grey50")
                 history_text.append(
-                    "Review needed: ",
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    label,
+                    style=f"bold {_rgb_to_hex(label_rgb)}",
                 )
                 _apply_shimmer(
                     history_text, text, "checkpoint",
                     layer_index=render_layer,
-                    indent_width=len(indent) + len("Review needed: "),
+                    indent_width=len(indent) + len(label),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -5582,6 +5594,9 @@ class PaintDryDisplay:
     def on_review_marker(self, text: str) -> None:
         self.history.append(("review_marker", text, None))
 
+    def on_professor_mismatch(self, text: str) -> None:
+        self.history.append(("professor_mismatch", text, None))
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -5908,6 +5923,8 @@ def main() -> int:
                         display.on_hinge(msg.get("text", ""))
                     elif msg_type == "review_marker":
                         display.on_review_marker(msg.get("text", ""))
+                    elif msg_type == "professor_mismatch":
+                        display.on_professor_mismatch(msg.get("text", ""))
                     elif msg_type == "checkpoint":
                         display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":
