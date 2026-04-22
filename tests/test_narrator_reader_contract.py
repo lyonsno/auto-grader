@@ -4463,33 +4463,67 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
     def test_secondary_history_overlay_targets_header_group_and_child_rows(self):
-        display = self._make_display()
-        wrap_width = display._compute_wrap_width()
-        self.assertIsNotNone(wrap_width)
-        secondary_head_col = int(round(
-            narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET
-            * (wrap_width + narrator_reader._SHIMMER_WIDTH)
-            - narrator_reader._SHIMMER_WIDTH
-        ))
-        header_index = "[item 2/2]"
-        header_content_col = len("─ ") + len(header_index) + 1
-        line_content_col = len("    ")
-        header_filler = "x" * max(0, secondary_head_col - header_content_col)
-        line_filler = "x" * max(0, secondary_head_col - line_content_col)
-        display.history.append(
-            ("header", "[item 1/2] " + header_filler + "OLDERHDR", None)
-        )
-        display.history.append(
-            ("line", line_filler + "OLDERLINE", 0)
-        )
-        display.history.append(
-            ("header", "[item 2/2] " + header_filler + "NEWHDR", None)
-        )
-        display.history.append(
-            ("line", line_filler + "NEWLINE", 0)
-        )
+        def _build_display() -> PaintDryDisplay:
+            display = self._make_display()
+            wrap_width = display._compute_wrap_width()
+            self.assertIsNotNone(wrap_width)
+            global_history_phase = display._shimmer_phases.phase(0)
+            secondary_phase = narrator_reader._history_secondary_phase(0.0)[1]
+
+            def _secondary_head_col(
+                group_index: int,
+                group_depth: int,
+            ) -> int:
+                primary_phase = narrator_reader._history_entry_phase(
+                    display._shimmer_phases.phase(group_index),
+                    global_history_phase,
+                    group_index,
+                    group_depth,
+                )
+                secondary_entry_phase = narrator_reader._history_secondary_entry_phase(
+                    primary_phase,
+                    global_history_phase,
+                    secondary_phase,
+                )
+                return math.floor(
+                    secondary_entry_phase
+                    * (wrap_width + narrator_reader._SHIMMER_WIDTH)
+                    - narrator_reader._SHIMMER_WIDTH
+                )
+
+            old_header_index = "[item 1/2]"
+            new_header_index = "[item 2/2]"
+            old_header_filler = "x" * max(
+                0,
+                _secondary_head_col(1, 0)
+                - (len("─ ") + len(old_header_index) + 1),
+            )
+            new_header_filler = "x" * max(
+                0,
+                _secondary_head_col(0, 0)
+                - (len("─ ") + len(new_header_index) + 1),
+            )
+            old_line_filler = "x" * max(
+                0,
+                _secondary_head_col(1, 1) - len("    "),
+            )
+            new_line_filler = "x" * max(
+                0,
+                _secondary_head_col(0, 1) - len("    "),
+            )
+
+            display.history.append(
+                ("header", f"{old_header_index} {old_header_filler}#", None)
+            )
+            display.history.append(("line", f"{old_line_filler}%", 0))
+            display.history.append(
+                ("header", f"{new_header_index} {new_header_filler}@", None)
+            )
+            display.history.append(("line", f"{new_line_filler}&", 0))
+            return display
 
         def _render_history_at(now_s: float) -> Text:
+            display = _build_display()
             with mock.patch.object(
                 narrator_reader.time,
                 "monotonic",
@@ -4504,63 +4538,84 @@ class NarratorReaderContract(unittest.TestCase):
             narrator_reader._HISTORY_GROUP_SECONDARY_CYCLE_S
         )
 
-        new_header_first = self._hex_luminance(
-            self._style_for_substring(first_pass, "NEWHDR")
+        new_header_first = self._rgb_from_hex(
+            self._style_for_substring(first_pass, "@")
         )
-        new_header_second = self._hex_luminance(
-            self._style_for_substring(second_pass, "NEWHDR")
+        new_header_second = self._rgb_from_hex(
+            self._style_for_substring(second_pass, "@")
         )
-        new_line_first = self._hex_luminance(
-            self._style_for_substring(first_pass, "NEWLINE")
+        new_line_first = self._rgb_from_hex(
+            self._style_for_substring(first_pass, "&")
         )
-        new_line_second = self._hex_luminance(
-            self._style_for_substring(second_pass, "NEWLINE")
+        new_line_second = self._rgb_from_hex(
+            self._style_for_substring(second_pass, "&")
         )
-        old_header_first = self._hex_luminance(
-            self._style_for_substring(first_pass, "OLDERHDR")
+        old_header_first = self._rgb_from_hex(
+            self._style_for_substring(first_pass, "#")
         )
-        old_header_second = self._hex_luminance(
-            self._style_for_substring(second_pass, "OLDERHDR")
+        old_header_second = self._rgb_from_hex(
+            self._style_for_substring(second_pass, "#")
         )
-        old_line_first = self._hex_luminance(
-            self._style_for_substring(first_pass, "OLDERLINE")
+        old_line_first = self._rgb_from_hex(
+            self._style_for_substring(first_pass, "%")
         )
-        old_line_second = self._hex_luminance(
-            self._style_for_substring(second_pass, "OLDERLINE")
+        old_line_second = self._rgb_from_hex(
+            self._style_for_substring(second_pass, "%")
         )
 
         self.assertGreater(
-            new_header_first,
-            new_header_second,
+            new_header_first[0],
+            new_header_second[0] + 40,
             "the first secondary pass should brighten the targeted heading group's header more than the same header on the opposite-parity pass",
         )
         self.assertGreater(
-            new_line_first,
-            new_line_second,
+            new_line_first[0],
+            new_line_second[0] + 40,
             "the selected heading group's subordinate row should ride along with the secondary pass instead of leaving the effect stranded on the header only",
         )
         self.assertGreater(
-            old_header_second,
-            old_header_first,
+            old_header_second[0],
+            old_header_first[0] + 40,
             "when the parity flips, the neighboring heading group's header should take the quieter second pass instead",
         )
         self.assertGreater(
-            old_line_second,
-            old_line_first,
+            old_line_second[0],
+            old_line_first[0] + 40,
             "the parity flip should also carry across the neighboring heading group's child row, not just its header",
         )
 
-    def test_secondary_history_overlay_gives_selected_child_row_a_visible_lift(self):
-        display = self._make_display()
-        display.history.append(("header", "[item 1/4] acids and salts", None))
-        display.history.append(("topic", "0.3s acid block", "match"))
-        display.history.append(("line", "first supporting line", 0))
-        display.history.append(("line", "second supporting line", 1))
-        display.history.append(("header", "[item 2/4] bases and buffers", None))
-        display.history.append(("topic", "0.4s base block", "match"))
-        display.history.append(("line", "neighboring block line", 0))
+    def test_secondary_history_overlay_gives_selected_child_row_a_visible_color_shift(self):
+        def _build_display() -> PaintDryDisplay:
+            display = self._make_display()
+            wrap_width = display._compute_wrap_width()
+            self.assertIsNotNone(wrap_width)
+            global_history_phase = display._shimmer_phases.phase(0)
+            secondary_phase = narrator_reader._history_secondary_phase(0.0)[1]
+            primary_phase = narrator_reader._history_entry_phase(
+                display._shimmer_phases.phase(0),
+                global_history_phase,
+                0,
+                1,
+            )
+            secondary_entry_phase = narrator_reader._history_secondary_entry_phase(
+                primary_phase,
+                global_history_phase,
+                secondary_phase,
+            )
+            line_head_col = math.floor(
+                secondary_entry_phase
+                * (wrap_width + narrator_reader._SHIMMER_WIDTH)
+                - narrator_reader._SHIMMER_WIDTH
+            )
+            line_filler = "x" * max(0, line_head_col - len("    "))
+            display.history.append(("header", "[item 1/2] acids and salts", None))
+            display.history.append(("line", "neighboring block line", 0))
+            display.history.append(("header", "[item 2/2] bases and buffers", None))
+            display.history.append(("line", f"{line_filler}&", 0))
+            return display
 
         def _render_history_at(now_s: float) -> Text:
+            display = _build_display()
             with mock.patch.object(
                 narrator_reader.time,
                 "monotonic",
@@ -4570,27 +4625,23 @@ class NarratorReaderContract(unittest.TestCase):
             history_panel = group.renderables[-1]
             return history_panel.renderable
 
-        active_pass = _render_history_at(
+        active_pass = _render_history_at(0.0)
+        inactive_pass = _render_history_at(
             narrator_reader._HISTORY_GROUP_SECONDARY_CYCLE_S
         )
-        inactive_pass = _render_history_at(0.0)
 
-        active_child_lift = (
-            self._average_luminance_for_substring(
-                active_pass, "first supporting line"
-            )
-            - self._average_luminance_for_substring(
-                inactive_pass, "first supporting line"
-            )
+        active_rgb = self._rgb_from_hex(self._style_for_substring(active_pass, "&"))
+        inactive_rgb = self._rgb_from_hex(
+            self._style_for_substring(inactive_pass, "&")
         )
 
         self.assertGreater(
-            active_child_lift,
-            8.0,
-            "the selected group's child row should get a clearly visible row-level lift from the secondary pass, not just a barely detectable witness on one or two characters",
+            active_rgb[0],
+            inactive_rgb[0] + 40,
+            "the selected group's child-row witness should take on a clearly visible warm secondary-crest shift when that pass is on it, rather than remaining visually indistinguishable from its off-pass state",
         )
 
-    def test_secondary_history_overlay_creates_same_frame_contrast_against_neighboring_group(self):
+    def test_secondary_history_overlay_does_not_create_constant_same_frame_bias_away_from_crest(self):
         def _build_display() -> PaintDryDisplay:
             display = self._make_display()
             display.history.append(("header", "[item 1/2] ALPHAHDR", None))
@@ -4646,10 +4697,44 @@ class NarratorReaderContract(unittest.TestCase):
             places=6,
             msg="without the alternating overlay, matched neighboring child rows should not drift apart in the same frame just because they belong to different heading groups",
         )
-        self.assertGreater(
+        self.assertAlmostEqual(
             active_gap,
-            30.0,
-            "the alternating overlay should create enough same-frame separation between adjacent heading groups that the selected block is actually legible as the selected one in smoke, not just technically brighter in a lab measurement",
+            0.0,
+            places=6,
+            msg="away from the moving crest, the alternating overlay should not leave one heading parity steadily brighter than the other; if the human sees a persistent parity flip, the floor wash is showing through instead of a second shimmer animation",
+        )
+
+    def test_secondary_history_overlay_debug_tuning_is_narrow_trough_rider_with_orange_peak(self):
+        self.assertEqual(
+            narrator_reader._HISTORY_GROUP_SECONDARY_FLOOR,
+            0.0,
+            "the temporary debug pass should not carry a constant floor wash; the human asked for motion they can identify, not a steady parity tint",
+        )
+        self.assertLess(
+            narrator_reader._HISTORY_GROUP_SECONDARY_WIDTH,
+            narrator_reader._SHIMMER_WIDTH,
+            "the debug secondary pass should be narrower than the primary shimmer so it reads as a distinct crest instead of a broad lingering bias",
+        )
+        self.assertGreater(
+            narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET,
+            0.60,
+            "the debug secondary pass should sit deeper in the primary trough so the two passes read as separated events instead of nearly back-to-back",
+        )
+        peak_r, peak_g, peak_b = narrator_reader._HISTORY_GROUP_SECONDARY_PEAK_RGB
+        self.assertGreaterEqual(
+            peak_r,
+            240,
+            "for this debug smoke the secondary crest should be loudly legible, not another muted near-neutral accent",
+        )
+        self.assertGreater(
+            peak_g,
+            peak_b,
+            "the temporary debug crest should read as orange rather than red or white",
+        )
+        self.assertLess(
+            peak_b,
+            90,
+            "the temporary debug crest should stay in an obvious orange family instead of drifting back toward cool silver-blue",
         )
 
     @staticmethod
