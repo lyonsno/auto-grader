@@ -38,6 +38,7 @@ import sys
 import termios
 import threading
 import time
+import traceback
 import tty
 from collections import deque
 from pathlib import Path
@@ -92,6 +93,17 @@ def _reader_debug(message: str) -> None:
             pass
     sys.stderr.write(line)
     sys.stderr.flush()
+
+
+def _reader_debug_exception(context: str, exc: BaseException) -> None:
+    """Write an exception plus traceback to the reader debug sink."""
+    _reader_debug(f"{context}: {exc.__class__.__name__}: {exc}")
+    try:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    except Exception:
+        return
+    for line in tb.rstrip().splitlines():
+        _reader_debug(f"{context} traceback: {line}")
 
 
 # Matches the elapsed-time prefix on after-action topic lines:
@@ -5772,10 +5784,14 @@ def main() -> int:
                         try:
                             _live_update()
                         except Exception as exc:
-                            # Transient race with the message loop mutating
-                            # display state — next tick will recover.
-                            _reader_debug(
-                                f"animation repaint failed: {type(exc).__name__}: {exc}"
+                            # Transient races can still recover on the next
+                            # tick, but swallowing the exception silently makes
+                            # a frozen first-frame regression impossible to
+                            # diagnose from smoke. Keep the loop alive while
+                            # writing the failure to the reader debug custody
+                            # surface.
+                            _reader_debug_exception(
+                                "animation tick failed", exc
                             )
                         _animation_wake.clear()
                         _animation_wake.wait(
