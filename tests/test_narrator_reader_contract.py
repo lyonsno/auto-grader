@@ -363,11 +363,18 @@ class NarratorReaderContract(unittest.TestCase):
             "live thought commits should stay in the live lane and no longer persist line rows into history",
         )
 
-    def test_active_animation_fps_is_doubled_for_smoother_motion(self):
+    def test_active_animation_fps_is_reduced_to_calm_box_load(self):
         self.assertEqual(
             _ACTIVE_ANIMATION_FPS,
-            24.0,
-            "top-band motion should redraw at 24 FPS instead of the old 12 FPS",
+            12.0,
+            "top-band motion should redraw at 12 FPS so a full history stack does not bog down the box",
+        )
+
+    def test_preview_animation_fps_matches_reduced_global_cadence(self):
+        self.assertEqual(
+            narrator_reader._PREVIEW_ANIMATION_FPS,
+            12.0,
+            "the precomposed preview band should follow the same 12 FPS ceiling so the heavy path stays calm once the history fills in",
         )
 
     def test_status_delta_types_in_status_lane_without_overwriting_live_line(self):

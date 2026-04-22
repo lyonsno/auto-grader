@@ -484,10 +484,9 @@ _STATUS_BONE_GLINT_PHASE_OFFSET_RAD = 1.10
 _LIVE_FREEZE_FADE_S = 2.5
 _LIVE_FROZEN_SAT_MUL = 0.70
 _LIVE_FROZEN_VAL_MUL = 0.85
-_ACTIVE_ANIMATION_FPS = 24.0  # smoother motion without changing the protocol;
-                              # the slower animation families above are eased
-                              # back to keep the overall feel restrained
-_PREVIEW_ANIMATION_FPS = 24.0  # now that the preview band is a precomposed
+_ACTIVE_ANIMATION_FPS = 12.0  # cut in half so a full history stack stops
+                              # making the box feel heavy under live smoke
+_PREVIEW_ANIMATION_FPS = 12.0  # keep the precomposed preview band on the
                                # Kitty image (~30 bytes/frame instead of
                                # ~12KB of text segments), there is no reason
                                # to throttle below the active animation rate.
