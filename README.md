@@ -1,11 +1,14 @@
 # Auto-Grader
 
-Local-first exam generation and grading for chemistry courses. Generates
-per-student exam variants from reusable templates, then grades scanned paper
-submissions using OpenCV (multiple-choice) and VLM inference (short-answer).
+Local-first exam generation and grading for chemistry courses. It handles the
+full paper loop: generate per-student variants from reusable templates, ingest
+scanned submissions, score multiple-choice deterministically with OpenCV, and
+run model-based grading and evaluation on handwritten short-answer work.
 
-Runs on a professor's laptop. No cloud dependency. Postgres-backed for
-auditability and idempotent re-runs.
+The project is designed to run on a professor's own machine. There is no cloud
+dependency in the normal workflow. Postgres is the persistence spine so grading
+state, scan sessions, review decisions, and re-runs stay auditable instead of
+turning into loose files and shell history.
 
 ## Requirements
 
@@ -30,7 +33,8 @@ export DATABASE_URL="postgresql://postgres@localhost/auto_grader"
 
 ### Local web GUI
 
-The normal operator entry point for MC grading. An instructor or TA can:
+The normal front door for production multiple-choice grading. An instructor or
+TA can:
 
 - create or select a grading target
 - ingest a batch of scans
@@ -43,20 +47,24 @@ and contracts use.
 
 ### Project Paint Dry
 
-The live grading view for short-answer smoke and eval runs. Paint Dry is the
-surface you use when the question is not just "what score came out?" but "why
-did the model make that call?" It makes ambiguity, hesitation, evidence focus,
-and prompt behavior inspectable during a run.
+The live observability surface for short-answer grading. Paint Dry is the tool
+you use when the question is not just "what score came out?" but "what is the
+model seeing, what is it defending, and where is the real uncertainty?"
+
+It is not just a narrator and not just a dashboard. It is a weird but powerful
+development instrument for watching model judgment form in real time on messy
+handwritten work. In practice it is where prompt tuning, ambiguity diagnosis,
+focus-region annotation, and model-comparison work become tractable instead of
+staying buried in static logs.
 
 - **Scoreboard** with tall-digit dials: total elapsed, turn elapsed, on-target
   fraction, left-on-table, and bad calls against the professor's ground truth
-- **Live pane** streaming the narrator's character-by-character dispatch as the
+- **Live pane** streaming what the narrator thinks is happening while the
   grader reasons through each item
-- **Focus preview** showing the actual student handwriting region being graded,
-  rendered inline via Kitty graphics protocol
-- **History pane** with structured narrator output per item: basis annotations
-  (what the grader credited), evidence lines, lean summaries, and verdict
-  comparisons (grader score vs. professor score with elapsed time)
+- **Focus preview** showing the exact handwriting crop the grader is looking at
+- **History pane** that keeps structured per-item artifacts such as basis,
+  evidence, lean, core issue, and the newer `Read / Salvage / Hinge` dossier
+  rows for interesting items
 - **Rejected pane** for dedup-filtered and empty-filtered narrator output
 
 The history pane is scrollable (`k`/`j` row, `u`/`d` page, `0` live edge,
@@ -64,55 +72,42 @@ The history pane is scrollable (`k`/`j` row, `u`/`d` page, `0` live edge,
 to `runs/<ts>-<model>/narrator.jsonl` (machine-replayable) and `narrator.txt`
 (human-readable transcript).
 
-## What's here
+## What the repo does
 
-### Two grading pipelines
+### Multiple-choice workflow
 
-**Multiple-choice (MC)** — fully implemented, end-to-end:
-- Template-driven exam generation with per-student answer-key shuffling
+This side of the repo is the production workflow today:
+
+- template-driven exam generation with per-student answer-key shuffling
 - PDF rendering with QR identity markers, registration corners, and bubble grids
-- OpenCV scan pipeline: QR readback → page registration → bubble interpretation → scoring
-- Dominance arbitration for borderline marks (one strong fill beats faint traces)
+- OpenCV scan ingestion: QR readback → page registration → bubble interpretation → scoring
+- dominance arbitration for borderline marks
 - DB-backed scan sessions with idempotent re-ingestion and divergence detection
-- Human review workflow for flagged questions (multiple marks, ambiguous fills)
-- Local web GUI and CLI for the full ingest → review → export cycle
+- human review workflow for flagged questions
+- local web GUI and CLI for ingest → review → resolve → export
 
-**Short-answer (Quiz 5)** — in progress:
-- Canonical reconstruction of legacy quiz variants from PDF
-- Variant generation (A/B observed → C generated)
-- DB-backed scan session persistence
-- VLM-based grading pipeline (eval harness with ground truth scoring)
-- Project Paint Dry live grading view with focus preview, retained history,
-  ambiguity diagnosis, and in-window focus-region annotation
-- Split-model and single-model narrator/grader configurations for smoke and
-  prompt work
-- Run comparison and truth/backfill tooling for evaluating model behavior
-  over time
+### Short-answer grading and evaluation
 
-### Key modules
+This side of the repo is where the more experimental and more interesting model
+work lives:
 
-| Module | What it does |
-|--------|-------------|
-| `auto_grader.template_schema` | YAML template validation, variable types, expression evaluation |
-| `auto_grader.generation` | Per-student exam instance generation with stable answer keys |
-| `auto_grader.pdf_rendering` | Answer-sheet PDF rendering from generation artifacts |
-| `auto_grader.scan_readback` | QR identity decoding from scanned pages |
-| `auto_grader.scan_registration` | Skew correction via corner registration markers |
-| `auto_grader.bubble_interpretation` | Filled-bubble detection from normalized page images |
-| `auto_grader.mc_scoring` | MC scoring with status vocabulary: correct, incorrect, blank, multiple_marked, ambiguous_mark, illegible_mark |
-| `auto_grader.mc_scan_ingest` | Batch scan ingestion producing matched/unmatched/ambiguous outcomes |
-| `auto_grader.mc_scan_db` | DB persistence for scan sessions and scored outcomes |
-| `auto_grader.mc_review_db` | DB persistence for human review resolutions |
-| `auto_grader.mc_results_db` | Authoritative current-final truth surface per exam instance |
-| `auto_grader.mc_workflow` | Professor-facing workflow: ingest, review, resolve, export |
-| `auto_grader.mc_workflow_gui` | Local web GUI over the MC workflow |
-| `auto_grader.vlm_inference` | VLM inference wrapper for short-answer grading |
-| `auto_grader.eval_harness` | Evaluation harness for VLM grading accuracy |
-| `auto_grader.quiz5_short_answer_reconstruction` | Legacy quiz family reconstruction from PDF |
+- VLM-based grading pipeline with ground-truth scoring and run comparison
+- Project Paint Dry for live inspection of model behavior during smoke and eval
+- focus-region authoring and in-window annotation for the exact evidence crop
+- split-model and single-model narrator/grader configurations
+- truth correction and backfill tooling so historical professor marks and
+  corrected ground truth can coexist honestly
+- canonical reconstruction and variant generation work for fixed-layout
+  short-answer quiz families such as Quiz 5
 
-### Scripts
+The short-answer lane is partly a grading system and partly an observability
+program. The point is not only to get a score, but to learn where the score is
+coming from, where the model is charitable or strict, and which disagreements
+are model failures versus genuinely hard handwritten cases.
 
-**Professor-facing:**
+## Running it
+
+### Professor-facing
 
 ```bash
 # Launch the local web GUI (MC workflow)
@@ -138,7 +133,7 @@ python scripts/mc_workflow.py export \
   --exam-instance-id 123 --format csv --output-dir /tmp/mc-export
 ```
 
-**Development / demo:**
+### Development and evaluation
 
 ```bash
 # Render a generated MC exam from a real template
@@ -153,6 +148,53 @@ python scripts/reconstruct_quiz5_short_answer.py
 # Run VLM smoke test
 python scripts/smoke_vlm.py --model qwen3.5 --items 5
 ```
+
+For Paint Dry and short-answer smoke work, see the eval-harness notes below
+plus [`docs/project_paint_dry.md`](docs/project_paint_dry.md).
+
+## Eval harness and Paint Dry
+
+The eval harness (`scripts/smoke_vlm.py`) runs short-answer items through a
+VLM grading pipeline against ground truth. It talks to local
+OpenAI-compatible servers in two supported configurations:
+
+- **Split mode**: dedicated narrator surface plus separate grader backend
+- **Single-model mode**: one strong Qwen backend handles both grading and
+  narration in the same smoke run
+
+Both are real supported working modes. Single-model narration is no longer an
+experiment; on strong backends it produces materially better live readouts than
+the old tiny-sidecar assumption.
+
+Focus regions live in `eval/focus_regions.yaml` and can be adjusted from the
+command line or reopened directly from Paint Dry with `a`. The combination of
+focus preview, structured live history, and durable run artifacts is what makes
+short-answer smoke useful here: you can see the evidence crop, the evolving
+judgment, and the post-hoc run record all in one workflow.
+
+For deeper semantics and operator vocabulary, see:
+
+- [`docs/project_paint_dry.md`](docs/project_paint_dry.md)
+- [`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md)
+
+## Implementation surfaces
+
+These are the core modules maintainers usually touch first:
+
+| Module | What it owns |
+|--------|--------------|
+| `auto_grader.template_schema` | YAML template validation, variables, expressions |
+| `auto_grader.generation` | Per-student exam instance generation |
+| `auto_grader.pdf_rendering` | PDF rendering for generated paper artifacts |
+| `auto_grader.scan_readback` | QR identity decoding from scanned pages |
+| `auto_grader.scan_registration` | Page registration and skew correction |
+| `auto_grader.bubble_interpretation` | Filled-bubble detection from normalized scans |
+| `auto_grader.mc_workflow` | Professor-facing MC ingest/review/resolve/export workflow |
+| `auto_grader.mc_workflow_gui` | Local web GUI over the MC workflow |
+| `auto_grader.vlm_inference` | Short-answer VLM inference and scan-to-page mapping |
+| `auto_grader.eval_harness` | Ground truth loading, scoring, and report logic |
+| `auto_grader.thinking_narrator` | Paint Dry narrator dispatch and structured artifacts |
+| `auto_grader.narrator_sink` | Durable narrator event/log emission |
 
 ## Testing
 
@@ -217,30 +259,7 @@ written, enforced by DB triggers.
 - Duplicate ingestion does not duplicate or corrupt results (idempotent via
   checksum key).
 - Ambiguous marks are flagged for review, never confidently scored.
-- Failed scans remain auditable artifacts with clear status and traceable
-  provenance.
-
-## Eval harness (dev)
-
-The eval harness (`scripts/smoke_vlm.py`) runs short-answer items through a
-VLM grading pipeline against ground truth. It talks to local
-OpenAI-compatible servers in two supported configurations:
-
-- **Split mode**: dedicated narrator (Bonsai 8B 1-bit) on its own surface,
-  separate grader backend (Qwen3.5 / Gemma-4 on a second machine)
-- **Single-model mode**: a strong Qwen backend handles both grading and
-  narration in the same smoke run
-
-Both are real working surfaces. Single-model narration is no longer a
-speculative path — it produces visibly better narrator quality on strong
-backends.
-
-Focus regions are defined in `eval/focus_regions.yaml` and adjustable via
-`scripts/annotate_focus_regions.py`. The narrator requires the PRISM MLX fork
-for 1-bit quantization support. See
-[`docs/bonsai_server_setup.md`](docs/bonsai_server_setup.md) for server setup
-and [`docs/project_paint_dry.md`](docs/project_paint_dry.md) for the surface
-semantics, scorebug vocabulary, and checkpoint/history contract.
+- Failed scans remain auditable artifacts with clear status and traceable provenance.
 
 ## Project structure
 
