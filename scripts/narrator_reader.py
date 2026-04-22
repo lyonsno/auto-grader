@@ -5405,8 +5405,7 @@ class PaintDryDisplay:
                 f"{exam_id}/{question_id}"
             )
             return False
-        pdf_name = _EXAM_PDF_MAP.get(exam_id)
-        if pdf_name is None:
+        if _EXAM_PDF_MAP.get(exam_id) is None:
             self.status_line = (
                 f"Annotate current item failed: no PDF mapping for "
                 f"{exam_id}/{question_id}."
