@@ -718,6 +718,22 @@ def _history_secondary_phase(now_s: float) -> tuple[int, float]:
     return pass_index, phase
 
 
+def _history_secondary_entry_phase(
+    primary_phase: float,
+    global_primary_phase: float,
+    secondary_phase: float,
+) -> float:
+    """Map the secondary pass onto the primary history field geometry.
+
+    The secondary overlay should feel like a quieter companion to the
+    existing raked shimmer, not like a separate vertical scanner. So we
+    keep each row's local phase relationships intact and only shift the
+    whole field by the secondary pass's global phase offset.
+    """
+    secondary_offset = (secondary_phase - global_primary_phase) % 1.0
+    return (primary_phase + secondary_offset) % 1.0
+
+
 def _history_secondary_group_weight(group_index: int, pass_index: int) -> float:
     """Return the quiet secondary-overlay weight for one heading group."""
     if group_index < 0:
@@ -4658,9 +4674,7 @@ class PaintDryDisplay:
         display_entries = self._viewport_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
-        secondary_pass_index, secondary_phase = _history_secondary_phase(
-            time.monotonic()
-        )
+        secondary_pass_index, secondary_phase = _history_secondary_phase(now)
         current_group_index = -1
         current_group_base_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
@@ -4695,7 +4709,11 @@ class PaintDryDisplay:
                 current_group_index, secondary_pass_index
             )
             history_secondary_kwargs = {
-                "secondary_phase_override": secondary_phase,
+                "secondary_phase_override": _history_secondary_entry_phase(
+                    phase_override,
+                    global_history_phase,
+                    secondary_phase,
+                ),
                 "secondary_peak_weight": secondary_peak_weight,
                 "secondary_peak_rgb": _HISTORY_GROUP_SECONDARY_PEAK_RGB,
                 "secondary_floor_weight": (
