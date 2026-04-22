@@ -57,6 +57,7 @@ from scripts.narrator_reader import (
     _undulation_hue_deg,
     _render_layer_index,
     _reader_debug,
+    _reader_debug_exception,
     HistoryScrollController,
 )
 
@@ -156,6 +157,18 @@ class NarratorReaderContract(unittest.TestCase):
 
                     self.assertTrue(debug_log.exists())
                     self.assertIn("interactive tty ready", debug_log.read_text())
+
+    def test_reader_debug_exception_includes_traceback(self):
+        stderr = StringIO()
+        with mock.patch("sys.stderr", stderr):
+            try:
+                raise RuntimeError("frame blew up")
+            except RuntimeError as exc:
+                _reader_debug_exception("animation tick failed", exc)
+
+        output = stderr.getvalue()
+        self.assertIn("animation tick failed: RuntimeError: frame blew up", output)
+        self.assertIn("Traceback", output)
 
     class _TTYBuffer(StringIO):
         def isatty(self) -> bool:
