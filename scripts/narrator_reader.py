@@ -786,29 +786,26 @@ _HISTORY_GROUP_SECONDARY_CYCLE_S = _SHIMMER_DEFAULT_CYCLE_S
                                    # the new quieter pass alternates one
                                    # heading-group parity per sweep, then
                                    # flips to the other on the next cycle
-_HISTORY_GROUP_SECONDARY_PHASE_OFFSET = 0.46
+_HISTORY_GROUP_SECONDARY_PHASE_OFFSET = 0.72
                                    # keep the second pass offset from the
                                    # primary shimmer so it reads as a
                                    # companion field, not a duplicate
-_HISTORY_GROUP_SECONDARY_BLEND = 0.40
-                                   # quieter than the primary pass; enough
-                                   # to separate adjacent heading blocks
-                                   # without taking over the stack
-_HISTORY_GROUP_SECONDARY_FLOOR = 0.12
-                                   # selected groups need a faint all-row wash
-                                   # underneath the moving crest, otherwise
-                                   # subordinate rows only catch one- or
-                                   # two-character witnesses and the effect
-                                   # disappears in smoke
-_HISTORY_GROUP_SECONDARY_WIDTH = 22
-                                   # broader than the primary shimmer so the
-                                   # second pass reads as a block-selecting
-                                   # companion field rather than a duplicate
-                                   # narrow glint
-_HISTORY_GROUP_SECONDARY_PEAK_RGB = (194, 214, 222)
-                                   # rain-washed silver-blue: distinct from
-                                   # the primary history crest, but muted
-                                   # enough to stay subordinate
+_HISTORY_GROUP_SECONDARY_BLEND = 0.55
+                                   # temporary debug tuning: push the crest
+                                   # hard enough to be obvious without
+                                   # promoting it to the primary field's role
+_HISTORY_GROUP_SECONDARY_FLOOR = 0.0
+                                   # no constant group-wide wash: the human
+                                   # asked for a clearly identifiable second
+                                   # shimmer, not a steady parity tint
+_HISTORY_GROUP_SECONDARY_WIDTH = 8
+                                   # narrower than the primary shimmer so the
+                                   # debug pass reads as a distinct moving
+                                   # crest in the trough, not a broad bias
+_HISTORY_GROUP_SECONDARY_PEAK_RGB = (255, 136, 24)
+                                   # temporary loud orange for smoke: make
+                                   # the secondary crest unmistakable while
+                                   # tuning the timing and geometry
 _HISTORY_CONTINUATION_ROW_STEP = 0.09  # wrapped continuation rows should step
                                        # down in authority below the first
                                        # visual row of an entry
