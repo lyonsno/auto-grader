@@ -5274,12 +5274,12 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertGreater(
             primary_gap,
-            0.015,
+            0.010,
             "the deep child row should materially trail its group header in the existing primary field before the secondary overlay is applied",
         )
         self.assertLess(
             primary_gap,
-            0.03,
+            0.020,
             "the shared history rake should stay gentle enough that both the primary shimmer and the skipped-parity secondary pass still read as coherent fields instead of two aggressively slanted ladders",
         )
         self.assertAlmostEqual(
@@ -5287,6 +5287,88 @@ class NarratorReaderContract(unittest.TestCase):
             primary_gap,
             places=6,
             msg="the quieter second pass should inherit that same within-group rake instead of resetting every row onto one shared vertical crest",
+        )
+
+    def test_secondary_history_overlay_weights_selected_group_rows_below_header(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/2] OLDHDR", None))
+        display.history.append(("topic", "OLDTOPIC", "match"))
+        display.history.append(("line", "OLDLINE", 0))
+        display.history.append(("header", "[item 2/2] TARGETHDR", None))
+        display.history.append(("topic", "TARGETTOPIC", "match"))
+        display.history.append(("line", "TARGETLINE", 0))
+
+        calls: list[dict[str, float | str | None]] = []
+        original_apply = narrator_reader._apply_shimmer
+
+        def _recording_apply(
+            text_obj: Text,
+            content: str,
+            kind: str,
+            layer_index: int,
+            **kwargs,
+        ) -> Text:
+            if content in {
+                "OLDHDR",
+                "OLDTOPIC",
+                "OLDLINE",
+                "TARGETHDR",
+                "TARGETTOPIC",
+                "TARGETLINE",
+            }:
+                calls.append(
+                    {
+                        "content": content,
+                        "kind": kind,
+                        "secondary_peak_weight": kwargs.get("secondary_peak_weight"),
+                    }
+                )
+            return original_apply(
+                text_obj,
+                content,
+                kind,
+                layer_index,
+                **kwargs,
+            )
+
+        with mock.patch.object(narrator_reader, "_apply_shimmer", side_effect=_recording_apply):
+            with mock.patch.object(
+                narrator_reader.time,
+                "monotonic",
+                return_value=0.0,
+            ):
+                display.render()
+
+        by_content = {call["content"]: call for call in calls}
+        self.assertEqual(
+            by_content["OLDHDR"]["secondary_peak_weight"],
+            0.0,
+            "the non-selected neighboring heading should not get the alternating pass in the current cycle",
+        )
+        self.assertEqual(
+            by_content["OLDTOPIC"]["secondary_peak_weight"],
+            0.0,
+            "the subordinate rows of the non-selected neighboring heading should stay off with it",
+        )
+        self.assertEqual(
+            by_content["OLDLINE"]["secondary_peak_weight"],
+            0.0,
+            "the next group's narration rows should not quietly inherit the alternating pass when their header is off",
+        )
+        self.assertGreater(
+            by_content["TARGETHDR"]["secondary_peak_weight"],
+            by_content["TARGETTOPIC"]["secondary_peak_weight"],
+            "the selected heading should take the strongest version of the alternating crest, with the subordinate rows below it explicitly stepped down",
+        )
+        self.assertGreater(
+            by_content["TARGETTOPIC"]["secondary_peak_weight"],
+            by_content["TARGETLINE"]["secondary_peak_weight"],
+            "the alternating pass should keep fading as it travels down the selected block instead of treating the heading and the text below it as the same-strength surface",
+        )
+        self.assertGreater(
+            by_content["TARGETLINE"]["secondary_peak_weight"],
+            0.0,
+            "the selected heading's subordinate text should still receive a real alternating pass, not just the heading row by itself",
         )
 
     def test_wrapped_history_line_only_privileges_first_visual_row(self) -> None:
