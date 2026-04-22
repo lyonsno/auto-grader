@@ -790,11 +790,11 @@ _HISTORY_GROUP_SECONDARY_PHASE_OFFSET = 0.46
                                    # keep the second pass offset from the
                                    # primary shimmer so it reads as a
                                    # companion field, not a duplicate
-_HISTORY_GROUP_SECONDARY_BLEND = 0.32
+_HISTORY_GROUP_SECONDARY_BLEND = 0.40
                                    # quieter than the primary pass; enough
                                    # to separate adjacent heading blocks
                                    # without taking over the stack
-_HISTORY_GROUP_SECONDARY_FLOOR = 0.08
+_HISTORY_GROUP_SECONDARY_FLOOR = 0.12
                                    # selected groups need a faint all-row wash
                                    # underneath the moving crest, otherwise
                                    # subordinate rows only catch one- or
@@ -805,7 +805,7 @@ _HISTORY_GROUP_SECONDARY_WIDTH = 22
                                    # second pass reads as a block-selecting
                                    # companion field rather than a duplicate
                                    # narrow glint
-_HISTORY_GROUP_SECONDARY_PEAK_RGB = (188, 208, 216)
+_HISTORY_GROUP_SECONDARY_PEAK_RGB = (194, 214, 222)
                                    # rain-washed silver-blue: distinct from
                                    # the primary history crest, but muted
                                    # enough to stay subordinate

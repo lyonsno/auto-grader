@@ -7,6 +7,7 @@ import signal as stdlib_signal
 import tempfile
 import time
 import unittest
+from contextlib import nullcontext
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -394,6 +395,33 @@ class NarratorReaderContract(unittest.TestCase):
                     break
         if count == 0:
             raise AssertionError(f"no styled characters found for {needle!r}")
+        return total / count
+
+    def _average_luminance_for_nth_substring(
+        self,
+        text: Text,
+        needle: str,
+        occurrence_index: int,
+    ) -> float:
+        start = -1
+        for _ in range(occurrence_index + 1):
+            start = text.plain.index(needle, start + 1)
+        total = 0
+        count = 0
+        for offset in range(len(needle)):
+            idx = start + offset
+            for span in text.spans:
+                if (
+                    isinstance(span.style, str)
+                    and span.start <= idx < span.end
+                ):
+                    total += self._hex_luminance(span.style)
+                    count += 1
+                    break
+        if count == 0:
+            raise AssertionError(
+                f"no styled characters found for {needle!r} occurrence {occurrence_index}"
+            )
         return total / count
 
     def test_status_commit_updates_sticky_status_without_replacing_frozen_thought(self):
@@ -5022,6 +5050,68 @@ class NarratorReaderContract(unittest.TestCase):
             active_child_lift,
             8.0,
             "the selected group's child row should get a clearly visible row-level lift from the secondary pass, not just a barely detectable witness on one or two characters",
+        )
+
+    def test_secondary_history_overlay_creates_same_frame_contrast_against_neighboring_group(self):
+        def _build_display() -> PaintDryDisplay:
+            display = self._make_display()
+            display.history.append(("header", "[item 1/2] ALPHAHDR", None))
+            display.history.append(("topic", "ALPHATOPIC", "match"))
+            display.history.append(("line", "SAMECHILD", 0))
+            display.history.append(("header", "[item 2/2] BETAHDR", None))
+            display.history.append(("topic", "BETATOPIC", "match"))
+            display.history.append(("line", "SAMECHILD", 0))
+            return display
+
+        def _render_history(
+            display: PaintDryDisplay,
+            *,
+            secondary_weight_override=None,
+        ) -> Text:
+            patch_ctx = (
+                mock.patch.object(
+                    narrator_reader,
+                    "_history_secondary_group_weight",
+                    side_effect=secondary_weight_override,
+                )
+                if secondary_weight_override is not None
+                else nullcontext()
+            )
+            with patch_ctx:
+                with mock.patch.object(
+                    narrator_reader.time,
+                    "monotonic",
+                    return_value=0.0,
+                ):
+                    group = display.render()
+            history_panel = group.renderables[-1]
+            return history_panel.renderable
+
+        active_frame = _render_history(_build_display())
+        no_secondary_frame = _render_history(
+            _build_display(),
+            secondary_weight_override=lambda group_index, pass_index: 0.0,
+        )
+
+        active_gap = (
+            self._average_luminance_for_nth_substring(active_frame, "SAMECHILD", 0)
+            - self._average_luminance_for_nth_substring(active_frame, "SAMECHILD", 1)
+        )
+        baseline_gap = (
+            self._average_luminance_for_nth_substring(no_secondary_frame, "SAMECHILD", 0)
+            - self._average_luminance_for_nth_substring(no_secondary_frame, "SAMECHILD", 1)
+        )
+
+        self.assertAlmostEqual(
+            baseline_gap,
+            0.0,
+            places=6,
+            msg="without the alternating overlay, matched neighboring child rows should not drift apart in the same frame just because they belong to different heading groups",
+        )
+        self.assertGreater(
+            active_gap,
+            30.0,
+            "the alternating overlay should create enough same-frame separation between adjacent heading groups that the selected block is actually legible as the selected one in smoke, not just technically brighter in a lab measurement",
         )
 
     @staticmethod
