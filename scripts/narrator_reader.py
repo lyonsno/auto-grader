@@ -107,6 +107,84 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 # The index marker gets the cool steel-blue accent for an always-on
 # cool note that's structural metadata, not status.
 _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
+_LATEX_MATH_SPAN_RE = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$", re.DOTALL)
+
+_LATEX_COMMAND_REPLACEMENTS = {
+    "Delta": "Δ",
+    "alpha": "α",
+    "beta": "β",
+    "cdot": "·",
+    "delta": "δ",
+    "geq": "≥",
+    "lambda": "λ",
+    "leftarrow": "←",
+    "leftrightarrow": "↔",
+    "leq": "≤",
+    "log": "log",
+    "mu": "μ",
+    "nu": "ν",
+    "pm": "±",
+    "rightarrow": "→",
+    "times": "×",
+}
+_SORTED_LATEX_COMMAND_NAMES = tuple(
+    sorted(_LATEX_COMMAND_REPLACEMENTS, key=len, reverse=True)
+)
+
+_UNICODE_SUPERSCRIPTS = {
+    "+": "⁺",
+    "-": "⁻",
+    "(": "⁽",
+    ")": "⁾",
+    "0": "⁰",
+    "1": "¹",
+    "2": "²",
+    "3": "³",
+    "4": "⁴",
+    "5": "⁵",
+    "6": "⁶",
+    "7": "⁷",
+    "8": "⁸",
+    "9": "⁹",
+    "=": "⁼",
+    "i": "ⁱ",
+    "n": "ⁿ",
+}
+
+_UNICODE_SUBSCRIPTS = {
+    "+": "₊",
+    "-": "₋",
+    "(": "₍",
+    ")": "₎",
+    "0": "₀",
+    "1": "₁",
+    "2": "₂",
+    "3": "₃",
+    "4": "₄",
+    "5": "₅",
+    "6": "₆",
+    "7": "₇",
+    "8": "₈",
+    "9": "₉",
+    "=": "₌",
+    "a": "ₐ",
+    "e": "ₑ",
+    "h": "ₕ",
+    "i": "ᵢ",
+    "j": "ⱼ",
+    "k": "ₖ",
+    "l": "ₗ",
+    "m": "ₘ",
+    "n": "ₙ",
+    "o": "ₒ",
+    "p": "ₚ",
+    "r": "ᵣ",
+    "s": "ₛ",
+    "t": "ₜ",
+    "u": "ᵤ",
+    "v": "ᵥ",
+    "x": "ₓ",
+}
 
 # Keep the full structured-row family recorded locally near the reader
 # surface, even while implementation is still partial, so scrollback
@@ -128,6 +206,158 @@ _LEGIBILITY_STRUCTURED_ROW_ORDER = {
     "professor_mismatch": 6,
 }
 _LEGIBILITY_STRUCTURED_ROW_KINDS = frozenset(_LEGIBILITY_STRUCTURED_ROW_LABELS)
+
+
+def _extract_braced_group(content: str, start: int) -> tuple[str, int] | None:
+    if start >= len(content) or content[start] != "{":
+        return None
+    depth = 0
+    chars: list[str] = []
+    i = start
+    while i < len(content):
+        ch = content[i]
+        if ch == "{":
+            if depth > 0:
+                chars.append(ch)
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(chars), i + 1
+            chars.append(ch)
+        else:
+            chars.append(ch)
+        i += 1
+    return None
+
+
+def _translate_script_group(group: str, mapping: dict[str, str], fallback_prefix: str) -> str:
+    translated: list[str] = []
+    for ch in group:
+        mapped = mapping.get(ch)
+        if mapped is None:
+            return fallback_prefix + group
+        translated.append(mapped)
+    return "".join(translated)
+
+
+def _latex_math_to_terminal(expr: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(expr):
+        if expr.startswith(r"\frac", i):
+            i += len(r"\frac")
+            numerator_group = _extract_braced_group(expr, i)
+            if numerator_group is None:
+                out.append("frac")
+                continue
+            numerator, i = numerator_group
+            denominator_group = _extract_braced_group(expr, i)
+            if denominator_group is None:
+                out.append(_latex_math_to_terminal(numerator))
+                continue
+            denominator, i = denominator_group
+            out.append(
+                f"{_latex_math_to_terminal(numerator)}/{_latex_math_to_terminal(denominator)}"
+            )
+            continue
+
+        ch = expr[i]
+        if ch == "\\":
+            for command_name in _SORTED_LATEX_COMMAND_NAMES:
+                token = f"\\{command_name}"
+                if expr.startswith(token, i):
+                    out.append(_LATEX_COMMAND_REPLACEMENTS[command_name])
+                    i += len(token)
+                    break
+            else:
+                j = i + 1
+                while j < len(expr) and expr[j].isalpha():
+                    j += 1
+                command = expr[i + 1 : j]
+                if command:
+                    if command in {"mathrm", "text", "textrm", "mathit"}:
+                        group = _extract_braced_group(expr, j)
+                        if group is None:
+                            out.append(command)
+                        else:
+                            group_text, i = group
+                            out.append(_latex_math_to_terminal(group_text))
+                            continue
+                    else:
+                        out.append(command)
+                    i = j
+                    continue
+                if j < len(expr):
+                    out.append(expr[j])
+                    i = j + 1
+                    continue
+            continue
+
+        if ch in "^_":
+            j = i + 1
+            if j >= len(expr):
+                out.append(ch)
+                i += 1
+                continue
+            if expr[j] == "{":
+                group = _extract_braced_group(expr, j)
+                if group is None:
+                    out.append(ch)
+                    i += 1
+                    continue
+                raw_group, i = group
+                normalized_group = _latex_math_to_terminal(raw_group)
+            elif expr[j] == "\\":
+                k = j + 1
+                while k < len(expr) and expr[k].isalpha():
+                    k += 1
+                raw_group = expr[j:k]
+                normalized_group = _latex_math_to_terminal(raw_group)
+                i = k
+            else:
+                normalized_group = _latex_math_to_terminal(expr[j])
+                i = j + 1
+
+            if ch == "^":
+                out.append(
+                    _translate_script_group(
+                        normalized_group,
+                        _UNICODE_SUPERSCRIPTS,
+                        "^",
+                    )
+                )
+            else:
+                out.append(
+                    _translate_script_group(
+                        normalized_group,
+                        _UNICODE_SUBSCRIPTS,
+                        "_",
+                    )
+                )
+            continue
+
+        if ch in "{}":
+            i += 1
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def _latex_to_terminal_text(text: str) -> str:
+    if "$" not in text and "\\" not in text:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        expr = match.group(1) if match.group(1) is not None else match.group(2)
+        if expr is None:
+            return match.group(0)
+        return _latex_math_to_terminal(re.sub(r"\s+", "", expr.strip()))
+
+    return _LATEX_MATH_SPAN_RE.sub(_replace, text)
 
 
 _MAX_HISTORY_LINES = 90  # cap so we don't grow unbounded
@@ -4340,7 +4570,9 @@ class PaintDryDisplay:
         # indigo-steel shimmer. The live first-person line below it is
         # the more volatile surface, so it carries the warmer active
         # treatment without overwriting the sticky status.
-        displayed_live = self.streaming_line or self.frozen_line
+        displayed_live = _latex_to_terminal_text(
+            self.streaming_line or self.frozen_line
+        )
         is_active = bool(self.streaming_line)
         live_palette_variant = "warm" if (
             self._line_parity if is_active else self._frozen_line_parity
@@ -4399,7 +4631,9 @@ class PaintDryDisplay:
             )
 
         status_text = Text(no_wrap=False, overflow="fold")
-        displayed_status = self.status_streaming_line or self.status_line
+        displayed_status = _latex_to_terminal_text(
+            self.status_streaming_line or self.status_line
+        )
         if displayed_status:
             displayed_status = displayed_status.upper()
             status_gutter_rgb = _interp_rgb(
@@ -4517,7 +4751,7 @@ class PaintDryDisplay:
         current_group_base_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
             kind = entry[0]
-            text = entry[1]
+            text = _latex_to_terminal_text(entry[1])
             parity = entry[2] if len(entry) > 2 else None
             if kind == "header":
                 current_group_index += 1

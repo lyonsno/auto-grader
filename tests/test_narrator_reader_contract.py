@@ -50,6 +50,7 @@ from scripts.narrator_reader import (
     _render_status_undulating,
     _scorebug_big_value_rows,
     _history_tier_dim_factor,
+    _latex_to_terminal_text,
     _message_requires_immediate_refresh,
     _live_frame_prefix,
     _otsu_threshold,
@@ -72,6 +73,47 @@ def _extract_plain(renderable) -> str:
 
 
 class NarratorReaderContract(unittest.TestCase):
+    def test_latex_to_terminal_text_converts_common_chemistry_inline_math(self):
+        converted = _latex_to_terminal_text(
+            (
+                "I'm weighing the $\\Delta E$ omission against $E=h\\nu$, "
+                "$10^{-19}$, $s^{-1}$, and $\\frac{6.626\\times10^{-34}}{h}$."
+            )
+        )
+
+        self.assertEqual(
+            converted,
+            (
+                "I'm weighing the ΔE omission against E=hν, "
+                "10⁻¹⁹, s⁻¹, and 6.626×10⁻³⁴/h."
+            ),
+            "chemistry narrator math should flatten into ordinary shimmerable "
+            "terminal glyphs instead of leaking raw LaTeX delimiters or "
+            "needing a bitmap path for simple inline notation",
+        )
+
+    def test_render_rewrites_latex_across_live_and_history_text_surfaces(self):
+        display = self._make_display()
+        display.on_header("[item 1/1] 15-blue/fr-10a (numeric, 3.0 pts)")
+        display.on_delta(
+            "I'm weighing the $\\Delta E$ omission against $E=h\\nu$ and $10^{-19}$."
+        )
+        display.on_basis(
+            "Wrong formula ($E=h\\nu$), missing mole conversion ($N_A$), and bad unit $s^{-1}$."
+        )
+
+        group = display.render()
+        plain = _extract_plain(group)
+
+        self.assertIn("ΔE", plain)
+        self.assertIn("E=hν", plain)
+        self.assertIn("10⁻¹⁹", plain)
+        self.assertIn("s⁻¹", plain)
+        self.assertNotIn("$\\Delta E$", plain)
+        self.assertNotIn("$E=h\\nu$", plain)
+        self.assertNotIn("$10^{-19}$", plain)
+        self.assertNotIn("$s^{-1}$", plain)
+
     def test_stable_live_paint_prefix_clears_tail_below_shorter_frame(self):
         self.assertEqual(
             _live_frame_prefix((120, 40), (120, 40)),
