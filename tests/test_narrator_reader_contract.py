@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import fitz
+from rich.cells import cell_len
 from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
@@ -113,6 +114,23 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertNotIn("$E=h\\nu$", plain)
         self.assertNotIn("$10^{-19}$", plain)
         self.assertNotIn("$s^{-1}$", plain)
+
+    def test_latex_to_terminal_text_emits_single_cell_glyphs_for_supported_subset(self):
+        converted = _latex_to_terminal_text(
+            r"$\Delta E$ $10^{-19}$ $s^{-1}$ $H_2O$ $\nu$ $\times$ $\cdot$ $\rightarrow$ $\leftrightarrow$ $\frac{6.626\times10^{-34}}{h}$"
+        )
+
+        self.assertEqual(
+            cell_len(converted),
+            len(converted),
+            "the bounded chemistry subset should stay single-cell in Rich so "
+            "live-lane truncation and wrap math remain character-count coherent",
+        )
+        self.assertTrue(
+            all(cell_len(ch) == 1 for ch in converted),
+            "supported LaTeX replacements should stay in the one-cell terminal "
+            "glyph set rather than introducing double-width or zero-width codepoints",
+        )
 
     def test_stable_live_paint_prefix_clears_tail_below_shorter_frame(self):
         self.assertEqual(
