@@ -144,6 +144,30 @@ class ThinkingNarratorContract(unittest.TestCase):
             "Context: rubric denies method credit for the setup.",
         )
 
+    def test_checkpoint_prompt_treats_prior_context_as_update_target(self):
+        narrator = ThinkingNarrator(_DummySink())
+
+        content = narrator._build_checkpoint_user_content(
+            "student used initial energy instead of delta E",
+            "I'm checking the photon-energy setup.",
+            prior_thoughts=[],
+            prior_statuses=[],
+            prior_checkpoints=[
+                "Core issue: Student used initial energy instead of delta E.",
+                "Context: Student used initial energy instead of delta E, yielding a negative frequency.",
+            ],
+        )
+
+        self.assertIn(
+            "Latest Context to update",
+            content,
+            "when a prior Context row exists, checkpoint prompting should treat it as a rolling summary target instead of inviting an append-only pileup",
+        )
+        self.assertIn(
+            "If you write another Context:",
+            content,
+        )
+
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
         narrator = _RetryNarrator(sink)

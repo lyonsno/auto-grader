@@ -119,6 +119,10 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 # The index marker gets the cool steel-blue accent for an always-on
 # cool note that's structural metadata, not status.
 _HEADER_INDEX_RE = re.compile(r"^(\[(?:item\s+)?\d+/\d+\])\s*(.*)$", re.DOTALL)
+_CHECKPOINT_LABEL_RE = re.compile(
+    r"^(?:\*+|`+)?\s*(Core issue|Evidence|Context)\s*:\s*(?:\*+|`+)?\s*(.*)$",
+    re.IGNORECASE,
+)
 _LATEX_MATH_SPAN_RE = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$", re.DOTALL)
 
 _LATEX_COMMAND_REPLACEMENTS = {
@@ -2623,6 +2627,13 @@ def _pixel_luma(rgb: tuple[int, int, int]) -> float:
     return (0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2])
 
 
+def _split_checkpoint_label(text: str) -> tuple[str, str]:
+    match = _CHECKPOINT_LABEL_RE.match(text.strip())
+    if not match:
+        return "", text.strip()
+    return match.group(1).lower(), match.group(2).strip()
+
+
 def _render_focus_preview_pixels(
     pixels: list[list[tuple[int, int, int]]],
     *,
@@ -2671,6 +2682,9 @@ def _render_focus_preview_steady(
     # This keeps blank regions rendering as page instead of as garbled noise.
     lum_span = max(luminances) - min(luminances) if luminances else 0.0
     degenerate = lum_span < 12.0
+    darker_cluster_count = sum(1 for lum in luminances if lum < threshold)
+    lighter_cluster_count = len(luminances) - darker_cluster_count
+    darker_cluster_is_paper = darker_cluster_count > lighter_cluster_count
 
     ink_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_INK_RGB)
     paper_hex = _rgb_to_hex(_FOCUS_PREVIEW_HARD_PAPER_RGB)
@@ -2678,7 +2692,10 @@ def _render_focus_preview_steady(
     def _color_for(rgb: tuple[int, int, int]) -> str:
         if degenerate:
             return paper_hex
-        return ink_hex if _pixel_luma(rgb) < threshold else paper_hex
+        is_darker_cluster = _pixel_luma(rgb) < threshold
+        if darker_cluster_is_paper:
+            return paper_hex if is_darker_cluster else ink_hex
+        return ink_hex if is_darker_cluster else paper_hex
 
     rows: list[Text] = []
     # Walk source rows in pairs. If the source has an odd number of rows,
@@ -5841,6 +5858,20 @@ class PaintDryDisplay:
             ),
             self._line_parity,
         )
+        label, _body = _split_checkpoint_label(text)
+        if label == "context":
+            for index in range(len(self.history) - 1, -1, -1):
+                kind, existing_text, parity = self.history[index]
+                if kind in {"header", "topic"}:
+                    break
+                if kind != "checkpoint":
+                    continue
+                existing_label, _existing_body = _split_checkpoint_label(
+                    existing_text
+                )
+                if existing_label == "context":
+                    self.history[index] = ("checkpoint", text, parity)
+                    return
         self.history.append(("checkpoint", text, checkpoint_parity))
 
     def _structured_row_parity(self) -> int:

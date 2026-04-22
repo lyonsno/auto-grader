@@ -900,6 +900,12 @@ class ThinkingNarrator:
                 )
             )
         if prior_checkpoints:
+            latest_context = self._latest_checkpoint_for_label(
+                prior_checkpoints,
+                "context",
+            )
+            if latest_context:
+                blocks.append(f"Latest Context to update:\n- {latest_context}")
             blocks.append(
                 "Recent checkpoints (reuse the same wording if the issue is the same; do not paraphrase it):\n"
                 + "\n".join(
@@ -914,6 +920,10 @@ class ThinkingNarrator:
         blocks.append(
             "If the issue matches a recent checkpoint, reuse its wording instead of paraphrasing it."
         )
+        if self._latest_checkpoint_for_label(prior_checkpoints, "context"):
+            blocks.append(
+                "If you write another Context:, treat it as an updated replacement for the existing Context line rather than a new sibling row."
+            )
         return "\n\n".join(blocks)
 
     def _emit_checkpoint_from_context(
@@ -947,7 +957,20 @@ class ThinkingNarrator:
         if _checkpoint_line_breaks_contract(checkpoint_text):
             self._sink.write_drop("contract-checkpoint", checkpoint_text)
             return
-        if any(
+        checkpoint_label, _checkpoint_body = self._split_checkpoint_label(
+            checkpoint_text
+        )
+        latest_same_label = (
+            self._latest_checkpoint_for_label(prior_checkpoints, checkpoint_label)
+            if checkpoint_label
+            else None
+        )
+        if latest_same_label and checkpoint_text == latest_same_label:
+            self._sink.write_drop("dedup-checkpoint", checkpoint_text)
+            return
+        if checkpoint_label == "context":
+            pass
+        elif any(
             self._checkpoint_lines_share_basin(
                 checkpoint_text,
                 prev,
@@ -958,7 +981,7 @@ class ThinkingNarrator:
             return
         self._sink.write_checkpoint(checkpoint_text)
         with self._lock:
-            self._prior_checkpoints.append(checkpoint_text)
+            self._record_checkpoint(checkpoint_text)
 
     def _maybe_groom_after_repeated_dedup(
         self,
@@ -1860,6 +1883,34 @@ class ThinkingNarrator:
             "context": "Context",
         }
         return f"{canonical_labels[label]}: {body}"
+
+    @staticmethod
+    def _latest_checkpoint_for_label(
+        checkpoints: list[str],
+        label: str,
+    ) -> str | None:
+        target = label.strip().casefold()
+        if not target:
+            return None
+        for checkpoint in reversed(checkpoints):
+            checkpoint_label, _body = ThinkingNarrator._split_checkpoint_label(
+                checkpoint
+            )
+            if checkpoint_label == target:
+                return checkpoint
+        return None
+
+    def _record_checkpoint(self, checkpoint_text: str) -> None:
+        label, _body = self._split_checkpoint_label(checkpoint_text)
+        if label == "context":
+            for index in range(len(self._prior_checkpoints) - 1, -1, -1):
+                existing_label, _existing_body = self._split_checkpoint_label(
+                    self._prior_checkpoints[index]
+                )
+                if existing_label == "context":
+                    self._prior_checkpoints[index] = checkpoint_text
+                    return
+        self._prior_checkpoints.append(checkpoint_text)
 
     @staticmethod
     def _normalize_checkpoint_body(text: str) -> str:

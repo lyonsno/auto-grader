@@ -1069,6 +1069,50 @@ class NarratorReaderContract(unittest.TestCase):
             "a dark stroke against lighter paper must produce spatial variation in output cells (ink cells AND paper cells), not a single uniform slab",
         )
 
+    def test_focus_preview_inverted_scan_normalizes_back_to_parchment_lane(self):
+        pixels = []
+        for row in range(16):
+            rows: list[tuple[int, int, int]] = []
+            for col in range(24):
+                if 9 <= col <= 14 and 3 <= row <= 12:
+                    rows.append((220, 214, 206))
+                else:
+                    rows.append((28, 30, 34))
+            pixels.append(rows)
+
+        renderable = _render_focus_preview_pixels(
+            pixels,
+            now=0.0,
+            pending=False,
+        )
+        style_pairs = [
+            span.style
+            for row in renderable.renderables
+            for span in row.spans
+            if isinstance(span.style, str) and " on " in span.style
+        ]
+        self.assertTrue(style_pairs)
+
+        bg_counts: dict[str, int] = {}
+        for style in style_pairs:
+            _fg, bg = style.split(" on ")
+            bg_counts[bg] = bg_counts.get(bg, 0) + 1
+        dominant_bg = max(bg_counts, key=bg_counts.get)
+        rgb = self._rgb_from_hex(dominant_bg)
+
+        self.assertGreater(
+            rgb[0],
+            rgb[1],
+            "normalized preview paper should stay red-led even when the source scan arrives inverted",
+        )
+        self.assertGreater(rgb[1], rgb[2])
+        self.assertGreaterEqual(rgb[0] - rgb[2], 28)
+        self.assertGreaterEqual(
+            len(set(style_pairs)),
+            2,
+            "inverted scans should still normalize to distinct ink-vs-paper cell styles rather than collapsing into a uniformly dark slab",
+        )
+
     def test_focus_preview_sampling_preserves_thin_dark_strokes(self):
         width = 96
         height = 96
@@ -2629,6 +2673,38 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("Deciding issue:", plain)
         self.assertNotIn("Salvage:", plain)
         self.assertNotIn("Hinge:", plain)
+
+    def test_new_context_checkpoint_replaces_prior_context_within_same_problem(self):
+        display = self._make_display()
+        display.on_header("[1/6] exam 15-blue · problem fr-10a (numeric, 3.0 pts)")
+        display.on_topic(
+            "41s · Grader: 1/2 · Prof: 1/2",
+            verdict="match",
+            grader_score=1.0,
+            truth_score=1.0,
+            max_points=2.0,
+        )
+        display.on_checkpoint(
+            "Context: Student used initial energy instead of delta E."
+        )
+        display.on_checkpoint(
+            "Context: Student used initial energy instead of delta E, yielding physically impossible negative frequency."
+        )
+
+        checkpoints = [
+            entry for entry in display.history if entry[0] == "checkpoint"
+        ]
+        self.assertEqual(
+            checkpoints,
+            [
+                (
+                    "checkpoint",
+                    "Context: Student used initial energy instead of delta E, yielding physically impossible negative frequency.",
+                    0,
+                )
+            ],
+            "Context checkpoints should roll forward in place within a problem instead of stacking duplicate context rows under the same topic",
+        )
 
     def test_structured_rows_inherit_topic_parity_for_group_alternation(self):
         display = self._make_display()
