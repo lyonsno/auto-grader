@@ -539,21 +539,6 @@ _HISTORY_GROUP_SECONDARY_BLEND = 0.32
                                    # quieter than the primary pass; enough
                                    # to separate adjacent heading blocks
                                    # without taking over the stack
-_HISTORY_GROUP_SECONDARY_FLOOR = 0.08
-                                   # selected groups need a faint all-row wash
-                                   # underneath the moving crest, otherwise
-                                   # subordinate rows only catch one- or
-                                   # two-character witnesses and the effect
-                                   # disappears in smoke
-_HISTORY_GROUP_SECONDARY_WIDTH = 22
-                                   # broader than the primary shimmer so the
-                                   # second pass reads as a block-selecting
-                                   # companion field rather than a duplicate
-                                   # narrow glint
-_HISTORY_GROUP_SECONDARY_PEAK_RGB = (188, 208, 216)
-                                   # rain-washed silver-blue: distinct from
-                                   # the primary history crest, but muted
-                                   # enough to stay subordinate
 _HISTORY_CONTINUATION_ROW_STEP = 0.09  # wrapped continuation rows should step
                                        # down in authority below the first
                                        # visual row of an entry
@@ -2639,8 +2624,6 @@ def _apply_shimmer(
     secondary_phase_override: float | None = None,
     secondary_peak_weight: float = 0.0,
     secondary_peak_rgb: tuple[int, int, int] | None = None,
-    secondary_floor_weight: float = 0.0,
-    secondary_width: int = _SHIMMER_WIDTH,
 ) -> Text:
     """Append content to text_obj with a moving shimmer overlay.
 
@@ -2761,8 +2744,6 @@ def _apply_shimmer(
                 ),
                 secondary_peak_rgb=secondary_target_rgb,
                 secondary_peak_weight=secondary_peak_weight,
-                secondary_floor_weight=secondary_floor_weight,
-                secondary_width=secondary_width,
             )
     else:
         # Fallback character-index sweep (when no wrap_width given)
@@ -2782,8 +2763,6 @@ def _apply_shimmer(
                 ),
                 secondary_peak_rgb=secondary_target_rgb,
                 secondary_peak_weight=secondary_peak_weight,
-                secondary_floor_weight=secondary_floor_weight,
-                secondary_width=secondary_width,
             )
 
     return text_obj
@@ -3082,16 +3061,11 @@ def _render_status_undulating(
     return text_obj
 
 
-def _shimmer_intensity(
-    distance: float,
-    layer_recency: float,
-    *,
-    width: int = _SHIMMER_WIDTH,
-) -> float:
+def _shimmer_intensity(distance: float, layer_recency: float) -> float:
     """Return shimmer intensity for one character at a given head distance."""
-    if width <= 0 or distance < 0 or distance > width:
+    if distance < 0 or distance > _SHIMMER_WIDTH:
         return 0.0
-    return (1.0 - (distance / width)) * layer_recency
+    return (1.0 - (distance / _SHIMMER_WIDTH)) * layer_recency
 
 
 def _append_shimmer_char(
@@ -3105,8 +3079,6 @@ def _append_shimmer_char(
     secondary_distance: float | None = None,
     secondary_peak_rgb: tuple[int, int, int] | None = None,
     secondary_peak_weight: float = 0.0,
-    secondary_floor_weight: float = 0.0,
-    secondary_width: int = _SHIMMER_WIDTH,
 ) -> None:
     """Append one shimmered character with the right style based on
     its distance from the shimmer head. peak_rgb may be a per-kind
@@ -3118,26 +3090,15 @@ def _append_shimmer_char(
     else:
         color_rgb = _interp_rgb(base_rgb, peak_rgb, intensity)
         bold_head = (layer_index == 0 and -0.5 <= distance < 1.5)
-    secondary_target_rgb = secondary_peak_rgb or peak_rgb
-    if secondary_floor_weight > 0.0:
-        color_rgb = _blend_rgb(
-            color_rgb,
-            secondary_target_rgb,
-            secondary_floor_weight,
-        )
     if secondary_distance is not None and secondary_peak_weight > 0.0:
         secondary_intensity = (
-            _shimmer_intensity(
-                secondary_distance,
-                layer_recency,
-                width=secondary_width,
-            )
+            _shimmer_intensity(secondary_distance, layer_recency)
             * secondary_peak_weight
         )
         if secondary_intensity > 0.0:
             color_rgb = _interp_rgb(
                 color_rgb,
-                secondary_target_rgb,
+                secondary_peak_rgb or peak_rgb,
                 secondary_intensity,
             )
     style = _rgb_to_hex(color_rgb)
@@ -4716,17 +4677,6 @@ class PaintDryDisplay:
             secondary_peak_weight = _history_secondary_group_weight(
                 current_group_index, secondary_pass_index
             )
-            history_secondary_kwargs = {
-                "secondary_phase_override": secondary_phase,
-                "secondary_peak_weight": secondary_peak_weight,
-                "secondary_peak_rgb": _HISTORY_GROUP_SECONDARY_PEAK_RGB,
-                "secondary_floor_weight": (
-                    _HISTORY_GROUP_SECONDARY_FLOOR
-                    if secondary_peak_weight > 0.0
-                    else 0.0
-                ),
-                "secondary_width": _HISTORY_GROUP_SECONDARY_WIDTH,
-            }
 
             if kind == "header":
                 indent = "─ "
@@ -4741,7 +4691,8 @@ class PaintDryDisplay:
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    **history_secondary_kwargs,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
                 # Split the [item N/M] index marker from the rest of
                 # the title so the index can be rendered in cool steel
@@ -4762,7 +4713,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
@@ -4772,7 +4724,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
                 else:
                     _apply_shimmer(
@@ -4782,7 +4735,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
             elif kind == "topic":
                 indent = "  · "
@@ -4814,7 +4768,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
                 else:
                     _apply_shimmer(
@@ -4824,7 +4779,8 @@ class PaintDryDisplay:
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        secondary_phase_override=secondary_phase,
+                        secondary_peak_weight=secondary_peak_weight,
                     )
             elif kind == "basis":
                 indent = "  ≡ "
@@ -4840,7 +4796,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
             elif kind in {"read", "salvage", "hinge"}:
                 indent = "  ≡ "
@@ -4873,7 +4830,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
             elif kind == "checkpoint":
                 indent = "  ≈ "
@@ -4884,7 +4842,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
                 checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 _apply_shimmer(
@@ -4894,7 +4853,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
             else:
                 indent = "    "
@@ -4911,7 +4871,8 @@ class PaintDryDisplay:
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    secondary_phase_override=secondary_phase,
+                    secondary_peak_weight=secondary_peak_weight,
                 )
 
         if not display_entries:
