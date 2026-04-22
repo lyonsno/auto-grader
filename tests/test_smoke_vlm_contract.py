@@ -304,6 +304,53 @@ class SmokeVlmContract(unittest.TestCase):
             "15 blue_professor_markings_hidden.pdf",
         )
 
+    def test_describe_only_mode_accepts_legacy_fifteen_blue_scan_name(self) -> None:
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=1.0,
+            professor_mark="check",
+            student_answer="mock",
+            notes="mock",
+        )
+        config = smoke_vlm.ServerConfig(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scans_dir = Path(tmpdir) / "scans"
+            scans_dir.mkdir()
+            (scans_dir / "15 blue.pdf").write_bytes(b"%PDF-1.4 legacy")
+            run_dir = Path(tmpdir) / "run"
+
+            with (
+                mock.patch.object(smoke_vlm, "_SCANS_DIR", scans_dir),
+                mock.patch.object(
+                    smoke_vlm,
+                    "extract_page_image",
+                    return_value=b"page-bytes",
+                ),
+                mock.patch.object(
+                    smoke_vlm,
+                    "stream_vision_completion",
+                    return_value=("visible student work", "brief reasoning"),
+                ) as stream_mock,
+            ):
+                result = smoke_vlm.run_describe_only_mode(
+                    SimpleNamespace(run_dir=run_dir),
+                    [item],
+                    config,
+                    model_family="qwen",
+                )
+
+        self.assertEqual(result["count_ok"], 1)
+        self.assertEqual(result["count_err"], 0)
+        stream_mock.assert_called_once()
+
     def test_contamination_warnings_surface_non_clean_exam_ids(self) -> None:
         subset = [
             EvalItem(
