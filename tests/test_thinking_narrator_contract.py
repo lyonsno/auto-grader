@@ -73,9 +73,6 @@ class _AfterActionNarrator(ThinkingNarrator):
     def __init__(self, sink: _DummySink) -> None:
         super().__init__(sink)
 
-    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
-        return "Grader: 1 (exact truth). Prof: 1 (same score)."
-
     def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
         return None
 
@@ -89,8 +86,6 @@ class _DossierAfterActionNarrator(ThinkingNarrator):
 
     def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
         system = messages[0]["content"]
-        if "after-action line" in system:
-            return "Grader: 2 (exact truth). Prof: 2 (same score)."
         if "background dossier" in system:
             return json.dumps(
                 {
@@ -233,8 +228,52 @@ class ThinkingNarratorContract(unittest.TestCase):
             "match",
             "the narrator's primary verdict must stay aligned with truth_score even when an advisory acceptable band excludes that truth",
         )
+        self.assertEqual(
+            sink.topics[0]["text"],
+            "12s · Grader: 1/2 · Prof: 1/2\nBand: 1.5/2 to 2/2",
+        )
         self.assertEqual(sink.topics[0]["acceptable_score_floor"], 1.5)
         self.assertEqual(sink.topics[0]["acceptable_score_ceiling"], 2.0)
+
+    def test_after_action_uses_truth_and_historical_prof_on_corrected_items(self):
+        sink = _DummySink()
+        narrator = _AfterActionNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-5b",
+                "answer_type": "numeric",
+                "max_points": 2.0,
+                "student_answer": "14.2031",
+                "professor_score": 2.0,
+                "truth_score": 0.0,
+                "corrected_score": 0.0,
+                "professor_mark": "x",
+                "notes": "historical overcredit",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 0.0,
+                "model_read": "14.2031",
+                "model_reasoning": "methodology is invalid",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(72.0, prediction, item, template_question=None)
+
+        self.assertEqual(len(sink.topics), 1)
+        self.assertEqual(
+            sink.topics[0]["text"],
+            "72s · Grader: 0/2 · Truth: 0/2\nHistorical prof: 2/2",
+        )
 
     def test_after_action_enqueues_and_flushes_background_dossier_for_interesting_item(self):
         sink = _DummySink()

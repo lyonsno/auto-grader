@@ -1089,8 +1089,8 @@ def grade_all_items(
         # Per-item narrator lifecycle
         if narrator is not None and sink is not None:
             header = (
-                f"[item {i + 1}/{len(ground_truth)}] "
-                f"{item.exam_id}/{item.question_id} "
+                f"[{i + 1}/{len(ground_truth)}] "
+                f"exam {item.exam_id} · problem {item.question_id} "
                 f"({item.answer_type}, {item.max_points} pts)"
             )
             # Build a richer context for the narrator: actual question prompt

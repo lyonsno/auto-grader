@@ -363,6 +363,39 @@ class NarratorReaderContract(unittest.TestCase):
             "live thought commits should stay in the live lane and no longer persist line rows into history",
         )
 
+    def test_new_problem_header_format_updates_scorebug_locator(self):
+        display = PaintDryDisplay()
+
+        display.on_header("[13/15] exam 15-blue · problem fr-10a (numeric, 3.0 pts)")
+
+        self.assertEqual(display.current_item_bug, "13/15")
+        self.assertEqual(
+            display.history[-1],
+            ("header", "[13/15] exam 15-blue · problem fr-10a (numeric, 3.0 pts)", None),
+        )
+
+    def test_multiline_topic_preserves_compact_outcome_block_shape(self):
+        display = self._make_display()
+        display.on_header("[13/15] exam 15-blue · problem fr-10a (numeric, 3.0 pts)")
+        display.on_topic(
+            "91s · Grader: 0/3 · Prof: 1.5/3\nBand: 1/3 to 1.5/3",
+            verdict="undershoot",
+            grader_score=0.0,
+            truth_score=1.5,
+            max_points=3.0,
+            acceptable_score_floor=1.0,
+            acceptable_score_ceiling=1.5,
+        )
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            history_text = display.render().renderables[-1].renderable
+
+        plain = history_text.plain
+        self.assertIn("[13/15] exam 15-blue · problem fr-10a (numeric, 3.0 pts)", plain)
+        self.assertIn("91s", plain)
+        self.assertIn("Grader: 0/3 · Prof: 1.5/3", plain)
+        self.assertIn("Band: 1/3 to 1.5/3", plain)
+
     def test_active_animation_fps_is_reduced_to_calm_box_load(self):
         self.assertEqual(
             _ACTIVE_ANIMATION_FPS,

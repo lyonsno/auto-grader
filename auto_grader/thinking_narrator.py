@@ -389,6 +389,63 @@ def _band_commentary_clause(
     )
 
 
+def _band_detail_line(
+    classification: _ScoreBandClassification,
+    *,
+    max_points: float,
+) -> str | None:
+    if not classification.band_present:
+        return None
+    floor_display = _format_score_with_denominator(classification.floor, max_points)
+    ceiling_display = _format_score_with_denominator(
+        classification.ceiling, max_points
+    )
+    return f"Band: {floor_display} to {ceiling_display}"
+
+
+def _after_action_topic_text(
+    *,
+    elapsed: float,
+    prediction: Any,
+    item: Any,
+    truth_score: float,
+    corrected_truth: bool,
+    band_classification: _ScoreBandClassification,
+) -> str:
+    grader_score_display = _format_score_with_denominator(
+        prediction.model_score, item.max_points
+    )
+    truth_score_display = _format_score_with_denominator(
+        truth_score, item.max_points
+    )
+    if corrected_truth:
+        main_line = (
+            f"{elapsed:.0f}s · Grader: {grader_score_display} · "
+            f"Truth: {truth_score_display}"
+        )
+        detail_parts = [
+            "Historical prof: "
+            + _format_score_with_denominator(item.professor_score, item.max_points)
+        ]
+    else:
+        main_line = (
+            f"{elapsed:.0f}s · Grader: {grader_score_display} · "
+            f"Prof: {truth_score_display}"
+        )
+        detail_parts = []
+
+    band_detail = _band_detail_line(
+        band_classification,
+        max_points=item.max_points,
+    )
+    if band_detail is not None:
+        detail_parts.append(band_detail)
+
+    if not detail_parts:
+        return main_line
+    return main_line + "\n" + " · ".join(detail_parts)
+
+
 def _normalize_after_action_scores(
     text: str,
     *,
@@ -1463,49 +1520,17 @@ class ThinkingNarrator:
         item: Any,
         template_question: dict | None,
     ) -> None:
-        """Produce a per-item after-action line: factual two-part comparison
-        of grader vs professor with brief reasoning, plus an optional
-        dry/arch coda from bonsai if it can fit one in."""
+        """Produce a compact per-problem outcome block."""
         try:
-            # Fall back to a bare timing line if we don't have the data
             if prediction is None or item is None:
                 self._sink.write_topic(f"{elapsed:.0f}s elapsed")
                 return
 
-            # Truncated / unparseable rows are non-predictions — the
-            # grader never committed to a score. Emit a distinct
-            # after-action shape instead of feeding null scores into
-            # the verdict comparison path (which would TypeError on
-            # None < float) or into bonsai's comparative-line prompt
-            # (which would lie about the grader having scored zero).
-            # Operation Zilch Reaper, forward lane.
             if getattr(prediction, "truncated", False):
                 self._sink.write_topic(
-                    f"{elapsed:.0f}s · "
-                    f"{item.exam_id}/{item.question_id}: "
-                    f"grader did not commit to a score (truncated)"
+                    f"{elapsed:.0f}s · grader did not commit to a score (truncated)"
                 )
                 return
-
-            # Build the structured verdict context for bonsai
-            qprompt = ""
-            expected = ""
-            if template_question:
-                if "prompt" in template_question:
-                    qprompt = (
-                        str(template_question["prompt"])
-                        .strip()
-                        .replace("\n", " ")[:160]
-                    )
-                if "correct" in template_question:
-                    correct = template_question["correct"]
-                    if isinstance(correct, dict):
-                        if "value" in correct:
-                            expected = str(correct["value"])
-                        elif "expression" in correct:
-                            expected = f"expr: {correct['expression']}"
-                    else:
-                        expected = str(correct)
 
             truth_score = getattr(item, "truth_score", item.professor_score)
             corrected_truth = (
@@ -1516,217 +1541,43 @@ class ThinkingNarrator:
                 prediction.model_score,
                 item,
             )
-            verdict = band_classification.verdict
             verdict_short = band_classification.verdict_short
-            grader_score_display = _format_score_with_denominator(
-                prediction.model_score, item.max_points
+            text = _after_action_topic_text(
+                elapsed=elapsed,
+                prediction=prediction,
+                item=item,
+                truth_score=truth_score,
+                corrected_truth=corrected_truth,
+                band_classification=band_classification,
             )
-            truth_score_display = _format_score_with_denominator(
-                truth_score, item.max_points
-            )
-            payload = (
-                f"The grader just rendered a verdict on question "
-                f"{item.question_id}. Here's the after-action:\n\n"
-                f"  Question type: {item.answer_type}, max {item.max_points} pts\n"
-            )
-            if qprompt:
-                payload += f"  Question prompt: {qprompt}\n"
-            if expected:
-                payload += f"  Expected answer: {expected}\n"
-            payload += (
-                f"  Student wrote: \"{item.student_answer}\"\n"
-                f"  Grader read: \"{prediction.model_read}\"\n"
-                f"  Grader awarded: {prediction.model_score} pts "
-                f"(display as {grader_score_display})\n"
-                f"  Grader reasoning: {prediction.model_reasoning[:300]}\n"
-            )
-            if corrected_truth:
-                professor_score_display = _format_score_with_denominator(
-                    item.professor_score, item.max_points
-                )
-                payload += (
-                    f"  Truth awarded: {truth_score} pts "
-                    f"(display as {truth_score_display})\n"
-                    f"  Historical professor awarded: {item.professor_score} pts "
-                    f"(display as {professor_score_display}, mark: {item.professor_mark})\n"
-                    f"  Historical professor's note: \"{item.notes}\"\n"
-                    f"  Correction reason: \"{getattr(item, 'correction_reason', '')}\"\n"
-                )
-            else:
-                payload += (
-                    f"  Professor awarded: {truth_score} pts "
-                    f"(display as {truth_score_display}, mark: {item.professor_mark})\n"
-                    f"  Professor's note: \"{item.notes}\"\n"
-                )
-            band_commentary = _band_commentary_clause(
-                band_classification,
+            logger.info("After-action: %s", text.replace("\n", " | "))
+            self._sink.write_topic(
+                text,
+                verdict=verdict_short,
+                grader_score=prediction.model_score,
+                truth_score=truth_score,
                 max_points=item.max_points,
+                acceptable_score_floor=(
+                    band_classification.floor
+                    if band_classification.band_present
+                    else None
+                ),
+                acceptable_score_ceiling=(
+                    band_classification.ceiling
+                    if band_classification.band_present
+                    else None
+                ),
             )
-            if band_commentary is not None:
-                payload += f"  {band_commentary}\n"
-            payload += (
-                f"  Verdict: {verdict}\n\n"
-                f"CRITICAL SEMANTICS: The grader and professor are JUDGES "
-                f"who score the STUDENT. When both judges give a low score "
-                f"(e.g. 0/4) they are AGREEING TO DOCK the student for "
-                f"making an error — NOT failing themselves. Never write "
-                f"'both judges missed' or 'both judges failed' when the "
-                f"score is low. Low score from both = STUDENT made the "
-                f"mistake, JUDGES correctly caught it. High score from "
-                f"both = student got it right and judges agreed to "
-                f"award credit. The judges only 'miss' something if "
-                f"they DISAGREE with each other (verdict = OVERSHOT or "
-                f"UNDERSHOT).\n\n"
-            )
-            if corrected_truth:
-                payload += (
-                    "For corrected historical items, success means matching "
-                    "the corrected truth, not the historical professor mark. "
-                    "Mention the historical professor score only as provenance, "
-                    "not as the target.\n\n"
-                    "Write ONE concise after-action line in this format:\n"
-                    '  "Grader: <score> (<one-clause reason>). '
-                    'Truth: <score> (<one-clause reason>). · '
-                    'Historical prof: <score> (<one-clause provenance note>)"\n\n'
-                )
-            else:
-                payload += (
-                    "Write ONE concise after-action line in this format:\n"
-                    '  "Grader: <score> (<one-clause reason>). '
-                    'Prof: <score> (<one-clause reason>). · '
-                    '<optional short coda>"\n\n'
-                )
-            payload += (
-                f"Style rules:\n"
-                f"- The score+reason portion should be matter-of-fact and question-specific.\n"
-                f"- The optional coda should be fresh, concrete, and tied to this exact item.\n"
-                f"- Prefer no coda to a stock phrase.\n"
-                f"- Do not reuse canned taglines or recurring catchphrases.\n"
-                f"- Avoid slogan-like codas, victory laps, and recurring comic patter.\n"
-                f"- When the scores match, describe agreement plainly without celebratory catchphrases.\n"
-                f"- When the scores differ, explicitly describe the disagreement.\n"
-                f"- When an acceptable band is provided, say whether the grader is at the ceiling, within range below ceiling, above range, or below range.\n"
-                f"- Never describe disagreement as agreement.\n"
-                f"- Never say the judges 'missed' something when they both assigned the student a low score; "
-                f"that means they both caught the student's error.\n\n"
-                f"Output ONE line only, no preamble, no quotes around your output."
-            )
-
-            messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a chemistry-grading sports commentator "
-                        "delivering a per-question after-action line. "
-                        "Matter-of-fact in the comparison, dry/arch in "
-                        "the optional coda. ONE line only."
-                    ),
-                },
-                {"role": "user", "content": payload},
-            ]
-            # max_tokens 120 → 256: 120 was tight enough that any
-            # preamble could push the actual after-action line off the
-            # end of the budget. timeout 15 → 60: this call runs
-            # immediately after the per-line bonsai pipeline has just
-            # been thrashed, so the server can be under transient load
-            # and a 15s timeout produces silent ConnectionResetError /
-            # TimeoutError (swallowed by the broad except below). 60s
-            # gives the bonsai server room to drain and respond.
-            text = ""
-            try:
-                text = self._chat_completion(
-                    messages,
-                    max_tokens=256,
-                    temperature=0.6,
-                    repetition_penalty=1.001,
-                    presence_penalty=0.0,
-                    timeout=60,
-                )
-            except Exception:
-                logger.exception(
-                    "After-action chat call failed for %s/%s",
-                    item.exam_id, item.question_id,
-                )
-            if text:
-                text = _sanitize_after_action_text(text)
-                text = _normalize_after_action_scores(
-                    text,
-                    grader_score=prediction.model_score,
-                    truth_score=truth_score,
-                    max_points=item.max_points,
-                    historical_professor_score=(
-                        item.professor_score if corrected_truth else None
-                    ),
-                )
-                if band_commentary is not None and band_commentary not in text:
-                    text = f"{text} · {band_commentary}"
-                logger.info("After-action: %s", text)
-                self._sink.write_topic(
-                    f"{elapsed:.0f}s · {text}",
-                    verdict=verdict_short,
-                    grader_score=prediction.model_score,
-                    truth_score=truth_score,
-                    max_points=item.max_points,
-                    acceptable_score_floor=(
-                        band_classification.floor
-                        if band_classification.band_present
-                        else None
-                    ),
-                    acceptable_score_ceiling=(
-                        band_classification.ceiling
-                        if band_classification.band_present
-                        else None
-                    ),
-                )
-                self._handle_legibility_rows(prediction, item)
-                if self._should_enqueue_dossier(elapsed, prediction, item):
-                    self._enqueue_dossier_job(
-                        self._build_dossier_prompt(
-                            elapsed=elapsed,
-                            prediction=prediction,
-                            item=item,
-                        )
+            self._handle_legibility_rows(prediction, item)
+            if self._should_enqueue_dossier(elapsed, prediction, item):
+                self._enqueue_dossier_job(
+                    self._build_dossier_prompt(
+                        elapsed=elapsed,
+                        prediction=prediction,
+                        item=item,
                     )
-                self._schedule_idle_legibility_if_needed()
-            else:
-                # Fallback: bonsai returned empty or raised. Always
-                # emit SOMETHING so the user can see the item finished
-                # and how long it took, even when the verdict line
-                # couldn't be generated. Without this, the item
-                # silently has no topic at all and the run looks
-                # broken — which is exactly what hid the item-3
-                # failure mode in the wild.
-                logger.warning(
-                    "After-action empty for %s/%s — emitting bare timing fallback",
-                    item.exam_id, item.question_id,
                 )
-                self._sink.write_topic(
-                    f"{elapsed:.0f}s · (after-action unavailable)",
-                    verdict=verdict_short,
-                    grader_score=prediction.model_score,
-                    truth_score=truth_score,
-                    max_points=item.max_points,
-                    acceptable_score_floor=(
-                        band_classification.floor
-                        if band_classification.band_present
-                        else None
-                    ),
-                    acceptable_score_ceiling=(
-                        band_classification.ceiling
-                        if band_classification.band_present
-                        else None
-                    ),
-                )
-                self._handle_legibility_rows(prediction, item)
-                if self._should_enqueue_dossier(elapsed, prediction, item):
-                    self._enqueue_dossier_job(
-                        self._build_dossier_prompt(
-                            elapsed=elapsed,
-                            prediction=prediction,
-                            item=item,
-                        )
-                    )
-                self._schedule_idle_legibility_if_needed()
+            self._schedule_idle_legibility_if_needed()
         except Exception:
             logger.exception("Failed to produce after-action summary")
 

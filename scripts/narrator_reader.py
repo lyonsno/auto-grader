@@ -112,13 +112,13 @@ def _reader_debug_exception(context: str, exc: BaseException) -> None:
 # Group 1: the elapsed time ("47s"), group 2: the rest after the bullet.
 _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 
-# Splits an item header into the [item N/M] index marker and the rest
+# Splits a problem header into the bracketed progress marker and the rest
 # of the title:
-#   "[item 3/6] 15-blue/fr-5b (numeric, 2.0 pts)"
-# Group 1 = "[item 3/6]", group 2 = "15-blue/fr-5b (numeric, 2.0 pts)".
+#   "[3/6] exam 15-blue · problem fr-5b (numeric, 2.0 pts)"
+# Group 1 = "[3/6]", group 2 = "exam 15-blue · problem fr-5b (numeric, 2.0 pts)".
 # The index marker gets the cool steel-blue accent for an always-on
 # cool note that's structural metadata, not status.
-_HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
+_HEADER_INDEX_RE = re.compile(r"^(\[(?:item\s+)?\d+/\d+\])\s*(.*)$", re.DOTALL)
 
 # Keep the full structured-row family recorded locally near the reader
 # surface, even while implementation is still partial, so scrollback
@@ -5086,7 +5086,15 @@ class PaintDryDisplay:
             self._focus_preview_pending_renderable = None
         m = _HEADER_INDEX_RE.match(text)
         if m:
-            self.current_item_bug = m.group(1).removeprefix("[item ").removesuffix("]").upper()
+            self.current_item_bug = (
+                m.group(1)
+                .removeprefix("[")
+                .removesuffix("]")
+                .removeprefix("item ")
+                .upper()
+            )
+        else:
+            self.current_item_bug = ""
         self.history.append(("header", text, None))
 
     def on_session_meta(
