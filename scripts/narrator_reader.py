@@ -5153,14 +5153,9 @@ class PaintDryDisplay:
             return False
         try:
             pdf_path = resolve_scan_pdf_path(self.current_scans_dir, exam_id)
-        except FileNotFoundError:
-            self.status_line = (
-                f"Annotate current item failed: scan PDF missing for "
-                f"{exam_id}/{question_id}."
-            )
-            _reader_debug(
-                f"annotate-current-item failed: scan PDF missing for {exam_id}/{question_id}"
-            )
+        except FileNotFoundError as exc:
+            self.status_line = f"Annotate current item failed: {exc}."
+            _reader_debug(f"annotate-current-item failed: {exc}")
             return False
         try:
             _reader_debug(

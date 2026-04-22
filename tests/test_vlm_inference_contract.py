@@ -49,7 +49,7 @@ class SamplingPresetContract(unittest.TestCase):
         ):
             apply_model_sampling_preset(config)
 
-    def test_grade_all_items_accepts_legacy_fifteen_blue_scan_name(self):
+    def test_grade_all_items_rejects_contaminated_legacy_fifteen_blue_scan(self):
         from auto_grader.vlm_inference import ServerConfig, grade_all_items
 
         item = EvalItem(
@@ -90,14 +90,17 @@ class SamplingPresetContract(unittest.TestCase):
                     return_value=prediction,
                 ) as grade_single_item_mock,
             ):
-                resolved = grade_all_items(
-                    [item],
-                    scans_dir,
-                    config,
-                )
+                with self.assertRaisesRegex(
+                    FileNotFoundError,
+                    "Refusing contaminated fallback.*15 blue\\.pdf",
+                ):
+                    grade_all_items(
+                        [item],
+                        scans_dir,
+                        config,
+                    )
 
-        self.assertEqual(resolved, [prediction])
-        self.assertEqual(grade_single_item_mock.call_count, 1)
+        self.assertEqual(grade_single_item_mock.call_count, 0)
 
 
 if __name__ == "__main__":

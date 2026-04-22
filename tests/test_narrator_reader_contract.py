@@ -3460,7 +3460,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.focus_preview_source, "operator_annotated")
         self.assertEqual(display.status_line, "Updated focus preview for 15-blue/fr-11c.")
 
-    def test_annotate_current_focus_item_falls_back_to_legacy_fifteen_blue_scan_name(self):
+    def test_annotate_current_focus_item_refuses_contaminated_legacy_fifteen_blue_scan(self):
         display = self._make_display()
         display.on_session_meta(
             model="qwen3p5-35B-A3B",
@@ -3513,9 +3513,12 @@ class NarratorReaderContract(unittest.TestCase):
         ):
             refreshed = display.annotate_current_focus_item()
 
-        self.assertTrue(refreshed)
-        cmd = run_mock.call_args.args[0]
-        self.assertIn("/tmp/scans/15 blue.pdf", cmd)
+        self.assertFalse(refreshed)
+        run_mock.assert_not_called()
+        self.assertIn(
+            "Refusing contaminated fallback",
+            display.status_line,
+        )
 
     def test_session_meta_message_handler_preserves_scans_and_focus_region_paths(self):
         source = inspect.getsource(narrator_reader.main)

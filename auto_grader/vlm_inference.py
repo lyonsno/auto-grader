@@ -993,33 +993,34 @@ _EXAM_PDF_MAP = {
     # be trusted. See the contamination spike on 2026-04-08 for context.
     "39-blue-redacted": "39 blue_Redacted_grading_marks_removed.pdf",
 }
-_EXAM_PDF_FALLBACKS = {
-    # The clean hidden scan is preferred, but older local corpora may still
-    # only carry the pre-redaction filename.
+_EXAM_PDF_FORBIDDEN_ALIASES = {
+    # This legacy filename still contains the professor's marks. It is not
+    # a compatibility fallback; silently accepting it would contaminate evals.
     "15-blue": ("15 blue.pdf",),
 }
 
 
 def resolve_scan_pdf_path(scans_dir: Path, exam_id: str) -> Path:
-    """Resolve an exam scan path, preferring canonical names over aliases."""
+    """Resolve an exam scan path, refusing known contaminated aliases."""
     pdf_name = _EXAM_PDF_MAP.get(exam_id)
     if not pdf_name:
         raise ValueError(f"No PDF mapping for exam_id: {exam_id}")
 
-    candidate_names = (pdf_name, *_EXAM_PDF_FALLBACKS.get(exam_id, ()))
-    tried_paths: list[str] = []
-    for candidate_name in candidate_names:
-        pdf_path = scans_dir / candidate_name
-        if pdf_path.exists():
-            return pdf_path
-        tried_paths.append(str(pdf_path))
+    canonical_path = scans_dir / pdf_name
+    if canonical_path.exists():
+        return canonical_path
 
-    if len(tried_paths) == 1:
-        raise FileNotFoundError(f"Scan PDF not found: {tried_paths[0]}")
-    raise FileNotFoundError(
-        f"Scan PDF not found for exam_id {exam_id}; tried: "
-        + ", ".join(tried_paths)
-    )
+    forbidden_aliases = _EXAM_PDF_FORBIDDEN_ALIASES.get(exam_id, ())
+    for alias_name in forbidden_aliases:
+        alias_path = scans_dir / alias_name
+        if alias_path.exists():
+            raise FileNotFoundError(
+                f"Refusing contaminated fallback for {exam_id}: "
+                f"{alias_path} still contains professor markings; "
+                f"expected clean scan {canonical_path}"
+            )
+
+    raise FileNotFoundError(f"Scan PDF not found: {canonical_path}")
 
 
 def _report_focus_preview_failure(sink: Any, item: EvalItem, exc: Exception) -> None:
