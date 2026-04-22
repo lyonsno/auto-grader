@@ -465,6 +465,7 @@ class TestWezTermResolution(unittest.TestCase):
             salvage["text"],
             "The stoichiometric setup is still worth full method credit.",
         )
+        self.assertEqual(salvage["label"], "What survives")
 
     def test_write_hinge_emits_hinge_event(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -487,6 +488,7 @@ class TestWezTermResolution(unittest.TestCase):
             hinge["text"],
             "The score depends on whether the crossed-out digit outweighs the coherent setup.",
         )
+        self.assertEqual(hinge["label"], "Deciding issue")
 
 
 if __name__ == "__main__":

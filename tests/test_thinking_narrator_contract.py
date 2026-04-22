@@ -7,6 +7,7 @@ from unittest import mock
 from auto_grader.thinking_narrator import (
     ThinkingNarrator,
     _classify_score_against_band,
+    _checkpoint_line_breaks_contract,
 )
 
 
@@ -127,6 +128,21 @@ class _FakeStreamResponse:
 
 
 class ThinkingNarratorContract(unittest.TestCase):
+    def test_checkpoint_contract_accepts_context_label(self):
+        self.assertFalse(
+            _checkpoint_line_breaks_contract(
+                "Context: Rubric denies method credit because the setup uses initial energy."
+            )
+        )
+
+    def test_checkpoint_canonicalizer_promotes_context_label(self):
+        self.assertEqual(
+            ThinkingNarrator._canonicalize_checkpoint_text(
+                "context: rubric denies method credit for the setup."
+            ),
+            "Context: rubric denies method credit for the setup.",
+        )
+
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
         narrator = _RetryNarrator(sink)

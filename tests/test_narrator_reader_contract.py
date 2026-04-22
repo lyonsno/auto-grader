@@ -2517,6 +2517,74 @@ class NarratorReaderContract(unittest.TestCase):
             ],
         )
 
+    def test_dossier_rows_use_reader_facing_labels(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "topic line", "match"))
+        display.on_read("Final mark could be 1 or 2; context leans 1.")
+        display.on_salvage("Orbital-box method still supports one unpaired electron.")
+        display.on_hinge(
+            "The score turns on whether the glyph outweighs the coherent surrounding work."
+        )
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            history_text = display.render().renderables[-1].renderable
+
+        plain = history_text.plain
+        self.assertIn("Read:", plain)
+        self.assertIn("What survives:", plain)
+        self.assertIn("Deciding issue:", plain)
+        self.assertNotIn("Salvage:", plain)
+        self.assertNotIn("Hinge:", plain)
+
+    def test_structured_rows_inherit_topic_parity_for_group_alternation(self):
+        display = self._make_display()
+        display.on_topic(
+            "12s · first topic",
+            verdict="match",
+            grader_score=1.0,
+            truth_score=1.0,
+            max_points=1.0,
+        )
+        display.on_basis("first basis")
+        display.on_read("first read")
+        display.on_review_marker("first review")
+        display.on_topic(
+            "24s · second topic",
+            verdict="undershoot",
+            grader_score=0.0,
+            truth_score=1.0,
+            max_points=1.0,
+        )
+        display.on_basis("second basis")
+        display.on_salvage("second survives")
+        display.on_professor_mismatch("second mismatch")
+
+        structured = [
+            (kind, text, parity)
+            for kind, text, parity in display.history
+            if kind in {
+                "basis",
+                "read",
+                "salvage",
+                "review_marker",
+                "professor_mismatch",
+            }
+        ]
+
+        self.assertEqual(
+            structured,
+            [
+                ("basis", "first basis", 0),
+                ("read", "first read", 0),
+                ("review_marker", "first review", 0),
+                ("basis", "second basis", 1),
+                ("salvage", "second survives", 1),
+                ("professor_mismatch", "second mismatch", 1),
+            ],
+            "structured child rows should inherit per-topic parity so the moss/bone alternation survives under the new grouped history rendering",
+        )
+
     def test_alert_labels_use_distinct_alert_accent(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))
@@ -2917,10 +2985,10 @@ class NarratorReaderContract(unittest.TestCase):
         tally_value_top = scorebug_renderable.renderables[3]
         tally_value_mid = scorebug_renderable.renderables[4]
         tally_value_bottom = scorebug_renderable.renderables[5]
-        expected_on_target = _scorebug_big_value_rows("2.0/12.0")
-        expected_in_range = _scorebug_big_value_rows("1.0/1.5")
-        expected_left = _scorebug_big_value_rows("1.0/1.0")
-        expected_bad = _scorebug_big_value_rows("1.5/1.5")
+        expected_exact = _scorebug_big_value_rows("2.0/6.0")
+        expected_floor_met = _scorebug_big_value_rows("4.5/5.5")
+        expected_partial = _scorebug_big_value_rows("0.0/0.5")
+        expected_withheld = _scorebug_big_value_rows("1.5/6.0")
 
         self.assertIn("PROJECT PAINT DRY", _extract_plain(header_panel.renderable))
         self.assertIn("CURRENT MODEL", scorebug_text)
@@ -2928,26 +2996,26 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("TRICKY", scorebug_text)
         self.assertIn("ITEM", scorebug_text)
         self.assertIn("4/6", scorebug_text)
-        self.assertIn("ON TARGET", scorebug_text)
-        self.assertIn("IN RANGE", scorebug_text)
-        self.assertIn("LEFT ON TABLE", scorebug_text)
-        self.assertIn("BAD CALLS", scorebug_text)
+        self.assertIn("EXACT", scorebug_text)
+        self.assertIn("FLOOR MET", scorebug_text)
+        self.assertIn("PARTIAL", scorebug_text)
+        self.assertIn("WITHHELD", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
         normalized_top = self._normalize_scorebug_texture(tally_value_top.plain)
         normalized_mid = self._normalize_scorebug_texture(tally_value_mid.plain)
         normalized_bottom = self._normalize_scorebug_texture(tally_value_bottom.plain)
-        self.assertIn(expected_on_target[0], normalized_top)
-        self.assertIn(expected_on_target[1], normalized_mid)
-        self.assertIn(expected_on_target[2], normalized_bottom)
-        self.assertIn(expected_in_range[0], normalized_top)
-        self.assertIn(expected_in_range[1], normalized_mid)
-        self.assertIn(expected_in_range[2], normalized_bottom)
-        self.assertIn(expected_left[0], normalized_top)
-        self.assertIn(expected_left[1], normalized_mid)
-        self.assertIn(expected_left[2], normalized_bottom)
-        self.assertIn(expected_bad[0], normalized_top)
-        self.assertIn(expected_bad[1], normalized_mid)
-        self.assertIn(expected_bad[2], normalized_bottom)
+        self.assertIn(expected_exact[0], normalized_top)
+        self.assertIn(expected_exact[1], normalized_mid)
+        self.assertIn(expected_exact[2], normalized_bottom)
+        self.assertIn(expected_floor_met[0], normalized_top)
+        self.assertIn(expected_floor_met[1], normalized_mid)
+        self.assertIn(expected_floor_met[2], normalized_bottom)
+        self.assertIn(expected_partial[0], normalized_top)
+        self.assertIn(expected_partial[1], normalized_mid)
+        self.assertIn(expected_partial[2], normalized_bottom)
+        self.assertIn(expected_withheld[0], normalized_top)
+        self.assertIn(expected_withheld[1], normalized_mid)
+        self.assertIn(expected_withheld[2], normalized_bottom)
         current_model_bg = self._background_hex(
             self._style_for_substring(scorebug_text_obj, "CURRENT MODEL")
         )
@@ -2978,56 +3046,56 @@ class NarratorReaderContract(unittest.TestCase):
             655,
             "scorebug metadata values should read closer to blocky white lettering than dim instrument text",
         )
-        on_target_label_style = self._style_for_substring(tally_text_obj, "ON TARGET")
-        in_range_label_style = self._style_for_substring(tally_text_obj, "IN RANGE")
-        left_label_style = self._style_for_substring(tally_text_obj, "LEFT ON TABLE")
-        bad_label_style = self._style_for_substring(tally_text_obj, "BAD CALLS")
-        on_target_label_bg = self._background_hex(on_target_label_style)
-        in_range_label_bg = self._background_hex(in_range_label_style)
-        left_label_bg = self._background_hex(left_label_style)
-        bad_label_bg = self._background_hex(bad_label_style)
+        exact_label_style = self._style_for_substring(tally_text_obj, "EXACT")
+        floor_met_label_style = self._style_for_substring(tally_text_obj, "FLOOR MET")
+        partial_label_style = self._style_for_substring(tally_text_obj, "PARTIAL")
+        withheld_label_style = self._style_for_substring(tally_text_obj, "WITHHELD")
+        exact_label_bg = self._background_hex(exact_label_style)
+        floor_met_label_bg = self._background_hex(floor_met_label_style)
+        partial_label_bg = self._background_hex(partial_label_style)
+        withheld_label_bg = self._background_hex(withheld_label_style)
         self.assertEqual(
-            {on_target_label_bg, in_range_label_bg, left_label_bg, bad_label_bg},
-            {on_target_label_bg},
+            {exact_label_bg, floor_met_label_bg, partial_label_bg, withheld_label_bg},
+            {exact_label_bg},
             "the tally labels should sit on one shared charcoal field instead of three color-coded boards",
         )
         self.assertGreaterEqual(
             len(
                 {
-                    self._foreground_hex(on_target_label_style),
-                    self._foreground_hex(in_range_label_style),
-                    self._foreground_hex(left_label_style),
-                    self._foreground_hex(bad_label_style),
+                    self._foreground_hex(exact_label_style),
+                    self._foreground_hex(floor_met_label_style),
+                    self._foreground_hex(partial_label_style),
+                    self._foreground_hex(withheld_label_style),
                 }
             ),
             2,
             "the labels can still carry restrained accent differences, but only in the foreground ink, not in separate slab backgrounds",
         )
-        cell_width = len(f" {expected_on_target[0]} ")
+        cell_width = len(f" {expected_exact[0]} ")
         separator_width = 2
-        # Gauge Saints II: TOTAL and TURN now sit leftmost in the
-        # big-value strip as their own scoreboard plates, so ON TARGET
-        # no longer starts at offset 0. This test only cares about the
-        # relative layout of the three grading plates, so it anchors
-        # on wherever ON TARGET lands and walks from there.
-        on_target_start = tally_text_obj.plain.index("ON TARGET")
-        in_range_start = tally_text_obj.plain.index("IN RANGE")
-        left_start = tally_text_obj.plain.index("LEFT ON TABLE")
-        bad_start = tally_text_obj.plain.index("BAD CALLS")
+        # TOTAL and TURN now sit leftmost in the big-value strip as
+        # their own scoreboard plates, so EXACT no longer starts at
+        # offset 0. This test only cares about the relative layout of
+        # the grading plates, so it anchors on wherever EXACT lands
+        # and walks from there.
+        exact_start = tally_text_obj.plain.index("EXACT")
+        floor_met_start = tally_text_obj.plain.index("FLOOR MET")
+        partial_start = tally_text_obj.plain.index("PARTIAL")
+        withheld_start = tally_text_obj.plain.index("WITHHELD")
         self.assertGreater(
-            in_range_start,
-            on_target_start,
-            "IN RANGE should appear to the right of ON TARGET in the scorebug strip",
+            floor_met_start,
+            exact_start,
+            "FLOOR MET should appear to the right of EXACT in the scorebug strip",
         )
         self.assertGreater(
-            left_start,
-            in_range_start,
-            "LEFT ON TABLE should appear to the right of IN RANGE in the scorebug strip",
+            partial_start,
+            floor_met_start,
+            "PARTIAL should appear to the right of FLOOR MET in the scorebug strip",
         )
         self.assertGreater(
-            bad_start,
-            left_start,
-            "BAD CALLS should appear rightmost among the grading tally cells",
+            withheld_start,
+            partial_start,
+            "WITHHELD should appear rightmost among the grading tally cells",
         )
 
         def _first_strong_style_in_cell(row: Text, start: int) -> str:
@@ -3043,37 +3111,37 @@ class NarratorReaderContract(unittest.TestCase):
                 f"no strong scorebug span found in cell range {start}:{end}"
             )
 
-        on_target_styles = self._styles_in_range(
+        exact_styles = self._styles_in_range(
             tally_value_top,
-            on_target_start,
-            on_target_start + cell_width,
+            exact_start,
+            exact_start + cell_width,
         )
         self.assertGreaterEqual(
-            len(on_target_styles),
+            len(exact_styles),
             2,
             "scorebug numerals should use at least two stroke weights/colors inside a single value cell",
         )
-        on_target_top_style = self._style_for_normalized_scorebug_substring(
+        exact_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
-            expected_on_target[0].strip(),
+            expected_exact[0].strip(),
         )
-        in_range_top_style = self._style_for_normalized_scorebug_substring(
+        floor_met_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
-            expected_in_range[0].strip(),
+            expected_floor_met[0].strip(),
         )
-        left_top_style = self._style_for_normalized_scorebug_substring(
+        partial_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
-            expected_left[0].strip(),
+            expected_partial[0].strip(),
         )
-        bad_top_style = self._style_for_normalized_scorebug_substring(
+        withheld_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
-            expected_bad[0].strip(),
+            expected_withheld[0].strip(),
         )
         self.assertEqual(
             {
-                self._background_hex(on_target_top_style),
-                self._background_hex(left_top_style),
-                self._background_hex(bad_top_style),
+                self._background_hex(exact_top_style),
+                self._background_hex(partial_top_style),
+                self._background_hex(withheld_top_style),
             },
             {None},
             "scorebug value strokes should no longer carry filled backgrounds; "
@@ -3111,35 +3179,35 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_mid.plain + tally_value_top.plain + tally_value_bottom.plain,
             "scorebug texture should avoid thin vertical artifact glyphs that read like accidental banding",
         )
-        on_target_mid_style = self._style_for_normalized_scorebug_substring(
+        exact_mid_style = self._style_for_normalized_scorebug_substring(
             tally_value_mid,
-            expected_on_target[1].strip(),
+            expected_exact[1].strip(),
         )
-        left_mid_style = self._style_for_normalized_scorebug_substring(
+        partial_mid_style = self._style_for_normalized_scorebug_substring(
             tally_value_mid,
-            expected_left[1].strip(),
+            expected_partial[1].strip(),
         )
-        bad_mid_style = self._style_for_normalized_scorebug_substring(
+        withheld_mid_style = self._style_for_normalized_scorebug_substring(
             tally_value_mid,
-            expected_bad[1].strip(),
+            expected_withheld[1].strip(),
         )
-        on_target_bottom_style = self._style_for_normalized_scorebug_substring(
+        exact_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
-            expected_on_target[2].strip(),
+            expected_exact[2].strip(),
         )
         self.assertEqual(
             {
-                self._background_hex(on_target_mid_style),
-                self._background_hex(on_target_bottom_style),
+                self._background_hex(exact_mid_style),
+                self._background_hex(exact_bottom_style),
             },
             {None},
             "middle and bottom numeral strokes should also stay foreground-only "
             "once the scorebug drops its filled slabs",
         )
         fg_lumas = [
-            self._hex_luminance(self._foreground_hex(on_target_top_style)),
-            self._hex_luminance(self._foreground_hex(on_target_mid_style)),
-            self._hex_luminance(self._foreground_hex(on_target_bottom_style)),
+            self._hex_luminance(self._foreground_hex(exact_top_style)),
+            self._hex_luminance(self._foreground_hex(exact_mid_style)),
+            self._hex_luminance(self._foreground_hex(exact_bottom_style)),
         ]
         self.assertGreater(
             max(fg_lumas) - min(fg_lumas),
@@ -3147,79 +3215,75 @@ class NarratorReaderContract(unittest.TestCase):
             "the scorebug should still keep some row-to-row tonal drift in "
             "the numeral ink after the fill is removed",
         )
-        # Find the first two strong-stroke spans inside the ON TARGET
-        # cell by walking the tally_value_top spans from on_target_start
+        # Find the first two strong-stroke spans inside the EXACT
+        # cell by walking the tally_value_top spans from exact_start
         # rather than indexing by absolute span index (which would now
         # point at the TOTAL/TURN plates' spans).
-        on_target_spans = [
+        exact_spans = [
             span
             for span in tally_value_top.spans
             if (
                 isinstance(span.style, str)
-                and span.start >= on_target_start
-                and span.end <= on_target_start + cell_width
+                and span.start >= exact_start
+                and span.end <= exact_start + cell_width
             )
         ]
         self.assertGreaterEqual(
-            len(on_target_spans),
+            len(exact_spans),
             3,
-            "ON TARGET value cell should carry multiple styled spans",
+            "EXACT value cell should carry multiple styled spans",
         )
-        on_target_top_strong = on_target_spans[1].style
-        on_target_bottom_style = self._style_for_normalized_scorebug_substring(
-            tally_value_bottom,
-            expected_on_target[2].strip(),
-        )
+        exact_top_strong = exact_spans[1].style
         self.assertNotEqual(
-            on_target_top_strong,
-            on_target_bottom_style,
+            exact_top_strong,
+            exact_bottom_style,
             "scorebug value rows should now drift tonally across the board instead of sitting on one flat background",
         )
-        left_bottom_style = self._style_for_normalized_scorebug_substring(
+        partial_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
-            expected_left[2].strip(),
+            expected_partial[2].strip(),
         )
-        bad_bottom_style = self._style_for_normalized_scorebug_substring(
+        withheld_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
-            expected_bad[2].strip(),
+            expected_withheld[2].strip(),
         )
         self.assertNotEqual(
-            left_top_style,
-            left_bottom_style,
-            "left-on-table board should also drift tonally instead of reading as a flat tech slab",
+            partial_top_style,
+            partial_bottom_style,
+            "partial-credit board should also drift tonally instead of reading as a flat tech slab",
         )
         self.assertNotEqual(
-            bad_top_style,
-            bad_bottom_style,
-            "bad-calls board should also drift tonally instead of reading as a flat tech slab",
+            withheld_top_style,
+            withheld_bottom_style,
+            "withheld-credit board should also drift tonally instead of reading as a flat tech slab",
         )
         top_board_styles = {
-            _first_strong_style_in_cell(tally_value_top, on_target_start),
-            _first_strong_style_in_cell(tally_value_top, in_range_start),
-            _first_strong_style_in_cell(tally_value_top, left_start),
-            _first_strong_style_in_cell(tally_value_top, bad_start),
+            _first_strong_style_in_cell(tally_value_top, exact_start),
+            _first_strong_style_in_cell(tally_value_top, floor_met_start),
+            _first_strong_style_in_cell(tally_value_top, partial_start),
+            _first_strong_style_in_cell(tally_value_top, withheld_start),
         }
         mid_board_styles = {
-            _first_strong_style_in_cell(tally_value_mid, on_target_start),
-            _first_strong_style_in_cell(tally_value_mid, in_range_start),
-            _first_strong_style_in_cell(tally_value_mid, left_start),
-            _first_strong_style_in_cell(tally_value_mid, bad_start),
+            _first_strong_style_in_cell(tally_value_mid, exact_start),
+            _first_strong_style_in_cell(tally_value_mid, floor_met_start),
+            _first_strong_style_in_cell(tally_value_mid, partial_start),
+            _first_strong_style_in_cell(tally_value_mid, withheld_start),
         }
         bottom_board_styles = {
-            _first_strong_style_in_cell(tally_value_bottom, on_target_start),
-            _first_strong_style_in_cell(tally_value_bottom, in_range_start),
-            _first_strong_style_in_cell(tally_value_bottom, left_start),
-            _first_strong_style_in_cell(tally_value_bottom, bad_start),
+            _first_strong_style_in_cell(tally_value_bottom, exact_start),
+            _first_strong_style_in_cell(tally_value_bottom, floor_met_start),
+            _first_strong_style_in_cell(tally_value_bottom, partial_start),
+            _first_strong_style_in_cell(tally_value_bottom, withheld_start),
         }
         self.assertEqual(
             len(top_board_styles),
             4,
-            "AT CEILING, IN RANGE, LEFT ON TABLE, and BAD CALLS should each keep a distinct top-row board family",
+            "EXACT, FLOOR MET, PARTIAL, and WITHHELD should each keep a distinct top-row board family",
         )
         self.assertEqual(
             len(mid_board_styles),
             4,
-            "the middle row should also keep distinct board families so lawful-in-range calls do not collapse into either ceiling hits or miss buckets",
+            "the middle row should also keep distinct board families so floor coverage and lawful partials do not collapse into one bucket",
         )
         self.assertEqual(
             len(bottom_board_styles),
@@ -3232,21 +3296,21 @@ class NarratorReaderContract(unittest.TestCase):
                     self._foreground_hex(style)
                 ) > 635
                 for style in {
-                    on_target_top_strong,
-                    in_range_top_style,
-                    left_top_style,
-                    bad_top_style,
+                    exact_top_strong,
+                    floor_met_top_style,
+                    partial_top_style,
+                    withheld_top_style,
                 }
             ),
             "the main numeral strokes should now carry more white weight so the scorebug can sit in the same bold white language as the surrounding interface",
         )
         self.assertEqual(
-            on_target_spans[2].style,
-            on_target_top_strong,
+            exact_spans[2].style,
+            exact_top_strong,
             "top-row horizontal bars should stay on the strong stroke tier so the numerals read chunkier",
         )
 
-    def test_scorebug_keeps_band_ceiling_hits_out_of_on_target(self):
+    def test_scorebug_splits_floor_coverage_and_lawful_partial(self):
         display = self._make_display()
 
         display.on_topic(
@@ -3260,25 +3324,33 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
         self.assertEqual(
-            display.score_on_target_points,
+            display.score_exact_points,
             0.0,
             "lawful band hits at the acceptable ceiling should not be treated "
             "as exact truth hits when truth_score is lower",
         )
         self.assertEqual(
-            display.score_within_band_points,
-            1.5,
-            "lawful band hits should accrue in the IN RANGE bucket even when "
-            "they sit at the acceptable ceiling",
+            display.score_floor_met_points,
+            1.0,
+            "lawful band hits should still fully cover the acceptable floor",
         )
         self.assertEqual(
-            display.score_within_band_potential,
-            1.5,
-            "the IN RANGE bucket should still report the lawful ceiling as "
-            "its potential when the exact truth stays lower",
+            display.score_floor_met_potential,
+            1.0,
+            "the FLOOR MET plate should report the total lawful floor credit available",
+        )
+        self.assertEqual(
+            display.score_partial_points,
+            0.5,
+            "lawful band hits above the floor should accrue into the PARTIAL plate",
+        )
+        self.assertEqual(
+            display.score_partial_potential,
+            0.5,
+            "the PARTIAL plate should report the lawful headroom above the floor",
         )
 
-    def test_scorebug_counts_truth_match_as_on_target_even_with_band(self):
+    def test_scorebug_counts_truth_match_as_exact_even_with_band(self):
         display = self._make_display()
 
         display.on_topic(
@@ -3292,16 +3364,28 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
         self.assertEqual(
-            display.score_on_target_points,
+            display.score_exact_points,
             1.0,
             "truth_score remains the exact-hit target even when a lawful "
             "acceptable band is also present",
         )
         self.assertEqual(
-            display.score_within_band_points,
+            display.score_floor_met_points,
+            1.0,
+            "exact truth matches also satisfy the minimum lawful floor and "
+            "should count toward the FLOOR MET plate",
+        )
+        self.assertEqual(
+            display.score_floor_met_potential,
+            1.0,
+            "the FLOOR MET plate should still report the lawful floor for an "
+            "exact hit",
+        )
+        self.assertEqual(
+            display.score_partial_points,
             0.0,
-            "exact truth matches should not be diverted into the lawful-band "
-            "bucket",
+            "exact truth matches should not be diverted into the PARTIAL "
+            "plate",
         )
 
     def test_annotate_current_focus_item_relaunches_annotator_and_refreshes_preview(self):
@@ -3654,10 +3738,10 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("CURRENT MODEL", scorebug_text)
         self.assertIn("SET", scorebug_text)
         self.assertIn("TRICKY", scorebug_text)
-        self.assertIn("ON TARGET", scorebug_text)
-        self.assertIn("IN RANGE", scorebug_text)
-        self.assertIn("LEFT ON TABLE", scorebug_text)
-        self.assertIn("BAD CALLS", scorebug_text)
+        self.assertIn("EXACT", scorebug_text)
+        self.assertIn("FLOOR MET", scorebug_text)
+        self.assertIn("PARTIAL", scorebug_text)
+        self.assertIn("WITHHELD", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
         self.assertIn(
             zero_rows[0],
@@ -4078,13 +4162,13 @@ class NarratorReaderContract(unittest.TestCase):
             "separator dots should read as foreground ink, not as another slab",
         )
 
-        expected_on_target = _scorebug_big_value_rows("0.0/1.0")
-        on_target_top_style = self._style_for_normalized_scorebug_substring(
+        expected_exact = _scorebug_big_value_rows("0.0/0.0")
+        exact_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
-            expected_on_target[0].strip(),
+            expected_exact[0].strip(),
         )
         self.assertIsNone(
-            self._background_hex(on_target_top_style),
+            self._background_hex(exact_top_style),
             "scorebug numeral strokes should stay foreground-only once the "
             "lighter plate treatment is restored",
         )
@@ -4092,7 +4176,7 @@ class NarratorReaderContract(unittest.TestCase):
     def test_timers_render_as_tall_scorebug_plates_not_small_capsules(self):
         """TOTAL and TURN must render as full three-row
         ``_append_scorebug_big_value_cell`` plates inside the scorebug
-        panel, next to ON TARGET / LEFT ON TABLE / BAD CALLS — not as
+        panel, next to EXACT / PARTIAL / WITHHELD — not as
         small single-row ``_append_scorebug_cell`` capsules in the top
         header band.
 
@@ -4116,7 +4200,7 @@ class NarratorReaderContract(unittest.TestCase):
             timer values are actually walking through the big-digit
             renderer rather than being printed in bare text.
           * Each of TOTAL and TURN has an ``on #...`` capsule label
-            style matching the ON TARGET / LEFT ON TABLE / BAD CALLS
+            style matching the EXACT / PARTIAL / WITHHELD
             label cell idiom.
           * TOTAL and TURN are gone from the header panel plain text —
             no duplicated small-capsule version in the top band.
@@ -4232,15 +4316,15 @@ class NarratorReaderContract(unittest.TestCase):
                 style,
                 f"timer plate label {label!r} should live inside a capsule "
                 f"cell (``fg on #bghex`` style), matching the existing "
-                f"ON TARGET / LEFT ON TABLE / BAD CALLS label cells",
+                f"EXACT / PARTIAL / WITHHELD label cells",
             )
 
         total_label_bg = self._background_hex(_label_style_in_scorebug("TOTAL"))
         turn_label_bg = self._background_hex(_label_style_in_scorebug("TURN"))
-        on_target_label_bg = self._background_hex(_label_style_in_scorebug("ON TARGET"))
+        exact_label_bg = self._background_hex(_label_style_in_scorebug("EXACT"))
         self.assertEqual(
-            {total_label_bg, turn_label_bg, on_target_label_bg},
-            {on_target_label_bg},
+            {total_label_bg, turn_label_bg, exact_label_bg},
+            {exact_label_bg},
             "TOTAL and TURN should share the same charcoal label field as the rest of the scorebug row rather than living on isolated blue/orange slabs",
         )
 
@@ -4359,7 +4443,7 @@ class NarratorReaderContract(unittest.TestCase):
                 style,
                 f"timer plate label {label!r} should live inside a capsule "
                 f"cell (``fg on #bghex`` style), matching the existing "
-                f"ON TARGET / LEFT ON TABLE / BAD CALLS label cells",
+                f"EXACT / PARTIAL / WITHHELD label cells",
             )
 
         # Header panel no longer carries small TOTAL/TURN capsules —
