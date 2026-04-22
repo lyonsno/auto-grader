@@ -527,10 +527,10 @@ _SCOREBUG_BIG_DIGITS = {
 _HISTORY_GROUP_SETBACK = 0.036     # lower item headers sit a bit more visibly
                                    # one above them, but not by enough to read
                                    # as separate weather systems
-_HISTORY_GROUP_RAKE = 0.011        # halve the within-item rake so both the
-                                   # main shimmer and the skipped-parity
-                                   # secondary pass read as gentler unified
-                                   # fields during smoke
+_HISTORY_GROUP_RAKE = 0.00825      # soften the within-item rake a further
+                                   # quarter so the main shimmer and the
+                                   # skipped-parity secondary pass stay in
+                                   # one gentler visual family
                                    # so the grouping reads structural, not
                                    # algorithmically terraced
 _HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
@@ -743,6 +743,30 @@ def _history_secondary_group_weight(group_index: int, pass_index: int) -> float:
         if (group_index % 2) == (pass_index % 2)
         else 0.0
     )
+
+
+def _history_secondary_row_weight(
+    group_weight: float,
+    kind: str,
+    group_depth: int,
+) -> float:
+    """Step the selected group's secondary crest down beneath the header.
+
+    The selected heading should take the clearest secondary hit, while the
+    topic / basis / reasoning rows below it still ride along more softly.
+    This keeps the second shimmer readable as a block-level field instead of
+    a header-only accent or a uniform full-strength slab.
+    """
+    if group_weight <= 0.0:
+        return 0.0
+    if kind in {"header", "header_index", "header_dash"}:
+        return group_weight
+    if kind in {"topic", "basis", "review_marker", "checkpoint"}:
+        return group_weight * 0.82
+    if kind in {"line", "line_alt"}:
+        depth_step = max(0, group_depth - 2)
+        return group_weight * max(0.56, 0.72 - (0.08 * depth_step))
+    return group_weight * 0.72
 
 
 def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
@@ -4705,8 +4729,14 @@ class PaintDryDisplay:
                 current_group_index,
                 group_depth,
             )
-            secondary_peak_weight = _history_secondary_group_weight(
-                current_group_index, secondary_pass_index
+            secondary_group_weight = _history_secondary_group_weight(
+                current_group_index,
+                secondary_pass_index,
+            )
+            secondary_peak_weight = _history_secondary_row_weight(
+                secondary_group_weight,
+                kind,
+                group_depth,
             )
             history_secondary_kwargs = {
                 "secondary_phase_override": _history_secondary_entry_phase(
