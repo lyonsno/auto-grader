@@ -1657,6 +1657,16 @@ def _read_tty_key(fd: int) -> str | None:
     return chunk.decode("latin-1", errors="ignore")
 
 
+def _should_close_after_session_end(key: str) -> bool:
+    """Return True when an ended session should close on this key.
+
+    Finished Paint Dry sessions should remain usable as scrollback
+    custody surfaces. Only explicit quit keys should dismiss them;
+    stray keys should be ignored.
+    """
+    return key in {"q", "Q", "\r", "\n", "\x1b", "\x03"}
+
+
 def _supports_kitty_graphics(term_program: str | None) -> bool:
     """Return True if the terminal supports the Kitty graphics
     protocol.
@@ -5314,7 +5324,7 @@ class PaintDryDisplay:
             panels.append(drops_panel)
         if self.session_ended:
             footer = Text(
-                "  ▌ session ended — k/j scroll, u/d page, 0 live edge, any other key closes ▐",
+                "  ▌ session ended — k/j scroll, u/d page, 0 live edge, q/enter/esc close ▐",
                 style="grey50 italic",
             )
             panels.append(footer)
@@ -6124,8 +6134,8 @@ def main() -> int:
             # real TTY in cbreak mode. Reads one byte at a time and
             # forwards it to the scroll controller. Before session
             # end, unbound keys are swallowed (to avoid accidental
-            # exits). After session end, unbound keys trigger the
-            # session exit signal — any keystroke closes the reader.
+            # exits). After session end, scrollback remains live and
+            # only explicit quit keys dismiss the reader.
             scroll_stop = threading.Event()
 
             def _scroll_tick():
@@ -6139,7 +6149,11 @@ def main() -> int:
                     _reader_debug(f"live key received: {ch!r}")
                     handled = scroll_controller.handle_key(ch)
                     _reader_debug(f"live key handled={handled} key={ch!r}")
-                    if not handled and display.session_ended:
+                    if (
+                        not handled
+                        and display.session_ended
+                        and _should_close_after_session_end(ch)
+                    ):
                         session_exit.set()
                         return
 

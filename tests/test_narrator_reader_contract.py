@@ -61,6 +61,7 @@ from scripts.narrator_reader import (
     _render_layer_index,
     _reader_debug,
     _reader_debug_exception,
+    _should_close_after_session_end,
     HistoryScrollController,
 )
 
@@ -195,6 +196,16 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertTrue(controller.handle_key("a"))
         display.annotate_current_focus_item.assert_called_once_with()
+
+    def test_session_end_close_requires_explicit_quit_key(self):
+        self.assertFalse(
+            _should_close_after_session_end("x"),
+            "ended Paint Dry sessions should ignore stray keys instead of "
+            "arming a hair-trigger close path that kills scrollback custody",
+        )
+        self.assertTrue(_should_close_after_session_end("q"))
+        self.assertTrue(_should_close_after_session_end("\r"))
+        self.assertTrue(_should_close_after_session_end("\x1b"))
 
     def test_reader_debug_writes_to_stderr(self):
         stderr = StringIO()
@@ -5348,6 +5359,34 @@ class NarratorReaderContract(unittest.TestCase):
             display.should_animate(
                 now=100.0 + _SESSION_END_ANIMATION_LINGER_S + 0.1
             )
+        )
+
+    def test_session_end_footer_advertises_explicit_quit_keys(self) -> None:
+        display = self._make_display()
+        display.session_ended = True
+        display._session_ended_at = 100.0
+
+        rendered = display.render()
+        footer = rendered.renderables[-1]
+
+        self.assertIn("q/enter/esc close", footer.plain.lower())
+        self.assertNotIn("any other key closes", footer.plain.lower())
+
+    def test_main_uses_explicit_session_end_quit_gate(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        main_tail = source.split("def main() -> int:", 1)[1]
+
+        self.assertIn(
+            "_should_close_after_session_end(ch)",
+            main_tail,
+            "ended reader sessions should only exit on explicit quit keys "
+            "so scrollback remains usable after the run finishes",
+        )
+        self.assertNotIn(
+            "if not handled and display.session_ended:",
+            main_tail,
+            "the raw 'any unhandled key closes' end-state policy is what "
+            "kills post-run history browsing too easily",
         )
 
 
