@@ -46,6 +46,7 @@ from auto_grader.vlm_inference import (
     grade_all_items,
     grading_prompt_metadata,
     known_model_families,
+    resolve_scan_pdf_path,
     resolve_model_family,
     stream_vision_completion,
 )
@@ -561,15 +562,10 @@ def run_describe_only_mode(
     for i, item in enumerate(subset, start=1):
         cache_key = (item.exam_id, item.page)
         if cache_key not in page_cache:
-            pdf_name = _EXAM_PDF_MAP.get(item.exam_id)
-            if not pdf_name:
-                msg = f"No PDF mapping for exam_id: {item.exam_id}"
-                print(f"[{i}/{len(subset)}] {msg}", file=sys.stderr)
-                n_err += 1
-                continue
-            pdf_path = _SCANS_DIR / pdf_name
-            if not pdf_path.exists():
-                msg = f"Scan PDF not found: {pdf_path}"
+            try:
+                pdf_path = resolve_scan_pdf_path(_SCANS_DIR, item.exam_id)
+            except (FileNotFoundError, ValueError) as exc:
+                msg = str(exc)
                 print(f"[{i}/{len(subset)}] {msg}", file=sys.stderr)
                 n_err += 1
                 continue

@@ -298,7 +298,13 @@ class SmokeVlmContract(unittest.TestCase):
             ],
         )
 
-    def test_describe_only_mode_uses_clean_fifteen_blue_scan_path(self) -> None:
+    def test_exam_pdf_map_uses_redacted_fifteen_blue_scan(self) -> None:
+        self.assertEqual(
+            smoke_vlm._EXAM_PDF_MAP["15-blue"],
+            "15 blue_professor_markings_hidden.pdf",
+        )
+
+    def test_describe_only_mode_rejects_contaminated_legacy_fifteen_blue_scan(self) -> None:
         item = EvalItem(
             exam_id="15-blue",
             question_id="fr-1",
@@ -321,6 +327,7 @@ class SmokeVlmContract(unittest.TestCase):
             legacy_path = scans_dir / "15 blue.pdf"
             legacy_path.write_bytes(b"%PDF-1.4 legacy")
             run_dir = Path(tmpdir) / "run"
+            stderr = io.StringIO()
 
             with (
                 mock.patch.object(smoke_vlm, "_SCANS_DIR", scans_dir),
@@ -334,6 +341,7 @@ class SmokeVlmContract(unittest.TestCase):
                     "stream_vision_completion",
                     return_value=("visible student work", "brief reasoning"),
                 ) as stream_mock,
+                contextlib.redirect_stderr(stderr),
             ):
                 result = smoke_vlm.run_describe_only_mode(
                     SimpleNamespace(run_dir=run_dir),
@@ -342,10 +350,10 @@ class SmokeVlmContract(unittest.TestCase):
                     model_family="qwen",
                 )
 
-        self.assertEqual(result["count_ok"], 1)
-        self.assertEqual(result["count_err"], 0)
-        extract_mock.assert_called_once_with(legacy_path, 1)
-        stream_mock.assert_called_once()
+        self.assertEqual(result["count_ok"], 0)
+        self.assertEqual(result["count_err"], 1)
+        self.assertIn("Refusing contaminated fallback", stderr.getvalue())
+        stream_mock.assert_not_called()
 
     def test_describe_only_mode_prefers_clean_fifteen_blue_scan_when_hidden_variant_also_exists(
         self,
@@ -398,7 +406,10 @@ class SmokeVlmContract(unittest.TestCase):
 
         self.assertEqual(result["count_ok"], 1)
         self.assertEqual(result["count_err"], 0)
-        extract_mock.assert_called_once_with(legacy_path, 1)
+        extract_mock.assert_called_once_with(
+            scans_dir / "15 blue_professor_markings_hidden.pdf",
+            1,
+        )
 
     def test_run_dir_help_advertises_durable_root_outside_worktree(self) -> None:
         parser = smoke_vlm._build_arg_parser()

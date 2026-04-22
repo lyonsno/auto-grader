@@ -3186,7 +3186,7 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertIn("annotate_focus_regions.py", cmd[1])
         self.assertIn("--pdf", cmd)
-        self.assertIn("/tmp/scans/15 blue.pdf", cmd)
+        self.assertIn("/tmp/scans/15 blue_professor_markings_hidden.pdf", cmd)
         self.assertIn("--page", cmd)
         self.assertIn("3", cmd)
         self.assertIn("--targets", cmd)
@@ -3198,6 +3198,65 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertEqual(display.focus_preview_source, "operator_annotated")
         self.assertEqual(display.status_line, "Updated focus preview for 15-blue/fr-11c.")
 
+    def test_annotate_current_focus_item_refuses_contaminated_legacy_fifteen_blue_scan(self):
+        display = self._make_display()
+        display.on_session_meta(
+            model="qwen3p5-35B-A3B",
+            set_label="TRICKY++",
+            subset_count=15,
+            scans_dir="/tmp/scans",
+            focus_regions_path="/tmp/focus-regions.yaml",
+        )
+        display.on_focus_preview(
+            self._make_png(rgb=(10, 20, 30)),
+            label="15-blue/fr-11c",
+            source="operator_annotated",
+        )
+        gt_item = mock.Mock(exam_id="15-blue", question_id="fr-11c", page=3)
+        updated_region = mock.Mock(
+            page=3,
+            x=0.1,
+            y=0.2,
+            width=0.3,
+            height=0.4,
+            source="operator_annotated",
+        )
+
+        with (
+            mock.patch(
+                "scripts.narrator_reader.load_ground_truth",
+                return_value=[gt_item],
+            ),
+            mock.patch(
+                "pathlib.Path.exists",
+                autospec=True,
+                side_effect=lambda path: path.name in {
+                    "focus-regions.yaml",
+                    "15 blue.pdf",
+                },
+            ),
+            mock.patch("scripts.narrator_reader.subprocess.run") as run_mock,
+            mock.patch(
+                "scripts.narrator_reader.load_focus_regions",
+                return_value={("15-blue", "fr-11c"): updated_region},
+            ),
+            mock.patch(
+                "scripts.narrator_reader.extract_page_image",
+                return_value=b"page-png",
+            ),
+            mock.patch(
+                "scripts.narrator_reader.render_focus_preview",
+                return_value=self._make_png(rgb=(40, 50, 60)),
+            ),
+        ):
+            refreshed = display.annotate_current_focus_item()
+
+        self.assertFalse(refreshed)
+        run_mock.assert_not_called()
+        self.assertIn(
+            "Refusing contaminated fallback",
+            display.status_line,
+        )
     def test_session_meta_message_handler_preserves_scans_and_focus_region_paths(self):
         source = inspect.getsource(narrator_reader.main)
 
