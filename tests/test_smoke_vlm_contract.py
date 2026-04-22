@@ -304,7 +304,7 @@ class SmokeVlmContract(unittest.TestCase):
             "15 blue_professor_markings_hidden.pdf",
         )
 
-    def test_describe_only_mode_accepts_legacy_fifteen_blue_scan_name(self) -> None:
+    def test_describe_only_mode_rejects_contaminated_legacy_fifteen_blue_scan(self) -> None:
         item = EvalItem(
             exam_id="15-blue",
             question_id="fr-1",
@@ -326,6 +326,7 @@ class SmokeVlmContract(unittest.TestCase):
             scans_dir.mkdir()
             (scans_dir / "15 blue.pdf").write_bytes(b"%PDF-1.4 legacy")
             run_dir = Path(tmpdir) / "run"
+            stderr = io.StringIO()
 
             with (
                 mock.patch.object(smoke_vlm, "_SCANS_DIR", scans_dir),
@@ -339,6 +340,7 @@ class SmokeVlmContract(unittest.TestCase):
                     "stream_vision_completion",
                     return_value=("visible student work", "brief reasoning"),
                 ) as stream_mock,
+                contextlib.redirect_stderr(stderr),
             ):
                 result = smoke_vlm.run_describe_only_mode(
                     SimpleNamespace(run_dir=run_dir),
@@ -347,9 +349,10 @@ class SmokeVlmContract(unittest.TestCase):
                     model_family="qwen",
                 )
 
-        self.assertEqual(result["count_ok"], 1)
-        self.assertEqual(result["count_err"], 0)
-        stream_mock.assert_called_once()
+        self.assertEqual(result["count_ok"], 0)
+        self.assertEqual(result["count_err"], 1)
+        self.assertIn("Refusing contaminated fallback", stderr.getvalue())
+        stream_mock.assert_not_called()
 
     def test_contamination_warnings_surface_non_clean_exam_ids(self) -> None:
         subset = [
