@@ -126,8 +126,8 @@ _HEADER_INDEX_RE = re.compile(r"^(\[item \d+/\d+\])\s*(.*)$", re.DOTALL)
 _LEGIBILITY_STRUCTURED_ROW_LABELS = {
     "basis": "Basis",
     "read": "Read",
-    "salvage": "Salvage",
-    "hinge": "Hinge",
+    "salvage": "What survives",
+    "hinge": "Deciding issue",
     "ambiguity": "Ambiguity",
     "credit_preserved": "Credit preserved for",
     "deduction": "Deduction",
@@ -3422,14 +3422,15 @@ class PaintDryDisplay:
         self.current_item_bug: str = ""
         self.current_scans_dir: Path | None = None
         self.current_focus_regions_path: Path = DEFAULT_FOCUS_REGIONS_PATH
-        self.score_on_target_points = 0.0
-        self.score_within_band_points = 0.0
-        self.score_within_band_potential = 0.0
-        self.score_points_possible = 0.0
-        self.score_left_on_table_points = 0.0
-        self.score_left_on_table_potential = 0.0
-        self.score_bad_call_points = 0.0
-        self.score_bad_call_potential = 0.0
+        self.score_exact_points = 0.0
+        self.score_truth_points = 0.0
+        self.score_floor_met_points = 0.0
+        self.score_floor_met_potential = 0.0
+        self.score_partial_points = 0.0
+        self.score_partial_potential = 0.0
+        self.score_withheld_points = 0.0
+        self._current_topic_parity = 0
+        self._next_topic_parity = 0
 
         # Sticky live: the thought lane has a streaming buffer plus a
         # frozen committed line. The status rail has its own separate
@@ -3701,9 +3702,9 @@ class PaintDryDisplay:
         elif kind == "read":
             prefix_width = len("  ≡ Read: ")
         elif kind == "salvage":
-            prefix_width = len("  ≡ Salvage: ")
+            prefix_width = len("  ≡ What survives: ")
         elif kind == "hinge":
-            prefix_width = len("  ≡ Hinge: ")
+            prefix_width = len("  ≡ Deciding issue: ")
         elif kind == "review_marker":
             prefix_width = len("  ! Review needed: ")
         elif kind == "professor_mismatch":
@@ -4285,7 +4286,7 @@ class PaintDryDisplay:
                 f"{turn_elapsed_s}" if turn_elapsed_s is not None else "--"
             )
 
-            if self.score_points_possible > 0:
+            if self.score_truth_points > 0:
                 scorebug_labels = Text()
                 scorebug_values_top = Text()
                 scorebug_values_middle = Text()
@@ -4319,10 +4320,10 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "ON TARGET",
+                    "EXACT",
                     (
-                        f"{self._format_scorebug_points(self.score_on_target_points)}"
-                        f"/{self._format_scorebug_points(self.score_points_possible)}"
+                        f"{self._format_scorebug_points(self.score_exact_points)}"
+                        f"/{self._format_scorebug_points(self.score_truth_points)}"
                     ),
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=on_target_value_strong_styles,
@@ -4340,10 +4341,10 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "IN RANGE",
+                    "FLOOR MET",
                     (
-                        f"{self._format_scorebug_points(self.score_within_band_points)}"
-                        f"/{self._format_scorebug_points(self.score_within_band_potential)}"
+                        f"{self._format_scorebug_points(self.score_floor_met_points)}"
+                        f"/{self._format_scorebug_points(self.score_floor_met_potential)}"
                     ),
                     label_style=f"bold #a8bfac on {tally_label_bg}",
                     value_row_styles=in_range_value_strong_styles,
@@ -4361,10 +4362,10 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "LEFT ON TABLE",
+                    "PARTIAL",
                     (
-                        f"{self._format_scorebug_points(self.score_left_on_table_points)}"
-                        f"/{self._format_scorebug_points(self.score_left_on_table_potential)}"
+                        f"{self._format_scorebug_points(self.score_partial_points)}"
+                        f"/{self._format_scorebug_points(self.score_partial_potential)}"
                     ),
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=left_table_value_strong_styles,
@@ -4382,10 +4383,10 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "BAD CALLS",
+                    "WITHHELD",
                     (
-                        f"{self._format_scorebug_points(self.score_bad_call_points)}"
-                        f"/{self._format_scorebug_points(self.score_bad_call_potential)}"
+                        f"{self._format_scorebug_points(self.score_withheld_points)}"
+                        f"/{self._format_scorebug_points(self.score_truth_points)}"
                     ),
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=bad_calls_value_strong_styles,
@@ -4441,7 +4442,7 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "ON TARGET",
+                    "EXACT",
                     "0.0/0.0",
                     label_style=f"bold #a8b8bb on {tally_label_bg}",
                     value_row_styles=on_target_value_strong_styles,
@@ -4459,7 +4460,7 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "IN RANGE",
+                    "FLOOR MET",
                     "0.0/0.0",
                     label_style=f"bold #a8bfac on {tally_label_bg}",
                     value_row_styles=in_range_value_strong_styles,
@@ -4477,7 +4478,7 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "LEFT ON TABLE",
+                    "PARTIAL",
                     "0.0/0.0",
                     label_style=f"bold #c0aa83 on {tally_label_bg}",
                     value_row_styles=left_table_value_strong_styles,
@@ -4495,7 +4496,7 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "BAD CALLS",
+                    "WITHHELD",
                     "0.0/0.0",
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=bad_calls_value_strong_styles,
@@ -4850,13 +4851,14 @@ class PaintDryDisplay:
                     )
             elif kind == "basis":
                 indent = "  ≡ "
+                structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 history_text.append(indent, style="grey50")
                 history_text.append(
                     "Basis: ",
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                 )
                 _apply_shimmer(
-                    history_text, text, "checkpoint_alt",
+                    history_text, text, structured_kind,
                     layer_index=render_layer,
                     indent_width=len(indent) + len("Basis: "),
                     wrap_width=wrap_width,
@@ -4866,32 +4868,34 @@ class PaintDryDisplay:
                 )
             elif kind in {"read", "salvage", "hinge"}:
                 indent = "  ≡ "
+                structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
+                label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
                 history_text.append(indent, style="grey50")
                 history_text.append(
-                    f"{_LEGIBILITY_STRUCTURED_ROW_LABELS[kind]}: ",
+                    label,
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                 )
                 _apply_shimmer(
-                    history_text, text, "checkpoint_alt",
+                    history_text, text, structured_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent)
-                    + len(_LEGIBILITY_STRUCTURED_ROW_LABELS[kind])
-                    + len(": "),
+                    indent_width=len(indent) + len(label),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
+                    **history_secondary_kwargs,
                 )
             elif kind in {"review_marker", "professor_mismatch"}:
                 indent = "  ! "
                 label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
                 label_rgb = _ALERT_ACCENT_RGB
+                structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 history_text.append(indent, style="grey50")
                 history_text.append(
                     label,
                     style=f"bold {_rgb_to_hex(label_rgb)}",
                 )
                 _apply_shimmer(
-                    history_text, text, "checkpoint",
+                    history_text, text, structured_kind,
                     layer_index=render_layer,
                     indent_width=len(indent) + len(label),
                     wrap_width=wrap_width,
@@ -5533,6 +5537,9 @@ class PaintDryDisplay:
         # The verdict ("match" / "overshoot" / "undershoot" / None)
         # is stored in the third tuple slot so the renderer can pick
         # the right color variant for the topic line.
+        topic_parity = self._next_topic_parity
+        self._current_topic_parity = topic_parity
+        self._next_topic_parity = 1 - topic_parity
         self.history.append(("topic", text, verdict))
         if (
             grader_score is None
@@ -5540,15 +5547,7 @@ class PaintDryDisplay:
             or max_points is None
         ):
             return
-        self.score_points_possible += max_points
-        if abs(grader_score - truth_score) < 1e-9:
-            self.score_on_target_points += truth_score
-            return
-
-        band_present = (
-            acceptable_score_floor is not None
-            or acceptable_score_ceiling is not None
-        )
+        self.score_truth_points += truth_score
         floor = (
             acceptable_score_floor
             if acceptable_score_floor is not None
@@ -5559,17 +5558,20 @@ class PaintDryDisplay:
             if acceptable_score_ceiling is not None
             else truth_score
         )
-        if band_present and floor <= grader_score <= ceiling:
-            self.score_within_band_points += grader_score
-            self.score_within_band_potential += ceiling
+        floor = max(0.0, floor)
+        ceiling = max(floor, ceiling)
+        self.score_floor_met_points += max(0.0, min(grader_score, floor))
+        self.score_floor_met_potential += floor
+        self.score_partial_points += max(
+            0.0,
+            min(grader_score, ceiling) - floor,
+        )
+        self.score_partial_potential += max(0.0, ceiling - floor)
+        if abs(grader_score - truth_score) < 1e-9:
+            self.score_exact_points += truth_score
             return
         if grader_score < truth_score:
-            self.score_left_on_table_points += truth_score - grader_score
-            self.score_left_on_table_potential += truth_score
-            return
-        if grader_score > truth_score:
-            self.score_bad_call_points += grader_score - truth_score
-            self.score_bad_call_potential += max(0.0, max_points - truth_score)
+            self.score_withheld_points += truth_score - grader_score
 
     def on_checkpoint(self, text: str) -> None:
         checkpoint_parity = next(
@@ -5582,23 +5584,28 @@ class PaintDryDisplay:
         )
         self.history.append(("checkpoint", text, checkpoint_parity))
 
+    def _structured_row_parity(self) -> int:
+        return self._current_topic_parity
+
     def on_basis(self, text: str) -> None:
-        self.history.append(("basis", text, None))
+        self.history.append(("basis", text, self._structured_row_parity()))
 
     def on_read(self, text: str) -> None:
-        self.history.append(("read", text, None))
+        self.history.append(("read", text, self._structured_row_parity()))
 
     def on_salvage(self, text: str) -> None:
-        self.history.append(("salvage", text, None))
+        self.history.append(("salvage", text, self._structured_row_parity()))
 
     def on_hinge(self, text: str) -> None:
-        self.history.append(("hinge", text, None))
+        self.history.append(("hinge", text, self._structured_row_parity()))
 
     def on_review_marker(self, text: str) -> None:
-        self.history.append(("review_marker", text, None))
+        self.history.append(("review_marker", text, self._structured_row_parity()))
 
     def on_professor_mismatch(self, text: str) -> None:
-        self.history.append(("professor_mismatch", text, None))
+        self.history.append(
+            ("professor_mismatch", text, self._structured_row_parity())
+        )
 
 
 def main() -> int:

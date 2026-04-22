@@ -176,7 +176,7 @@ keeping in durable history. This is not a live thought and not a status line.
 Rules:
 - ONE sentence. 8-18 words.
 - Do NOT use first person.
-- Start with a short label: "Core issue:", "Evidence:", or "Lean:".
+- Start with a short label: "Core issue:", "Evidence:", or "Context:".
 - Be specific to this exact item: mention the concrete chemistry issue,
   quantity, unit, species, or rubric dimension when possible.
 - Prefer a small stable vocabulary over novelty. If the issue has already
@@ -471,7 +471,7 @@ def _reasoning_warrants_human_review(text: str) -> bool:
 def _checkpoint_line_breaks_contract(text: str) -> bool:
     stripped = ThinkingNarrator._canonicalize_checkpoint_text(text)
     label, body = ThinkingNarrator._split_checkpoint_label(stripped)
-    if label not in {"core issue", "evidence", "lean"}:
+    if label not in {"core issue", "evidence", "context"}:
         return True
     if not body:
         return True
@@ -1976,7 +1976,7 @@ class ThinkingNarrator:
     @staticmethod
     def _split_checkpoint_label(text: str) -> tuple[str, str]:
         match = re.match(
-            r"^(?:\*+|`+)?\s*(Core issue|Evidence|Lean)\s*:\s*(?:\*+|`+)?\s*(.*)$",
+            r"^(?:\*+|`+)?\s*(Core issue|Evidence|Context)\s*:\s*(?:\*+|`+)?\s*(.*)$",
             text.strip(),
             re.IGNORECASE,
         )
@@ -1987,12 +1987,12 @@ class ThinkingNarrator:
     @staticmethod
     def _canonicalize_checkpoint_text(text: str) -> str:
         label, body = ThinkingNarrator._split_checkpoint_label(text)
-        if label not in {"core issue", "evidence", "lean"} or not body:
+        if label not in {"core issue", "evidence", "context"} or not body:
             return text.strip()
         canonical_labels = {
             "core issue": "Core issue",
             "evidence": "Evidence",
-            "lean": "Lean",
+            "context": "Context",
         }
         return f"{canonical_labels[label]}: {body}"
 

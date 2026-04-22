@@ -240,10 +240,10 @@ class NarratorSink:
         self._write_structured_row("read", "Read", text)
 
     def write_salvage(self, text: str) -> None:
-        self._write_structured_row("salvage", "Salvage", text)
+        self._write_structured_row("salvage", "What survives", text)
 
     def write_hinge(self, text: str) -> None:
-        self._write_structured_row("hinge", "Hinge", text)
+        self._write_structured_row("hinge", "Deciding issue", text)
 
     def write_ambiguity(self, text: str) -> None:
         self._write_structured_row("ambiguity", "Ambiguity", text)
@@ -382,7 +382,7 @@ class NarratorSink:
         if not text:
             return
         with self._lock:
-            self._emit({"type": event_type, "text": text})
+            self._emit({"type": event_type, "text": text, "label": label})
             if self._txt_file is not None:
                 self._txt_file.write(f"  {label}: {text}\n")
             if not self.config.spawn_terminal:
