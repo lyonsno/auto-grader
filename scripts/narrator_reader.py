@@ -5729,10 +5729,12 @@ def main() -> int:
                     if display.should_animate() or _resize_pending.is_set():
                         try:
                             _live_update()
-                        except Exception:
+                        except Exception as exc:
                             # Transient race with the message loop mutating
                             # display state — next tick will recover.
-                            pass
+                            _reader_debug(
+                                f"animation repaint failed: {type(exc).__name__}: {exc}"
+                            )
                         _animation_wake.clear()
                         _animation_wake.wait(
                             timeout=1.0 / display.target_animation_fps()
@@ -5877,8 +5879,10 @@ def main() -> int:
                     if _message_requires_immediate_refresh(msg_type):
                         try:
                             _live_update()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            _reader_debug(
+                                f"event repaint failed for {msg_type}: {type(exc).__name__}: {exc}"
+                            )
     finally:
         animation_stop.set()
         try:
