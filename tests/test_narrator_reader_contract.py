@@ -4888,6 +4888,83 @@ class NarratorReaderContract(unittest.TestCase):
             "the selected group's child row should get a clearly visible row-level lift from the secondary pass, not just a barely detectable witness on one or two characters",
         )
 
+    @staticmethod
+    def _circular_delta(a: float, b: float) -> float:
+        return ((a - b) + 0.5) % 1.0 - 0.5
+
+    def test_secondary_history_overlay_uses_local_rake_instead_of_vertical_alignment(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/1] TARGETHDR", None))
+        display.history.append(("topic", "0.3s acid block", "match"))
+        display.history.append(("line", "first supporting line", 0))
+        display.history.append(("line", "second supporting line", 1))
+        display.history.append(("line", "DEEPLINE", 0))
+
+        calls: list[dict[str, float | str | None]] = []
+        original_apply = narrator_reader._apply_shimmer
+
+        def _recording_apply(
+            text_obj: Text,
+            content: str,
+            kind: str,
+            layer_index: int,
+            **kwargs,
+        ) -> Text:
+            if content in {"TARGETHDR", "DEEPLINE"}:
+                calls.append(
+                    {
+                        "content": content,
+                        "kind": kind,
+                        "phase_override": kwargs.get("phase_override"),
+                        "secondary_phase_override": kwargs.get(
+                            "secondary_phase_override"
+                        ),
+                    }
+                )
+            return original_apply(
+                text_obj,
+                content,
+                kind,
+                layer_index,
+                **kwargs,
+            )
+
+        with mock.patch.object(narrator_reader, "_apply_shimmer", side_effect=_recording_apply):
+            with mock.patch.object(
+                narrator_reader.time,
+                "monotonic",
+                return_value=0.0,
+            ):
+                display.render()
+
+        header_call = next(call for call in calls if call["content"] == "TARGETHDR")
+        deep_line_call = next(call for call in calls if call["content"] == "DEEPLINE")
+        self.assertIsNotNone(header_call["phase_override"])
+        self.assertIsNotNone(deep_line_call["phase_override"])
+        self.assertIsNotNone(header_call["secondary_phase_override"])
+        self.assertIsNotNone(deep_line_call["secondary_phase_override"])
+
+        primary_gap = self._circular_delta(
+            header_call["phase_override"],
+            deep_line_call["phase_override"],
+        )
+        secondary_gap = self._circular_delta(
+            header_call["secondary_phase_override"],
+            deep_line_call["secondary_phase_override"],
+        )
+
+        self.assertGreater(
+            primary_gap,
+            0.03,
+            "the deep child row should materially trail its group header in the existing primary field before the secondary overlay is applied",
+        )
+        self.assertAlmostEqual(
+            secondary_gap,
+            primary_gap,
+            places=6,
+            msg="the quieter second pass should inherit that same within-group rake instead of resetting every row onto one shared vertical crest",
+        )
+
     def test_wrapped_history_line_only_privileges_first_visual_row(self) -> None:
         wrapped_text = Text()
         _apply_shimmer(
