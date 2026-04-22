@@ -2851,13 +2851,13 @@ class NarratorReaderContract(unittest.TestCase):
         topic_style = self._foreground_hex(
             self._style_for_substring(
                 history_text,
-                "Grader: 4/4 (Correct net ionic equation with proper states and balance.)",
+                "Grader: 4/4 (Correct net ionic equation",
             )
         )
         basis_style = self._foreground_hex(
             self._style_for_substring(
                 history_text,
-                "Full credit: Correct net ionic equation with states and stoichiometry.",
+                "Full credit: Correct net ionic equation",
             )
         )
 
@@ -5308,6 +5308,32 @@ class NarratorReaderContract(unittest.TestCase):
             self._hex_luminance(first_row_style),
         )
 
+    def test_topic_wrap_continuation_preserves_hanging_indent(self) -> None:
+        display = self._make_display()
+        display._wrap_width_override = 21
+        display.history.append(("header", "[1/1] exam 15-blue · problem fr-10a", None))
+        display.history.append(("topic", "123s · ABCDEFGHIJKLMNO", "match"))
+
+        group = display.render()
+        history_panel = group.renderables[-1]
+        lines = history_panel.renderable.plain.splitlines()
+
+        self.assertIn("  · 123s  ·  ABCDEFGH", lines)
+        self.assertIn((" " * len("  · 123s  ·  ")) + "IJKLMNO", lines)
+
+    def test_basis_wrap_continuation_preserves_structured_row_indent(self) -> None:
+        display = self._make_display()
+        display._wrap_width_override = 20
+        display.history.append(("header", "[1/1] exam 15-blue · problem fr-10a", None))
+        display.history.append(("basis", "ABCDEFGHIJKLMNO", 0))
+
+        group = display.render()
+        history_panel = group.renderables[-1]
+        lines = history_panel.renderable.plain.splitlines()
+
+        self.assertIn("  ≡ Basis: ABCDEFGHI", lines)
+        self.assertIn((" " * len("  ≡ Basis: ")) + "JKLMNO", lines)
+
     def test_active_session_keeps_animating_after_live_freeze_fade(self) -> None:
         display = self._make_display()
         display.on_delta("fresh line")
@@ -5474,6 +5500,24 @@ class NarratorReaderContract(unittest.TestCase):
             main_tail,
             "the raw 'any unhandled key closes' end-state policy is what "
             "kills post-run history browsing too easily",
+        )
+
+    def test_main_wakes_idle_reader_after_handled_scroll_key(self) -> None:
+        source = Path("scripts/narrator_reader.py").read_text()
+        main_tail = source.split("def main() -> int:", 1)[1]
+
+        self.assertIn(
+            "_history_nav_pending.set()",
+            main_tail,
+            "handled history keys should schedule a repaint even after the "
+            "session has gone idle, or post-end scrolling will mutate the "
+            "viewport invisibly without redrawing",
+        )
+        self.assertIn(
+            "_history_nav_pending.is_set()",
+            main_tail,
+            "the animation loop should treat queued history navigation as "
+            "its own repaint trigger instead of only waking for shimmer or resize",
         )
 
 

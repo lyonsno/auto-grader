@@ -3083,6 +3083,123 @@ def _apply_shimmer(
     return text_obj
 
 
+def _wrapped_visual_row_count(
+    content: str,
+    *,
+    first_prefix_width: int,
+    continuation_prefix_width: int,
+    wrap_width: int | None,
+) -> int:
+    if wrap_width is None or wrap_width <= 0:
+        return 1
+    paragraphs = content.split("\n") if content else [""]
+    total_rows = 0
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        paragraph_prefix_width = (
+            first_prefix_width if paragraph_index == 0 else continuation_prefix_width
+        )
+        first_capacity = max(1, wrap_width - paragraph_prefix_width)
+        continuation_capacity = max(1, wrap_width - continuation_prefix_width)
+        paragraph_len = len(paragraph)
+        if paragraph_len <= first_capacity:
+            total_rows += 1
+            continue
+        remaining = paragraph_len - first_capacity
+        total_rows += 1 + math.ceil(remaining / continuation_capacity)
+    return max(1, total_rows)
+
+
+def _append_wrapped_shimmer_block(
+    text_obj: Text,
+    content: str,
+    kind: str,
+    *,
+    layer_index: int,
+    first_indent_width: int,
+    continuation_prefix: str,
+    continuation_prefix_style: str,
+    wrap_width: int | None,
+    cycle_s: float | None = None,
+    phase_override: float | None = None,
+    secondary_phase_override: float | None = None,
+    secondary_peak_weight: float = 0.0,
+    secondary_peak_rgb: tuple[int, int, int] | None = None,
+    secondary_floor_weight: float = 0.0,
+    secondary_width: int = _SHIMMER_WIDTH,
+) -> Text:
+    paragraphs = content.split("\n") if content else [""]
+    continuation_indent_width = len(continuation_prefix)
+
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        paragraph_indent_width = (
+            first_indent_width
+            if paragraph_index == 0
+            else continuation_indent_width
+        )
+        if paragraph_index > 0:
+            text_obj.append("\n")
+            if continuation_prefix:
+                text_obj.append(continuation_prefix, style=continuation_prefix_style)
+
+        if wrap_width is None or wrap_width <= 0:
+            _apply_shimmer(
+                text_obj,
+                paragraph,
+                kind,
+                layer_index,
+                indent_width=paragraph_indent_width,
+                wrap_width=wrap_width,
+                cycle_s=cycle_s,
+                phase_override=phase_override,
+                secondary_phase_override=secondary_phase_override,
+                secondary_peak_weight=secondary_peak_weight,
+                secondary_peak_rgb=secondary_peak_rgb,
+                secondary_floor_weight=secondary_floor_weight,
+                secondary_width=secondary_width,
+            )
+            continue
+
+        first_capacity = max(1, wrap_width - paragraph_indent_width)
+        continuation_capacity = max(1, wrap_width - continuation_indent_width)
+        segments: list[tuple[str, int]] = []
+        if len(paragraph) <= first_capacity:
+            segments.append((paragraph, paragraph_indent_width))
+        else:
+            segments.append((paragraph[:first_capacity], paragraph_indent_width))
+            remaining = paragraph[first_capacity:]
+            while remaining:
+                segments.append(
+                    (remaining[:continuation_capacity], continuation_indent_width)
+                )
+                remaining = remaining[continuation_capacity:]
+
+        for segment_index, (segment, segment_indent_width) in enumerate(segments):
+            if segment_index > 0:
+                text_obj.append("\n")
+                if continuation_prefix:
+                    text_obj.append(
+                        continuation_prefix,
+                        style=continuation_prefix_style,
+                    )
+            _apply_shimmer(
+                text_obj,
+                segment,
+                kind,
+                layer_index,
+                indent_width=segment_indent_width,
+                wrap_width=wrap_width,
+                cycle_s=cycle_s,
+                phase_override=phase_override,
+                secondary_phase_override=secondary_phase_override,
+                secondary_peak_weight=secondary_peak_weight,
+                secondary_peak_rgb=secondary_peak_rgb,
+                secondary_floor_weight=secondary_floor_weight,
+                secondary_width=secondary_width,
+            )
+
+    return text_obj
+
+
 def _undulation_hue_deg(
     now_s: float,
     global_i: int,
@@ -3971,26 +4088,50 @@ class PaintDryDisplay:
         kind = entry[0]
         text = entry[1]
         if kind == "header":
-            prefix_width = len("─ ")
+            match = _HEADER_INDEX_RE.match(text)
+            if match:
+                prefix_width = len("─ ") + len(match.group(1)) + 1
+            else:
+                prefix_width = len("─ ")
+            continuation_prefix_width = prefix_width
         elif kind == "topic":
-            prefix_width = len("  · ")
+            match = _TIME_PREFIX_RE.match(text)
+            if match:
+                prefix_width = len("  · ") + len(match.group(1)) + len("  ·  ")
+            else:
+                prefix_width = len("  · ")
+            continuation_prefix_width = prefix_width
         elif kind == "basis":
             prefix_width = len("  ≡ Basis: ")
+            continuation_prefix_width = prefix_width
         elif kind == "read":
             prefix_width = len("  ≡ Read: ")
+            continuation_prefix_width = prefix_width
         elif kind == "salvage":
             prefix_width = len("  ≡ What survives: ")
+            continuation_prefix_width = prefix_width
         elif kind == "hinge":
             prefix_width = len("  ≡ Deciding issue: ")
+            continuation_prefix_width = prefix_width
         elif kind == "review_marker":
             prefix_width = len("  ! Review needed: ")
+            continuation_prefix_width = prefix_width
         elif kind == "professor_mismatch":
             prefix_width = len("  ! Professor mismatch: ")
+            continuation_prefix_width = prefix_width
+        elif kind == "checkpoint":
+            prefix_width = len("  ≈ ")
+            continuation_prefix_width = prefix_width
         else:
             prefix_width = len("    ")
+            continuation_prefix_width = prefix_width
 
-        visual_cols = max(1, prefix_width + len(text))
-        return max(1, math.ceil(visual_cols / wrap_width))
+        return _wrapped_visual_row_count(
+            text,
+            first_prefix_width=prefix_width,
+            continuation_prefix_width=continuation_prefix_width,
+            wrap_width=wrap_width,
+        )
 
     def _build_display_entries(
         self,
@@ -4173,9 +4314,11 @@ class PaintDryDisplay:
         return out
 
     def _resolve_wrap_width(self) -> int:
+        if self._wrap_width_override is not None:
+            return self._wrap_width_override
         wrap = self._compute_wrap_width()
         if wrap is None:
-            wrap = self._wrap_width_override or 80
+            wrap = 80
         return wrap
 
     def _sync_viewport(self) -> HistoryViewport:
@@ -4316,7 +4459,7 @@ class PaintDryDisplay:
 
         # Compute the wrap width once — used by both the live panel
         # shimmer and the history panel shimmer.
-        wrap_width = self._compute_wrap_width()
+        wrap_width = self._resolve_wrap_width()
 
         # Header — title + running stats. Muted, single line.
         # The subtitle is in cool steel blue — always-on cool note in
@@ -5071,20 +5214,24 @@ class PaintDryDisplay:
                         **history_secondary_kwargs,
                     )
                     history_text.append(" ", style="grey39")
-                    _apply_shimmer(
+                    _append_wrapped_shimmer_block(
                         history_text, rest_part, "header",
                         layer_index=render_layer,
-                        indent_width=len(indent) + len(index_part) + 1,
+                        first_indent_width=len(indent) + len(index_part) + 1,
+                        continuation_prefix=" " * (len(indent) + len(index_part) + 1),
+                        continuation_prefix_style="grey39",
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                         **history_secondary_kwargs,
                     )
                 else:
-                    _apply_shimmer(
+                    _append_wrapped_shimmer_block(
                         history_text, text, "header",
                         layer_index=render_layer,
-                        indent_width=len(indent),
+                        first_indent_width=len(indent),
+                        continuation_prefix=" " * len(indent),
+                        continuation_prefix_style="grey39",
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
@@ -5113,20 +5260,24 @@ class PaintDryDisplay:
                     )
                     history_text.append("  ·  ", style="grey50")
                     extra_indent = len(time_prefix) + len("  ·  ")
-                    _apply_shimmer(
+                    _append_wrapped_shimmer_block(
                         history_text, rest, topic_kind,
                         layer_index=render_layer,
-                        indent_width=len(indent) + extra_indent,
+                        first_indent_width=len(indent) + extra_indent,
+                        continuation_prefix=" " * (len(indent) + extra_indent),
+                        continuation_prefix_style="grey50",
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
                         **history_secondary_kwargs,
                     )
                 else:
-                    _apply_shimmer(
+                    _append_wrapped_shimmer_block(
                         history_text, text, topic_kind,
                         layer_index=render_layer,
-                        indent_width=len(indent),
+                        first_indent_width=len(indent),
+                        continuation_prefix=" " * len(indent),
+                        continuation_prefix_style="grey50",
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         phase_override=phase_override,
@@ -5140,10 +5291,12 @@ class PaintDryDisplay:
                     "Basis: ",
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                 )
-                _apply_shimmer(
+                _append_wrapped_shimmer_block(
                     history_text, text, structured_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent) + len("Basis: "),
+                    first_indent_width=len(indent) + len("Basis: "),
+                    continuation_prefix=" " * (len(indent) + len("Basis: ")),
+                    continuation_prefix_style="grey50",
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -5158,10 +5311,12 @@ class PaintDryDisplay:
                     label,
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                 )
-                _apply_shimmer(
+                _append_wrapped_shimmer_block(
                     history_text, text, structured_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent) + len(label),
+                    first_indent_width=len(indent) + len(label),
+                    continuation_prefix=" " * (len(indent) + len(label)),
+                    continuation_prefix_style="grey50",
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -5177,10 +5332,12 @@ class PaintDryDisplay:
                     label,
                     style=f"bold {_rgb_to_hex(label_rgb)}",
                 )
-                _apply_shimmer(
+                _append_wrapped_shimmer_block(
                     history_text, text, structured_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent) + len(label),
+                    first_indent_width=len(indent) + len(label),
+                    continuation_prefix=" " * (len(indent) + len(label)),
+                    continuation_prefix_style="grey50",
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -5198,10 +5355,12 @@ class PaintDryDisplay:
                     **history_secondary_kwargs,
                 )
                 checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
-                _apply_shimmer(
+                _append_wrapped_shimmer_block(
                     history_text, text, checkpoint_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent),
+                    first_indent_width=len(indent),
+                    continuation_prefix=" " * len(indent),
+                    continuation_prefix_style="grey50",
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -5215,10 +5374,12 @@ class PaintDryDisplay:
                 # so the alternation is stable as new lines arrive and
                 # old lines fall off the deque.
                 line_kind = "line_alt" if parity == 1 else "line"
-                _apply_shimmer(
+                _append_wrapped_shimmer_block(
                     history_text, text, line_kind,
                     layer_index=render_layer,
-                    indent_width=len(indent),
+                    first_indent_width=len(indent),
+                    continuation_prefix=indent,
+                    continuation_prefix_style="dim",
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     phase_override=phase_override,
@@ -5965,6 +6126,7 @@ def main() -> int:
         animation_stop = threading.Event()
         session_exit = threading.Event()
         scroll_controller = HistoryScrollController(display)
+        _history_nav_pending = threading.Event()
         # screen=True — use the terminal's alternate screen buffer.
         # Alt-screen gives us clean resize handling: Rich redraws the
         # full screen on every frame instead of trying to diff against
@@ -6024,6 +6186,7 @@ def main() -> int:
             try:
                 with _paint_lock:
                     _resize_pending.clear()
+                    _history_nav_pending.clear()
 
                     # Drain any pending Kitty transmit from the event thread
                     # before painting so escape sequences don't interleave
@@ -6102,7 +6265,11 @@ def main() -> int:
 
             def _animation_tick():
                 while not animation_stop.is_set():
-                    if display.should_animate() or _resize_pending.is_set():
+                    if (
+                        display.should_animate()
+                        or _resize_pending.is_set()
+                        or _history_nav_pending.is_set()
+                    ):
                         try:
                             _live_update()
                         except Exception as exc:
@@ -6149,6 +6316,9 @@ def main() -> int:
                     _reader_debug(f"live key received: {ch!r}")
                     handled = scroll_controller.handle_key(ch)
                     _reader_debug(f"live key handled={handled} key={ch!r}")
+                    if handled:
+                        _history_nav_pending.set()
+                        _animation_wake.set()
                     if (
                         not handled
                         and display.session_ended
