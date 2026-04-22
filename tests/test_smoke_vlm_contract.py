@@ -297,6 +297,109 @@ class SmokeVlmContract(unittest.TestCase):
                 ("34-blue", "fr-12a"),
             ],
         )
+
+    def test_describe_only_mode_uses_clean_fifteen_blue_scan_path(self) -> None:
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=1.0,
+            professor_mark="check",
+            student_answer="mock",
+            notes="mock",
+        )
+        config = smoke_vlm.ServerConfig(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scans_dir = Path(tmpdir) / "scans"
+            scans_dir.mkdir()
+            legacy_path = scans_dir / "15 blue.pdf"
+            legacy_path.write_bytes(b"%PDF-1.4 legacy")
+            run_dir = Path(tmpdir) / "run"
+
+            with (
+                mock.patch.object(smoke_vlm, "_SCANS_DIR", scans_dir),
+                mock.patch.object(
+                    smoke_vlm,
+                    "extract_page_image",
+                    return_value=b"page-bytes",
+                ) as extract_mock,
+                mock.patch.object(
+                    smoke_vlm,
+                    "stream_vision_completion",
+                    return_value=("visible student work", "brief reasoning"),
+                ) as stream_mock,
+            ):
+                result = smoke_vlm.run_describe_only_mode(
+                    SimpleNamespace(run_dir=run_dir),
+                    [item],
+                    config,
+                    model_family="qwen",
+                )
+
+        self.assertEqual(result["count_ok"], 1)
+        self.assertEqual(result["count_err"], 0)
+        extract_mock.assert_called_once_with(legacy_path, 1)
+        stream_mock.assert_called_once()
+
+    def test_describe_only_mode_prefers_clean_fifteen_blue_scan_when_hidden_variant_also_exists(
+        self,
+    ) -> None:
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-1",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=1.0,
+            professor_mark="check",
+            student_answer="mock",
+            notes="mock",
+        )
+        config = smoke_vlm.ServerConfig(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scans_dir = Path(tmpdir) / "scans"
+            scans_dir.mkdir()
+            legacy_path = scans_dir / "15 blue.pdf"
+            legacy_path.write_bytes(b"%PDF-1.4 clean")
+            (scans_dir / "15 blue_professor_markings_hidden.pdf").write_bytes(
+                b"%PDF-1.4 sibling"
+            )
+            run_dir = Path(tmpdir) / "run"
+
+            with (
+                mock.patch.object(smoke_vlm, "_SCANS_DIR", scans_dir),
+                mock.patch.object(
+                    smoke_vlm,
+                    "extract_page_image",
+                    return_value=b"page-bytes",
+                ) as extract_mock,
+                mock.patch.object(
+                    smoke_vlm,
+                    "stream_vision_completion",
+                    return_value=("visible student work", "brief reasoning"),
+                ),
+            ):
+                result = smoke_vlm.run_describe_only_mode(
+                    SimpleNamespace(run_dir=run_dir),
+                    [item],
+                    config,
+                    model_family="qwen",
+                )
+
+        self.assertEqual(result["count_ok"], 1)
+        self.assertEqual(result["count_err"], 0)
+        extract_mock.assert_called_once_with(legacy_path, 1)
+
     def test_run_dir_help_advertises_durable_root_outside_worktree(self) -> None:
         parser = smoke_vlm._build_arg_parser()
         run_dir_action = next(
