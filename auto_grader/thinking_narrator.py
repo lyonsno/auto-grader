@@ -691,6 +691,7 @@ class ThinkingNarrator:
         framing context for THIS item. The narrator history resets each
         item so the model doesn't carry stale assumptions across items.
         """
+        self._flush_pending_legibility_rows_before_item_reset()
         with self._lock:
             self._buffer = ""
             self._thinking_start = 0.0
@@ -724,6 +725,24 @@ class ThinkingNarrator:
             self._cur_item_dispatches = 0
             self._stat_items_started += 1
         logger.info("Narrator session started")
+
+    def _flush_pending_legibility_rows_before_item_reset(self) -> None:
+        while True:
+            with self._lock:
+                pending_jobs = len(self._legibility_jobs)
+            if pending_jobs == 0:
+                return
+            emitted = self._flush_idle_legibility_once(force=True)
+            with self._lock:
+                remaining_jobs = len(self._legibility_jobs)
+            if remaining_jobs == 0:
+                return
+            if not emitted and remaining_jobs == pending_jobs:
+                logger.warning(
+                    "Unable to drain %d pending legibility row(s) before item reset",
+                    remaining_jobs,
+                )
+                return
 
     def _compose_system_prompt(self, *, status_mode: bool = False) -> str:
         base = _STATUS_SYSTEM_PROMPT if status_mode else _SYSTEM_PROMPT
@@ -1123,11 +1142,13 @@ class ThinkingNarrator:
     def _flush_idle_legibility_once(
         self,
         generation: int | None = None,
+        *,
+        force: bool = False,
     ) -> bool:
         with self._lock:
             if generation is not None and generation != self._idle_legibility_generation:
                 return False
-            if self._pending_dispatch or self._buffer or not self._legibility_jobs:
+            if ((self._pending_dispatch or self._buffer) and not force) or not self._legibility_jobs:
                 return False
             job = self._legibility_jobs.pop(0)
             current_generation = self._idle_legibility_generation

@@ -17,6 +17,8 @@ class _DummySink:
         self.commits = 0
         self.drops: list[tuple[str, str]] = []
         self.topics: list[dict[str, object]] = []
+        self.credit_preserved_rows: list[str] = []
+        self.deduction_rows: list[str] = []
 
     def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
@@ -38,6 +40,12 @@ class _DummySink:
 
     def write_review_marker(self, text: str) -> None:
         return None
+
+    def write_credit_preserved(self, text: str) -> None:
+        self.credit_preserved_rows.append(text)
+
+    def write_deduction(self, text: str) -> None:
+        self.deduction_rows.append(text)
 
 
 class _RetryNarrator(ThinkingNarrator):
@@ -92,6 +100,24 @@ class _FakeStreamResponse:
 
 
 class ThinkingNarratorContract(unittest.TestCase):
+    def test_start_flushes_pending_legibility_rows_before_resetting_item_state(self):
+        sink = _DummySink()
+        narrator = ThinkingNarrator(sink)
+        narrator.start(item_header="15-blue/fr-1")
+        narrator._enqueue_legibility_job(
+            "credit_preserved",
+            text="Stoichiometric setup was correct before the final arithmetic slip.",
+        )
+
+        narrator.start(item_header="15-blue/fr-2")
+
+        self.assertEqual(
+            sink.credit_preserved_rows,
+            ["Stoichiometric setup was correct before the final arithmetic slip."],
+            "starting the next item should flush any queued dossier rows for the prior item instead of clearing the idle-legibility queue and silently dropping that background context",
+        )
+        self.assertEqual(narrator._legibility_jobs, [])
+
     def test_duplicate_first_person_line_retries_as_status_and_commits(self):
         sink = _DummySink()
         narrator = _RetryNarrator(sink)
