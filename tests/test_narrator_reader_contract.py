@@ -4804,8 +4804,13 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertGreater(
             primary_gap,
-            0.03,
+            0.015,
             "the deep child row should materially trail its group header in the existing primary field before the secondary overlay is applied",
+        )
+        self.assertLess(
+            primary_gap,
+            0.03,
+            "the shared history rake should stay gentle enough that both the primary shimmer and the skipped-parity secondary pass still read as coherent fields instead of two aggressively slanted ladders",
         )
         self.assertAlmostEqual(
             secondary_gap,

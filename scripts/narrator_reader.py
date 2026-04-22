@@ -527,7 +527,10 @@ _SCOREBUG_BIG_DIGITS = {
 _HISTORY_GROUP_SETBACK = 0.036     # lower item headers sit a bit more visibly
                                    # one above them, but not by enough to read
                                    # as separate weather systems
-_HISTORY_GROUP_RAKE = 0.022        # gentler within-item rake than the last pass
+_HISTORY_GROUP_RAKE = 0.011        # halve the within-item rake so both the
+                                   # main shimmer and the skipped-parity
+                                   # secondary pass read as gentler unified
+                                   # fields during smoke
                                    # so the grouping reads structural, not
                                    # algorithmically terraced
 _HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
