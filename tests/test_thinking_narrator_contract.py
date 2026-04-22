@@ -197,13 +197,7 @@ class ThinkingNarratorContract(unittest.TestCase):
 
     def test_after_action_keeps_exact_truth_match_even_when_band_excludes_truth(self):
         sink = _DummySink()
-        narrator = _AfterActionNarrator(
-            sink,
-            response=(
-                "Grader: 1/2 (same partial resonance credit). "
-                "Prof: 1/2 (same half-credit read)."
-            ),
-        )
+        narrator = _AfterActionNarrator(sink)
         item = type(
             "Item",
             (),
@@ -235,7 +229,11 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator._produce_after_action(12.0, prediction, item, template_question=None)
 
         self.assertEqual(len(sink.topics), 1)
-        self.assertEqual(len(narrator.chat_calls), 1)
+        self.assertEqual(
+            narrator.chat_calls,
+            [],
+            "the compact outcome block is intentional here; after-action should not re-enter the Bonsai one-line/coda path",
+        )
         self.assertEqual(
             sink.topics[0]["verdict"],
             "match",
@@ -243,21 +241,16 @@ class ThinkingNarratorContract(unittest.TestCase):
         )
         self.assertEqual(
             sink.topics[0]["text"],
-            "12s · Grader: 1/2 (same partial resonance credit). Prof: 1/2 (same half-credit read). · Acceptable band: 1.5/2 to 2/2; grader is at the truth target.",
+            "12s · Grader: 1/2 · Prof: 1/2\nBand: 1.5/2 to 2/2",
         )
         self.assertEqual(sink.topics[0]["acceptable_score_floor"], 1.5)
         self.assertEqual(sink.topics[0]["acceptable_score_ceiling"], 2.0)
 
-    def test_after_action_keeps_llm_narrative_line_for_corrected_items(self):
+    def test_after_action_uses_compact_truth_and_historical_prof_block_for_corrected_items(
+        self,
+    ):
         sink = _DummySink()
-        narrator = _AfterActionNarrator(
-            sink,
-            response=(
-                "Grader: 0/2 (methodology is invalid). "
-                "Truth: 0/2 (corrected after review). "
-                "· Historical prof: 2/2 (overcredit on the boxed answer)."
-            ),
-        )
+        narrator = _AfterActionNarrator(sink)
         item = type(
             "Item",
             (),
@@ -290,10 +283,10 @@ class ThinkingNarratorContract(unittest.TestCase):
         narrator._produce_after_action(72.0, prediction, item, template_question=None)
 
         self.assertEqual(len(sink.topics), 1)
-        self.assertEqual(len(narrator.chat_calls), 1)
+        self.assertEqual(narrator.chat_calls, [])
         self.assertEqual(
             sink.topics[0]["text"],
-            "72s · Grader: 0/2 (methodology is invalid). Truth: 0/2 (corrected after review). · Historical prof: 2/2 (overcredit on the boxed answer).",
+            "72s · Grader: 0/2 · Truth: 0/2\nHistorical prof: 2/2",
         )
 
     def test_after_action_enqueues_and_flushes_background_dossier_for_interesting_item(self):
