@@ -109,6 +109,21 @@ class _DossierAfterActionNarrator(ThinkingNarrator):
         return None
 
 
+class _PromptCapturingDossierNarrator(ThinkingNarrator):
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+        self.enqueued_dossier_prompts: list[str] = []
+
+    def _enqueue_dossier_job(self, prompt: str) -> None:  # type: ignore[override]
+        self.enqueued_dossier_prompts.append(prompt)
+
+    def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
+        return None
+
+    def _schedule_idle_legibility_if_needed(self) -> None:  # type: ignore[override]
+        return None
+
+
 class _FakeJSONResponse:
     def __init__(self, payload: dict[str, object]) -> None:
         self._payload = json.dumps(payload).encode()
@@ -449,6 +464,99 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(narrator._legibility_jobs, [])
         self.assertFalse(narrator._flush_idle_legibility_once())
         self.assertEqual(sink.structured_rows, [])
+
+    def test_truncated_long_item_still_enqueues_background_dossier(self):
+        sink = _DummySink()
+        narrator = _PromptCapturingDossierNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-11c",
+                "answer_type": "exact_match",
+                "max_points": 0.5,
+                "student_answer": "1",
+                "professor_score": 0.5,
+                "truth_score": 0.5,
+                "professor_mark": "correct",
+                "notes": "ambiguous crossed-out numeral",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 0.0,
+                "model_read": "2?",
+                "model_reasoning": (
+                    "Ambiguous crossed-out 2 obscures whether the student intended 2 or 1."
+                ),
+                "score_basis": "No final score committed before truncation.",
+                "truncated": True,
+            },
+        )()
+
+        narrator._produce_after_action(194.0, prediction, item, template_question=None)
+
+        self.assertEqual(len(sink.topics), 1)
+        self.assertEqual(
+            sink.topics[0]["text"],
+            "194s · grader did not commit to a score (truncated)",
+        )
+        self.assertEqual(
+            len(narrator.enqueued_dossier_prompts),
+            1,
+            "long ambiguity-shaped truncated items should still earn a trailing dossier instead of being categorically excluded",
+        )
+
+    def test_truncated_dossier_prompt_marks_unstabilized_score(self):
+        sink = _DummySink()
+        narrator = _PromptCapturingDossierNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-12b",
+                "answer_type": "lewis_structure",
+                "max_points": 2.0,
+                "student_answer": "two resonance structures",
+                "professor_score": 1.0,
+                "truth_score": 1.0,
+                "professor_mark": "partial",
+                "notes": "lone-pair ambiguity",
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 0.0,
+                "model_read": "two resonance structures",
+                "model_reasoning": "The resonance connectivity is right but the lone pairs remain ambiguous.",
+                "score_basis": "The grader never stabilized to a final score before truncation.",
+                "truncated": True,
+            },
+        )()
+
+        prompt = narrator._build_dossier_prompt(
+            elapsed=226.0,
+            prediction=prediction,
+            item=item,
+        )
+
+        self.assertIn(
+            "Final score state: no final score committed before truncation",
+            prompt,
+            "truncated dossier prompts should tell the model plainly that the grader never stabilized to a final score",
+        )
+        self.assertIn(
+            "If the grader never stabilized to a final score, say that explicitly when it matters.",
+            prompt,
+        )
 
     def test_qwen36_sync_narrator_requests_disable_thinking(self):
         sink = _DummySink()

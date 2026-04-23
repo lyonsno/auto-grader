@@ -1382,8 +1382,6 @@ class ThinkingNarrator:
         prediction: Any,
         item: Any,
     ) -> bool:
-        if getattr(prediction, "truncated", False):
-            return False
         if elapsed >= _DOSSIER_LONG_ELAPSED_SECONDS:
             return True
 
@@ -1416,6 +1414,13 @@ class ThinkingNarrator:
             item_token_count = self._item_token_count
             max_dedupe_streak = self._item_max_dedupe_streak
 
+        if getattr(prediction, "truncated", False):
+            score_line = "Final score state: no final score committed before truncation"
+        else:
+            score_line = (
+                f"Model score: {prediction.model_score}/{item.max_points}"
+            )
+
         return (
             "The item is finished. Build a compact trailing dossier for the operator.\n\n"
             f"Item: {item.exam_id}/{item.question_id}\n"
@@ -1425,7 +1430,7 @@ class ThinkingNarrator:
             f"Max dedupe streak observed: {max_dedupe_streak}\n"
             f"Student answer: {item.student_answer}\n"
             f"Model read: {getattr(prediction, 'model_read', '')}\n"
-            f"Model score: {prediction.model_score}/{item.max_points}\n"
+            f"{score_line}\n"
             f"Truth score: {truth_score}/{item.max_points}\n"
             f"Professor mark: {item.professor_mark}\n"
             f"Professor note: {item.notes}\n"
@@ -1442,6 +1447,7 @@ class ThinkingNarrator:
             "- Ground every value in the specific item.\n"
             "- If handwriting is not the issue, say what the student work appears to show instead.\n"
             "- If little is salvageable, say that plainly rather than inventing credit.\n"
+            "- If the grader never stabilized to a final score, say that explicitly when it matters.\n"
             "- The hinge should name the contested deciding issue, not just repeat the score.\n"
             "- No markdown, no prose outside the JSON object."
         )
@@ -1567,6 +1573,15 @@ class ThinkingNarrator:
                 self._sink.write_topic(
                     f"{elapsed:.0f}s · grader did not commit to a score (truncated)"
                 )
+                if self._should_enqueue_dossier(elapsed, prediction, item):
+                    self._enqueue_dossier_job(
+                        self._build_dossier_prompt(
+                            elapsed=elapsed,
+                            prediction=prediction,
+                            item=item,
+                        )
+                    )
+                self._schedule_idle_legibility_if_needed()
                 return
 
             truth_score = getattr(item, "truth_score", item.professor_score)
