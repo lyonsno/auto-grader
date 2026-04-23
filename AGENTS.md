@@ -2,6 +2,20 @@
 
 These repo-specific instructions supplement the global Codex defaults.
 
+## Topothesia review surfaces
+
+- `auto-grader` uses Topothesia review surfaces for clean-scan authority and
+  contamination-boundary review routing.
+- When the human says `Make this durable for review`, consult
+  `docs/review_surfaces.toml` and `docs/review-authority-surfaces.md` before
+  turning scan-routing or compatibility-fallback findings into code changes.
+- Use Topothesia review surfaces when the issue is about authority,
+  canonical-vs-fallback interpretation, or allowed divergence between clean and
+  contaminated scan paths.
+- Use Prilosec instead when the issue is a recurring acknowledged false
+  positive or accepted finding family that should be suppressed or demoted
+  across future review runs.
+
 ## Bonsai narrator server
 
 - On `MacBook-Pro-2.local`, the canonical local Bonsai narrator surface is a

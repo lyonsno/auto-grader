@@ -1,0 +1,22 @@
+[surfaces.clean_eval_scan_authority]
+canonical_surface = "docs/review-authority-surfaces.md"
+authoritative_paths = ["auto_grader/vlm_inference.py"]
+consumer_paths = [
+  "scripts/smoke_vlm.py",
+  "scripts/smoke_probe.py",
+  "scripts/narrator_reader.py",
+]
+forbidden_fallback_aliases = ["15 blue.pdf"]
+equivalence = "no_implicit_fallback_from_clean_ids_to_contaminated_aliases"
+default_review_action = "waive-contaminated-fallback"
+reason = "The current grading, narration, and eval mode is only semantically coherent on clean scans. Professor-marked legacy filenames are intentionally rejected rather than treated as compatibility fallbacks."
+promote_when = "Promote to material only when a surface silently accepts a contaminated alias, consumer surfaces contradict the authoritative clean-scan declaration, or a separate professor-marked mode is introduced without its own routed semantics."
+revisit_when = "Revisit when clean-scan preparation becomes automatic or when professor-marked inspection becomes an explicit first-class mode."
+canonical_markers = [
+  "Clean Eval Scan Authority",
+  "auto_grader/vlm_inference.py",
+  "15 blue_professor_markings_hidden.pdf",
+  "15 blue.pdf",
+  "Refusing contaminated fallback",
+  "separate explicit mode",
+]
