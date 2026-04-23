@@ -264,6 +264,16 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
     @staticmethod
+    def _panel_title_markup(title: str) -> str:
+        title_hex = narrator_reader._rgb_to_hex(narrator_reader._PANEL_TITLE_RGB)
+        return f"[{title_hex}]{title}[/{title_hex}]"
+
+    @staticmethod
+    def _panel_subtitle_markup(text: str) -> str:
+        subtitle_hex = narrator_reader._rgb_to_hex(narrator_reader._PANEL_SUBTITLE_RGB)
+        return f"[{subtitle_hex}]{text}[/{subtitle_hex}]"
+
+    @staticmethod
     def _make_png(
         *,
         width: int = 16,
@@ -561,16 +571,20 @@ class NarratorReaderContract(unittest.TestCase):
             if getattr(panel, "title", None) is not None
         ]
 
-        self.assertIn("[grey50]status + live[/grey50]", titled_panels)
-        self.assertIn("[grey50]focus preview · 15-blue/fr-12a[/grey50]", titled_panels)
-        self.assertIn("[grey50]history[/grey50]", titled_panels)
+        status_title = self._panel_title_markup("status + live")
+        preview_title = self._panel_title_markup("focus preview · 15-blue/fr-12a")
+        history_title = self._panel_title_markup("history")
+
+        self.assertIn(status_title, titled_panels)
+        self.assertIn(preview_title, titled_panels)
+        self.assertIn(history_title, titled_panels)
         self.assertLess(
-            titled_panels.index("[grey50]status + live[/grey50]"),
-            titled_panels.index("[grey50]focus preview · 15-blue/fr-12a[/grey50]"),
+            titled_panels.index(status_title),
+            titled_panels.index(preview_title),
         )
         self.assertLess(
-            titled_panels.index("[grey50]focus preview · 15-blue/fr-12a[/grey50]"),
-            titled_panels.index("[grey50]history[/grey50]"),
+            titled_panels.index(preview_title),
+            titled_panels.index(history_title),
         )
 
     def test_kitty_focus_preview_renders_between_live_and_history(self):
@@ -599,9 +613,9 @@ class NarratorReaderContract(unittest.TestCase):
         kitty_idx = None
         for i, r in enumerate(renderables):
             title = getattr(r, "title", None)
-            if title == "[grey50]status + live[/grey50]":
+            if title == self._panel_title_markup("status + live"):
                 status_live_idx = i
-            elif title == "[grey50]history[/grey50]":
+            elif title == self._panel_title_markup("history"):
                 history_idx = i
             elif isinstance(r, FocusPreviewKittyImage):
                 kitty_idx = i
@@ -621,12 +635,12 @@ class NarratorReaderContract(unittest.TestCase):
 
         group = display.render()
         history_panel = next(
-            r for r in group.renderables if getattr(r, "title", None) == "[grey50]history[/grey50]"
+            r for r in group.renderables if getattr(r, "title", None) == self._panel_title_markup("history")
         )
 
         self.assertEqual(
             history_panel.subtitle,
-            "[grey35]live edge · no overflow yet[/grey35]",
+            self._panel_subtitle_markup("live edge · no overflow yet"),
             "short runs should make it explicit that history is not scrollable yet "
             "instead of leaving the operator to guess whether the controls failed",
         )
@@ -642,12 +656,12 @@ class NarratorReaderContract(unittest.TestCase):
         display.scroll_history_up(7)
         group = display.render()
         history_panel = next(
-            r for r in group.renderables if getattr(r, "title", None) == "[grey50]history[/grey50]"
+            r for r in group.renderables if getattr(r, "title", None) == self._panel_title_markup("history")
         )
 
         self.assertEqual(
             history_panel.subtitle,
-            "[grey35]7 rows back · j/d forward · 0 latest[/grey35]",
+            self._panel_subtitle_markup("7 rows back · j/d forward · 0 latest"),
             "once the operator scrolls off the live edge, the panel should say "
             "so explicitly instead of making the result invisible",
         )
@@ -674,9 +688,9 @@ class NarratorReaderContract(unittest.TestCase):
         inline_idx = None
         for i, r in enumerate(renderables):
             title = getattr(r, "title", None)
-            if title == "[grey50]status + live[/grey50]":
+            if title == self._panel_title_markup("status + live"):
                 status_live_idx = i
-            elif title == "[grey50]history[/grey50]":
+            elif title == self._panel_title_markup("history"):
                 history_idx = i
             elif isinstance(r, FocusPreviewInlineImage):
                 inline_idx = i
@@ -708,7 +722,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertTrue(display.focus_preview_pending)
         self.assertIn(
-            "[grey50]focus preview · pending · 15-blue/fr-12a[/grey50]",
+            self._panel_title_markup("focus preview · pending · 15-blue/fr-12a"),
             titled_panels,
         )
 
@@ -800,7 +814,7 @@ class NarratorReaderContract(unittest.TestCase):
         group = display.render()
         live_panel = next(
             panel for panel in group.renderables
-            if getattr(panel, "title", None) == "[grey50]status + live[/grey50]"
+            if getattr(panel, "title", None) == self._panel_title_markup("status + live")
         )
         panel_text = _extract_plain(live_panel.renderable)
 
@@ -2864,6 +2878,71 @@ class NarratorReaderContract(unittest.TestCase):
             self._hex_luminance(basis_style) - self._hex_luminance(topic_style),
             80,
             "ordinary match topics should stay in a readable indigo band instead of collapsing into a much darker blue haze than the structured rows beneath them",
+        )
+
+    def test_focus_preview_hard_paper_stays_in_a_darker_parchment_lane(self):
+        paper_rgb = narrator_reader._FOCUS_PREVIEW_HARD_PAPER_RGB
+
+        self.assertLess(
+            sum(paper_rgb) / 3,
+            180,
+            "the steady focus preview paper should sit in a materially darker parchment lane instead of blowing out into a bright cream slab against the dark frame",
+        )
+        self.assertGreater(
+            paper_rgb[0],
+            paper_rgb[1],
+            "parchment should stay warm red-led rather than flattening toward neutral grey",
+        )
+        self.assertGreater(
+            paper_rgb[1],
+            paper_rgb[2],
+            "parchment should keep an amber/bone falloff rather than a flat beige-white top end",
+        )
+
+    def test_dim_panel_titles_stop_using_literal_dead_grey(self):
+        display = self._make_display()
+        display.status_line = "Tracing the stoichiometry setup."
+        display.focus_preview_label = "15-blue/fr-12a"
+        display.focus_preview_renderable = Text("preview")
+
+        group = display.render()
+        titles = [
+            getattr(panel, "title", None)
+            for panel in group.renderables
+            if getattr(panel, "title", None) is not None
+        ]
+
+        self.assertTrue(titles, "expected titled Paint Dry panels to render")
+        self.assertTrue(
+            all("grey50" not in title for title in titles),
+            "panel titles should come from the screen palette instead of falling back to literal grey50, which makes the faint chrome read dead and grim",
+        )
+
+    def test_history_family_colors_keep_more_bone_and_moss_air(self):
+        line_rgb = narrator_reader._BASE_RGB["line"]
+        line_alt_rgb = narrator_reader._BASE_RGB["line_alt"]
+        checkpoint_rgb = narrator_reader._BASE_RGB["checkpoint"]
+        checkpoint_alt_rgb = narrator_reader._BASE_RGB["checkpoint_alt"]
+
+        self.assertGreater(
+            sum(line_rgb) / 3,
+            152,
+            "the moss lane should lift out of the murk enough to read as faint color instead of dim grey-green",
+        )
+        self.assertGreater(
+            sum(line_alt_rgb) / 3,
+            194,
+            "the bone lane should reclaim more breathing room instead of reading like a dark beige shadow",
+        )
+        self.assertGreater(
+            sum(checkpoint_rgb) / 3,
+            150,
+            "checkpoint moss should stay in the same lighter family as the history rows instead of settling into a grim steel-dark tier",
+        )
+        self.assertGreater(
+            sum(checkpoint_alt_rgb) / 3,
+            198,
+            "checkpoint bone should keep a visibly lighter warm lane so the alternating stack still feels airy under the headers",
         )
 
     def test_display_no_longer_exposes_scrollback_snapshot_affordance(self):

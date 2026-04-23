@@ -403,7 +403,7 @@ _FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
 _FOCUS_PREVIEW_COMPANION_SCALE = 0.69
 _FOCUS_PREVIEW_PENDING_FPS = 8.0
 _FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
-_FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)  # used only by the transition
+_FOCUS_PREVIEW_PAPER_RGB = (178, 162, 138)  # used only by the transition
                                              # (pending) glyph overlay; the
                                              # steady-state renderer uses
                                              # the harder colors below
@@ -411,8 +411,8 @@ _FOCUS_PREVIEW_PAPER_RGB = (204, 196, 186)  # used only by the transition
 # the panel background so binary-thresholded cells still read cleanly, but
 # preserve enough parchment warmth that the opaque paper field doesn't flatten
 # back into a generic gray-beige slab on the dark Paint Dry panel.
-_FOCUS_PREVIEW_HARD_INK_RGB = (50, 54, 62)
-_FOCUS_PREVIEW_HARD_PAPER_RGB = (232, 214, 186)
+_FOCUS_PREVIEW_HARD_INK_RGB = (54, 46, 38)
+_FOCUS_PREVIEW_HARD_PAPER_RGB = (188, 166, 136)
 _FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
 _FOCUS_PREVIEW_OVERLAY_RGBS = (
     (108, 122, 154),
@@ -469,13 +469,13 @@ _HISTORY_GROUP_DIM_STEP = 0.07  # each successive thought line under a header
 # as the live-field background, the unknown-verdict topic fallback,
 # and the global shimmer-peak highlight color.
 _BASE_RGB = {
-    "line": (135, 160, 145),     # muted celadon — sage moss row,
+    "line": (154, 179, 163),     # muted celadon — sage moss row,
                                   # desaturated cousin of topic_match
                                   # so the verdict variant still pops
-    "line_alt": (198, 186, 168), # warm bone — the alternating row should
+    "line_alt": (214, 200, 180), # warm bone — the alternating row should
                                   # read clearly against the moss row,
                                   # not collapse into muddy ochre
-    "topic": (220, 205, 180),    # warm bone — fallback when verdict is
+    "topic": (228, 212, 190),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
     "header": (156, 52, 62),     # lacquered burgundy — red-led enough to
@@ -505,12 +505,12 @@ _BASE_RGB = {
     "topic_within_band": (104, 142, 118), # celadon lawful-range hit —
                                           # still a success color, but softer
                                           # than the ceiling-hit indigo
-    "checkpoint": (138, 156, 142),        # anchored moss checkpoint —
+    "checkpoint": (158, 176, 162),        # anchored moss checkpoint —
                                           # checkpoints should feel like
                                           # compressed descendants of the
                                           # live history rows, not a separate
                                           # steel annotation layer
-    "checkpoint_alt": (202, 190, 170),    # anchored warm bone checkpoint —
+    "checkpoint_alt": (220, 206, 184),    # anchored warm bone checkpoint —
                                           # brighter alternating companion
                                           # so the stack keeps the visible
                                           # moss/bone cadence the operator
@@ -627,6 +627,11 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "topic_overshoot",
     "topic_undershoot",
 })
+
+_CHROME_FAINT_MOSS_RGB = (134, 150, 140)
+_CHROME_FAINT_BONE_RGB = (182, 168, 150)
+_PANEL_TITLE_RGB = (190, 176, 156)
+_PANEL_SUBTITLE_RGB = (128, 142, 134)
 
 # Live panel reserves a fixed vertical footprint so it doesn't jitter
 # the layout when bonsai produces a long line that wraps. The panel
@@ -4606,6 +4611,10 @@ class PaintDryDisplay:
         # All _apply_shimmer calls in this render pass will read from
         # the same advanced snapshot.
         now = time.monotonic()
+        chrome_faint_moss = _rgb_to_hex(_CHROME_FAINT_MOSS_RGB)
+        chrome_faint_bone = _rgb_to_hex(_CHROME_FAINT_BONE_RGB)
+        panel_title_hex = _rgb_to_hex(_PANEL_TITLE_RGB)
+        panel_subtitle_hex = _rgb_to_hex(_PANEL_SUBTITLE_RGB)
         if self._last_phase_update_s is None:
             dt = 0.0
         else:
@@ -5142,7 +5151,7 @@ class PaintDryDisplay:
 
         if displayed_live:
             live_text = Text(no_wrap=False, overflow="fold")
-            cursor_style = _rgb_to_hex(_EMBER_ACCENT_RGB) if is_active else "grey50"
+            cursor_style = _rgb_to_hex(_EMBER_ACCENT_RGB) if is_active else chrome_faint_bone
             live_text.append("▌ ", style=cursor_style)
             freeze_age_s = None
             if not is_active and self._freeze_started_at is not None:
@@ -5159,7 +5168,7 @@ class PaintDryDisplay:
             )
         else:
             live_text = Text(no_wrap=False, overflow="fold")
-            live_text.append("▌ ", style="grey39")
+            live_text.append("▌ ", style=chrome_faint_moss)
             _render_live_undulating(
                 live_text,
                 _live_placeholder(now),
@@ -5190,14 +5199,14 @@ class PaintDryDisplay:
                 wrap_width=wrap_width,
             )
         else:
-            status_text.append("▌ ", style="grey39")
-            status_text.append("AWAITING STATUS", style="grey50")
+            status_text.append("▌ ", style=chrome_faint_moss)
+            status_text.append("AWAITING STATUS", style=chrome_faint_bone)
 
         live_panel = Panel(
             Group(status_text, live_text),
             border_style="#3d4458",
             padding=(0, 1),
-            title="[grey50]status + live[/grey50]",
+            title=f"[{panel_title_hex}]status + live[/{panel_title_hex}]",
             title_align="left",
             # Fixed height: top border + content + bottom border.
             # Locks the live panel's vertical footprint so the layout
@@ -5229,12 +5238,12 @@ class PaintDryDisplay:
             # the image cells without touching them.
             focus_preview_panel = self.focus_preview_inline_renderable
         elif have_kitty or have_inline or have_fallback:
-            preview_title = "[grey50]focus preview"
+            preview_title = f"[{panel_title_hex}]focus preview"
             if self.focus_preview_pending:
                 preview_title += " · pending"
             if self.focus_preview_label:
                 preview_title += f" · {self.focus_preview_label}"
-            preview_title += "[/grey50]"
+            preview_title += f"[/{panel_title_hex}]"
             # Pending or fallback path: use the half-block renderer
             # wrapped in a Panel. During the pending transition the
             # inline image path falls through to the half-block
@@ -5262,7 +5271,7 @@ class PaintDryDisplay:
                 # blank placeholder, the next focus_preview event
                 # will swap it for the real inline image.
                 preview_renderable = Text(
-                    "(preview loading…)", style="grey50 italic"
+                    "(preview loading…)", style=f"{chrome_faint_bone} italic"
                 )
             focus_preview_panel = Panel(
                 Align.center(preview_renderable),
@@ -5380,13 +5389,13 @@ class PaintDryDisplay:
                         cycle_s=entry_cycle,
                         **history_modulation_kwargs,
                     )
-                    history_text.append(" ", style="grey39")
+                    history_text.append(" ", style=chrome_faint_moss)
                     _append_wrapped_shimmer_block(
                         history_text, rest_part, "header",
                         layer_index=render_layer,
                         first_indent_width=len(indent) + len(index_part) + 1,
                         continuation_prefix=" " * (len(indent) + len(index_part) + 1),
-                        continuation_prefix_style="grey39",
+                        continuation_prefix_style=chrome_faint_moss,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         **history_modulation_kwargs,
@@ -5397,14 +5406,14 @@ class PaintDryDisplay:
                         layer_index=render_layer,
                         first_indent_width=len(indent),
                         continuation_prefix=" " * len(indent),
-                        continuation_prefix_style="grey39",
+                        continuation_prefix_style=chrome_faint_moss,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         **history_modulation_kwargs,
                     )
             elif kind == "topic":
                 indent = "  · "
-                history_text.append(indent, style="grey50")
+                history_text.append(indent, style=chrome_faint_bone)
                 # Pick the topic color variant based on the stored
                 # verdict (third tuple slot, named "parity" for line
                 # entries but reused as the verdict string for topic
@@ -5423,14 +5432,14 @@ class PaintDryDisplay:
                         time_prefix,
                         style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
                     )
-                    history_text.append("  ·  ", style="grey50")
+                    history_text.append("  ·  ", style=chrome_faint_bone)
                     extra_indent = len(time_prefix) + len("  ·  ")
                     _append_wrapped_shimmer_block(
                         history_text, rest, topic_kind,
                         layer_index=render_layer,
                         first_indent_width=len(indent) + extra_indent,
                         continuation_prefix=" " * (len(indent) + extra_indent),
-                        continuation_prefix_style="grey50",
+                        continuation_prefix_style=chrome_faint_bone,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         **history_modulation_kwargs,
@@ -5441,7 +5450,7 @@ class PaintDryDisplay:
                         layer_index=render_layer,
                         first_indent_width=len(indent),
                         continuation_prefix=" " * len(indent),
-                        continuation_prefix_style="grey50",
+                        continuation_prefix_style=chrome_faint_bone,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
                         **history_modulation_kwargs,
@@ -5449,7 +5458,7 @@ class PaintDryDisplay:
             elif kind == "basis":
                 indent = "  ≡ "
                 structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
-                history_text.append(indent, style="grey50")
+                history_text.append(indent, style=chrome_faint_bone)
                 history_text.append(
                     "Basis: ",
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
@@ -5459,7 +5468,7 @@ class PaintDryDisplay:
                     layer_index=render_layer,
                     first_indent_width=len(indent) + len("Basis: "),
                     continuation_prefix=" " * (len(indent) + len("Basis: ")),
-                    continuation_prefix_style="grey50",
+                    continuation_prefix_style=chrome_faint_bone,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
@@ -5468,7 +5477,7 @@ class PaintDryDisplay:
                 indent = "  ≡ "
                 structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
-                history_text.append(indent, style="grey50")
+                history_text.append(indent, style=chrome_faint_bone)
                 history_text.append(
                     label,
                     style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
@@ -5478,7 +5487,7 @@ class PaintDryDisplay:
                     layer_index=render_layer,
                     first_indent_width=len(indent) + len(label),
                     continuation_prefix=" " * (len(indent) + len(label)),
-                    continuation_prefix_style="grey50",
+                    continuation_prefix_style=chrome_faint_bone,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
@@ -5488,7 +5497,7 @@ class PaintDryDisplay:
                 label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
                 label_rgb = _ALERT_ACCENT_RGB
                 structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
-                history_text.append(indent, style="grey50")
+                history_text.append(indent, style=chrome_faint_bone)
                 history_text.append(
                     label,
                     style=f"bold {_rgb_to_hex(label_rgb)}",
@@ -5498,7 +5507,7 @@ class PaintDryDisplay:
                     layer_index=render_layer,
                     first_indent_width=len(indent) + len(label),
                     continuation_prefix=" " * (len(indent) + len(label)),
-                    continuation_prefix_style="grey50",
+                    continuation_prefix_style=chrome_faint_bone,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
@@ -5519,14 +5528,14 @@ class PaintDryDisplay:
                     layer_index=render_layer,
                     first_indent_width=len(indent),
                     continuation_prefix=" " * len(indent),
-                    continuation_prefix_style="grey50",
+                    continuation_prefix_style=chrome_faint_bone,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
                 )
             else:
                 indent = "    "
-                history_text.append(indent, style="dim")
+                history_text.append(indent, style=f"{chrome_faint_moss} dim")
                 # Pick mauve or warmer pink based on the line's stored
                 # parity. Stored per-entry (not computed from position)
                 # so the alternation is stable as new lines arrive and
@@ -5537,7 +5546,7 @@ class PaintDryDisplay:
                     layer_index=render_layer,
                     first_indent_width=len(indent),
                     continuation_prefix=indent,
-                    continuation_prefix_style="dim",
+                    continuation_prefix_style=f"{chrome_faint_moss} dim",
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
@@ -5545,27 +5554,27 @@ class PaintDryDisplay:
 
         if not display_entries:
             history_text = Text(
-                "(waiting for first summary...)", style="grey39"
+                "(waiting for first summary...)", style=chrome_faint_moss
             )
 
         viewport = self.history_viewport()
         if not viewport.at_live_edge:
             history_subtitle = (
-                f"[grey35]{viewport.scroll_offset} rows back · "
-                "j/d forward · 0 latest[/grey35]"
+                f"[{panel_subtitle_hex}]{viewport.scroll_offset} rows back · "
+                f"j/d forward · 0 latest[/{panel_subtitle_hex}]"
             )
         elif viewport.has_overflow:
             history_subtitle = (
-                "[grey35]live edge · k/u back · j/d forward · 0 latest[/grey35]"
+                f"[{panel_subtitle_hex}]live edge · k/u back · j/d forward · 0 latest[/{panel_subtitle_hex}]"
             )
         else:
-            history_subtitle = "[grey35]live edge · no overflow yet[/grey35]"
+            history_subtitle = f"[{panel_subtitle_hex}]live edge · no overflow yet[/{panel_subtitle_hex}]"
 
         history_panel = Panel(
             history_text,
             border_style="#3d4458",
             padding=(0, 1),
-            title="[grey50]history[/grey50]",
+            title=f"[{panel_title_hex}]history[/{panel_title_hex}]",
             title_align="left",
             subtitle=history_subtitle,
             subtitle_align="left",
@@ -5612,7 +5621,7 @@ class PaintDryDisplay:
             elapsed = time.monotonic() - self.wrap_up_pending_started
             wrap_text = Text(
                 f"writing post-game commentary... ({elapsed:.0f}s)",
-                style="grey50 italic",
+                style=f"{chrome_faint_bone} italic",
                 no_wrap=False,
                 overflow="fold",
             )
@@ -5620,7 +5629,7 @@ class PaintDryDisplay:
                 wrap_text,
                 border_style="#3d4458",
                 padding=(0, 1),
-                title="[grey50]post-game · pending[/grey50]",
+                title=f"[{panel_title_hex}]post-game · pending[/{panel_title_hex}]",
                 title_align="left",
             )
 
@@ -5643,7 +5652,7 @@ class PaintDryDisplay:
         if self.session_ended:
             footer = Text(
                 "  ▌ session ended — k/j scroll, u/d page, 0 live edge, q/enter/esc close ▐",
-                style="grey50 italic",
+                style=f"{chrome_faint_bone} italic",
             )
             panels.append(footer)
         return Group(*panels)
