@@ -41,13 +41,13 @@ class _DummySink:
     def write_review_marker(self, text: str) -> None:
         return None
 
-    def write_read(self, text: str) -> None:
+    def write_read(self, text: str, **_kwargs) -> None:
         self.structured_rows.append(("read", text))
 
-    def write_salvage(self, text: str) -> None:
+    def write_salvage(self, text: str, **_kwargs) -> None:
         self.structured_rows.append(("salvage", text))
 
-    def write_hinge(self, text: str) -> None:
+    def write_hinge(self, text: str, **_kwargs) -> None:
         self.structured_rows.append(("hinge", text))
 
 
@@ -112,10 +112,15 @@ class _DossierAfterActionNarrator(ThinkingNarrator):
 class _PromptCapturingDossierNarrator(ThinkingNarrator):
     def __init__(self, sink: _DummySink) -> None:
         super().__init__(sink)
-        self.enqueued_dossier_prompts: list[str] = []
+        self.enqueued_dossier_prompts: list[tuple[str, str | None]] = []
 
-    def _enqueue_dossier_job(self, prompt: str) -> None:  # type: ignore[override]
-        self.enqueued_dossier_prompts.append(prompt)
+    def _enqueue_dossier_job(
+        self,
+        prompt: str,
+        *,
+        target: str | None = None,
+    ) -> None:  # type: ignore[override]
+        self.enqueued_dossier_prompts.append((prompt, target))
 
     def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
         return None
@@ -342,7 +347,7 @@ class ThinkingNarratorContract(unittest.TestCase):
                 "student_answer": "1",
                 "professor_score": 2.0,
                 "truth_score": 2.0,
-                "professor_mark": "correct",
+                "professor_mark": "partial",
                 "notes": "glyph ambiguity",
                 "acceptable_score_floor": None,
                 "acceptable_score_ceiling": None,
@@ -352,13 +357,13 @@ class ThinkingNarratorContract(unittest.TestCase):
             "Prediction",
             (),
             {
-                "model_score": 2.0,
+                "model_score": 1.0,
                 "model_read": "1",
                 "model_reasoning": (
                     "The final glyph remains ambiguous between 1 and 2, "
-                    "but the surrounding chemistry work supports 1."
+                    "but the surrounding chemistry work supports 1 and still deserves partial credit."
                 ),
-                "score_basis": "Accepted the coherent orbital-box work despite the ambiguous final digit.",
+                "score_basis": "Preserved partial credit for the coherent orbital-box work despite the ambiguous final digit.",
                 "truncated": False,
             },
         )()
@@ -556,6 +561,46 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertIn(
             "If the grader never stabilized to a final score, say that explicitly when it matters.",
             prompt,
+        )
+
+    def test_full_credit_exact_hit_skips_background_dossier_even_if_reasoning_is_ambiguous(self):
+        sink = _DummySink()
+        narrator = _PromptCapturingDossierNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "27-blue-2023",
+                "question_id": "fr-12a",
+                "answer_type": "lewis_structure",
+                "max_points": 2.0,
+                "student_answer": "two resonance structures",
+                "professor_score": 2.0,
+                "truth_score": 2.0,
+                "professor_mark": "correct",
+                "notes": "clean full credit",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 2.0,
+                "model_read": "two resonance structures",
+                "model_reasoning": "The omitted lone pairs are a little ambiguous, but the final two drawings are chemically complete enough for full credit.",
+                "score_basis": "Full credit awarded for correct resonance structures and complete electron accounting.",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(71.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            narrator.enqueued_dossier_prompts,
+            [],
+            "exact full-credit hits should not emit trailing dossier rows just because the reasoning mentions ambiguity in passing",
         )
 
     def test_qwen36_sync_narrator_requests_disable_thinking(self):

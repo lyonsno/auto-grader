@@ -1289,7 +1289,7 @@ class ThinkingNarrator:
                 return False
 
         if job["kind"] == "generated_dossier":
-            return self._write_dossier_rows(text)
+            return self._write_dossier_rows(text, target=job.get("target"))
 
         writer = getattr(self._sink, f"write_{job['row_type']}", None)
         if writer is None:
@@ -1322,13 +1322,23 @@ class ThinkingNarrator:
         with self._lock:
             self._legibility_jobs.append(payload)
 
-    def _enqueue_dossier_job(self, prompt: str) -> None:
+    def _enqueue_dossier_job(
+        self,
+        prompt: str,
+        *,
+        target: str | None = None,
+    ) -> None:
         if not prompt.strip():
             return
         with self._lock:
-            self._legibility_jobs.append(
-                {"kind": "generated_dossier", "row_type": "dossier", "prompt": prompt}
-            )
+            payload = {
+                "kind": "generated_dossier",
+                "row_type": "dossier",
+                "prompt": prompt,
+            }
+            if target:
+                payload["target"] = target
+            self._legibility_jobs.append(payload)
 
     @staticmethod
     def _clean_json_response(text: str) -> str:
@@ -1338,7 +1348,7 @@ class ThinkingNarrator:
             cleaned = re.sub(r"\s*```$", "", cleaned)
         return cleaned.strip()
 
-    def _write_dossier_rows(self, text: str) -> bool:
+    def _write_dossier_rows(self, text: str, *, target: str | None = None) -> bool:
         try:
             payload = json.loads(self._clean_json_response(text))
         except json.JSONDecodeError:
@@ -1363,7 +1373,7 @@ class ThinkingNarrator:
                     row_type,
                 )
                 continue
-            writer(body)
+            writer(body, target=target)
             emitted = True
         return emitted
 
@@ -1382,12 +1392,21 @@ class ThinkingNarrator:
         prediction: Any,
         item: Any,
     ) -> bool:
-        if elapsed >= _DOSSIER_LONG_ELAPSED_SECONDS:
-            return True
-
         truth_score = getattr(item, "truth_score", item.professor_score)
         score_disagreement = abs(prediction.model_score - truth_score) > 1e-9
         partial_credit = 0.0 < prediction.model_score < item.max_points
+        truncated = bool(getattr(prediction, "truncated", False))
+        full_credit_exact = (
+            not truncated
+            and abs(prediction.model_score - truth_score) < 1e-9
+            and abs(prediction.model_score - item.max_points) < 1e-9
+        )
+
+        if full_credit_exact:
+            return False
+
+        if elapsed >= _DOSSIER_LONG_ELAPSED_SECONDS:
+            return True
 
         with self._lock:
             max_dedupe_streak = self._item_max_dedupe_streak
@@ -1579,7 +1598,8 @@ class ThinkingNarrator:
                             elapsed=elapsed,
                             prediction=prediction,
                             item=item,
-                        )
+                        ),
+                        target=f"{item.exam_id}/{item.question_id}",
                     )
                 self._schedule_idle_legibility_if_needed()
                 return
@@ -1627,7 +1647,8 @@ class ThinkingNarrator:
                         elapsed=elapsed,
                         prediction=prediction,
                         item=item,
-                    )
+                    ),
+                    target=f"{item.exam_id}/{item.question_id}",
                 )
             self._schedule_idle_legibility_if_needed()
         except Exception:

@@ -236,14 +236,24 @@ class NarratorSink:
     def write_basis(self, text: str) -> None:
         self._write_structured_row("basis", "Basis", text)
 
-    def write_read(self, text: str) -> None:
-        self._write_structured_row("read", "Read", text)
+    def write_read(self, text: str, *, target: str | None = None) -> None:
+        self._write_structured_row("read", "Read", text, target=target)
 
-    def write_salvage(self, text: str) -> None:
-        self._write_structured_row("salvage", "What survives", text)
+    def write_salvage(self, text: str, *, target: str | None = None) -> None:
+        self._write_structured_row(
+            "salvage",
+            "What survives",
+            text,
+            target=target,
+        )
 
-    def write_hinge(self, text: str) -> None:
-        self._write_structured_row("hinge", "Deciding issue", text)
+    def write_hinge(self, text: str, *, target: str | None = None) -> None:
+        self._write_structured_row(
+            "hinge",
+            "Deciding issue",
+            text,
+            target=target,
+        )
 
     def write_ambiguity(self, text: str) -> None:
         self._write_structured_row("ambiguity", "Ambiguity", text)
@@ -377,12 +387,22 @@ class NarratorSink:
             except Exception:
                 pass
 
-    def _write_structured_row(self, event_type: str, label: str, text: str) -> None:
+    def _write_structured_row(
+        self,
+        event_type: str,
+        label: str,
+        text: str,
+        *,
+        target: str | None = None,
+    ) -> None:
         """Write one structured legibility row under the current item."""
         if not text:
             return
         with self._lock:
-            self._emit({"type": event_type, "text": text, "label": label})
+            msg = {"type": event_type, "text": text, "label": label}
+            if target:
+                msg["target"] = target
+            self._emit(msg)
             if self._txt_file is not None:
                 self._txt_file.write(f"  {label}: {text}\n")
             if not self.config.spawn_terminal:

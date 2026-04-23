@@ -3196,7 +3196,7 @@ class NarratorReaderContract(unittest.TestCase):
         expected_exact = _scorebug_big_value_rows("2.0/6.0")
         expected_floor_met = _scorebug_big_value_rows("4.5/5.5")
         expected_partial = _scorebug_big_value_rows("0.0/0.5")
-        expected_withheld = _scorebug_big_value_rows("1.5/6.0")
+        expected_below_floor = _scorebug_big_value_rows("1.0/5.5")
 
         self.assertIn("PROJECT PAINT DRY", _extract_plain(header_panel.renderable))
         self.assertIn("CURRENT MODEL", scorebug_text)
@@ -3207,7 +3207,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("EXACT", scorebug_text)
         self.assertIn("FLOOR MET", scorebug_text)
         self.assertIn("PARTIAL", scorebug_text)
-        self.assertIn("WITHHELD", scorebug_text)
+        self.assertIn("BELOW FLOOR", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
         normalized_top = self._normalize_scorebug_texture(tally_value_top.plain)
         normalized_mid = self._normalize_scorebug_texture(tally_value_mid.plain)
@@ -3221,9 +3221,9 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn(expected_partial[0], normalized_top)
         self.assertIn(expected_partial[1], normalized_mid)
         self.assertIn(expected_partial[2], normalized_bottom)
-        self.assertIn(expected_withheld[0], normalized_top)
-        self.assertIn(expected_withheld[1], normalized_mid)
-        self.assertIn(expected_withheld[2], normalized_bottom)
+        self.assertIn(expected_below_floor[0], normalized_top)
+        self.assertIn(expected_below_floor[1], normalized_mid)
+        self.assertIn(expected_below_floor[2], normalized_bottom)
         current_model_bg = self._background_hex(
             self._style_for_substring(scorebug_text_obj, "CURRENT MODEL")
         )
@@ -3257,13 +3257,20 @@ class NarratorReaderContract(unittest.TestCase):
         exact_label_style = self._style_for_substring(tally_text_obj, "EXACT")
         floor_met_label_style = self._style_for_substring(tally_text_obj, "FLOOR MET")
         partial_label_style = self._style_for_substring(tally_text_obj, "PARTIAL")
-        withheld_label_style = self._style_for_substring(tally_text_obj, "WITHHELD")
+        below_floor_label_style = self._style_for_substring(
+            tally_text_obj, "BELOW FLOOR"
+        )
         exact_label_bg = self._background_hex(exact_label_style)
         floor_met_label_bg = self._background_hex(floor_met_label_style)
         partial_label_bg = self._background_hex(partial_label_style)
-        withheld_label_bg = self._background_hex(withheld_label_style)
+        below_floor_label_bg = self._background_hex(below_floor_label_style)
         self.assertEqual(
-            {exact_label_bg, floor_met_label_bg, partial_label_bg, withheld_label_bg},
+            {
+                exact_label_bg,
+                floor_met_label_bg,
+                partial_label_bg,
+                below_floor_label_bg,
+            },
             {exact_label_bg},
             "the tally labels should sit on one shared charcoal field instead of three color-coded boards",
         )
@@ -3273,7 +3280,7 @@ class NarratorReaderContract(unittest.TestCase):
                     self._foreground_hex(exact_label_style),
                     self._foreground_hex(floor_met_label_style),
                     self._foreground_hex(partial_label_style),
-                    self._foreground_hex(withheld_label_style),
+                    self._foreground_hex(below_floor_label_style),
                 }
             ),
             2,
@@ -3289,7 +3296,7 @@ class NarratorReaderContract(unittest.TestCase):
         exact_start = tally_text_obj.plain.index("EXACT")
         floor_met_start = tally_text_obj.plain.index("FLOOR MET")
         partial_start = tally_text_obj.plain.index("PARTIAL")
-        withheld_start = tally_text_obj.plain.index("WITHHELD")
+        below_floor_start = tally_text_obj.plain.index("BELOW FLOOR")
         self.assertGreater(
             floor_met_start,
             exact_start,
@@ -3301,9 +3308,9 @@ class NarratorReaderContract(unittest.TestCase):
             "PARTIAL should appear to the right of FLOOR MET in the scorebug strip",
         )
         self.assertGreater(
-            withheld_start,
+            below_floor_start,
             partial_start,
-            "WITHHELD should appear rightmost among the grading tally cells",
+            "BELOW FLOOR should appear rightmost among the grading tally cells",
         )
 
         def _first_strong_style_in_cell(row: Text, start: int) -> str:
@@ -3341,15 +3348,15 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_top,
             expected_partial[0].strip(),
         )
-        withheld_top_style = self._style_for_normalized_scorebug_substring(
+        below_floor_top_style = self._style_for_normalized_scorebug_substring(
             tally_value_top,
-            expected_withheld[0].strip(),
+            expected_below_floor[0].strip(),
         )
         self.assertEqual(
             {
                 self._background_hex(exact_top_style),
                 self._background_hex(partial_top_style),
-                self._background_hex(withheld_top_style),
+                self._background_hex(below_floor_top_style),
             },
             {None},
             "scorebug value strokes should no longer carry filled backgrounds; "
@@ -3395,9 +3402,9 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_mid,
             expected_partial[1].strip(),
         )
-        withheld_mid_style = self._style_for_normalized_scorebug_substring(
+        below_floor_mid_style = self._style_for_normalized_scorebug_substring(
             tally_value_mid,
-            expected_withheld[1].strip(),
+            expected_below_floor[1].strip(),
         )
         exact_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
@@ -3451,9 +3458,9 @@ class NarratorReaderContract(unittest.TestCase):
             tally_value_bottom,
             expected_partial[2].strip(),
         )
-        withheld_bottom_style = self._style_for_normalized_scorebug_substring(
+        below_floor_bottom_style = self._style_for_normalized_scorebug_substring(
             tally_value_bottom,
-            expected_withheld[2].strip(),
+            expected_below_floor[2].strip(),
         )
         self.assertNotEqual(
             partial_top_style,
@@ -3461,32 +3468,32 @@ class NarratorReaderContract(unittest.TestCase):
             "partial-credit board should also drift tonally instead of reading as a flat tech slab",
         )
         self.assertNotEqual(
-            withheld_top_style,
-            withheld_bottom_style,
-            "withheld-credit board should also drift tonally instead of reading as a flat tech slab",
+            below_floor_top_style,
+            below_floor_bottom_style,
+            "below-floor board should also drift tonally instead of reading as a flat tech slab",
         )
         top_board_styles = {
             _first_strong_style_in_cell(tally_value_top, exact_start),
             _first_strong_style_in_cell(tally_value_top, floor_met_start),
             _first_strong_style_in_cell(tally_value_top, partial_start),
-            _first_strong_style_in_cell(tally_value_top, withheld_start),
+            _first_strong_style_in_cell(tally_value_top, below_floor_start),
         }
         mid_board_styles = {
             _first_strong_style_in_cell(tally_value_mid, exact_start),
             _first_strong_style_in_cell(tally_value_mid, floor_met_start),
             _first_strong_style_in_cell(tally_value_mid, partial_start),
-            _first_strong_style_in_cell(tally_value_mid, withheld_start),
+            _first_strong_style_in_cell(tally_value_mid, below_floor_start),
         }
         bottom_board_styles = {
             _first_strong_style_in_cell(tally_value_bottom, exact_start),
             _first_strong_style_in_cell(tally_value_bottom, floor_met_start),
             _first_strong_style_in_cell(tally_value_bottom, partial_start),
-            _first_strong_style_in_cell(tally_value_bottom, withheld_start),
+            _first_strong_style_in_cell(tally_value_bottom, below_floor_start),
         }
         self.assertEqual(
             len(top_board_styles),
             4,
-            "EXACT, FLOOR MET, PARTIAL, and WITHHELD should each keep a distinct top-row board family",
+            "EXACT, FLOOR MET, PARTIAL, and BELOW FLOOR should each keep a distinct top-row board family",
         )
         self.assertEqual(
             len(mid_board_styles),
@@ -3507,7 +3514,7 @@ class NarratorReaderContract(unittest.TestCase):
                     exact_top_strong,
                     floor_met_top_style,
                     partial_top_style,
-                    withheld_top_style,
+                    below_floor_top_style,
                 }
             ),
             "the main numeral strokes should now carry more white weight so the scorebug can sit in the same bold white language as the surrounding interface",
@@ -3556,6 +3563,30 @@ class NarratorReaderContract(unittest.TestCase):
             display.score_partial_potential,
             0.5,
             "the PARTIAL plate should report the lawful headroom above the floor",
+        )
+
+    def test_scorebug_below_floor_ignores_truth_gap_when_floor_is_zero(self):
+        display = self._make_display()
+
+        display.on_topic(
+            "106s · Grader: 0/1 · Prof: 1/1.\nBand: 0/1 to 1/1",
+            verdict="undershoot",
+            grader_score=0.0,
+            truth_score=1.0,
+            max_points=1.0,
+            acceptable_score_floor=0.0,
+            acceptable_score_ceiling=1.0,
+        )
+
+        self.assertEqual(
+            display.score_floor_met_potential,
+            0.0,
+            "a zero lawful floor should not conjure red scoreboard debt just because truth was higher",
+        )
+        self.assertEqual(
+            display.score_below_floor_points,
+            0.0,
+            "BELOW FLOOR should track misses below the lawful minimum, not every truth-gap miss",
         )
 
     def test_scorebug_counts_truth_match_as_exact_even_with_band(self):
@@ -3949,7 +3980,7 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertIn("EXACT", scorebug_text)
         self.assertIn("FLOOR MET", scorebug_text)
         self.assertIn("PARTIAL", scorebug_text)
-        self.assertIn("WITHHELD", scorebug_text)
+        self.assertIn("BELOW FLOOR", scorebug_text)
         self.assertEqual(spacer_row.plain.strip(), "")
         self.assertIn(
             zero_rows[0],
@@ -5444,6 +5475,36 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertIn("  ≡ Basis: ABCDEFGHI", lines)
         self.assertIn((" " * len("  ≡ Basis: ")) + "JKLMNO", lines)
+
+    def test_targeted_structured_rows_attach_to_matching_problem_group(self) -> None:
+        display = self._make_display()
+        display.on_header("[1/2] exam 15-blue · problem fr-11c (exact_match, 0.5 pts)")
+        display.on_topic("183s · grader did not commit to a score (truncated)")
+        display.on_header("[2/2] exam 15-blue · problem fr-12b (lewis_structure, 2.0 pts)")
+        display.on_topic("71s · Grader: 2/2 · Prof: 1/2")
+
+        display.on_read(
+            "Ambiguous crossed-out digit conflicts with box diagram showing one unpaired electron.",
+            target="15-blue/fr-11c",
+        )
+
+        history = list(display.history)
+        read_index = next(
+            index
+            for index, (kind, text, _parity) in enumerate(history)
+            if kind == "read" and "Ambiguous crossed-out digit" in text
+        )
+        second_header_index = next(
+            index
+            for index, (kind, text, _parity) in enumerate(history)
+            if kind == "header" and "problem fr-12b" in text
+        )
+
+        self.assertLess(
+            read_index,
+            second_header_index,
+            "late dossier rows must land under their originating problem group instead of slipping under the current problem when the async call returns after the next header has started",
+        )
 
     def test_active_session_keeps_animating_after_live_freeze_fade(self) -> None:
         display = self._make_display()

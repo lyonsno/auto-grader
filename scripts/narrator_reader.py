@@ -119,6 +119,10 @@ _TIME_PREFIX_RE = re.compile(r"^(\d+s)\s*·\s*(.*)$", re.DOTALL)
 # The index marker gets the cool steel-blue accent for an always-on
 # cool note that's structural metadata, not status.
 _HEADER_INDEX_RE = re.compile(r"^(\[(?:item\s+)?\d+/\d+\])\s*(.*)$", re.DOTALL)
+_HEADER_TARGET_RE = re.compile(
+    r"^exam\s+(.+?)\s*·\s*problem\s+([^\s(]+)",
+    re.IGNORECASE,
+)
 _CHECKPOINT_LABEL_RE = re.compile(
     r"^(?:\*+|`+)?\s*(Core issue|Evidence|Context)\s*:\s*(?:\*+|`+)?\s*(.*)$",
     re.IGNORECASE,
@@ -3873,7 +3877,7 @@ class PaintDryDisplay:
         self.score_floor_met_potential = 0.0
         self.score_partial_points = 0.0
         self.score_partial_potential = 0.0
-        self.score_withheld_points = 0.0
+        self.score_below_floor_points = 0.0
         self._current_topic_parity = 0
         self._next_topic_parity = 0
 
@@ -4854,10 +4858,10 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "WITHHELD",
+                    "BELOW FLOOR",
                     (
-                        f"{self._format_scorebug_points(self.score_withheld_points)}"
-                        f"/{self._format_scorebug_points(self.score_truth_points)}"
+                        f"{self._format_scorebug_points(self.score_below_floor_points)}"
+                        f"/{self._format_scorebug_points(self.score_floor_met_potential)}"
                     ),
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=bad_calls_value_strong_styles,
@@ -4967,7 +4971,7 @@ class PaintDryDisplay:
                     scorebug_values_top,
                     scorebug_values_middle,
                     scorebug_values_bottom,
-                    "WITHHELD",
+                    "BELOW FLOOR",
                     "0.0/0.0",
                     label_style=f"bold #bc9589 on {tally_label_bg}",
                     value_row_styles=bad_calls_value_strong_styles,
@@ -6076,9 +6080,8 @@ class PaintDryDisplay:
         self.score_partial_potential += max(0.0, ceiling - floor)
         if abs(grader_score - truth_score) < 1e-9:
             self.score_exact_points += truth_score
-            return
-        if grader_score < truth_score:
-            self.score_withheld_points += truth_score - grader_score
+        if grader_score < floor:
+            self.score_below_floor_points += floor - grader_score
 
     def on_checkpoint(self, text: str) -> None:
         checkpoint_parity = next(
@@ -6108,17 +6111,85 @@ class PaintDryDisplay:
     def _structured_row_parity(self) -> int:
         return self._current_topic_parity
 
-    def on_basis(self, text: str) -> None:
-        self.history.append(("basis", text, self._structured_row_parity()))
+    @staticmethod
+    def _history_target_for_header(text: str) -> str | None:
+        m = _HEADER_INDEX_RE.match(text)
+        if m:
+            text = m.group(2)
+        target_match = _HEADER_TARGET_RE.match(text.strip())
+        if target_match:
+            return f"{target_match.group(1).strip()}/{target_match.group(2).strip()}"
+        legacy = text.strip()
+        if "/" in legacy and " " not in legacy.split("/", 1)[0]:
+            exam_id, question_id = legacy.split("/", 1)
+            question_id = question_id.split()[0]
+            return f"{exam_id.strip()}/{question_id.strip()}"
+        return None
 
-    def on_read(self, text: str) -> None:
-        self.history.append(("read", text, self._structured_row_parity()))
+    def _append_structured_history_row(
+        self,
+        kind: str,
+        text: str,
+        *,
+        parity: int,
+        target: str | None = None,
+    ) -> None:
+        if not target:
+            self.history.append((kind, text, parity))
+            return
 
-    def on_salvage(self, text: str) -> None:
-        self.history.append(("salvage", text, self._structured_row_parity()))
+        history = list(self.history)
+        target_header_index: int | None = None
+        insert_index = len(history)
+        for index, (entry_kind, entry_text, _entry_parity) in enumerate(history):
+            if entry_kind != "header":
+                continue
+            header_target = self._history_target_for_header(entry_text)
+            if target_header_index is None:
+                if header_target == target:
+                    target_header_index = index
+                continue
+            insert_index = index
+            break
 
-    def on_hinge(self, text: str) -> None:
-        self.history.append(("hinge", text, self._structured_row_parity()))
+        if target_header_index is None:
+            self.history.append((kind, text, parity))
+            return
+
+        history.insert(insert_index, (kind, text, parity))
+        self.history = deque(history, maxlen=_MAX_HISTORY_LINES)
+
+    def on_basis(self, text: str, *, target: str | None = None) -> None:
+        self._append_structured_history_row(
+            "basis",
+            text,
+            parity=self._structured_row_parity(),
+            target=target,
+        )
+
+    def on_read(self, text: str, *, target: str | None = None) -> None:
+        self._append_structured_history_row(
+            "read",
+            text,
+            parity=self._structured_row_parity(),
+            target=target,
+        )
+
+    def on_salvage(self, text: str, *, target: str | None = None) -> None:
+        self._append_structured_history_row(
+            "salvage",
+            text,
+            parity=self._structured_row_parity(),
+            target=target,
+        )
+
+    def on_hinge(self, text: str, *, target: str | None = None) -> None:
+        self._append_structured_history_row(
+            "hinge",
+            text,
+            parity=self._structured_row_parity(),
+            target=target,
+        )
 
     def on_review_marker(self, text: str) -> None:
         self.history.append(("review_marker", text, self._structured_row_parity()))
@@ -6460,11 +6531,20 @@ def main() -> int:
                     elif msg_type == "basis":
                         display.on_basis(msg.get("text", ""))
                     elif msg_type == "read":
-                        display.on_read(msg.get("text", ""))
+                        display.on_read(
+                            msg.get("text", ""),
+                            target=msg.get("target"),
+                        )
                     elif msg_type == "salvage":
-                        display.on_salvage(msg.get("text", ""))
+                        display.on_salvage(
+                            msg.get("text", ""),
+                            target=msg.get("target"),
+                        )
                     elif msg_type == "hinge":
-                        display.on_hinge(msg.get("text", ""))
+                        display.on_hinge(
+                            msg.get("text", ""),
+                            target=msg.get("target"),
+                        )
                     elif msg_type == "review_marker":
                         display.on_review_marker(msg.get("text", ""))
                     elif msg_type == "professor_mismatch":
