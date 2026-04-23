@@ -525,6 +525,86 @@ class ThinkingNarratorContract(unittest.TestCase):
             "long ambiguity-shaped truncated items should still earn a trailing dossier instead of being categorically excluded",
         )
 
+    def test_interpretive_disagreement_item_can_enqueue_dossier_before_general_threshold(self):
+        sink = _DummySink()
+        narrator = _PromptCapturingDossierNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "34-blue",
+                "question_id": "fr-12a",
+                "answer_type": "lewis_structure",
+                "max_points": 2.0,
+                "student_answer": "linear ozone",
+                "professor_score": 1.5,
+                "truth_score": 1.5,
+                "professor_mark": "partial",
+                "notes": "wrong Lewis structure",
+                "acceptable_score_floor": 1.0,
+                "acceptable_score_ceiling": 1.5,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 0.0,
+                "model_read": "linear O=O=O",
+                "model_reasoning": "The student drew linear ozone with 14 electrons and missed the bent resonance structure.",
+                "score_basis": "No valid Lewis reasoning survives from the linear ozone drawing.",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(44.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            len(narrator.enqueued_dossier_prompts),
+            1,
+            "long-ish interpretive disagreement items should start earning dossiers before the generic elapsed threshold so the operator can study the hard cases more aggressively",
+        )
+
+    def test_interpretive_truncated_item_can_enqueue_dossier_before_general_threshold(self):
+        sink = _DummySink()
+        narrator = _PromptCapturingDossierNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-11c",
+                "answer_type": "exact_match",
+                "max_points": 0.5,
+                "student_answer": "1",
+                "professor_score": 0.5,
+                "truth_score": 0.5,
+                "professor_mark": "correct",
+                "notes": "crossed-out digit ambiguity",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 0.0,
+                "model_read": "2?",
+                "model_reasoning": "Ambiguous crossed-out digit conflicts with the orbital diagram's single unpaired electron.",
+                "score_basis": "No final score committed before truncation.",
+                "truncated": True,
+            },
+        )()
+
+        narrator._produce_after_action(41.0, prediction, item, template_question=None)
+
+        self.assertEqual(
+            len(narrator.enqueued_dossier_prompts),
+            1,
+            "interpretive truncated items should not have to wait for the generic long-item threshold before earning a trailing dossier",
+        )
+
     def test_truncated_dossier_prompt_marks_unstabilized_score(self):
         sink = _DummySink()
         narrator = _PromptCapturingDossierNarrator(sink)

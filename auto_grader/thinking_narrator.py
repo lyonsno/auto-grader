@@ -248,7 +248,15 @@ _IDLE_LEGIBILITY_DELAY_S = 1.0
 _MAX_LEGIBILITY_EXTRA_ROWS = 2
 _DOSSIER_ELAPSED_SECONDS = 60.0
 _DOSSIER_LONG_ELAPSED_SECONDS = 120.0
+_DOSSIER_INTERPRETIVE_ELAPSED_SECONDS = 35.0
 _DOSSIER_DEDUPE_STREAK_THRESHOLD = 2
+_DOSSIER_INTERPRETIVE_ANSWER_TYPES = frozenset(
+    {
+        "lewis_structure",
+        "exact_match",
+        "electron_config",
+    }
+)
 _DOSSIER_REASONING_HINT_RE = re.compile(
     r"\b("
     r"ambigu(?:ity|ous)?|uncertain|unclear|illegible|handwriting|glyph|smudge|"
@@ -1411,14 +1419,27 @@ class ThinkingNarrator:
         with self._lock:
             max_dedupe_streak = self._item_max_dedupe_streak
 
+        interpretive_item = (
+            str(getattr(item, "answer_type", "")).strip().casefold()
+            in _DOSSIER_INTERPRETIVE_ANSWER_TYPES
+        )
+        reasoning_hint = self._reasoning_mentions_dossier_hints(prediction)
+
         if max_dedupe_streak >= _DOSSIER_DEDUPE_STREAK_THRESHOLD:
+            return True
+        if (
+            interpretive_item
+            and elapsed >= _DOSSIER_INTERPRETIVE_ELAPSED_SECONDS
+            and (truncated or reasoning_hint or score_disagreement or partial_credit)
+        ):
             return True
         if elapsed < _DOSSIER_ELAPSED_SECONDS:
             return False
         return (
-            self._reasoning_mentions_dossier_hints(prediction)
+            reasoning_hint
             or score_disagreement
             or partial_credit
+            or truncated
         )
 
     def _build_dossier_prompt(
