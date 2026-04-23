@@ -3276,6 +3276,8 @@ def _append_wrapped_shimmer_block(
     wrap_width: int | None,
     cycle_s: float | None = None,
     phase_override: float | None = None,
+    peak_rgb_override: tuple[int, int, int] | None = None,
+    intensity_multiplier: float = 1.0,
     secondary_phase_override: float | None = None,
     secondary_peak_weight: float = 0.0,
     secondary_peak_rgb: tuple[int, int, int] | None = None,
@@ -3306,6 +3308,8 @@ def _append_wrapped_shimmer_block(
                 wrap_width=wrap_width,
                 cycle_s=cycle_s,
                 phase_override=phase_override,
+                peak_rgb_override=peak_rgb_override,
+                intensity_multiplier=intensity_multiplier,
                 secondary_phase_override=secondary_phase_override,
                 secondary_peak_weight=secondary_peak_weight,
                 secondary_peak_rgb=secondary_peak_rgb,
@@ -3345,6 +3349,8 @@ def _append_wrapped_shimmer_block(
                 wrap_width=wrap_width,
                 cycle_s=cycle_s,
                 phase_override=phase_override,
+                peak_rgb_override=peak_rgb_override,
+                intensity_multiplier=intensity_multiplier,
                 secondary_phase_override=secondary_phase_override,
                 secondary_peak_weight=secondary_peak_weight,
                 secondary_peak_rgb=secondary_peak_rgb,
@@ -5475,8 +5481,7 @@ class PaintDryDisplay:
                     continuation_prefix_style="grey50",
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    **history_modulation_kwargs,
                 )
             elif kind in {"review_marker", "professor_mismatch"}:
                 indent = "  ! "
