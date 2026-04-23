@@ -6,6 +6,7 @@ from unittest import mock
 
 from auto_grader.thinking_narrator import (
     ThinkingNarrator,
+    _SYSTEM_PROMPT,
     _classify_score_against_band,
     _checkpoint_line_breaks_contract,
 )
@@ -149,6 +150,13 @@ class _FakeStreamResponse:
 
 
 class ThinkingNarratorContract(unittest.TestCase):
+    def test_system_prompt_does_not_claim_professor_score_as_live_context(self):
+        self.assertNotIn(
+            "professor's ground-truth score",
+            _SYSTEM_PROMPT,
+            "the live narrator should not be told it will receive professor-side score truth as context; that leaks exactly the kind of hindsight we were trying to keep out of live commentary",
+        )
+
     def test_checkpoint_contract_accepts_context_label(self):
         self.assertFalse(
             _checkpoint_line_breaks_contract(

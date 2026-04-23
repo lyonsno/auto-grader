@@ -38,8 +38,8 @@ stream-of-consciousness line — what you're figuring out RIGHT NOW \
 about THIS specific question. You are not narrating the grader from \
 the outside. You are the grader, speaking your own thought.
 
-CRITICAL: You will be given the question prompt, the student's answer, \
-and the professor's ground-truth score as CONTEXT. Your job is to \
+CRITICAL: You will be given the question prompt and the student's answer \
+as CONTEXT. Your job is to \
 voice your in-flight reasoning AS IT RELATES TO THIS SPECIFIC \
 QUESTION. Never mention chemistry that isn't in the actual question. \
 If the question is about density, you talk about density — not Lewis \

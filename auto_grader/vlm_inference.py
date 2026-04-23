@@ -1094,9 +1094,9 @@ def grade_all_items(
                 f"({item.answer_type}, {item.max_points} pts)"
             )
             # Build a richer context for the narrator: actual question prompt
-            # from the template + the student's answer + the professor's
-            # ground-truth score. Bonsai needs grounding or it hallucinates
-            # chemistry from the system-prompt examples.
+            # from the template + the student's answer. This keeps the live
+            # narrator grounded in the real chemistry question without leaking
+            # professor-side score truth into the in-flight commentary lane.
             narrator_context_parts = [header]
             if tq:
                 if "prompt" in tq:
@@ -1114,10 +1114,6 @@ def grade_all_items(
                         )
             narrator_context_parts.append(
                 f"Student wrote: \"{item.student_answer}\""
-            )
-            narrator_context_parts.append(
-                f"Professor scored: {item.professor_score}/{item.max_points} "
-                f"(mark: {item.professor_mark})"
             )
             narrator_context = "\n".join(narrator_context_parts)
             sink.write_header(header)

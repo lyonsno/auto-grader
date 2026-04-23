@@ -102,5 +102,91 @@ class SamplingPresetContract(unittest.TestCase):
 
         self.assertEqual(grade_single_item_mock.call_count, 0)
 
+    def test_grade_all_items_keeps_professor_score_out_of_live_narrator_context(self):
+        from auto_grader.vlm_inference import ServerConfig, grade_all_items
+
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            answer_type="numeric",
+            page=1,
+            professor_score=2.0,
+            max_points=2.0,
+            professor_mark="check",
+            student_answer="14.2031 mol",
+            notes="historical overcredit",
+            corrected_score=0.0,
+            correction_reason="boxed answer is chemically invalid",
+        )
+        config = ServerConfig(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+        prediction = Prediction(
+            exam_id="15-blue",
+            question_id="fr-5b",
+            model_score=0.0,
+            model_confidence=0.9,
+            model_reasoning="method invalid",
+            model_read="14.2031 mol",
+        )
+
+        class _FakeNarrator:
+            def __init__(self):
+                self.item_headers: list[str] = []
+
+            def start(self, item_header: str | None = None) -> None:
+                self.item_headers.append(item_header or "")
+
+            def feed(self, _token: str) -> None:
+                return None
+
+            def stop_and_summarize(self, **_kwargs) -> None:
+                return None
+
+        class _FakeSink:
+            def write_header(self, _text: str) -> None:
+                return None
+
+        narrator = _FakeNarrator()
+        sink = _FakeSink()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scans_dir = Path(tmpdir)
+            (scans_dir / "15 blue_professor_markings_hidden.pdf").write_bytes(b"%PDF-1.4 clean")
+            template_path = Path(tmpdir) / "template.yaml"
+            template_path.write_text(
+                "fr-5b:\n"
+                "  prompt: How many moles of NH3 can be produced?\n"
+                "  correct:\n"
+                "    value: 18.6 mol\n",
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch(
+                    "auto_grader.vlm_inference.extract_page_image",
+                    return_value=b"page-bytes",
+                ),
+                mock.patch(
+                    "auto_grader.vlm_inference.grade_single_item",
+                    return_value=prediction,
+                ),
+            ):
+                grade_all_items(
+                    [item],
+                    scans_dir,
+                    config,
+                    template_path=template_path,
+                    narrator=narrator,
+                    sink=sink,
+                )
+
+        self.assertEqual(len(narrator.item_headers), 1)
+        header = narrator.item_headers[0]
+        self.assertIn("[1/1] exam 15-blue · problem fr-5b", header)
+        self.assertIn('Student wrote: "14.2031 mol"', header)
+        self.assertNotIn("Professor scored:", header)
+        self.assertNotIn("mark: check", header)
 if __name__ == "__main__":
     unittest.main()
