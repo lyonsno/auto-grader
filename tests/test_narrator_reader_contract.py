@@ -4570,7 +4570,7 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertGreater(
             new_line_first[0],
-            new_line_second[0] + 40,
+            new_line_second[0] + 30,
             "the selected heading group's subordinate row should ride along with the secondary pass instead of leaving the effect stranded on the header only",
         )
         self.assertGreater(
@@ -4580,7 +4580,7 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertGreater(
             old_line_second[0],
-            old_line_first[0] + 40,
+            old_line_first[0] + 30,
             "the parity flip should also carry across the neighboring heading group's child row, not just its header",
         )
 
@@ -4637,7 +4637,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertGreater(
             active_rgb[0],
-            inactive_rgb[0] + 40,
+            inactive_rgb[0] + 30,
             "the selected group's child-row witness should take on a clearly visible warm secondary-crest shift when that pass is on it, rather than remaining visually indistinguishable from its off-pass state",
         )
 
@@ -4704,37 +4704,66 @@ class NarratorReaderContract(unittest.TestCase):
             msg="away from the moving crest, the alternating overlay should not leave one heading parity steadily brighter than the other; if the human sees a persistent parity flip, the floor wash is showing through instead of a second shimmer animation",
         )
 
-    def test_secondary_history_overlay_debug_tuning_is_narrow_trough_rider_with_orange_peak(self):
+    def test_secondary_history_overlay_tuning_sits_near_true_trough_with_paired_warm_cool_leans(self):
+        self.assertTrue(
+            hasattr(narrator_reader, "_history_secondary_peak_rgb"),
+            "the alternating overlay should expose a helper for its subtle warm/cool lean pattern so the paired heading-band coloring can stay explicit and testable",
+        )
         self.assertEqual(
             narrator_reader._HISTORY_GROUP_SECONDARY_FLOOR,
             0.0,
-            "the temporary debug pass should not carry a constant floor wash; the human asked for motion they can identify, not a steady parity tint",
+            "the secondary pass should not carry a constant floor wash; the human asked for motion in the trough, not a steady parity tint",
         )
         self.assertLess(
             narrator_reader._HISTORY_GROUP_SECONDARY_WIDTH,
             narrator_reader._SHIMMER_WIDTH,
-            "the debug secondary pass should be narrower than the primary shimmer so it reads as a distinct crest instead of a broad lingering bias",
+            "the secondary pass should stay narrower than the primary shimmer so it reads as its own crest instead of a broad lingering bias",
         )
         self.assertGreater(
             narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET,
-            0.60,
-            "the debug secondary pass should sit deeper in the primary trough so the two passes read as separated events instead of nearly back-to-back",
-        )
-        peak_r, peak_g, peak_b = narrator_reader._HISTORY_GROUP_SECONDARY_PEAK_RGB
-        self.assertGreaterEqual(
-            peak_r,
-            240,
-            "for this debug smoke the secondary crest should be loudly legible, not another muted near-neutral accent",
-        )
-        self.assertGreater(
-            peak_g,
-            peak_b,
-            "the temporary debug crest should read as orange rather than red or white",
+            0.42,
+            "the secondary pass should sit near the half-cycle trough instead of hugging the primary crest",
         )
         self.assertLess(
-            peak_b,
-            90,
-            "the temporary debug crest should stay in an obvious orange family instead of drifting back toward cool silver-blue",
+            narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET,
+            0.52,
+            "the secondary pass should hover around the real trough, not overshoot so far that the wrapped separation becomes close behind the primary again",
+        )
+        warm_pair_a = narrator_reader._history_secondary_peak_rgb(0, 0)
+        warm_pair_b = narrator_reader._history_secondary_peak_rgb(1, 1)
+        cool_pair_a = narrator_reader._history_secondary_peak_rgb(2, 0)
+        cool_pair_b = narrator_reader._history_secondary_peak_rgb(3, 1)
+        self.assertEqual(
+            warm_pair_a,
+            warm_pair_b,
+            "adjacent headings should resolve as a paired warm band across alternating passes, not as unrelated single-pass colors",
+        )
+        self.assertEqual(
+            cool_pair_a,
+            cool_pair_b,
+            "the next paired heading band should share the same subtle cool lean across its alternating passes",
+        )
+        self.assertNotEqual(
+            warm_pair_a,
+            cool_pair_a,
+            "the paired heading bands should actually alternate warm versus cool instead of collapsing back to one fixed secondary color",
+        )
+        self.assertEqual(
+            narrator_reader._history_secondary_peak_rgb(0, 2),
+            cool_pair_a,
+            "each heading should alternate its lean the next time it gets hit, not keep the same warm/cool family forever",
+        )
+        warm_r, warm_g, warm_b = warm_pair_a
+        cool_r, cool_g, cool_b = cool_pair_a
+        self.assertGreater(
+            warm_r - warm_b,
+            cool_r - cool_b,
+            "the warm lean should stay subtly warmer than the cool lean instead of both variants collapsing into the same neutral default",
+        )
+        self.assertGreater(
+            cool_g,
+            warm_g,
+            "the cool lean should lift the green/cool axis slightly above the warm lean while staying in-family with the default shimmer palette",
         )
 
     @staticmethod

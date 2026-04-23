@@ -540,7 +540,7 @@ _HISTORY_GROUP_SECONDARY_CYCLE_S = _SHIMMER_DEFAULT_CYCLE_S
                                    # the new quieter pass alternates one
                                    # heading-group parity per sweep, then
                                    # flips to the other on the next cycle
-_HISTORY_GROUP_SECONDARY_PHASE_OFFSET = 0.72
+_HISTORY_GROUP_SECONDARY_PHASE_OFFSET = 0.48
                                    # keep the second pass offset from the
                                    # primary shimmer so it reads as a
                                    # companion field, not a duplicate
@@ -556,10 +556,15 @@ _HISTORY_GROUP_SECONDARY_WIDTH = 8
                                    # narrower than the primary shimmer so the
                                    # debug pass reads as a distinct moving
                                    # crest in the trough, not a broad bias
-_HISTORY_GROUP_SECONDARY_PEAK_RGB = (255, 136, 24)
-                                   # temporary loud orange for smoke: make
-                                   # the secondary crest unmistakable while
-                                   # tuning the timing and geometry
+_HISTORY_GROUP_SECONDARY_PEAK_RGB_WARM = (242, 206, 168)
+                                   # warm-leaning bone crest: stays close to
+                                   # the default shimmer family, but with a
+                                   # subtle toasted-paper lean
+_HISTORY_GROUP_SECONDARY_PEAK_RGB_COOL = (224, 226, 204)
+                                   # cool-leaning bone crest: same family,
+                                   # nudged toward rain-washed sage so the
+                                   # alternating pass can lean cool without
+                                   # becoming a different effect entirely
 _HISTORY_CONTINUATION_ROW_STEP = 0.09  # wrapped continuation rows should step
                                        # down in authority below the first
                                        # visual row of an entry
@@ -767,6 +772,28 @@ def _history_secondary_row_weight(
         depth_step = max(0, group_depth - 2)
         return group_weight * max(0.56, 0.72 - (0.08 * depth_step))
     return group_weight * 0.72
+
+
+def _history_secondary_peak_rgb(
+    group_index: int,
+    pass_index: int,
+) -> tuple[int, int, int]:
+    """Return the subtle warm/cool lean for one selected heading band.
+
+    The secondary pass selects every other heading group per cycle. We want
+    the selected groups to resolve in PAIRS across adjacent passes — two
+    warms, then two cools — while still letting each heading alternate its
+    own lean the next time it is selected. Grouping by `group_index // 2`
+    gives us those heading pairs, and `pass_index // 2` flips the pair lean
+    on the next revisit.
+    """
+    if group_index < 0:
+        group_index = 0
+    pair_index = group_index // 2
+    pair_epoch = pass_index // 2
+    if (pair_index + pair_epoch) % 2 == 0:
+        return _HISTORY_GROUP_SECONDARY_PEAK_RGB_WARM
+    return _HISTORY_GROUP_SECONDARY_PEAK_RGB_COOL
 
 
 def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
@@ -4745,7 +4772,10 @@ class PaintDryDisplay:
                     secondary_phase,
                 ),
                 "secondary_peak_weight": secondary_peak_weight,
-                "secondary_peak_rgb": _HISTORY_GROUP_SECONDARY_PEAK_RGB,
+                "secondary_peak_rgb": _history_secondary_peak_rgb(
+                    current_group_index,
+                    secondary_pass_index,
+                ),
                 "secondary_floor_weight": (
                     _HISTORY_GROUP_SECONDARY_FLOOR
                     if secondary_peak_weight > 0.0
