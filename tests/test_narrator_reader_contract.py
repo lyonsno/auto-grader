@@ -7,7 +7,6 @@ import signal as stdlib_signal
 import tempfile
 import time
 import unittest
-from contextlib import nullcontext
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -4291,16 +4290,12 @@ class NarratorReaderContract(unittest.TestCase):
             msg="alternating groups should not all ride the exact same header setback",
         )
 
-    def test_secondary_history_overlay_flips_target_group_parity_each_pass(self):
+    def test_history_alternation_pass_epoch_advances_and_heading_leans_flip_each_cycle(self):
         import scripts.narrator_reader as module
 
         self.assertTrue(
             hasattr(module, "_history_secondary_phase"),
-            "history shimmer should expose a helper for the quieter second pass so parity-flip timing can stay explicit and testable",
-        )
-        self.assertTrue(
-            hasattr(module, "_history_secondary_group_weight"),
-            "history shimmer should expose a helper that selects which heading-group parity gets the secondary pass on a given cycle",
+            "history shimmer should expose the shared-sweep alternation epoch helper so the warm/cool lean timing stays explicit and testable",
         )
 
         pass0_index, pass0_phase = module._history_secondary_phase(0.0)
@@ -4320,29 +4315,29 @@ class NarratorReaderContract(unittest.TestCase):
             msg="the secondary pass should be phase-offset from the primary shimmer instead of riding exactly on top of it",
         )
         self.assertEqual(
-            module._history_secondary_group_weight(0, pass0_index),
-            module._HISTORY_GROUP_SECONDARY_BLEND,
-            "the first secondary pass should favor the first heading-group parity",
+            module._history_secondary_peak_rgb(0, pass0_index),
+            module._history_secondary_peak_rgb(1, pass0_index),
+            "adjacent headings in the same pair should share the same lean on a given sweep instead of each heading inventing its own color family",
         )
         self.assertEqual(
-            module._history_secondary_group_weight(1, pass0_index),
-            0.0,
-            "neighboring heading groups should not both get the quieter second pass in the same cycle",
+            module._history_secondary_peak_rgb(2, pass0_index),
+            module._history_secondary_peak_rgb(3, pass0_index),
+            "the next heading pair should likewise share its lean on the same sweep",
+        )
+        self.assertNotEqual(
+            module._history_secondary_peak_rgb(0, pass0_index),
+            module._history_secondary_peak_rgb(2, pass0_index),
+            "paired heading bands should alternate warm and cool across the stack instead of collapsing into one uniform accent",
         )
         self.assertEqual(
             pass1_index,
             1,
-            "one full secondary cycle later, the opposite parity should be active",
+            "one full alternation cycle later, the shared sweep should advance to the next warm/cool epoch",
         )
-        self.assertEqual(
-            module._history_secondary_group_weight(0, pass1_index),
-            0.0,
-            "the previously favored parity should stand down on the next pass",
-        )
-        self.assertEqual(
-            module._history_secondary_group_weight(1, pass1_index),
-            module._HISTORY_GROUP_SECONDARY_BLEND,
-            "the alternating secondary pass should flip to the neighboring heading-group parity on the next cycle",
+        self.assertNotEqual(
+            module._history_secondary_peak_rgb(0, pass0_index),
+            module._history_secondary_peak_rgb(0, pass1_index),
+            "a heading should not keep the same warm/cool lean forever; the lean should flip on the next sweep cycle",
         )
 
     def test_stream_events_do_not_force_immediate_repaint(self):
@@ -4429,319 +4424,228 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertGreater(top_boost, lower_boost)
 
-    def test_secondary_history_overlay_is_present_but_quieter_than_primary(self):
+    def test_history_alternation_modulation_is_present_but_quieter_than_primary(self):
         base_text = Text()
         _apply_shimmer(base_text, "A", "header", 0, phase_override=0.0)
 
         primary_text = Text()
         _apply_shimmer(primary_text, "A", "header", 0, phase_override=(12 / 13))
 
-        secondary_text = Text()
+        modulated_text = Text()
         _apply_shimmer(
-            secondary_text,
+            modulated_text,
             "A",
             "header",
             0,
-            phase_override=0.0,
-            secondary_phase_override=(12 / 13),
-            secondary_peak_weight=narrator_reader._HISTORY_GROUP_SECONDARY_BLEND,
+            phase_override=(12 / 13),
+            peak_rgb_override=narrator_reader._history_alternation_peak_rgb(
+                "header",
+                0,
+                0,
+                0,
+            ),
+            intensity_multiplier=narrator_reader._history_alternation_intensity_multiplier(
+                0,
+                0,
+                "header",
+                0,
+            ),
         )
 
         base_luma = self._hex_luminance(base_text.spans[0].style)
         primary_boost = self._hex_luminance(primary_text.spans[0].style) - base_luma
-        secondary_boost = self._hex_luminance(secondary_text.spans[0].style) - base_luma
+        modulation_delta = abs(
+            self._hex_luminance(modulated_text.spans[0].style)
+            - self._hex_luminance(primary_text.spans[0].style)
+        )
 
         self.assertGreater(
-            secondary_boost,
+            modulation_delta,
             0.0,
-            "the alternating overlay should create a real visible lift when its own pass is on the character",
+            "the alternating modulation should create a visible difference on the shared sweep instead of disappearing into the default primary shimmer",
         )
         self.assertLess(
-            secondary_boost,
+            modulation_delta,
             primary_boost,
-            "the alternating overlay should stay quieter than the main shimmer pass instead of competing with it",
+            "the alternating modulation should stay quieter than the main shimmer event instead of becoming a second equally loud crest",
         )
 
-    def test_secondary_history_overlay_targets_header_group_and_child_rows(self):
-        def _build_display() -> PaintDryDisplay:
-            display = self._make_display()
-            wrap_width = display._compute_wrap_width()
-            self.assertIsNotNone(wrap_width)
-            global_history_phase = display._shimmer_phases.phase(0)
-            secondary_phase = narrator_reader._history_secondary_phase(0.0)[1]
+    def test_history_alternation_groups_resolve_in_paired_bands_and_child_rows_follow(self):
+        display = self._make_display()
+        for index, label in ((4, "D"), (3, "C"), (2, "B"), (1, "A")):
+            display.history.append(("header", f"[item {index}/4] {label}HDR", None))
+            display.history.append(("line", f"{label}LINE", 0))
 
-            def _secondary_head_col(
-                group_index: int,
-                group_depth: int,
-            ) -> int:
-                primary_phase = narrator_reader._history_entry_phase(
-                    display._shimmer_phases.phase(group_index),
-                    global_history_phase,
-                    group_index,
-                    group_depth,
-                )
-                secondary_entry_phase = narrator_reader._history_secondary_entry_phase(
-                    primary_phase,
-                    global_history_phase,
-                    secondary_phase,
-                )
-                return math.floor(
-                    secondary_entry_phase
-                    * (wrap_width + narrator_reader._SHIMMER_WIDTH)
-                    - narrator_reader._SHIMMER_WIDTH
-                )
+        calls: list[dict[str, object]] = []
+        original_apply = narrator_reader._apply_shimmer
 
-            old_header_index = "[item 1/2]"
-            new_header_index = "[item 2/2]"
-            old_header_filler = "x" * max(
-                0,
-                _secondary_head_col(1, 0)
-                - (len("─ ") + len(old_header_index) + 1),
-            )
-            new_header_filler = "x" * max(
-                0,
-                _secondary_head_col(0, 0)
-                - (len("─ ") + len(new_header_index) + 1),
-            )
-            old_line_filler = "x" * max(
-                0,
-                _secondary_head_col(1, 1) - len("    "),
-            )
-            new_line_filler = "x" * max(
-                0,
-                _secondary_head_col(0, 1) - len("    "),
-            )
-
-            display.history.append(
-                ("header", f"{old_header_index} {old_header_filler}#", None)
-            )
-            display.history.append(("line", f"{old_line_filler}%", 0))
-            display.history.append(
-                ("header", f"{new_header_index} {new_header_filler}@", None)
-            )
-            display.history.append(("line", f"{new_line_filler}&", 0))
-            return display
-
-        def _render_history_at(now_s: float) -> Text:
-            display = _build_display()
-            with mock.patch.object(
-                narrator_reader.time,
-                "monotonic",
-                return_value=now_s,
-            ):
-                group = display.render()
-            history_panel = group.renderables[-1]
-            return history_panel.renderable
-
-        first_pass = _render_history_at(0.0)
-        second_pass = _render_history_at(
-            narrator_reader._HISTORY_GROUP_SECONDARY_CYCLE_S
-        )
-
-        new_header_first = self._rgb_from_hex(
-            self._style_for_substring(first_pass, "@")
-        )
-        new_header_second = self._rgb_from_hex(
-            self._style_for_substring(second_pass, "@")
-        )
-        new_line_first = self._rgb_from_hex(
-            self._style_for_substring(first_pass, "&")
-        )
-        new_line_second = self._rgb_from_hex(
-            self._style_for_substring(second_pass, "&")
-        )
-        old_header_first = self._rgb_from_hex(
-            self._style_for_substring(first_pass, "#")
-        )
-        old_header_second = self._rgb_from_hex(
-            self._style_for_substring(second_pass, "#")
-        )
-        old_line_first = self._rgb_from_hex(
-            self._style_for_substring(first_pass, "%")
-        )
-        old_line_second = self._rgb_from_hex(
-            self._style_for_substring(second_pass, "%")
-        )
-
-        self.assertGreater(
-            new_header_first[0],
-            new_header_second[0] + 40,
-            "the first secondary pass should brighten the targeted heading group's header more than the same header on the opposite-parity pass",
-        )
-        self.assertGreater(
-            new_line_first[0],
-            new_line_second[0] + 30,
-            "the selected heading group's subordinate row should ride along with the secondary pass instead of leaving the effect stranded on the header only",
-        )
-        self.assertGreater(
-            old_header_second[0],
-            old_header_first[0] + 40,
-            "when the parity flips, the neighboring heading group's header should take the quieter second pass instead",
-        )
-        self.assertGreater(
-            old_line_second[0],
-            old_line_first[0] + 30,
-            "the parity flip should also carry across the neighboring heading group's child row, not just its header",
-        )
-
-    def test_secondary_history_overlay_gives_selected_child_row_a_visible_color_shift(self):
-        def _build_display() -> PaintDryDisplay:
-            display = self._make_display()
-            wrap_width = display._compute_wrap_width()
-            self.assertIsNotNone(wrap_width)
-            global_history_phase = display._shimmer_phases.phase(0)
-            secondary_phase = narrator_reader._history_secondary_phase(0.0)[1]
-            primary_phase = narrator_reader._history_entry_phase(
-                display._shimmer_phases.phase(0),
-                global_history_phase,
-                0,
-                1,
-            )
-            secondary_entry_phase = narrator_reader._history_secondary_entry_phase(
-                primary_phase,
-                global_history_phase,
-                secondary_phase,
-            )
-            line_head_col = math.floor(
-                secondary_entry_phase
-                * (wrap_width + narrator_reader._SHIMMER_WIDTH)
-                - narrator_reader._SHIMMER_WIDTH
-            )
-            line_filler = "x" * max(0, line_head_col - len("    "))
-            display.history.append(("header", "[item 1/2] acids and salts", None))
-            display.history.append(("line", "neighboring block line", 0))
-            display.history.append(("header", "[item 2/2] bases and buffers", None))
-            display.history.append(("line", f"{line_filler}&", 0))
-            return display
-
-        def _render_history_at(now_s: float) -> Text:
-            display = _build_display()
-            with mock.patch.object(
-                narrator_reader.time,
-                "monotonic",
-                return_value=now_s,
-            ):
-                group = display.render()
-            history_panel = group.renderables[-1]
-            return history_panel.renderable
-
-        active_pass = _render_history_at(0.0)
-        inactive_pass = _render_history_at(
-            narrator_reader._HISTORY_GROUP_SECONDARY_CYCLE_S
-        )
-
-        active_rgb = self._rgb_from_hex(self._style_for_substring(active_pass, "&"))
-        inactive_rgb = self._rgb_from_hex(
-            self._style_for_substring(inactive_pass, "&")
-        )
-
-        self.assertGreater(
-            active_rgb[0],
-            inactive_rgb[0] + 30,
-            "the selected group's child-row witness should take on a clearly visible warm secondary-crest shift when that pass is on it, rather than remaining visually indistinguishable from its off-pass state",
-        )
-
-    def test_secondary_history_overlay_does_not_create_constant_same_frame_bias_away_from_crest(self):
-        def _build_display() -> PaintDryDisplay:
-            display = self._make_display()
-            display.history.append(("header", "[item 1/2] ALPHAHDR", None))
-            display.history.append(("topic", "ALPHATOPIC", "match"))
-            display.history.append(("line", "SAMECHILD", 0))
-            display.history.append(("header", "[item 2/2] BETAHDR", None))
-            display.history.append(("topic", "BETATOPIC", "match"))
-            display.history.append(("line", "SAMECHILD", 0))
-            return display
-
-        def _render_history(
-            display: PaintDryDisplay,
-            *,
-            secondary_weight_override=None,
+        def _recording_apply(
+            text_obj: Text,
+            content: str,
+            kind: str,
+            layer_index: int,
+            **kwargs,
         ) -> Text:
-            patch_ctx = (
-                mock.patch.object(
-                    narrator_reader,
-                    "_history_secondary_group_weight",
-                    side_effect=secondary_weight_override,
+            if content in {"AHDR", "ALINE", "BHDR", "BLINE", "CHDR", "CLINE", "DHDR", "DLINE"}:
+                calls.append(
+                    {
+                        "content": content,
+                        "peak_rgb_override": kwargs.get("peak_rgb_override"),
+                        "intensity_multiplier": kwargs.get("intensity_multiplier"),
+                    }
                 )
-                if secondary_weight_override is not None
-                else nullcontext()
+            return original_apply(
+                text_obj,
+                content,
+                kind,
+                layer_index,
+                **kwargs,
             )
-            with patch_ctx:
+
+        with mock.patch.object(narrator_reader, "_apply_shimmer", side_effect=_recording_apply):
+            with mock.patch.object(
+                narrator_reader.time,
+                "monotonic",
+                return_value=0.0,
+            ):
+                display.render()
+
+        by_content = {call["content"]: call for call in calls}
+        self.assertEqual(
+            by_content["AHDR"]["peak_rgb_override"],
+            by_content["BHDR"]["peak_rgb_override"],
+            "adjacent heading groups in the same pair should share the same warm/cool lean on a given sweep",
+        )
+        self.assertEqual(
+            by_content["CHDR"]["peak_rgb_override"],
+            by_content["DHDR"]["peak_rgb_override"],
+            "the next heading pair should also resolve together instead of every heading getting its own unrelated color lean",
+        )
+        self.assertNotEqual(
+            by_content["AHDR"]["peak_rgb_override"],
+            by_content["CHDR"]["peak_rgb_override"],
+            "the paired heading bands should alternate warm and cool across the stack",
+        )
+        self.assertGreater(
+            abs(by_content["AHDR"]["intensity_multiplier"] - 1.0),
+            abs(by_content["ALINE"]["intensity_multiplier"] - 1.0),
+            "the line under a heading should still ride the same modulated sweep, but more softly than the heading itself",
+        )
+        self.assertGreater(
+            abs(by_content["CHDR"]["intensity_multiplier"] - 1.0),
+            abs(by_content["CLINE"]["intensity_multiplier"] - 1.0),
+            "the same header-to-child falloff should hold on the cool pair too, not just the warm one",
+        )
+
+    def test_history_alternation_child_row_flips_lean_on_next_cycle(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/1] TARGETHDR", None))
+        display.history.append(("line", "TARGETLINE", 0))
+
+        def _capture_child(now_s: float) -> tuple[int, int, int]:
+            calls: list[dict[str, object]] = []
+            original_apply = narrator_reader._apply_shimmer
+
+            def _recording_apply(
+                text_obj: Text,
+                content: str,
+                kind: str,
+                layer_index: int,
+                **kwargs,
+            ) -> Text:
+                if content == "TARGETLINE":
+                    calls.append({"peak_rgb_override": kwargs.get("peak_rgb_override")})
+                return original_apply(
+                    text_obj,
+                    content,
+                    kind,
+                    layer_index,
+                    **kwargs,
+                )
+
+            with mock.patch.object(narrator_reader, "_apply_shimmer", side_effect=_recording_apply):
                 with mock.patch.object(
                     narrator_reader.time,
                     "monotonic",
-                    return_value=0.0,
+                    return_value=now_s,
                 ):
-                    group = display.render()
-            history_panel = group.renderables[-1]
-            return history_panel.renderable
+                    display.render()
+            return calls[0]["peak_rgb_override"]  # type: ignore[return-value]
 
-        active_frame = _render_history(_build_display())
-        no_secondary_frame = _render_history(
-            _build_display(),
-            secondary_weight_override=lambda group_index, pass_index: 0.0,
+        first_pass_rgb = _capture_child(0.0)
+        second_pass_rgb = _capture_child(
+            narrator_reader._HISTORY_GROUP_SECONDARY_CYCLE_S
         )
 
-        active_gap = (
-            self._average_luminance_for_nth_substring(active_frame, "SAMECHILD", 0)
-            - self._average_luminance_for_nth_substring(active_frame, "SAMECHILD", 1)
-        )
-        baseline_gap = (
-            self._average_luminance_for_nth_substring(no_secondary_frame, "SAMECHILD", 0)
-            - self._average_luminance_for_nth_substring(no_secondary_frame, "SAMECHILD", 1)
+        self.assertNotEqual(
+            first_pass_rgb,
+            second_pass_rgb,
+            "a heading should not keep the same warm/cool lean forever; its child rows should flip with it on the next sweep cycle",
         )
 
-        self.assertAlmostEqual(
-            baseline_gap,
-            0.0,
-            places=6,
-            msg="without the alternating overlay, matched neighboring child rows should not drift apart in the same frame just because they belong to different heading groups",
-        )
-        self.assertAlmostEqual(
-            active_gap,
-            0.0,
-            places=6,
-            msg="away from the moving crest, the alternating overlay should not leave one heading parity steadily brighter than the other; if the human sees a persistent parity flip, the floor wash is showing through instead of a second shimmer animation",
-        )
-
-    def test_secondary_history_overlay_tuning_sits_near_true_trough_with_paired_warm_cool_leans(self):
+    def test_history_alternation_tuning_uses_subtle_warm_cool_modulation_on_main_sweep(self):
         self.assertTrue(
             hasattr(narrator_reader, "_history_secondary_peak_rgb"),
-            "the alternating overlay should expose a helper for its subtle warm/cool lean pattern so the paired heading-band coloring can stay explicit and testable",
-        )
-        self.assertEqual(
-            narrator_reader._HISTORY_GROUP_SECONDARY_FLOOR,
-            0.0,
-            "the secondary pass should not carry a constant floor wash; the human asked for motion in the trough, not a steady parity tint",
+            "history alternation should expose a helper for its paired warm/cool lean pattern so the banding stays explicit and testable",
         )
         self.assertLess(
-            narrator_reader._HISTORY_GROUP_SECONDARY_WIDTH,
-            narrator_reader._SHIMMER_WIDTH,
-            "the secondary pass should stay narrower than the primary shimmer so it reads as its own crest instead of a broad lingering bias",
+            narrator_reader._HISTORY_GROUP_MODULATION_PHASE_OFFSET,
+            0.02,
+            "the alternating modulation should only nudge the shared sweep slightly; a large offset would turn it back into a second visible scanner",
         )
         self.assertGreater(
-            narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET,
-            0.42,
-            "the secondary pass should sit near the half-cycle trough instead of hugging the primary crest",
+            narrator_reader._HISTORY_GROUP_MODULATION_PHASE_OFFSET,
+            0.0,
+            "the alternating modulation should still have a real phase nudge so adjacent heading bands do not look mechanically identical",
         )
         self.assertLess(
-            narrator_reader._HISTORY_GROUP_SECONDARY_PHASE_OFFSET,
-            0.52,
-            "the secondary pass should hover around the real trough, not overshoot so far that the wrapped separation becomes close behind the primary again",
+            narrator_reader._HISTORY_GROUP_MODULATION_PHASE_WOBBLE,
+            narrator_reader._HISTORY_GROUP_MODULATION_PHASE_OFFSET,
+            "the phase wobble should stay smaller than the underlying offset so the shared sweep hovers gently instead of losing its identity",
+        )
+        self.assertGreater(
+            narrator_reader._HISTORY_GROUP_MODULATION_PEAK_BLEND,
+            0.0,
+            "the alternating modulation should actually lean the peak color a bit instead of leaving the shared sweep visually identical across heading bands",
+        )
+        self.assertLess(
+            narrator_reader._HISTORY_GROUP_MODULATION_PEAK_BLEND,
+            0.5,
+            "the warm/cool peak blending should stay subtle enough that the main shimmer family remains the dominant read",
+        )
+        self.assertGreater(
+            narrator_reader._HISTORY_GROUP_MODULATION_WARM_DELTA,
+            0.0,
+            "warm-leaning heading bands should get a slight strength lift on the shared sweep",
+        )
+        self.assertLess(
+            narrator_reader._HISTORY_GROUP_MODULATION_COOL_DELTA,
+            0.0,
+            "cool-leaning heading bands should give back a little sweep intensity so the alternation is not just color-only",
+        )
+        self.assertLess(
+            abs(narrator_reader._HISTORY_GROUP_MODULATION_WARM_DELTA),
+            0.15,
+            "the warm intensity bias should stay subtle; a large bias would read as a separate second event instead of one modulated sweep",
+        )
+        self.assertLess(
+            abs(narrator_reader._HISTORY_GROUP_MODULATION_COOL_DELTA),
+            0.15,
+            "the cool intensity bias should also stay subtle for the same reason",
         )
         warm_pair_a = narrator_reader._history_secondary_peak_rgb(0, 0)
-        warm_pair_b = narrator_reader._history_secondary_peak_rgb(1, 1)
+        warm_pair_b = narrator_reader._history_secondary_peak_rgb(1, 0)
         cool_pair_a = narrator_reader._history_secondary_peak_rgb(2, 0)
-        cool_pair_b = narrator_reader._history_secondary_peak_rgb(3, 1)
+        cool_pair_b = narrator_reader._history_secondary_peak_rgb(3, 0)
         self.assertEqual(
             warm_pair_a,
             warm_pair_b,
-            "adjacent headings should resolve as a paired warm band across alternating passes, not as unrelated single-pass colors",
+            "adjacent headings should resolve as a paired warm band on the same sweep, not as unrelated single-heading colors",
         )
         self.assertEqual(
             cool_pair_a,
             cool_pair_b,
-            "the next paired heading band should share the same subtle cool lean across its alternating passes",
+            "the next paired heading band should likewise share the same subtle cool lean on that sweep",
         )
         self.assertNotEqual(
             warm_pair_a,
@@ -4749,9 +4653,9 @@ class NarratorReaderContract(unittest.TestCase):
             "the paired heading bands should actually alternate warm versus cool instead of collapsing back to one fixed secondary color",
         )
         self.assertEqual(
-            narrator_reader._history_secondary_peak_rgb(0, 2),
+            narrator_reader._history_secondary_peak_rgb(0, 1),
             cool_pair_a,
-            "each heading should alternate its lean the next time it gets hit, not keep the same warm/cool family forever",
+            "each heading should alternate its lean on the next sweep instead of keeping the same warm/cool family forever",
         )
         warm_r, warm_g, warm_b = warm_pair_a
         cool_r, cool_g, cool_b = cool_pair_a
@@ -4770,7 +4674,7 @@ class NarratorReaderContract(unittest.TestCase):
     def _circular_delta(a: float, b: float) -> float:
         return ((a - b) + 0.5) % 1.0 - 0.5
 
-    def test_secondary_history_overlay_uses_local_rake_instead_of_vertical_alignment(self):
+    def test_history_alternation_uses_local_rake_instead_of_vertical_alignment(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/1] TARGETHDR", None))
         display.history.append(("topic", "0.3s acid block", "match"))
@@ -4794,9 +4698,6 @@ class NarratorReaderContract(unittest.TestCase):
                         "content": content,
                         "kind": kind,
                         "phase_override": kwargs.get("phase_override"),
-                        "secondary_phase_override": kwargs.get(
-                            "secondary_phase_override"
-                        ),
                     }
                 )
             return original_apply(
@@ -4819,43 +4720,29 @@ class NarratorReaderContract(unittest.TestCase):
         deep_line_call = next(call for call in calls if call["content"] == "DEEPLINE")
         self.assertIsNotNone(header_call["phase_override"])
         self.assertIsNotNone(deep_line_call["phase_override"])
-        self.assertIsNotNone(header_call["secondary_phase_override"])
-        self.assertIsNotNone(deep_line_call["secondary_phase_override"])
 
-        primary_gap = self._circular_delta(
+        modulated_gap = self._circular_delta(
             header_call["phase_override"],
             deep_line_call["phase_override"],
         )
-        secondary_gap = self._circular_delta(
-            header_call["secondary_phase_override"],
-            deep_line_call["secondary_phase_override"],
-        )
 
         self.assertGreater(
-            primary_gap,
+            modulated_gap,
             0.010,
-            "the deep child row should materially trail its group header in the existing primary field before the secondary overlay is applied",
+            "the deep child row should still materially trail its group header; the alternating modulation should ride the existing rake instead of flattening it into one vertical sweep",
         )
         self.assertLess(
-            primary_gap,
+            modulated_gap,
             0.020,
-            "the shared history rake should stay gentle enough that both the primary shimmer and the skipped-parity secondary pass still read as coherent fields instead of two aggressively slanted ladders",
-        )
-        self.assertAlmostEqual(
-            secondary_gap,
-            primary_gap,
-            places=6,
-            msg="the quieter second pass should inherit that same within-group rake instead of resetting every row onto one shared vertical crest",
+            "the shared history rake should stay gentle enough that the modulation reads as one coherent field rather than a separate aggressively slanted ladder",
         )
 
-    def test_secondary_history_overlay_weights_selected_group_rows_below_header(self):
+    def test_history_alternation_steps_down_below_headers_and_varies_by_band(self):
         display = self._make_display()
-        display.history.append(("header", "[item 1/2] OLDHDR", None))
-        display.history.append(("topic", "OLDTOPIC", "match"))
-        display.history.append(("line", "OLDLINE", 0))
-        display.history.append(("header", "[item 2/2] TARGETHDR", None))
-        display.history.append(("topic", "TARGETTOPIC", "match"))
-        display.history.append(("line", "TARGETLINE", 0))
+        for index, label in ((4, "D"), (3, "C"), (2, "B"), (1, "A")):
+            display.history.append(("header", f"[item {index}/4] {label}HDR", None))
+            display.history.append(("topic", f"{label}TOPIC", "match"))
+            display.history.append(("line", f"{label}LINE", 0))
 
         calls: list[dict[str, float | str | None]] = []
         original_apply = narrator_reader._apply_shimmer
@@ -4868,18 +4755,25 @@ class NarratorReaderContract(unittest.TestCase):
             **kwargs,
         ) -> Text:
             if content in {
-                "OLDHDR",
-                "OLDTOPIC",
-                "OLDLINE",
-                "TARGETHDR",
-                "TARGETTOPIC",
-                "TARGETLINE",
+                "AHDR",
+                "ATOPIC",
+                "ALINE",
+                "BHDR",
+                "BTOPIC",
+                "BLINE",
+                "CHDR",
+                "CTOPIC",
+                "CLINE",
+                "DHDR",
+                "DTOPIC",
+                "DLINE",
             }:
                 calls.append(
                     {
                         "content": content,
                         "kind": kind,
-                        "secondary_peak_weight": kwargs.get("secondary_peak_weight"),
+                        "intensity_multiplier": kwargs.get("intensity_multiplier"),
+                        "peak_rgb_override": kwargs.get("peak_rgb_override"),
                     }
                 )
             return original_apply(
@@ -4899,35 +4793,35 @@ class NarratorReaderContract(unittest.TestCase):
                 display.render()
 
         by_content = {call["content"]: call for call in calls}
-        self.assertEqual(
-            by_content["OLDHDR"]["secondary_peak_weight"],
-            0.0,
-            "the non-selected neighboring heading should not get the alternating pass in the current cycle",
-        )
-        self.assertEqual(
-            by_content["OLDTOPIC"]["secondary_peak_weight"],
-            0.0,
-            "the subordinate rows of the non-selected neighboring heading should stay off with it",
-        )
-        self.assertEqual(
-            by_content["OLDLINE"]["secondary_peak_weight"],
-            0.0,
-            "the next group's narration rows should not quietly inherit the alternating pass when their header is off",
+        self.assertGreater(
+            abs(by_content["AHDR"]["intensity_multiplier"] - 1.0),
+            abs(by_content["ATOPIC"]["intensity_multiplier"] - 1.0),
+            "the heading should take the strongest version of the modulation, with the topic row below it explicitly stepped down",
         )
         self.assertGreater(
-            by_content["TARGETHDR"]["secondary_peak_weight"],
-            by_content["TARGETTOPIC"]["secondary_peak_weight"],
-            "the selected heading should take the strongest version of the alternating crest, with the subordinate rows below it explicitly stepped down",
+            abs(by_content["ATOPIC"]["intensity_multiplier"] - 1.0),
+            abs(by_content["ALINE"]["intensity_multiplier"] - 1.0),
+            "the modulation should keep fading as it travels down the block instead of treating the heading and the text below it as the same-strength surface",
+        )
+        self.assertEqual(
+            by_content["AHDR"]["peak_rgb_override"],
+            by_content["BHDR"]["peak_rgb_override"],
+            "adjacent headings in the same paired band should share the same subtle lean on a given sweep",
+        )
+        self.assertNotEqual(
+            by_content["AHDR"]["peak_rgb_override"],
+            by_content["CHDR"]["peak_rgb_override"],
+            "the next paired band should switch to the opposite warm/cool lean",
         )
         self.assertGreater(
-            by_content["TARGETTOPIC"]["secondary_peak_weight"],
-            by_content["TARGETLINE"]["secondary_peak_weight"],
-            "the alternating pass should keep fading as it travels down the selected block instead of treating the heading and the text below it as the same-strength surface",
+            abs(by_content["AHDR"]["intensity_multiplier"] - 1.0),
+            abs(by_content["CHDR"]["intensity_multiplier"] - 1.0),
+            "the warm band should ride the shared sweep a bit stronger than the cool band instead of every heading using identical intensity",
         )
         self.assertGreater(
-            by_content["TARGETLINE"]["secondary_peak_weight"],
-            0.0,
-            "the selected heading's subordinate text should still receive a real alternating pass, not just the heading row by itself",
+            abs(by_content["ALINE"]["intensity_multiplier"] - 1.0),
+            abs(by_content["CLINE"]["intensity_multiplier"] - 1.0),
+            "that same warm-versus-cool intensity relationship should remain visible on the subordinate rows too, just more softly than the headers",
         )
 
     def test_wrapped_history_line_only_privileges_first_visual_row(self) -> None:

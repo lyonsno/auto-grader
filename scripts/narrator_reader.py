@@ -537,13 +537,14 @@ _HISTORY_GROUP_ALT_FIELD = 0.012   # subtle secondary alternating shimmer field
                                    # shared across even/odd item groups
 _HISTORY_GROUP_ALT_RATE = 0.55     # slower than the primary history field
 _HISTORY_GROUP_SECONDARY_CYCLE_S = _SHIMMER_DEFAULT_CYCLE_S
-                                   # the new quieter pass alternates one
-                                   # heading-group parity per sweep, then
-                                   # flips to the other on the next cycle
+                                   # advance the warm/cool alternation epoch
+                                   # once per main sweep so each heading pair
+                                   # flips lean on the next cycle
 _HISTORY_GROUP_SECONDARY_PHASE_OFFSET = 0.48
-                                   # keep the second pass offset from the
-                                   # primary shimmer so it reads as a
-                                   # companion field, not a duplicate
+                                   # keep an explicit half-cycle witness for
+                                   # the alternation epoch; the live surface
+                                   # now uses tiny same-sweep nudges instead
+                                   # of a distinct second crest
 _HISTORY_GROUP_SECONDARY_BLEND = 0.55
                                    # temporary debug tuning: push the crest
                                    # hard enough to be obvious without
@@ -565,6 +566,27 @@ _HISTORY_GROUP_SECONDARY_PEAK_RGB_COOL = (224, 226, 204)
                                    # nudged toward rain-washed sage so the
                                    # alternating pass can lean cool without
                                    # becoming a different effect entirely
+_HISTORY_GROUP_MODULATION_PHASE_OFFSET = 0.006
+                                   # tiny alternating phase nudge between
+                                   # adjacent heading groups so the shared
+                                   # sweep does not read mechanically stamped
+_HISTORY_GROUP_MODULATION_PHASE_WOBBLE = 0.003
+                                   # slight time-varying wobble so the phase
+                                   # offset hovers instead of locking dead-on
+_HISTORY_GROUP_MODULATION_PHASE_WOBBLE_CYCLE_S = 5.8
+                                   # slower than the main shimmer so the
+                                   # inter-group offset breathes gently
+_HISTORY_GROUP_MODULATION_PEAK_BLEND = 0.34
+                                   # subtle lean toward the warm/cool paired
+                                   # variants while staying in the main
+                                   # shimmer family
+_HISTORY_GROUP_MODULATION_WARM_DELTA = 0.10
+                                   # warm-leaning groups take a slight extra
+                                   # crest intensity on the shared sweep
+_HISTORY_GROUP_MODULATION_COOL_DELTA = -0.08
+                                   # cool-leaning groups step a little calmer
+                                   # on the same sweep instead of spawning a
+                                   # whole second event
 _HISTORY_CONTINUATION_ROW_STEP = 0.09  # wrapped continuation rows should step
                                        # down in authority below the first
                                        # visual row of an entry
@@ -711,11 +733,12 @@ def _history_entry_phase(
 
 
 def _history_secondary_phase(now_s: float) -> tuple[int, float]:
-    """Return the current secondary-pass index and offset phase.
+    """Return the current alternation epoch and a legacy trough witness.
 
-    The second shimmer layer sweeps once per cycle, but only one
-    heading-group parity is eligible during that sweep. On the next
-    cycle, the active parity flips.
+    The live history modulation now rides the main sweep rather than a
+    separate secondary crest, but we still keep an explicit per-cycle
+    epoch helper so warm/cool pairing stays testable, plus a half-cycle
+    phase witness that makes trough placement obvious during retunes.
     """
     cycle = _HISTORY_GROUP_SECONDARY_CYCLE_S
     pass_index = int(now_s // cycle)
@@ -774,26 +797,94 @@ def _history_secondary_row_weight(
     return group_weight * 0.72
 
 
+def _history_alternation_row_scale(kind: str, group_depth: int) -> float:
+    """Return how strongly the shared-sweep modulation should read here."""
+    if kind in {"header", "header_index", "header_dash"}:
+        return 1.0
+    if kind in {"topic", "basis", "review_marker", "checkpoint"}:
+        return 0.70
+    if kind in {"line", "line_alt"}:
+        depth_step = max(0, group_depth - 2)
+        return max(0.42, 0.56 - (0.06 * depth_step))
+    return 0.56
+
+
 def _history_secondary_peak_rgb(
     group_index: int,
     pass_index: int,
 ) -> tuple[int, int, int]:
-    """Return the subtle warm/cool lean for one selected heading band.
+    """Return the subtle warm/cool lean for one heading band on this sweep.
 
-    The secondary pass selects every other heading group per cycle. We want
-    the selected groups to resolve in PAIRS across adjacent passes — two
-    warms, then two cools — while still letting each heading alternate its
-    own lean the next time it is selected. Grouping by `group_index // 2`
-    gives us those heading pairs, and `pass_index // 2` flips the pair lean
-    on the next revisit.
+    The modulation rides the same main sweep everywhere. We still want the
+    headings to resolve in PAIRS — two warms, then two cools — and for each
+    heading to flip warm/cool the next time the sweep revisits it. Grouping
+    by `group_index // 2` gives us those heading pairs, and `pass_index`
+    flips the pair lean on the next sweep.
     """
     if group_index < 0:
         group_index = 0
     pair_index = group_index // 2
-    pair_epoch = pass_index // 2
+    pair_epoch = pass_index
     if (pair_index + pair_epoch) % 2 == 0:
         return _HISTORY_GROUP_SECONDARY_PEAK_RGB_WARM
     return _HISTORY_GROUP_SECONDARY_PEAK_RGB_COOL
+
+
+def _history_alternation_peak_rgb(
+    kind: str,
+    group_index: int,
+    pass_index: int,
+    group_depth: int,
+) -> tuple[int, int, int]:
+    """Blend the main shimmer peak toward the paired warm/cool lean."""
+    base_peak = _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB)
+    row_scale = _history_alternation_row_scale(kind, group_depth)
+    lean_peak = _history_secondary_peak_rgb(group_index, pass_index)
+    return _blend_rgb(
+        base_peak,
+        lean_peak,
+        _HISTORY_GROUP_MODULATION_PEAK_BLEND * row_scale,
+    )
+
+
+def _history_alternation_intensity_multiplier(
+    group_index: int,
+    pass_index: int,
+    kind: str,
+    group_depth: int,
+) -> float:
+    """Slightly bias the shared sweep stronger/weaker by alternating group."""
+    row_scale = _history_alternation_row_scale(kind, group_depth)
+    lean_peak = _history_secondary_peak_rgb(group_index, pass_index)
+    is_warm = lean_peak == _HISTORY_GROUP_SECONDARY_PEAK_RGB_WARM
+    delta = (
+        _HISTORY_GROUP_MODULATION_WARM_DELTA
+        if is_warm
+        else _HISTORY_GROUP_MODULATION_COOL_DELTA
+    )
+    return max(0.82, 1.0 + (delta * row_scale))
+
+
+def _history_alternation_phase_offset(
+    group_index: int,
+    pass_index: int,
+    kind: str,
+    group_depth: int,
+    now_s: float,
+) -> float:
+    """Return a tiny alternating phase offset on the shared sweep."""
+    row_scale = _history_alternation_row_scale(kind, group_depth)
+    lean_peak = _history_secondary_peak_rgb(group_index, pass_index)
+    direction = 1.0 if lean_peak == _HISTORY_GROUP_SECONDARY_PEAK_RGB_WARM else -1.0
+    wobble = math.sin(
+        2 * math.pi * (now_s / _HISTORY_GROUP_MODULATION_PHASE_WOBBLE_CYCLE_S)
+        + (group_index * 0.91)
+        + (group_depth * 0.37)
+    )
+    return row_scale * (
+        (direction * _HISTORY_GROUP_MODULATION_PHASE_OFFSET)
+        + (_HISTORY_GROUP_MODULATION_PHASE_WOBBLE * wobble)
+    )
 
 
 def _scorebug_big_value_rows(value: str) -> tuple[str, str, str]:
@@ -2709,6 +2800,8 @@ def _apply_shimmer(
     wrap_width: int | None = None,
     cycle_s: float | None = None,
     phase_override: float | None = None,
+    peak_rgb_override: tuple[int, int, int] | None = None,
+    intensity_multiplier: float = 1.0,
     secondary_phase_override: float | None = None,
     secondary_peak_weight: float = 0.0,
     secondary_peak_rgb: tuple[int, int, int] | None = None,
@@ -2729,6 +2822,11 @@ def _apply_shimmer(
     so the layers can have weakly-coupled drifting periods that orbit
     the ideal stack instead of marching in lockstep. The override is
     expected to already account for the per-layer offset.
+
+    peak_rgb_override / intensity_multiplier: optional modulation of the
+    primary sweep. Used by the history renderer so alternating groups can
+    lean warm/cool and slightly stronger/weaker while still sharing ONE
+    main shimmer event.
 
     secondary_phase_override / secondary_peak_weight: optional quieter
     companion shimmer pass layered on top of the main one. Used by the
@@ -2756,7 +2854,9 @@ def _apply_shimmer(
     tier_dim = _history_tier_dim_factor(layer_index)
     base_rgb = _scale_rgb(_BASE_RGB.get(kind, _BASE_RGB["line"]), tier_dim)
     peak_rgb = _scale_rgb(
-        _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB),
+        peak_rgb_override
+        if peak_rgb_override is not None
+        else _SHIMMER_KIND_PEAK_RGB.get(kind, _SHIMMER_PEAK_RGB),
         tier_dim,
     )
     secondary_target_rgb = (
@@ -2778,7 +2878,7 @@ def _apply_shimmer(
         return text_obj
     if kind in {"line", "line_alt"}:
         kind_intensity *= tier_dim
-    layer_recency = raw_recency * kind_intensity
+    layer_recency = raw_recency * kind_intensity * intensity_multiplier
 
     if phase_override is not None:
         # Coupled-oscillator state already accounts for the per-layer
@@ -4725,7 +4825,7 @@ class PaintDryDisplay:
         display_entries = self._viewport_display_entries()
         history_text = Text(no_wrap=False, overflow="fold")
         global_history_phase = self._shimmer_phases.phase(0)
-        secondary_pass_index, secondary_phase = _history_secondary_phase(now)
+        alternation_pass_index = _history_secondary_phase(now)[0]
         current_group_index = -1
         current_group_base_phase = 0.0
         for i, (entry, is_most_recent, group_depth) in enumerate(display_entries):
@@ -4756,32 +4856,30 @@ class PaintDryDisplay:
                 current_group_index,
                 group_depth,
             )
-            secondary_group_weight = _history_secondary_group_weight(
-                current_group_index,
-                secondary_pass_index,
-            )
-            secondary_peak_weight = _history_secondary_row_weight(
-                secondary_group_weight,
-                kind,
-                group_depth,
-            )
-            history_secondary_kwargs = {
-                "secondary_phase_override": _history_secondary_entry_phase(
-                    phase_override,
-                    global_history_phase,
-                    secondary_phase,
-                ),
-                "secondary_peak_weight": secondary_peak_weight,
-                "secondary_peak_rgb": _history_secondary_peak_rgb(
+            modulation_phase_override = (
+                phase_override
+                + _history_alternation_phase_offset(
                     current_group_index,
-                    secondary_pass_index,
+                    alternation_pass_index,
+                    kind,
+                    group_depth,
+                    now,
+                )
+            ) % 1.0
+            history_modulation_kwargs = {
+                "phase_override": modulation_phase_override,
+                "peak_rgb_override": _history_alternation_peak_rgb(
+                    kind,
+                    current_group_index,
+                    alternation_pass_index,
+                    group_depth,
                 ),
-                "secondary_floor_weight": (
-                    _HISTORY_GROUP_SECONDARY_FLOOR
-                    if secondary_peak_weight > 0.0
-                    else 0.0
+                "intensity_multiplier": _history_alternation_intensity_multiplier(
+                    current_group_index,
+                    alternation_pass_index,
+                    kind,
+                    group_depth,
                 ),
-                "secondary_width": _HISTORY_GROUP_SECONDARY_WIDTH,
             }
 
             if kind == "header":
@@ -4797,7 +4895,7 @@ class PaintDryDisplay:
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    **history_secondary_kwargs,
+                    **history_modulation_kwargs,
                 )
                 # Split the [item N/M] index marker from the rest of
                 # the title so the index can be rendered in cool steel
@@ -4817,8 +4915,7 @@ class PaintDryDisplay:
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
-                        phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        **history_modulation_kwargs,
                     )
                     history_text.append(" ", style="grey39")
                     _apply_shimmer(
@@ -4827,8 +4924,7 @@ class PaintDryDisplay:
                         indent_width=len(indent) + len(index_part) + 1,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
-                        phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        **history_modulation_kwargs,
                     )
                 else:
                     _apply_shimmer(
@@ -4837,8 +4933,7 @@ class PaintDryDisplay:
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
-                        phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        **history_modulation_kwargs,
                     )
             elif kind == "topic":
                 indent = "  · "
@@ -4869,8 +4964,7 @@ class PaintDryDisplay:
                         indent_width=len(indent) + extra_indent,
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
-                        phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        **history_modulation_kwargs,
                     )
                 else:
                     _apply_shimmer(
@@ -4879,8 +4973,7 @@ class PaintDryDisplay:
                         indent_width=len(indent),
                         wrap_width=wrap_width,
                         cycle_s=entry_cycle,
-                        phase_override=phase_override,
-                        **history_secondary_kwargs,
+                        **history_modulation_kwargs,
                     )
             elif kind == "basis":
                 indent = "  ≡ "
@@ -4895,8 +4988,7 @@ class PaintDryDisplay:
                     indent_width=len(indent) + len("Basis: "),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    **history_modulation_kwargs,
                 )
             elif kind == "review_marker":
                 indent = "  ! "
@@ -4911,8 +5003,7 @@ class PaintDryDisplay:
                     indent_width=len(indent) + len("Review needed: "),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    **history_modulation_kwargs,
                 )
             elif kind == "checkpoint":
                 indent = "  ≈ "
@@ -4922,8 +5013,7 @@ class PaintDryDisplay:
                     indent_width=0,
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    **history_modulation_kwargs,
                 )
                 checkpoint_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 _apply_shimmer(
@@ -4932,8 +5022,7 @@ class PaintDryDisplay:
                     indent_width=len(indent),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    **history_modulation_kwargs,
                 )
             else:
                 indent = "    "
@@ -4949,8 +5038,7 @@ class PaintDryDisplay:
                     indent_width=len(indent),
                     wrap_width=wrap_width,
                     cycle_s=entry_cycle,
-                    phase_override=phase_override,
-                    **history_secondary_kwargs,
+                    **history_modulation_kwargs,
                 )
 
         if not display_entries:
