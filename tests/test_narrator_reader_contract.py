@@ -2797,13 +2797,13 @@ class NarratorReaderContract(unittest.TestCase):
             structured,
             [
                 ("basis", "first basis", 0),
-                ("read", "first read", 0),
+                ("read", "first read", 1),
                 ("review_marker", "first review", 0),
-                ("basis", "second basis", 1),
+                ("basis", "second basis", 0),
                 ("salvage", "second survives", 1),
-                ("professor_mismatch", "second mismatch", 1),
+                ("professor_mismatch", "second mismatch", 0),
             ],
-            "structured child rows should inherit per-topic parity so the moss/bone alternation survives under the new grouped history rendering",
+            "structured child rows should alternate locally within each topic block so the moss/bone rhythm survives as visible internal structure instead of collapsing into one flat lane",
         )
 
     def test_alert_labels_use_distinct_alert_accent(self):
@@ -2885,7 +2885,7 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertLess(
             sum(paper_rgb) / 3,
-            180,
+            150,
             "the steady focus preview paper should sit in a materially darker parchment lane instead of blowing out into a bright cream slab against the dark frame",
         )
         self.assertGreater(
@@ -2926,23 +2926,55 @@ class NarratorReaderContract(unittest.TestCase):
 
         self.assertGreater(
             sum(line_rgb) / 3,
-            152,
+            165,
             "the moss lane should lift out of the murk enough to read as faint color instead of dim grey-green",
         )
         self.assertGreater(
             sum(line_alt_rgb) / 3,
-            194,
+            200,
             "the bone lane should reclaim more breathing room instead of reading like a dark beige shadow",
         )
         self.assertGreater(
             sum(checkpoint_rgb) / 3,
-            150,
+            165,
             "checkpoint moss should stay in the same lighter family as the history rows instead of settling into a grim steel-dark tier",
         )
         self.assertGreater(
             sum(checkpoint_alt_rgb) / 3,
-            198,
+            202,
             "checkpoint bone should keep a visibly lighter warm lane so the alternating stack still feels airy under the headers",
+        )
+
+    def test_structured_rows_alternate_parity_within_one_problem(self):
+        display = self._make_display()
+        display.on_header("[1/6] exam 15-blue · problem fr-10a (numeric, 3.0 pts)")
+        display.on_topic(
+            "41s · Grader: 1/2 · Prof: 1/2",
+            verdict="match",
+            grader_score=1.0,
+            truth_score=1.0,
+            max_points=2.0,
+        )
+        display.on_basis("Setup is right but arithmetic slips.")
+        display.on_checkpoint("Context: The setup survives but the units do not.")
+        display.on_read("The student wrote 6.98 mL, not 16.98 mL.")
+        display.on_salvage("Density setup is still chemically sound.")
+
+        structured = [
+            (kind, parity)
+            for kind, _text, parity in display.history
+            if kind in {"basis", "checkpoint", "read", "salvage"}
+        ]
+
+        self.assertEqual(
+            structured,
+            [
+                ("basis", 0),
+                ("checkpoint", 1),
+                ("read", 0),
+                ("salvage", 1),
+            ],
+            "structured rows under one problem should alternate through the local moss/bone rhythm instead of inheriting one flat parity across the whole block",
         )
 
     def test_display_no_longer_exposes_scrollback_snapshot_affordance(self):

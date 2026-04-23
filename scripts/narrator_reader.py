@@ -403,7 +403,7 @@ _FOCUS_PREVIEW_MAX_HEIGHT_ROWS = 30
 _FOCUS_PREVIEW_COMPANION_SCALE = 0.69
 _FOCUS_PREVIEW_PENDING_FPS = 8.0
 _FOCUS_PREVIEW_BG_RGB = (8, 10, 14)
-_FOCUS_PREVIEW_PAPER_RGB = (178, 162, 138)  # used only by the transition
+_FOCUS_PREVIEW_PAPER_RGB = (150, 134, 110)  # used only by the transition
                                              # (pending) glyph overlay; the
                                              # steady-state renderer uses
                                              # the harder colors below
@@ -411,8 +411,8 @@ _FOCUS_PREVIEW_PAPER_RGB = (178, 162, 138)  # used only by the transition
 # the panel background so binary-thresholded cells still read cleanly, but
 # preserve enough parchment warmth that the opaque paper field doesn't flatten
 # back into a generic gray-beige slab on the dark Paint Dry panel.
-_FOCUS_PREVIEW_HARD_INK_RGB = (54, 46, 38)
-_FOCUS_PREVIEW_HARD_PAPER_RGB = (188, 166, 136)
+_FOCUS_PREVIEW_HARD_INK_RGB = (48, 40, 32)
+_FOCUS_PREVIEW_HARD_PAPER_RGB = (162, 142, 116)
 _FOCUS_PREVIEW_OVERLAY_CHARS = "0011/."
 _FOCUS_PREVIEW_OVERLAY_RGBS = (
     (108, 122, 154),
@@ -469,13 +469,13 @@ _HISTORY_GROUP_DIM_STEP = 0.07  # each successive thought line under a header
 # as the live-field background, the unknown-verdict topic fallback,
 # and the global shimmer-peak highlight color.
 _BASE_RGB = {
-    "line": (154, 179, 163),     # muted celadon — sage moss row,
+    "line": (166, 190, 172),     # muted celadon — sage moss row,
                                   # desaturated cousin of topic_match
                                   # so the verdict variant still pops
-    "line_alt": (214, 200, 180), # warm bone — the alternating row should
+    "line_alt": (224, 208, 186), # warm bone — the alternating row should
                                   # read clearly against the moss row,
                                   # not collapse into muddy ochre
-    "topic": (228, 212, 190),    # warm bone — fallback when verdict is
+    "topic": (232, 216, 194),    # warm bone — fallback when verdict is
                                   # unknown / no prediction data. Bone's
                                   # structural home outside the live field
     "header": (156, 52, 62),     # lacquered burgundy — red-led enough to
@@ -505,12 +505,12 @@ _BASE_RGB = {
     "topic_within_band": (104, 142, 118), # celadon lawful-range hit —
                                           # still a success color, but softer
                                           # than the ceiling-hit indigo
-    "checkpoint": (158, 176, 162),        # anchored moss checkpoint —
+    "checkpoint": (168, 188, 172),        # anchored moss checkpoint —
                                           # checkpoints should feel like
                                           # compressed descendants of the
                                           # live history rows, not a separate
                                           # steel annotation layer
-    "checkpoint_alt": (220, 206, 184),    # anchored warm bone checkpoint —
+    "checkpoint_alt": (228, 212, 188),    # anchored warm bone checkpoint —
                                           # brighter alternating companion
                                           # so the stack keeps the visible
                                           # moss/bone cadence the operator
@@ -628,10 +628,10 @@ _SHIMMER_FLOORED_KINDS = frozenset({
     "topic_undershoot",
 })
 
-_CHROME_FAINT_MOSS_RGB = (134, 150, 140)
-_CHROME_FAINT_BONE_RGB = (182, 168, 150)
-_PANEL_TITLE_RGB = (190, 176, 156)
-_PANEL_SUBTITLE_RGB = (128, 142, 134)
+_CHROME_FAINT_MOSS_RGB = (148, 164, 152)
+_CHROME_FAINT_BONE_RGB = (198, 184, 164)
+_PANEL_TITLE_RGB = (204, 190, 168)
+_PANEL_SUBTITLE_RGB = (142, 156, 146)
 
 # Live panel reserves a fixed vertical footprint so it doesn't jitter
 # the layout when bonsai produces a long line that wraps. The panel
@@ -6186,14 +6186,7 @@ class PaintDryDisplay:
             self.score_below_floor_points += floor - grader_score
 
     def on_checkpoint(self, text: str) -> None:
-        checkpoint_parity = next(
-            (
-                parity
-                for kind, _text, parity in reversed(self.history)
-                if kind == "line" and parity is not None
-            ),
-            self._line_parity,
-        )
+        checkpoint_parity = self._next_structured_row_parity()
         label, _body = _split_checkpoint_label(text)
         if label == "context":
             for index in range(len(self.history) - 1, -1, -1):
@@ -6210,8 +6203,40 @@ class PaintDryDisplay:
                     return
         self.history.append(("checkpoint", text, checkpoint_parity))
 
-    def _structured_row_parity(self) -> int:
-        return self._current_topic_parity
+    def _next_structured_row_parity(self, *, target: str | None = None) -> int:
+        history = list(self.history)
+        if not history:
+            return self._current_topic_parity
+
+        if target:
+            target_header_index: int | None = None
+            end_index = len(history)
+            for index, (entry_kind, entry_text, _entry_parity) in enumerate(history):
+                if entry_kind != "header":
+                    continue
+                header_target = self._history_target_for_header(entry_text)
+                if target_header_index is None:
+                    if header_target == target:
+                        target_header_index = index
+                    continue
+                end_index = index
+                break
+            if target_header_index is None:
+                return self._current_topic_parity
+            structured_count = sum(
+                1
+                for entry_kind, _entry_text, _entry_parity in history[target_header_index + 1 : end_index]
+                if entry_kind in _LEGIBILITY_STRUCTURED_ROW_KINDS or entry_kind == "checkpoint"
+            )
+            return structured_count % 2
+
+        structured_count = 0
+        for entry_kind, _entry_text, _entry_parity in reversed(history):
+            if entry_kind in {"header", "topic"}:
+                break
+            if entry_kind in _LEGIBILITY_STRUCTURED_ROW_KINDS or entry_kind == "checkpoint":
+                structured_count += 1
+        return structured_count % 2
 
     @staticmethod
     def _history_target_for_header(text: str) -> str | None:
@@ -6265,7 +6290,7 @@ class PaintDryDisplay:
         self._append_structured_history_row(
             "basis",
             text,
-            parity=self._structured_row_parity(),
+            parity=self._next_structured_row_parity(target=target),
             target=target,
         )
 
@@ -6273,7 +6298,7 @@ class PaintDryDisplay:
         self._append_structured_history_row(
             "read",
             text,
-            parity=self._structured_row_parity(),
+            parity=self._next_structured_row_parity(target=target),
             target=target,
         )
 
@@ -6281,7 +6306,7 @@ class PaintDryDisplay:
         self._append_structured_history_row(
             "salvage",
             text,
-            parity=self._structured_row_parity(),
+            parity=self._next_structured_row_parity(target=target),
             target=target,
         )
 
@@ -6289,16 +6314,16 @@ class PaintDryDisplay:
         self._append_structured_history_row(
             "hinge",
             text,
-            parity=self._structured_row_parity(),
+            parity=self._next_structured_row_parity(target=target),
             target=target,
         )
 
     def on_review_marker(self, text: str) -> None:
-        self.history.append(("review_marker", text, self._structured_row_parity()))
+        self.history.append(("review_marker", text, self._next_structured_row_parity()))
 
     def on_professor_mismatch(self, text: str) -> None:
         self.history.append(
-            ("professor_mismatch", text, self._structured_row_parity())
+            ("professor_mismatch", text, self._next_structured_row_parity())
         )
 
 
