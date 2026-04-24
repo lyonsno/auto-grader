@@ -398,14 +398,14 @@ class ThinkingNarratorContract(unittest.TestCase):
             (),
             {
                 "exam_id": "15-blue",
-                "question_id": "fr-11c",
+                "question_id": "fr-11a",
                 "answer_type": "electron_config",
                 "max_points": 2.0,
                 "student_answer": "1",
                 "professor_score": 2.0,
                 "truth_score": 2.0,
-                "professor_mark": "correct",
-                "notes": "glyph ambiguity",
+                "professor_mark": "partial",
+                "notes": "ambiguous final digit with partially creditable setup",
                 "acceptable_score_floor": None,
                 "acceptable_score_ceiling": None,
             },
@@ -414,7 +414,7 @@ class ThinkingNarratorContract(unittest.TestCase):
             "Prediction",
             (),
             {
-                "model_score": 2.0,
+                "model_score": 1.0,
                 "model_read": "1",
                 "model_reasoning": (
                     "The final glyph remains ambiguous between 1 and 2, "
