@@ -1268,6 +1268,7 @@ class ThinkingNarrator:
                 timeout=30,
             ).strip()
         elif job["kind"] == "generated_dossier":
+            self._emit_status_line("Compiling dossier.")
             text = self._chat_completion(
                 [
                     {
@@ -1347,6 +1348,17 @@ class ThinkingNarrator:
             if target:
                 payload["target"] = target
             self._legibility_jobs.append(payload)
+        self._emit_status_line("Dossier incoming.")
+
+    def _emit_status_line(self, text: str) -> None:
+        if not text.strip():
+            return
+        delta_writer = getattr(self._sink, "write_delta", None)
+        commit_writer = getattr(self._sink, "commit_live", None)
+        if delta_writer is None or commit_writer is None:
+            return
+        delta_writer(text.strip(), mode="status")
+        commit_writer(mode="status")
 
     @staticmethod
     def _clean_json_response(text: str) -> str:
@@ -1366,6 +1378,9 @@ class ThinkingNarrator:
             logger.warning("Background dossier was not valid JSON; dropping")
             return False
 
+        self._emit_status_line("Checking dossier.")
+        payload = self._reconcile_dossier_payload(payload)
+
         emitted = False
         for row_type in ("read", "salvage", "hinge"):
             body = str(payload.get(row_type, "")).strip()
@@ -1384,6 +1399,89 @@ class ThinkingNarrator:
             writer(body, target=target)
             emitted = True
         return emitted
+
+    def _reconcile_dossier_payload(self, payload: Any) -> dict[str, str]:
+        original = self._normalized_dossier_payload(payload)
+        if not any(original.values()):
+            return original
+
+        prompt = (
+            "Reconcile this trailing chemistry-grading dossier before display.\n\n"
+            "Input JSON:\n"
+            f"{json.dumps(original, ensure_ascii=False, sort_keys=True)}\n\n"
+            "Return JSON only with the same string fields: read, salvage, hinge.\n"
+            "Precedence order: hinge beats salvage beats read when fields overlap; "
+            "read may survive only for distinct visual transcription facts; "
+            "salvage may survive only for distinct creditable-work facts; "
+            "hinge should name the deciding scoring or interpretation issue.\n"
+            "If a lower-priority field repeats, slightly contradicts, or muddies a "
+            "higher-priority field, rewrite it into a distinct fact or return an empty string. "
+            "Keep every surviving value to one compact sentence."
+        )
+        try:
+            response = self._chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a dossier reconciliation pass for Project Paint Dry. "
+                            "You remove redundant or out-of-phase dossier fields before the operator sees them. "
+                            "Return ONLY valid JSON."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=180,
+                temperature=0.2,
+                repetition_penalty=1.0,
+                presence_penalty=0.0,
+                timeout=20,
+            ).strip()
+        except Exception:
+            logger.exception("Background dossier reconciliation failed; using original dossier")
+            return self._dedupe_dossier_payload(original)
+
+        if not response:
+            return self._dedupe_dossier_payload(original)
+        try:
+            reconciled = json.loads(self._clean_json_response(response))
+        except json.JSONDecodeError:
+            drop_writer = getattr(self._sink, "write_drop", None)
+            if drop_writer is not None:
+                drop_writer("dossier-reconcile-json", response)
+            logger.warning("Background dossier reconciliation was not valid JSON; using original dossier")
+            return self._dedupe_dossier_payload(original)
+        normalized = self._normalized_dossier_payload(reconciled)
+        if not any(normalized.values()):
+            return self._dedupe_dossier_payload(original)
+        return self._dedupe_dossier_payload(normalized)
+
+    @staticmethod
+    def _normalized_dossier_payload(payload: Any) -> dict[str, str]:
+        if not isinstance(payload, dict):
+            return {"read": "", "salvage": "", "hinge": ""}
+        return {
+            row_type: str(payload.get(row_type, "")).strip()
+            for row_type in ("read", "salvage", "hinge")
+        }
+
+    @staticmethod
+    def _dedupe_dossier_payload(payload: dict[str, str]) -> dict[str, str]:
+        seen: set[str] = set()
+        cleaned: dict[str, str] = {}
+        for row_type in ("hinge", "salvage", "read"):
+            body = payload.get(row_type, "").strip()
+            key = re.sub(r"[^a-z0-9]+", " ", body.casefold()).strip()
+            if not body or key in seen:
+                cleaned[row_type] = ""
+                continue
+            seen.add(key)
+            cleaned[row_type] = body
+        return {
+            "read": cleaned.get("read", ""),
+            "salvage": cleaned.get("salvage", ""),
+            "hinge": cleaned.get("hinge", ""),
+        }
 
     @staticmethod
     def _reasoning_mentions_dossier_hints(prediction: Any) -> bool:

@@ -2840,6 +2840,39 @@ class NarratorReaderContract(unittest.TestCase):
             "alert rows should carry their own warmer accent instead of reusing the ordinary explanation-label ember",
         )
 
+    def test_structured_dossier_labels_fade_down_the_block(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(("topic", "topic line", "match"))
+        display.history.append(("basis", "Correct setup, wrong units.", 0))
+        display.history.append(("read", "Student work is legible.", 1))
+        display.history.append(("salvage", "Setup survives.", 0))
+        display.history.append(("hinge", "Units decide the score.", 1))
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            history_text = display.render().renderables[-1].renderable
+
+        basis_label = self._foreground_hex(
+            self._style_for_substring(history_text, "Basis:")
+        )
+        read_label = self._foreground_hex(
+            self._style_for_substring(history_text, "Read:")
+        )
+        hinge_label = self._foreground_hex(
+            self._style_for_substring(history_text, "Deciding issue:")
+        )
+
+        self.assertLess(
+            self._hex_luminance(read_label),
+            self._hex_luminance(basis_label),
+            "dossier labels should inherit the same down-block fade as their row bodies instead of all shouting at full ember brightness",
+        )
+        self.assertLess(
+            self._hex_luminance(hinge_label),
+            self._hex_luminance(read_label),
+            "deeper dossier labels should continue fading, with a readable floor rather than a flat orange rail",
+        )
+
     def test_match_topic_stays_within_readable_band_of_basis_row(self):
         display = self._make_display()
         display.history.append(("header", "[item 1/6] first", None))

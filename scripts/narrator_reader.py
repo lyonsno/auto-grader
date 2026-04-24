@@ -1261,6 +1261,12 @@ def _render_layer_index(kind: str, group_depth: int) -> int:
     return 0 if kind == "header" else group_depth
 
 
+def _history_label_style(rgb: tuple[int, int, int], layer_index: int) -> str:
+    """Render structured-row labels with the same local depth as the row body."""
+    factor = max(_HISTORY_TIER_DIM_MIN, _history_tier_dim_factor(layer_index))
+    return f"bold {_rgb_to_hex(_scale_rgb(rgb, factor))}"
+
+
 def _message_requires_immediate_refresh(msg_type: str) -> bool:
     """Return whether a FIFO event should bypass the normal animation cadence.
 
@@ -5461,7 +5467,7 @@ class PaintDryDisplay:
                 history_text.append(indent, style=chrome_faint_bone)
                 history_text.append(
                     "Basis: ",
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    style=_history_label_style(_EMBER_ACCENT_RGB, render_layer),
                 )
                 _append_wrapped_shimmer_block(
                     history_text, text, structured_kind,
@@ -5480,7 +5486,7 @@ class PaintDryDisplay:
                 history_text.append(indent, style=chrome_faint_bone)
                 history_text.append(
                     label,
-                    style=f"bold {_rgb_to_hex(_EMBER_ACCENT_RGB)}",
+                    style=_history_label_style(_EMBER_ACCENT_RGB, render_layer),
                 )
                 _append_wrapped_shimmer_block(
                     history_text, text, structured_kind,

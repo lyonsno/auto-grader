@@ -15,20 +15,29 @@ from auto_grader.thinking_narrator import (
 class _DummySink:
     def __init__(self) -> None:
         self.deltas: list[str] = []
+        self._status_parts: list[str] = []
+        self.status_lines: list[str] = []
         self.rollbacks = 0
         self.commits = 0
+        self.commit_modes: list[str] = []
         self.drops: list[tuple[str, str]] = []
         self.topics: list[dict[str, object]] = []
         self.structured_rows: list[tuple[str, str]] = []
 
     def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
+        if mode == "status":
+            self._status_parts.append(text)
 
     def rollback_live(self) -> None:
         self.rollbacks += 1
 
     def commit_live(self, *, mode: str = "thought") -> None:
         self.commits += 1
+        self.commit_modes.append(mode)
+        if mode == "status":
+            self.status_lines.append("".join(self._status_parts))
+            self._status_parts = []
 
     def write_drop(self, reason: str, text: str) -> None:
         self.drops.append((reason, text))
@@ -99,6 +108,39 @@ class _DossierAfterActionNarrator(ThinkingNarrator):
                     "read": "Final mark could be a corrected 1 or a messy 2; context leans 1.",
                     "salvage": "The student's setup still supports the intended chemistry method.",
                     "hinge": "The score turns on whether the final handwritten glyph outweighs the surrounding coherent work.",
+                }
+            )
+        return ""
+
+    def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
+        return None
+
+    def _schedule_idle_legibility_if_needed(self) -> None:  # type: ignore[override]
+        return None
+
+
+class _ReconcilingDossierNarrator(ThinkingNarrator):
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+        self.chat_systems: list[str] = []
+
+    def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
+        system = messages[0]["content"]
+        self.chat_systems.append(system)
+        if "background dossier" in system:
+            return json.dumps(
+                {
+                    "read": "The student provided the two ozone resonance forms but omitted lone pairs and formal charges.",
+                    "salvage": "The two ozone resonance connectivities are correct and support full credit.",
+                    "hinge": "The score turns on whether omitted lone pairs and formal charges require partial credit rather than full credit.",
+                }
+            )
+        if "dossier reconciliation" in system:
+            return json.dumps(
+                {
+                    "read": "The student identifies both ozone resonance connectivities but leaves electron bookkeeping incomplete.",
+                    "salvage": "",
+                    "hinge": "The score turns on whether this prompt requires explicit lone pairs and formal charges for full credit.",
                 }
             )
         return ""
@@ -388,6 +430,99 @@ class ThinkingNarratorContract(unittest.TestCase):
                 ("salvage", "The student's setup still supports the intended chemistry method."),
                 ("hinge", "The score turns on whether the final handwritten glyph outweighs the surrounding coherent work."),
             ],
+        )
+
+    def test_background_dossier_pipeline_surfaces_status_stages(self):
+        sink = _DummySink()
+        narrator = _DossierAfterActionNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-11c",
+                "answer_type": "electron_config",
+                "max_points": 2.0,
+                "student_answer": "1",
+                "professor_score": 2.0,
+                "truth_score": 2.0,
+                "professor_mark": "partial",
+                "notes": "glyph ambiguity",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 1.0,
+                "model_read": "1",
+                "model_reasoning": "The final glyph remains ambiguity-sensitive after a long pass.",
+                "score_basis": "Accepted the coherent orbital-box work despite the ambiguous final digit.",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(95.0, prediction, item, template_question=None)
+        self.assertIn("Dossier incoming.", sink.status_lines)
+
+        self.assertTrue(narrator._flush_idle_legibility_once())
+        self.assertIn("Compiling dossier.", sink.status_lines)
+        self.assertIn("Checking dossier.", sink.status_lines)
+
+    def test_background_dossier_reconciliation_drops_redundant_lower_priority_field(self):
+        sink = _DummySink()
+        narrator = _ReconcilingDossierNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-12b",
+                "answer_type": "lewis_structure",
+                "max_points": 2.0,
+                "student_answer": "two ozone resonance drawings",
+                "professor_score": 1.0,
+                "truth_score": 1.0,
+                "professor_mark": "partial",
+                "notes": "omitted lone pairs and formal charges",
+                "acceptable_score_floor": None,
+                "acceptable_score_ceiling": None,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 2.0,
+                "model_read": "two resonance forms",
+                "model_reasoning": "The connectivities are right, but the electron bookkeeping is contested.",
+                "score_basis": "Full credit awarded for two resonance structures.",
+                "truncated": False,
+            },
+        )()
+
+        narrator._produce_after_action(95.0, prediction, item, template_question=None)
+        self.assertTrue(narrator._flush_idle_legibility_once())
+
+        self.assertEqual(
+            sink.structured_rows,
+            [
+                (
+                    "read",
+                    "The student identifies both ozone resonance connectivities but leaves electron bookkeeping incomplete.",
+                ),
+                (
+                    "hinge",
+                    "The score turns on whether this prompt requires explicit lone pairs and formal charges for full credit.",
+                ),
+            ],
+            "dossier reconciliation should let the high-value read/hinge survive while dropping the redundant What survives row",
+        )
+        self.assertTrue(
+            any("dossier reconciliation" in system for system in narrator.chat_systems),
+            "the dossier path should run a second compact reconciliation pass before emitting rows",
         )
 
     def test_start_flushes_pending_background_dossier_before_resetting_item_state(self):
