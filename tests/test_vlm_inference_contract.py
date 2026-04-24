@@ -188,5 +188,72 @@ class SamplingPresetContract(unittest.TestCase):
         self.assertIn('Student wrote: "14.2031 mol"', header)
         self.assertNotIn("Professor scored:", header)
         self.assertNotIn("mark: check", header)
+
+    def test_grade_single_item_uses_bounded_stream_idle_timeout(self):
+        from auto_grader.vlm_inference import (
+            ServerConfig,
+            _STREAM_IDLE_TIMEOUT_S,
+            grade_single_item,
+        )
+
+        item = EvalItem(
+            exam_id="15-blue",
+            question_id="fr-10b",
+            answer_type="numeric",
+            page=1,
+            professor_score=1.0,
+            max_points=1.0,
+            professor_mark="check",
+            student_answer="-2.415",
+            notes="mock",
+        )
+        config = ServerConfig(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+
+        with mock.patch(
+            "auto_grader.vlm_inference._stream_vision_completion_with_finish",
+            return_value=('{"model_score": 0, "model_confidence": 0.5, "model_read": "", "model_reasoning": "", "upstream_dependency": "none", "if_dependent_then_consistent": null, "score_basis": "", "is_obviously_fully_correct": null, "is_obviously_wrong": null}', "", "stop"),
+        ) as stream_mock:
+            grade_single_item(
+                item,
+                page_image=b"page-bytes",
+                config=config,
+            )
+
+        self.assertEqual(
+            stream_mock.call_args.kwargs["timeout"],
+            _STREAM_IDLE_TIMEOUT_S,
+            "grade_single_item should use the bounded stream idle timeout so a wedged upstream completion fails fast instead of freezing Paint Dry for ten minutes",
+        )
+
+    def test_describe_only_stream_uses_bounded_idle_timeout(self):
+        from auto_grader.vlm_inference import (
+            ServerConfig,
+            _STREAM_IDLE_TIMEOUT_S,
+            stream_vision_completion,
+        )
+
+        config = ServerConfig(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+
+        with mock.patch(
+            "auto_grader.vlm_inference._stream_vision_completion_with_finish",
+            return_value=("visible student work", "brief reasoning", "stop"),
+        ) as stream_mock:
+            stream_vision_completion(
+                config=config,
+                prompt_text="Describe the page.",
+                page_image=b"page-bytes",
+            )
+
+        self.assertEqual(
+            stream_mock.call_args.kwargs["timeout"],
+            _STREAM_IDLE_TIMEOUT_S,
+            "describe/smoke paths should share the same bounded idle timeout so the preview surface cannot hang indefinitely on a silent upstream stream",
+        )
 if __name__ == "__main__":
     unittest.main()

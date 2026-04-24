@@ -232,6 +232,11 @@ GRADER_PAGE_DPI = 200
 #: rasterized into a separate cache at GRADER_PAGE_DPI.
 PREVIEW_PAGE_DPI = 800
 
+# If the upstream stream goes silent for this long, treat it as wedged and
+# fail the item rather than freezing Paint Dry for the full legacy 10-minute
+# socket timeout.
+_STREAM_IDLE_TIMEOUT_S = 45
+
 
 def extract_page_image(pdf_path: Path, page_num: int, dpi: int = GRADER_PAGE_DPI) -> bytes:
     """Extract a single page from a PDF as a PNG image (bytes).
@@ -559,7 +564,7 @@ def _stream_vision_completion_with_finish(
     on_reasoning_delta: Any = None,
     extra_body: dict[str, Any] | None = None,
     raw_dump_path: Path | None = None,
-    timeout: float = 600,
+    timeout: float = _STREAM_IDLE_TIMEOUT_S,
     retries: int = 3,
     failure_context: str | None = None,
 ) -> tuple[str, str, str | None]:
@@ -678,7 +683,7 @@ def stream_vision_completion(
     on_reasoning_delta: Any = None,
     extra_body: dict[str, Any] | None = None,
     raw_dump_path: Path | None = None,
-    timeout: float = 600,
+    timeout: float = _STREAM_IDLE_TIMEOUT_S,
     retries: int = 3,
     failure_context: str | None = None,
 ) -> tuple[str, str]:
@@ -720,6 +725,7 @@ def grade_single_item(
         page_image=page_image,
         system_prompt=_SYSTEM_PROMPT,
         on_reasoning_delta=on_reasoning_delta,
+        timeout=_STREAM_IDLE_TIMEOUT_S,
         failure_context=f"{item.exam_id}/{item.question_id}",
     )
 
