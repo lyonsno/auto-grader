@@ -50,6 +50,15 @@ class _DummySink:
     def write_hinge(self, text: str) -> None:
         self.structured_rows.append(("hinge", text))
 
+    def write_credit_preserved(self, text: str) -> None:
+        self.structured_rows.append(("credit_preserved", text))
+
+    def write_deduction(self, text: str) -> None:
+        self.structured_rows.append(("deduction", text))
+
+    def write_professor_mismatch(self, text: str) -> None:
+        self.structured_rows.append(("professor_mismatch", text))
+
 
 class _RetryNarrator(ThinkingNarrator):
     def __init__(self, sink: _DummySink) -> None:
@@ -79,9 +88,6 @@ class _AfterActionNarrator(ThinkingNarrator):
         self.chat_calls.append({"messages": messages, "kwargs": kwargs})
         return self._response
 
-    def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
-        return None
-
     def _schedule_idle_legibility_if_needed(self) -> None:  # type: ignore[override]
         return None
 
@@ -103,9 +109,6 @@ class _DossierAfterActionNarrator(ThinkingNarrator):
                 }
             )
         return ""
-
-    def _handle_legibility_rows(self, prediction, item):  # type: ignore[override]
-        return None
 
     def _schedule_idle_legibility_if_needed(self) -> None:  # type: ignore[override]
         return None
@@ -399,6 +402,18 @@ class ThinkingNarratorContract(unittest.TestCase):
             prediction,
             item,
             template_question=template_question,
+        )
+        self.assertEqual(
+            sink.structured_rows,
+            [
+                (
+                    "salvage",
+                    "Acceptable band preserves 1/2 to 1.5/2 because: "
+                    "The student gets the O-O-O connectivity and "
+                    "valence-electron basis, but the drawn O=O=O structure "
+                    "violates the octet rule.",
+                )
+            ],
         )
         self.assertTrue(narrator._flush_idle_legibility_once())
 

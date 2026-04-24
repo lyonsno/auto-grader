@@ -1511,6 +1511,30 @@ class ThinkingNarrator:
         )
 
     @staticmethod
+    def _acceptable_band_salvage_text(prediction: Any, item: Any) -> str | None:
+        floor_raw = getattr(item, "acceptable_score_floor", None)
+        if floor_raw is None:
+            return None
+        floor = float(floor_raw)
+        if prediction.model_score >= floor:
+            return None
+        reason = str(getattr(item, "acceptable_score_reason", "")).strip()
+        if not reason:
+            return None
+        ceiling_raw = getattr(item, "acceptable_score_ceiling", None)
+        ceiling = (
+            float(ceiling_raw)
+            if ceiling_raw is not None
+            else float(getattr(item, "truth_score", item.professor_score))
+        )
+        return (
+            "Acceptable band preserves "
+            f"{_format_score_with_denominator(floor, item.max_points)} to "
+            f"{_format_score_with_denominator(ceiling, item.max_points)} "
+            f"because: {reason}"
+        )
+
+    @staticmethod
     def _should_emit_basis_row(
         prediction: Any,
         item: Any,
@@ -1542,6 +1566,10 @@ class ThinkingNarrator:
         score_basis = str(getattr(prediction, "score_basis", "")).strip()
         review_needed = self._review_needed_text(prediction)
         professor_mismatch = self._professor_mismatch_text(item)
+        acceptable_band_salvage = self._acceptable_band_salvage_text(
+            prediction,
+            item,
+        )
 
         if self._should_emit_basis_row(
             prediction,
@@ -1550,6 +1578,9 @@ class ThinkingNarrator:
             professor_mismatch=professor_mismatch,
         ):
             self._write_legibility_row_now("basis", score_basis)
+
+        if acceptable_band_salvage:
+            self._write_legibility_row_now("salvage", acceptable_band_salvage)
 
         extras = 0
 
@@ -1561,7 +1592,11 @@ class ThinkingNarrator:
             self._write_legibility_row_now("professor_mismatch", professor_mismatch)
             extras += 1
 
-        if prediction.model_score < item.max_points and extras < _MAX_LEGIBILITY_EXTRA_ROWS:
+        if (
+            prediction.model_score < item.max_points
+            and extras < _MAX_LEGIBILITY_EXTRA_ROWS
+            and not acceptable_band_salvage
+        ):
             if 0.0 < prediction.model_score < item.max_points:
                 self._enqueue_legibility_job(
                     "credit_preserved",
