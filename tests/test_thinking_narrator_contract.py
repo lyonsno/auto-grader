@@ -89,10 +89,12 @@ class _AfterActionNarrator(ThinkingNarrator):
 class _DossierAfterActionNarrator(ThinkingNarrator):
     def __init__(self, sink: _DummySink) -> None:
         super().__init__(sink)
+        self.dossier_prompts: list[str] = []
 
     def _chat_completion(self, messages, **kwargs):  # type: ignore[override]
         system = messages[0]["content"]
         if "background dossier" in system:
+            self.dossier_prompts.append(messages[1]["content"])
             return json.dumps(
                 {
                     "read": "Final mark could be a corrected 1 or a messy 2; context leans 1.",
@@ -336,6 +338,85 @@ class ThinkingNarratorContract(unittest.TestCase):
                 ("salvage", "The student's setup still supports the intended chemistry method."),
                 ("hinge", "The score turns on whether the final handwritten glyph outweighs the surrounding coherent work."),
             ],
+        )
+
+    def test_background_dossier_prompt_carries_rubric_and_acceptable_band_context(self):
+        sink = _DummySink()
+        narrator = _DossierAfterActionNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "34-blue",
+                "question_id": "fr-12a",
+                "answer_type": "lewis_structure",
+                "max_points": 2.0,
+                "student_answer": "O3 structure drawn",
+                "professor_score": 1.5,
+                "truth_score": 1.5,
+                "professor_mark": "partial",
+                "notes": "Annotation about valence electrons.",
+                "acceptable_score_floor": 1.0,
+                "acceptable_score_ceiling": 1.5,
+                "acceptable_score_reason": (
+                    "The student gets the O-O-O connectivity and "
+                    "valence-electron basis, but the drawn O=O=O structure "
+                    "violates the octet rule."
+                ),
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": 0.0,
+                "model_read": "O=O=O with lone pairs; 6 x 3 = 18 then 14 val",
+                "model_reasoning": (
+                    "Wrong electron count and central oxygen octet violation."
+                ),
+                "score_basis": "0/2. Incorrect Lewis structure drawn.",
+                "truncated": False,
+            },
+        )()
+        template_question = {
+            "prompt": "Draw the Lewis structure of O3.",
+            "answer": {
+                "rubric": [
+                    {
+                        "criterion": "Correct number of valence electrons (18)",
+                        "points": 1,
+                    },
+                    {
+                        "criterion": "Valid Lewis structure with correct bonds and lone pairs",
+                        "points": 1,
+                    },
+                ],
+            },
+        }
+
+        narrator._produce_after_action(
+            158.0,
+            prediction,
+            item,
+            template_question=template_question,
+        )
+        self.assertTrue(narrator._flush_idle_legibility_once())
+
+        prompt = narrator.dossier_prompts[-1]
+        self.assertIn("Question prompt: Draw the Lewis structure of O3.", prompt)
+        self.assertIn(
+            "Rubric: Correct number of valence electrons (18) (1 pt); "
+            "Valid Lewis structure with correct bonds and lone pairs (1 pt)",
+            prompt,
+        )
+        self.assertIn("Acceptable score band: 1/2 to 1.5/2", prompt)
+        self.assertIn(
+            "valence-electron basis, but the drawn O=O=O structure violates the octet rule",
+            prompt,
+        )
+        self.assertIn(
+            "If the model score is below the acceptable score floor",
+            prompt,
         )
 
     def test_start_flushes_pending_background_dossier_before_resetting_item_state(self):

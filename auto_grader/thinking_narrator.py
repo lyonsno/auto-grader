@@ -297,6 +297,59 @@ def _format_score_with_denominator(score: float, max_points: float) -> str:
     return f"{score:g}/{max_points:g}"
 
 
+def _format_dossier_question_context(template_question: dict | None) -> str:
+    if not template_question:
+        return ""
+    lines: list[str] = []
+    prompt = str(template_question.get("prompt", "")).strip()
+    if prompt:
+        lines.append(f"Question prompt: {prompt}")
+    answer = template_question.get("answer")
+    if isinstance(answer, dict):
+        rubric = answer.get("rubric")
+        if isinstance(rubric, list):
+            rubric_parts: list[str] = []
+            for entry in rubric:
+                if not isinstance(entry, dict):
+                    continue
+                criterion = str(entry.get("criterion", "")).strip()
+                if not criterion:
+                    continue
+                points = entry.get("points")
+                if points is None:
+                    rubric_parts.append(criterion)
+                else:
+                    rubric_parts.append(f"{criterion} ({float(points):g} pt)")
+            if rubric_parts:
+                lines.append(f"Rubric: {'; '.join(rubric_parts)}")
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def _format_dossier_acceptable_band_context(item: Any) -> str:
+    floor_raw = getattr(item, "acceptable_score_floor", None)
+    ceiling_raw = getattr(item, "acceptable_score_ceiling", None)
+    reason = str(getattr(item, "acceptable_score_reason", "")).strip()
+    if floor_raw is None and ceiling_raw is None and not reason:
+        return ""
+
+    max_points = float(getattr(item, "max_points", 0.0))
+    truth_score = float(
+        getattr(item, "truth_score", getattr(item, "professor_score", 0.0))
+    )
+    floor = float(floor_raw) if floor_raw is not None else truth_score
+    ceiling = float(ceiling_raw) if ceiling_raw is not None else truth_score
+    lines = [
+        "Acceptable score band: "
+        f"{_format_score_with_denominator(floor, max_points)} to "
+        f"{_format_score_with_denominator(ceiling, max_points)}"
+    ]
+    if reason:
+        lines.append(f"Acceptable band reason: {reason}")
+    return "\n".join(lines) + "\n"
+
+
 @dataclass(frozen=True)
 class _ScoreBandClassification:
     truth: float
@@ -1387,16 +1440,20 @@ class ThinkingNarrator:
         elapsed: float,
         prediction: Any,
         item: Any,
+        template_question: dict | None = None,
     ) -> str:
         truth_score = getattr(item, "truth_score", item.professor_score)
         with self._lock:
             item_token_count = self._item_token_count
             max_dedupe_streak = self._item_max_dedupe_streak
+        question_context = _format_dossier_question_context(template_question)
+        acceptable_band_context = _format_dossier_acceptable_band_context(item)
 
         return (
             "The item is finished. Build a compact trailing dossier for the operator.\n\n"
             f"Item: {item.exam_id}/{item.question_id}\n"
             f"Type: {item.answer_type}\n"
+            f"{question_context}"
             f"Elapsed seconds: {elapsed:.1f}\n"
             f"Approx narrator token count observed: {item_token_count}\n"
             f"Max dedupe streak observed: {max_dedupe_streak}\n"
@@ -1404,6 +1461,7 @@ class ThinkingNarrator:
             f"Model read: {getattr(prediction, 'model_read', '')}\n"
             f"Model score: {prediction.model_score}/{item.max_points}\n"
             f"Truth score: {truth_score}/{item.max_points}\n"
+            f"{acceptable_band_context}"
             f"Professor mark: {item.professor_mark}\n"
             f"Professor note: {item.notes}\n"
             f"Score basis: {getattr(prediction, 'score_basis', '')}\n"
@@ -1419,6 +1477,8 @@ class ThinkingNarrator:
             "- Ground every value in the specific item.\n"
             "- If handwriting is not the issue, say what the student work appears to show instead.\n"
             "- If little is salvageable, say that plainly rather than inventing credit.\n"
+            "- If the model score is below the acceptable score floor, do not erase the band reason; name the model/band tension in the hinge.\n"
+            "- Use the rubric and acceptable-band reason as counter-evidence when the model rationale overstates how little survives.\n"
             "- The hinge should name the contested deciding issue, not just repeat the score.\n"
             "- No markdown, no prose outside the JSON object."
         )
@@ -1589,6 +1649,7 @@ class ThinkingNarrator:
                         elapsed=elapsed,
                         prediction=prediction,
                         item=item,
+                        template_question=template_question,
                     )
                 )
             self._schedule_idle_legibility_if_needed()
