@@ -211,6 +211,7 @@ _UNICODE_SUBSCRIPTS = {
 # archiving and in-pane rendering share one stable vocabulary.
 _LEGIBILITY_STRUCTURED_ROW_LABELS = {
     "basis": "Basis",
+    "dossier_status": "Dossier",
     "read": "Read",
     "salvage": "What survives",
     "hinge": "Deciding issue",
@@ -222,12 +223,13 @@ _LEGIBILITY_STRUCTURED_ROW_LABELS = {
 }
 _LEGIBILITY_STRUCTURED_ROW_ORDER = {
     "basis": 1,
-    "read": 2,
-    "salvage": 3,
-    "hinge": 4,
-    "ambiguity": 5,
-    "credit_preserved": 6,
-    "deduction": 7,
+    "dossier_status": 2,
+    "read": 3,
+    "salvage": 4,
+    "hinge": 5,
+    "ambiguity": 6,
+    "credit_preserved": 7,
+    "deduction": 8,
     "review_marker": 8,
     "professor_mismatch": 9,
 }
@@ -1279,6 +1281,7 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
         "focus_preview",
         "wrap_up",
         "basis",
+        "dossier_status",
         "review_marker",
         "end",
     }
@@ -4239,6 +4242,7 @@ class PaintDryDisplay:
             "rollback_live",
             "topic",
             "basis",
+            "dossier_status",
             "read",
             "salvage",
             "hinge",
@@ -4275,6 +4279,9 @@ class PaintDryDisplay:
             continuation_prefix_width = prefix_width
         elif kind == "basis":
             prefix_width = len("  ≡ Basis: ")
+            continuation_prefix_width = prefix_width
+        elif kind == "dossier_status":
+            prefix_width = len("  ≈ Dossier: ")
             continuation_prefix_width = prefix_width
         elif kind == "read":
             prefix_width = len("  ≡ Read: ")
@@ -4368,6 +4375,7 @@ class PaintDryDisplay:
                 "header",
                 "topic",
                 "basis",
+                "dossier_status",
                 "read",
                 "salvage",
                 "hinge",
@@ -4395,6 +4403,7 @@ class PaintDryDisplay:
                 "header",
                 "topic",
                 "basis",
+                "dossier_status",
                 "read",
                 "salvage",
                 "hinge",
@@ -5479,6 +5488,25 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
                 )
+            elif kind == "dossier_status":
+                indent = "  ≈ "
+                label = "Dossier: "
+                structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
+                history_text.append(indent, style=chrome_faint_bone)
+                history_text.append(
+                    label,
+                    style=_history_label_style(_CHROME_FAINT_MOSS_RGB, render_layer),
+                )
+                _append_wrapped_shimmer_block(
+                    history_text, text, structured_kind,
+                    layer_index=render_layer,
+                    first_indent_width=len(indent) + len(label),
+                    continuation_prefix=" " * (len(indent) + len(label)),
+                    continuation_prefix_style=chrome_faint_bone,
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    **history_modulation_kwargs,
+                )
             elif kind in {"read", "salvage", "hinge"}:
                 indent = "  ≡ "
                 structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
@@ -6292,6 +6320,88 @@ class PaintDryDisplay:
         history.insert(insert_index, (kind, text, parity))
         self.history = deque(history, maxlen=_MAX_HISTORY_LINES)
 
+    def _target_group_bounds(self, target: str | None) -> tuple[int | None, int]:
+        history = list(self.history)
+        if target is None:
+            return (None, len(history))
+
+        target_header_index: int | None = None
+        end_index = len(history)
+        for index, (entry_kind, entry_text, _entry_parity) in enumerate(history):
+            if entry_kind != "header":
+                continue
+            header_target = self._history_target_for_header(entry_text)
+            if target_header_index is None:
+                if header_target == target:
+                    target_header_index = index
+                continue
+            end_index = index
+            break
+        return target_header_index, end_index
+
+    def _remove_dossier_status_for_target(self, target: str | None) -> None:
+        history = list(self.history)
+        if not history:
+            return
+
+        if target is None:
+            for index in range(len(history) - 1, -1, -1):
+                if history[index][0] == "dossier_status":
+                    del history[index]
+                    self.history = deque(history, maxlen=_MAX_HISTORY_LINES)
+                    return
+            return
+
+        start, end = self._target_group_bounds(target)
+        if start is None:
+            return
+        changed = False
+        retained = []
+        for index, entry in enumerate(history):
+            if start < index < end and entry[0] == "dossier_status":
+                changed = True
+                continue
+            retained.append(entry)
+        if changed:
+            self.history = deque(retained, maxlen=_MAX_HISTORY_LINES)
+
+    def on_dossier_status(
+        self,
+        text: str,
+        *,
+        stage: str | None = None,
+        target: str | None = None,
+    ) -> None:
+        del stage  # The reader currently renders the human-facing text directly.
+        text = text.strip()
+        if not text:
+            return
+
+        history = list(self.history)
+        if target:
+            start, end = self._target_group_bounds(target)
+            if start is not None:
+                for index in range(start + 1, end):
+                    if history[index][0] == "dossier_status":
+                        history[index] = (
+                            "dossier_status",
+                            text,
+                            history[index][2],
+                        )
+                        self.history = deque(history, maxlen=_MAX_HISTORY_LINES)
+                        return
+                parity = self._next_structured_row_parity(target=target)
+                history.insert(end, ("dossier_status", text, parity))
+                self.history = deque(history, maxlen=_MAX_HISTORY_LINES)
+                return
+
+        self._append_structured_history_row(
+            "dossier_status",
+            text,
+            parity=self._next_structured_row_parity(target=target),
+            target=target,
+        )
+
     def on_basis(self, text: str, *, target: str | None = None) -> None:
         self._append_structured_history_row(
             "basis",
@@ -6301,6 +6411,7 @@ class PaintDryDisplay:
         )
 
     def on_read(self, text: str, *, target: str | None = None) -> None:
+        self._remove_dossier_status_for_target(target)
         self._append_structured_history_row(
             "read",
             text,
@@ -6309,6 +6420,7 @@ class PaintDryDisplay:
         )
 
     def on_salvage(self, text: str, *, target: str | None = None) -> None:
+        self._remove_dossier_status_for_target(target)
         self._append_structured_history_row(
             "salvage",
             text,
@@ -6317,6 +6429,7 @@ class PaintDryDisplay:
         )
 
     def on_hinge(self, text: str, *, target: str | None = None) -> None:
+        self._remove_dossier_status_for_target(target)
         self._append_structured_history_row(
             "hinge",
             text,
@@ -6663,6 +6776,12 @@ def main() -> int:
                         )
                     elif msg_type == "basis":
                         display.on_basis(msg.get("text", ""))
+                    elif msg_type == "dossier_status":
+                        display.on_dossier_status(
+                            msg.get("text", ""),
+                            stage=msg.get("stage"),
+                            target=msg.get("target"),
+                        )
                     elif msg_type == "read":
                         display.on_read(
                             msg.get("text", ""),

@@ -333,6 +333,29 @@ class TestWezTermResolution(unittest.TestCase):
         row = next(event for event in events if event["type"] == "read")
         self.assertEqual(row["target"], "15-blue/fr-11c")
 
+    def test_write_dossier_status_emits_first_class_sidecar_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(log_dir=Path(tmpdir), fallback_stream=io.StringIO())
+            )
+            sink.start()
+            sink.write_dossier_status(
+                "Compiling dossier.",
+                stage="compiling",
+                target="15-blue/fr-11c",
+            )
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        status = next(event for event in events if event["type"] == "dossier_status")
+        self.assertEqual(status["text"], "Compiling dossier.")
+        self.assertEqual(status["stage"], "compiling")
+        self.assertEqual(status["target"], "15-blue/fr-11c")
+
     def test_fifo_writer_drop_persists_diagnostic_in_log_dir(self):
         class _BrokenWriter:
             def write(self, _line: str) -> None:

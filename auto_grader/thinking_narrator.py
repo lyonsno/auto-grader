@@ -1268,7 +1268,11 @@ class ThinkingNarrator:
                 timeout=30,
             ).strip()
         elif job["kind"] == "generated_dossier":
-            self._emit_status_line("Compiling dossier.")
+            self._emit_dossier_status_line(
+                "Compiling dossier.",
+                stage="compiling",
+                target=job.get("target"),
+            )
             text = self._chat_completion(
                 [
                     {
@@ -1348,7 +1352,11 @@ class ThinkingNarrator:
             if target:
                 payload["target"] = target
             self._legibility_jobs.append(payload)
-        self._emit_status_line("Dossier incoming.")
+        self._emit_dossier_status_line(
+            "Dossier incoming.",
+            stage="incoming",
+            target=target,
+        )
 
     def _emit_status_line(self, text: str) -> None:
         if not text.strip():
@@ -1359,6 +1367,21 @@ class ThinkingNarrator:
             return
         delta_writer(text.strip(), mode="status")
         commit_writer(mode="status")
+
+    def _emit_dossier_status_line(
+        self,
+        text: str,
+        *,
+        stage: str,
+        target: str | None = None,
+    ) -> None:
+        if not text.strip():
+            return
+        dossier_writer = getattr(self._sink, "write_dossier_status", None)
+        if dossier_writer is not None:
+            dossier_writer(text.strip(), stage=stage, target=target)
+            return
+        self._emit_status_line(text)
 
     @staticmethod
     def _clean_json_response(text: str) -> str:
@@ -1378,7 +1401,11 @@ class ThinkingNarrator:
             logger.warning("Background dossier was not valid JSON; dropping")
             return False
 
-        self._emit_status_line("Checking dossier.")
+        self._emit_dossier_status_line(
+            "Checking dossier.",
+            stage="checking",
+            target=target,
+        )
         payload = self._reconcile_dossier_payload(payload)
 
         emitted = False

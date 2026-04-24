@@ -23,6 +23,7 @@ class _DummySink:
         self.drops: list[tuple[str, str]] = []
         self.topics: list[dict[str, object]] = []
         self.structured_rows: list[tuple[str, str]] = []
+        self.dossier_statuses: list[dict[str, str | None]] = []
 
     def write_delta(self, text: str, *, mode: str = "thought") -> None:
         self.deltas.append(text)
@@ -41,6 +42,17 @@ class _DummySink:
 
     def write_drop(self, reason: str, text: str) -> None:
         self.drops.append((reason, text))
+
+    def write_dossier_status(
+        self,
+        text: str,
+        *,
+        stage: str | None = None,
+        target: str | None = None,
+    ) -> None:
+        self.dossier_statuses.append(
+            {"text": text, "stage": stage, "target": target}
+        )
 
     def write_topic(self, text: str, verdict: str | None = None, **kwargs) -> None:
         self.topics.append({"text": text, "verdict": verdict, **kwargs})
@@ -465,11 +477,32 @@ class ThinkingNarratorContract(unittest.TestCase):
         )()
 
         narrator._produce_after_action(95.0, prediction, item, template_question=None)
-        self.assertIn("Dossier incoming.", sink.status_lines)
+        self.assertIn(
+            {
+                "text": "Dossier incoming.",
+                "stage": "incoming",
+                "target": "15-blue/fr-11c",
+            },
+            sink.dossier_statuses,
+        )
 
         self.assertTrue(narrator._flush_idle_legibility_once())
-        self.assertIn("Compiling dossier.", sink.status_lines)
-        self.assertIn("Checking dossier.", sink.status_lines)
+        self.assertIn(
+            {
+                "text": "Compiling dossier.",
+                "stage": "compiling",
+                "target": "15-blue/fr-11c",
+            },
+            sink.dossier_statuses,
+        )
+        self.assertIn(
+            {
+                "text": "Checking dossier.",
+                "stage": "checking",
+                "target": "15-blue/fr-11c",
+            },
+            sink.dossier_statuses,
+        )
 
     def test_background_dossier_reconciliation_drops_redundant_lower_priority_field(self):
         sink = _DummySink()

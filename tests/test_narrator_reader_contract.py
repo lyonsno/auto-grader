@@ -2726,6 +2726,60 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertNotIn("Salvage:", plain)
         self.assertNotIn("Hinge:", plain)
 
+    def test_dossier_status_lands_under_target_problem_as_history_placeholder(self):
+        display = self._make_display()
+        display.on_header("[1/2] exam 15-blue · problem fr-11c (exact_match, 0.5 pts)")
+        display.on_dossier_status(
+            "Compiling dossier.",
+            stage="compiling",
+            target="15-blue/fr-11c",
+        )
+        display.on_header("[2/2] exam 15-blue · problem fr-12b (lewis_structure, 2.0 pts)")
+        display.on_delta("Verifying electron count.", mode="status")
+        display.on_commit("status")
+
+        history = list(display.history)
+        status_index = next(
+            index
+            for index, (kind, text, _parity) in enumerate(history)
+            if kind == "dossier_status" and text == "Compiling dossier."
+        )
+        second_header_index = next(
+            index
+            for index, (kind, text, _parity) in enumerate(history)
+            if kind == "header" and "problem fr-12b" in text
+        )
+
+        self.assertLess(
+            status_index,
+            second_header_index,
+            "dossier progress belongs under the originating problem, not in the current live status lane",
+        )
+
+        plain = _extract_plain(display.render())
+        self.assertIn("Dossier: Compiling dossier.", plain)
+        self.assertIn("VERIFYING ELECTRON COUNT.", plain)
+
+    def test_dossier_status_clears_when_targeted_dossier_row_arrives(self):
+        display = self._make_display()
+        display.on_header("[1/2] exam 15-blue · problem fr-11c (exact_match, 0.5 pts)")
+        display.on_dossier_status(
+            "Checking dossier.",
+            stage="checking",
+            target="15-blue/fr-11c",
+        )
+
+        display.on_read(
+            "Ambiguous crossed-out digit conflicts with the orbital box diagram.",
+            target="15-blue/fr-11c",
+        )
+
+        self.assertNotIn(
+            "dossier_status",
+            [kind for kind, _text, _parity in display.history],
+            "the placeholder should be replaced by the dossier rows once they land",
+        )
+
     def test_new_context_checkpoint_replaces_prior_context_within_same_problem(self):
         display = self._make_display()
         display.on_header("[1/6] exam 15-blue · problem fr-10a (numeric, 3.0 pts)")

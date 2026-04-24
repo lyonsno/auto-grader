@@ -255,6 +255,24 @@ class NarratorSink:
             target=target,
         )
 
+    def write_dossier_status(
+        self,
+        text: str,
+        *,
+        stage: str | None = None,
+        target: str | None = None,
+    ) -> None:
+        """Emit a targeted in-progress marker for a trailing dossier."""
+        if not text.strip():
+            return
+        with self._lock:
+            msg = {"type": "dossier_status", "text": text.strip()}
+            if stage:
+                msg["stage"] = stage
+            if target:
+                msg["target"] = target
+            self._emit(msg)
+
     def write_ambiguity(self, text: str) -> None:
         self._write_structured_row("ambiguity", "Ambiguity", text)
 
