@@ -22,7 +22,7 @@ In short: this is a paper-grading system with the production spine intact, plus
 a live forensic instrument for understanding whether an AI grader is being
 charitable, strict, confused, or genuinely right.
 
-## Why it matters
+## What It Makes Visible
 
 Most grading demos stop at "the model returned a score." This repo keeps going:
 it ties that score back to paper artifacts, scan identity, database state,
