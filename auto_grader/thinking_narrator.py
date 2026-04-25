@@ -195,13 +195,12 @@ def _qwen36_chat_template_kwargs(model: str | None) -> dict[str, bool] | None:
     return None
 
 
-# Chunking parameters — denser than spoke's defaults so we get a real
-# play-by-play feel. The dedup + grounding fix means we can dispatch more
-# often without repetitive output. For a 30s VLM reasoning stream we want
-# ~4-5 narrator lines, not 1-2.
-_TARGET_CHUNK_TOKENS = 200
-_MIN_INTERVAL_S = 3.0      # minimum seconds between narrator calls
-_MAX_INTERVAL_S = 8.0      # dispatch even with few tokens after this long
+# Chunking parameters. The richer status/checkpoint/dossier system made each
+# live call more useful, so keep the play-by-play but space it out enough that
+# the narrator does not crowd the grader on shared inference backends.
+_TARGET_CHUNK_TOKENS = 300
+_MIN_INTERVAL_S = 4.5      # minimum seconds between narrator calls
+_MAX_INTERVAL_S = 12.0     # dispatch even with few tokens after this long
 _MAX_TOKENS = 200          # generation budget for each summary
                            # (was 50, bumped 2026-04-08 to give the
                            # sumi-e first-person voice room without

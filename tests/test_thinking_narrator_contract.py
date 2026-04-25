@@ -4,6 +4,7 @@ import json
 import unittest
 from unittest import mock
 
+import auto_grader.thinking_narrator as thinking_narrator
 from auto_grader.thinking_narrator import (
     ThinkingNarrator,
     _SYSTEM_PROMPT,
@@ -98,6 +99,27 @@ class _RetryNarrator(ThinkingNarrator):
         for token in text.split():
             on_delta(token + " ")
         return text
+
+
+class _CadenceNarrator(ThinkingNarrator):
+    def __init__(self, sink: _DummySink) -> None:
+        super().__init__(sink)
+        self.dispatched_chunks: list[str] = []
+
+    def _dispatch(self, chunk: str, my_generation: int) -> None:  # type: ignore[override]
+        self.dispatched_chunks.append(chunk)
+        with self._lock:
+            self._pending_dispatch = False
+            self._dispatch_started_at = None
+
+
+class _InlineThread:
+    def __init__(self, *, target, args=(), daemon=None):
+        self._target = target
+        self._args = args
+
+    def start(self) -> None:
+        self._target(*self._args)
 
 
 class _AfterActionNarrator(ThinkingNarrator):
@@ -280,6 +302,36 @@ class ThinkingNarratorContract(unittest.TestCase):
         self.assertEqual(
             narrator._prior_statuses[-1],
             "Rechecking the same unit conversion.",
+        )
+
+    def test_live_status_cadence_waits_for_wider_token_budget(self):
+        sink = _DummySink()
+        narrator = _CadenceNarrator(sink)
+        now = 1000.0
+
+        def monotonic() -> float:
+            return now
+
+        with (
+            mock.patch.object(thinking_narrator.time, "monotonic", monotonic),
+            mock.patch.object(thinking_narrator.threading, "Thread", _InlineThread),
+        ):
+            narrator.start(item_header="15-blue/fr-1")
+            now = 1005.0
+            narrator.feed("word " * 230)
+
+            self.assertEqual(
+                narrator.dispatched_chunks,
+                [],
+                "the live narrator should not dispatch at the old ~200-token cadence",
+            )
+
+            narrator.feed("word ")
+
+        self.assertEqual(
+            len(narrator.dispatched_chunks),
+            1,
+            "the live narrator should dispatch once the wider ~300-token budget is reached",
         )
 
     def test_classify_score_against_band_keeps_truth_as_exact_hit_target(self):
