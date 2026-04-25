@@ -1578,21 +1578,27 @@ class ThinkingNarrator:
         prediction: Any,
         item: Any,
     ) -> bool:
-        truth_score = getattr(item, "truth_score", item.professor_score)
-        score_disagreement = abs(prediction.model_score - truth_score) > 1e-9
-        partial_credit = 0.0 < prediction.model_score < item.max_points
         truncated = bool(getattr(prediction, "truncated", False))
+
+        if elapsed >= _DOSSIER_LONG_ELAPSED_SECONDS:
+            return True
+
+        truth_score = getattr(item, "truth_score", item.professor_score)
+        model_score = getattr(prediction, "model_score", None)
+        score_known = model_score is not None
+        score_disagreement = (
+            score_known and abs(model_score - truth_score) > 1e-9
+        )
+        partial_credit = score_known and 0.0 < model_score < item.max_points
         full_credit_exact = (
             not truncated
-            and abs(prediction.model_score - truth_score) < 1e-9
-            and abs(prediction.model_score - item.max_points) < 1e-9
+            and score_known
+            and abs(model_score - truth_score) < 1e-9
+            and abs(model_score - item.max_points) < 1e-9
         )
 
         if full_credit_exact:
             return False
-
-        if elapsed >= _DOSSIER_LONG_ELAPSED_SECONDS:
-            return True
 
         with self._lock:
             max_dedupe_streak = self._item_max_dedupe_streak

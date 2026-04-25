@@ -797,6 +797,51 @@ class ThinkingNarratorContract(unittest.TestCase):
             "long ambiguity-shaped truncated items should still earn a trailing dossier instead of being categorically excluded",
         )
 
+    def test_truncated_long_item_with_no_model_score_announces_background_dossier(self):
+        sink = _DummySink()
+        narrator = _DossierAfterActionNarrator(sink)
+        item = type(
+            "Item",
+            (),
+            {
+                "exam_id": "15-blue",
+                "question_id": "fr-10b",
+                "answer_type": "numeric",
+                "max_points": 1.0,
+                "student_answer": "-2.415",
+                "professor_score": 1.0,
+                "truth_score": 1.0,
+                "professor_mark": "check",
+                "notes": "generous historical mark",
+                "acceptable_score_floor": 0.0,
+                "acceptable_score_ceiling": 1.0,
+            },
+        )()
+        prediction = type(
+            "Prediction",
+            (),
+            {
+                "model_score": None,
+                "model_read": "",
+                "model_reasoning": "Grader output could not be parsed as the required JSON.",
+                "score_basis": "",
+                "truncated": True,
+            },
+        )()
+
+        narrator._produce_after_action(294.0, prediction, item, template_question=None)
+
+        self.assertEqual(len(sink.topics), 1)
+        self.assertIn(
+            {
+                "text": "Dossier incoming.",
+                "stage": "incoming",
+                "target": "15-blue/fr-10b",
+            },
+            sink.dossier_statuses,
+        )
+        self.assertTrue(narrator._flush_idle_legibility_once())
+
     def test_interpretive_disagreement_item_can_enqueue_dossier_before_general_threshold(self):
         sink = _DummySink()
         narrator = _PromptCapturingDossierNarrator(sink)
