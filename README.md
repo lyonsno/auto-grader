@@ -1,14 +1,45 @@
 # Auto-Grader
 
-Local-first exam generation and grading for chemistry courses. It handles the
-full paper loop: generate per-student variants from reusable templates, ingest
-scanned submissions, score multiple-choice deterministically with OpenCV, and
-run model-based grading and evaluation on handwritten short-answer work.
+Local-first exam generation, scan ingest, and grading for chemistry courses.
+It handles the full paper loop: generate per-student variants from reusable
+templates, ingest scanned submissions, score multiple-choice deterministically
+with OpenCV, and run model-based grading and evaluation on messy handwritten
+short-answer work.
 
 The project is designed to run on a professor's own machine. There is no cloud
 dependency in the normal workflow. Postgres is the persistence spine so grading
 state, scan sessions, review decisions, and re-runs stay auditable instead of
 turning into loose files and shell history.
+
+The unusual part is Project Paint Dry: a terminal-native observability cockpit
+for watching a local VLM grade handwritten chemistry in real time. It shows the
+evidence crop, the live reasoning trace, running score legality metrics, and
+compact background dossiers for hard calls. The goal is not just to get a score
+out of a model; it is to make the model's judgment inspectable while the run is
+still happening.
+
+In short: this is a paper-grading system with the production spine intact, plus
+a live forensic instrument for understanding whether an AI grader is being
+charitable, strict, confused, or genuinely right.
+
+## Why it matters
+
+Most grading demos stop at "the model returned a score." This repo keeps going:
+it ties that score back to paper artifacts, scan identity, database state,
+human review, model reasoning, and the exact pixels the model saw.
+
+- **Real paper workflow:** generated exams carry machine-readable identity,
+  scanned pages round-trip through registration and persistence, and review
+  decisions become durable database facts.
+- **Local AI grading:** short-answer evaluation runs against local
+  OpenAI-compatible VLM backends, so the normal workflow does not depend on a
+  vendor cloud or send student work off-box.
+- **Inspectable model judgment:** Paint Dry turns a black-box grading run into
+  a live trace with evidence crops, status narration, lawful score-band
+  metrics, hard-case dossiers, rejected-output diagnostics, and replayable logs.
+- **Honest truth handling:** historical professor marks, corrected ground truth,
+  contamination warnings, and model disagreements are preserved as separate
+  facts instead of being flattened into one convenient number.
 
 ## Requirements
 
@@ -51,20 +82,26 @@ The live observability surface for short-answer grading. Paint Dry is the tool
 you use when the question is not just "what score came out?" but "what is the
 model seeing, what is it defending, and where is the real uncertainty?"
 
-It is not just a narrator and not just a dashboard. It is a weird but powerful
-development instrument for watching model judgment form in real time on messy
-handwritten work. In practice it is where prompt tuning, ambiguity diagnosis,
-focus-region annotation, and model-comparison work become tractable instead of
-staying buried in static logs.
+It is not just a narrator and not just a dashboard. It is a development
+instrument for watching model judgment form in real time on handwriting that is
+ambiguous, partially correct, or just plain ugly. In practice it is where prompt
+tuning, ambiguity diagnosis, focus-region annotation, and model-comparison work
+become tractable instead of staying buried in static logs.
 
-- **Scoreboard** with tall-digit dials: total elapsed, turn elapsed, on-target
-  fraction, left-on-table, and bad calls against the professor's ground truth
-- **Live pane** streaming what the narrator thinks is happening while the
-  grader reasons through each item
+- **Scoreboard** with tall-digit dials for `TOTAL`, `TURN`, `EXACT`,
+  `FLOOR MET`, `PARTIAL`, and `BELOW FLOOR`, so the run reads as lawful
+  grading behavior rather than a raw accuracy counter
+- **Status + live pane** streaming what the narrator thinks the grader is
+  checking right now, with a slower cadence tuned not to crowd the grader on a
+  shared inference backend
 - **Focus preview** showing the exact handwriting crop the grader is looking at
-- **History pane** that keeps structured per-item artifacts such as basis,
-  evidence, lean, core issue, and the newer `Read / Salvage / Hinge` dossier
-  rows for interesting items
+- **History pane** that keeps structured per-problem artifacts: score line,
+  acceptable band, `Basis`, `Read`, `What survives`, `Deciding issue`, and
+  rolling `Context`
+- **Targeted dossiers** for long, unstable, or interpretive items, including
+  in-place progress markers while the sidecar compiles and reconciles the
+  final rows
+- **Post-game commentary** summarizing the run after the final score line
 - **Rejected pane** for dedup-filtered and empty-filtered narrator output
 
 The history pane is scrollable (`k`/`j` row, `u`/`d` page, `0` live edge,
@@ -88,22 +125,23 @@ This side of the repo is the production workflow today:
 
 ### Short-answer grading and evaluation
 
-This side of the repo is where the more experimental and more interesting model
-work lives:
+This side of the repo is where the model-grading work lives:
 
 - VLM-based grading pipeline with ground-truth scoring and run comparison
 - Project Paint Dry for live inspection of model behavior during smoke and eval
 - focus-region authoring and in-window annotation for the exact evidence crop
 - split-model and single-model narrator/grader configurations
+- background dossiers for hard calls, with a reconciliation pass to remove
+  redundant or out-of-phase rows before display
 - truth correction and backfill tooling so historical professor marks and
   corrected ground truth can coexist honestly
 - canonical reconstruction and variant generation work for fixed-layout
   short-answer quiz families such as Quiz 5
 
 The short-answer lane is partly a grading system and partly an observability
-program. The point is not only to get a score, but to learn where the score is
-coming from, where the model is charitable or strict, and which disagreements
-are model failures versus genuinely hard handwritten cases.
+program. The point is not only to get a score, but to see where the score is
+coming from, whether it is lawful under the rubric, and which disagreements are
+model failures versus genuinely hard handwritten cases.
 
 ## Running it
 
@@ -170,7 +208,8 @@ Focus regions live in `eval/focus_regions.yaml` and can be adjusted from the
 command line or reopened directly from Paint Dry with `a`. The combination of
 focus preview, structured live history, and durable run artifacts is what makes
 short-answer smoke useful here: you can see the evidence crop, the evolving
-judgment, and the post-hoc run record all in one workflow.
+judgment, the scoreboard, the trailing dossier, and the post-hoc run record all
+in one workflow.
 
 For deeper semantics and operator vocabulary, see:
 

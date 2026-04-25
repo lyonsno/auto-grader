@@ -29,9 +29,12 @@ Top row:
 - `ITEM`: current item index within the run
 
 Lower tally row:
-- `ON TARGET`: total points where grader and reference agreed
-- `LEFT ON TABLE`: points the grader failed to award but the reference did
-- `BAD CALLS`: points the grader awarded incorrectly relative to the reference
+- `TOTAL`: total run elapsed time
+- `TURN`: current item elapsed time
+- `EXACT`: points where the grader exactly matched the corrected truth target
+- `FLOOR MET`: lawful minimum credit the grader met under the acceptable band
+- `PARTIAL`: lawful partial credit awarded above zero and below full credit
+- `BELOW FLOOR`: points below the lawful minimum that should have been awarded
 
 These are running tallies across the current run, not predictions about the next
 item.
@@ -75,8 +78,10 @@ The history stack is the running durable trace for the current run.
 It currently contains, in descending importance:
 - item headers
 - per-item scoring/topic lines
-- checkpoint lines
-- live thought lines
+- acceptable score-band lines when the item has a lawful range
+- structured dossier rows (`Basis`, `Read`, `What survives`, `Deciding issue`)
+- rolling `Context` checkpoint lines
+- targeted dossier-progress placeholders while background sidecars run
 
 The history view uses stronger value and shimmer on the first visual row of an
 entry and dims wrapped continuations faster. This is deliberate: the top row of
@@ -84,28 +89,35 @@ each item block should anchor the eye, while deeper reasoning should recede.
 
 ## Checkpoints
 
-Checkpoints are the new durable synthesis layer.
+Checkpoints and dossiers are the durable synthesis layers.
 
 They are not:
 - a live thought
 - a status line
 - a score line
 
-They are compact summaries of the durable issue that repeated live/status lines
-have established.
+`Context` checkpoints are compact rolling summaries of the durable issue that
+repeated live/status lines have established. New `Context` rows replace the
+previous context for that item instead of piling up redundant siblings.
+
+Dossiers are trailing per-item artifacts for long, unstable, interpretive, or
+score-disagreement cases. They are targeted to the originating problem even when
+the next item has already started. While they are in flight, history shows a
+`Dossier:` placeholder; when the rows land, the placeholder is replaced by the
+structured dossier rows.
 
 Current transition rule:
-- checkpoints are the intended durable persisted history surface
-- for the first smoke pass of the checkpoint architecture, accepted live lines
-  are still also persisted in history for comparison
+- live/status lines are primarily active instrumentation
+- `Context` checkpoints and dossier rows are the intended durable persisted
+  history surface
+- full-credit exact hits should normally avoid trailing dossiers unless another
+  explicit trigger makes the case interesting
 
-That temporary overlap is intentional. It lets us compare whether checkpoints are
-actually strong enough to replace the denser live-line trace.
-
-Checkpoint styling is intentionally calmer and more anchored than live/body rows:
+Checkpoint and dossier styling is intentionally calmer and more anchored than
+live/body rows:
 - warm structural mark
 - cooler anchored text
-- lower shimmer intensity than live play-by-play
+- readable fade down a block so deeper rows recede without disappearing
 
 ## Persistence and artifacts
 
@@ -125,9 +137,9 @@ deliberately alongside tests:
 - The scorebug is always present from run start, even before any scored topics
   arrive.
 - `status` and `live` are separate surfaces with separate fallback/idle behavior.
-- Checkpoints are the intended durable history layer.
-- The current implementation still persists live lines alongside checkpoints for
-  comparison during the transition.
+- `Context` checkpoints and dossier rows are the intended durable history layer.
+- Dossier progress belongs under the originating problem, not in the current
+  live status lane.
 - History hierarchy is value-led: top rows matter more than wrapped continuation
   rows.
 - The scorebug tallies are cumulative run state, not item-local state.
