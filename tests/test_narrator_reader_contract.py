@@ -2726,6 +2726,51 @@ class NarratorReaderContract(unittest.TestCase):
         self.assertNotIn("Salvage:", plain)
         self.assertNotIn("Hinge:", plain)
 
+    def test_legibility_rows_emitted_by_sink_reach_live_history(self):
+        display = self._make_display()
+        display.history.append(("header", "[item 1/6] first", None))
+        display.history.append(
+            ("checkpoint", "Core issue: ozone drawing misses resonance.", None)
+        )
+        display.history.append(("topic", "topic line", "match"))
+
+        display.on_ambiguity("Crossed-out digit could be 1 or 7.")
+        display.on_credit_preserved("Setup and units still earn method credit.")
+        display.on_deduction("Final Lewis structure loses one point.")
+
+        entries = display._build_display_entries()
+        summary = [(entry[0], entry[1]) for entry, _recent, _depth in entries]
+
+        self.assertEqual(
+            summary,
+            [
+                ("header", "[item 1/6] first"),
+                ("topic", "topic line"),
+                ("ambiguity", "Crossed-out digit could be 1 or 7."),
+                ("credit_preserved", "Setup and units still earn method credit."),
+                ("deduction", "Final Lewis structure loses one point."),
+                ("checkpoint", "Core issue: ozone drawing misses resonance."),
+            ],
+        )
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            history_text = display.render().renderables[-1].renderable
+
+        plain = history_text.plain
+        self.assertIn("Ambiguity:", plain)
+        self.assertIn("Credit preserved for:", plain)
+        self.assertIn("Deduction:", plain)
+
+    def test_live_reader_dispatches_all_sink_legibility_row_types(self):
+        source = inspect.getsource(narrator_reader.main)
+
+        self.assertIn('elif msg_type == "ambiguity":', source)
+        self.assertIn("display.on_ambiguity", source)
+        self.assertIn('elif msg_type == "credit_preserved":', source)
+        self.assertIn("display.on_credit_preserved", source)
+        self.assertIn('elif msg_type == "deduction":', source)
+        self.assertIn("display.on_deduction", source)
+
     def test_dossier_status_lands_under_target_problem_as_history_placeholder(self):
         display = self._make_display()
         display.on_header("[1/2] exam 15-blue · problem fr-11c (exact_match, 0.5 pts)")

@@ -1049,7 +1049,15 @@ def _history_secondary_row_weight(
         return 0.0
     if kind in {"header", "header_index", "header_dash"}:
         return group_weight
-    if kind in {"topic", "basis", "review_marker", "checkpoint"}:
+    if kind in {
+        "topic",
+        "basis",
+        "ambiguity",
+        "credit_preserved",
+        "deduction",
+        "review_marker",
+        "checkpoint",
+    }:
         return group_weight * 0.82
     if kind in {"line", "line_alt"}:
         depth_step = max(0, group_depth - 2)
@@ -1061,7 +1069,15 @@ def _history_alternation_row_scale(kind: str, group_depth: int) -> float:
     """Return how strongly the shared-sweep modulation should read here."""
     if kind in {"header", "header_index", "header_dash"}:
         return 1.0
-    if kind in {"topic", "basis", "review_marker", "checkpoint"}:
+    if kind in {
+        "topic",
+        "basis",
+        "ambiguity",
+        "credit_preserved",
+        "deduction",
+        "review_marker",
+        "checkpoint",
+    }:
         return 0.70
     if kind in {"line", "line_alt"}:
         depth_step = max(0, group_depth - 2)
@@ -1282,6 +1298,9 @@ def _message_requires_immediate_refresh(msg_type: str) -> bool:
         "wrap_up",
         "basis",
         "dossier_status",
+        "ambiguity",
+        "credit_preserved",
+        "deduction",
         "review_marker",
         "end",
     }
@@ -4243,6 +4262,9 @@ class PaintDryDisplay:
             "topic",
             "basis",
             "dossier_status",
+            "ambiguity",
+            "credit_preserved",
+            "deduction",
             "read",
             "salvage",
             "hinge",
@@ -4282,6 +4304,10 @@ class PaintDryDisplay:
             continuation_prefix_width = prefix_width
         elif kind == "dossier_status":
             prefix_width = len("  ≈ Dossier: ")
+            continuation_prefix_width = prefix_width
+        elif kind in {"ambiguity", "credit_preserved", "deduction"}:
+            label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind]
+            prefix_width = len("  ≡ ") + len(label) + len(": ")
             continuation_prefix_width = prefix_width
         elif kind == "read":
             prefix_width = len("  ≡ Read: ")
@@ -4376,6 +4402,9 @@ class PaintDryDisplay:
                 "topic",
                 "basis",
                 "dossier_status",
+                "ambiguity",
+                "credit_preserved",
+                "deduction",
                 "read",
                 "salvage",
                 "hinge",
@@ -4404,6 +4433,9 @@ class PaintDryDisplay:
                 "topic",
                 "basis",
                 "dossier_status",
+                "ambiguity",
+                "credit_preserved",
+                "deduction",
                 "read",
                 "salvage",
                 "hinge",
@@ -5507,7 +5539,14 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
                 )
-            elif kind in {"read", "salvage", "hinge"}:
+            elif kind in {
+                "read",
+                "salvage",
+                "hinge",
+                "ambiguity",
+                "credit_preserved",
+                "deduction",
+            }:
                 indent = "  ≡ "
                 structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
                 label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
@@ -6410,6 +6449,27 @@ class PaintDryDisplay:
             target=target,
         )
 
+    def on_ambiguity(self, text: str) -> None:
+        self._append_structured_history_row(
+            "ambiguity",
+            text,
+            parity=self._next_structured_row_parity(),
+        )
+
+    def on_credit_preserved(self, text: str) -> None:
+        self._append_structured_history_row(
+            "credit_preserved",
+            text,
+            parity=self._next_structured_row_parity(),
+        )
+
+    def on_deduction(self, text: str) -> None:
+        self._append_structured_history_row(
+            "deduction",
+            text,
+            parity=self._next_structured_row_parity(),
+        )
+
     def on_read(self, text: str, *, target: str | None = None) -> None:
         self._remove_dossier_status_for_target(target)
         self._append_structured_history_row(
@@ -6776,6 +6836,12 @@ def main() -> int:
                         )
                     elif msg_type == "basis":
                         display.on_basis(msg.get("text", ""))
+                    elif msg_type == "ambiguity":
+                        display.on_ambiguity(msg.get("text", ""))
+                    elif msg_type == "credit_preserved":
+                        display.on_credit_preserved(msg.get("text", ""))
+                    elif msg_type == "deduction":
+                        display.on_deduction(msg.get("text", ""))
                     elif msg_type == "dossier_status":
                         display.on_dossier_status(
                             msg.get("text", ""),
