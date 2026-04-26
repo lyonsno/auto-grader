@@ -1675,7 +1675,7 @@ class NarratorReaderContract(unittest.TestCase):
         # state frames contain zero CSI 2K sequences.
         from scripts.narrator_reader import suppress_live_erase
 
-        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+        def second_frame_output(*, suppress: bool) -> str:
             buf = self._TTYBuffer()
             console = Console(
                 file=buf,
@@ -1693,15 +1693,28 @@ class NarratorReaderContract(unittest.TestCase):
                 image_pixel_height=100,
             )
             with Live(console=console, auto_refresh=False, screen=False) as live:
-                suppress_live_erase(live)
+                if suppress:
+                    suppress_live_erase(live)
                 live.update(renderable, refresh=True)
                 buf.seek(0)
                 buf.truncate(0)
                 live.update(renderable, refresh=True)
-                second = buf.getvalue()
+                return buf.getvalue()
+
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            baseline_second = second_frame_output(suppress=False)
+            suppressed_second = second_frame_output(suppress=True)
+
+        self.assertGreater(
+            baseline_second.count("\x1b[2K"),
+            0,
+            "test precondition: this Rich Live setup should emit per-row "
+            "CSI 2K before suppression so the assertion below proves "
+            "suppress_live_erase changed the behavior",
+        )
 
         self.assertEqual(
-            second.count("\x1b[2K"),
+            suppressed_second.count("\x1b[2K"),
             0,
             "after suppress_live_erase(), Rich must not emit CSI 2K — "
             "the animation loop handles positioning and Kitty pixels "
@@ -1709,7 +1722,7 @@ class NarratorReaderContract(unittest.TestCase):
         )
         self.assertIn(
             "\x1b_Ga=p",
-            second,
+            suppressed_second,
             "Kitty placement must still appear in the suppressed frame",
         )
     def test_retransmit_kitty_image_updates_placement_dimensions(self):
