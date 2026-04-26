@@ -228,6 +228,38 @@ class SamplingPresetContract(unittest.TestCase):
             "grade_single_item should use the bounded stream idle timeout so a wedged upstream completion fails fast instead of freezing Paint Dry for ten minutes",
         )
 
+    def test_streaming_vlm_requests_send_autograder_grapheus_headers(self):
+        from auto_grader.vlm_inference import (
+            ServerConfig,
+            _stream_vision_completion_with_finish,
+        )
+
+        captured_headers: list[dict[str, str]] = []
+
+        def _capture_request(url, data=None, headers=None, method=None):
+            captured_headers.append(headers or {})
+            return object()
+
+        config = ServerConfig(
+            base_url="http://example.test",
+            model="qwen3p5-35B-A3B",
+        )
+
+        with (
+            mock.patch("urllib.request.Request", side_effect=_capture_request),
+            mock.patch("urllib.request.urlopen", side_effect=OSError("stop")),
+            self.assertRaises(TimeoutError),
+        ):
+            _stream_vision_completion_with_finish(
+                config=config,
+                prompt_text="grade this",
+                image_data_url="data:image/png;base64,AA==",
+                retries=1,
+            )
+
+        self.assertEqual(captured_headers[-1]["X-AutoGrader-Pathway"], "grader")
+        self.assertEqual(captured_headers[-1]["X-AutoGrader-Component"], "vlm_inference")
+
     def test_describe_only_stream_uses_bounded_idle_timeout(self):
         from auto_grader.vlm_inference import (
             ServerConfig,

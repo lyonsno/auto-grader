@@ -235,6 +235,21 @@ These are the core modules maintainers usually touch first:
 | `auto_grader.thinking_narrator` | Paint Dry narrator dispatch and structured artifacts |
 | `auto_grader.narrator_sink` | Durable narrator event/log emission |
 
+## Model Routing
+
+Current state: short-answer grading and Project Paint Dry narration both use
+the big-box grader model through Grapheus at
+`http://macbook-pro-2.local:8090`. This is an operational contract for the
+present topology, not a claim about the final architecture. The grader model is
+too large for the smaller boxes in the current workflow, and the narrator is a
+structured interpretability surface rather than a lightweight convenience
+sidecar, so auto-grader no longer defaults to the older Bonsai narrator server.
+
+Direct backend ports such as `:8001` remain explicit override/debug surfaces.
+Default smoke traffic should enter through Grapheus so inference logs are
+stable and requests carry `X-AutoGrader-*` headers (`Repo`, `Pathway`,
+`Component`, and when available `Model`) for cross-run analysis.
+
 ## Testing
 
 Contract tests enforce schema, DB persistence, generation, rendering, scan

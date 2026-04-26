@@ -23,13 +23,19 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, TYPE_CHECKING
 
+from auto_grader.model_routing import (
+    DEFAULT_GRADER_MODEL,
+    DEFAULT_GRAPHEUS_BASE_URL,
+    autograder_grapheus_headers,
+)
+
 if TYPE_CHECKING:
     from auto_grader.narrator_sink import NarratorSink
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_NARRATOR_MODEL = "Bonsai-8B-mlx-1bit"
-_DEFAULT_NARRATOR_BASE_URL = "http://nlm2pr.local:8002"
+_DEFAULT_NARRATOR_MODEL = DEFAULT_GRADER_MODEL
+_DEFAULT_NARRATOR_BASE_URL = DEFAULT_GRAPHEUS_BASE_URL
 
 _SYSTEM_PROMPT = """\
 You ARE a chemistry-grading AI thinking out loud, in real time, in \
@@ -743,11 +749,9 @@ class ThinkingNarrator:
         self._model = model
         self._api_key = api_key
 
-        # Wrap-up uses a separate endpoint/model. By default it falls back
-        # to the narrator's own server (preserving old behavior), but in
-        # practice the harness points it at the grader server because the
-        # grader model is free by the time wrap-up fires and can produce a
-        # more grounded post-game read than the small narrator model.
+        # Wrap-up can still be overridden independently, but the current
+        # auto-grader default is one Grafeas-routed grader-model surface for
+        # both live narration and post-game synthesis.
         self._wrap_up_base_url = (
             wrap_up_base_url.rstrip("/") if wrap_up_base_url else self._base_url
         )
@@ -2238,14 +2242,9 @@ class ThinkingNarrator:
         per-item summary at the end of each item, and (with overrides)
         for the end-of-run wrap-up against the grader server.
 
-        Defaults are tuned for bonsai (the live narrator model). The
-        wrap-up call routes through this function with explicit
-        overrides for base_url/model/api_key/temperature/max_tokens
-        to hit the grader server instead; min_p and repetition_penalty
-        leak through with bonsai values, but the deviations from
-        Qwen's expected defaults (min_p=0, repetition_penalty=1.0)
-        are minimal (0.002 and 1.001 respectively) and not worth
-        adding more override surface for.
+        Defaults preserve the historically chatty narrator sampling shape.
+        The current endpoint/model default is the same Grafeas-routed grader
+        model used for grading, not the old Bonsai sidecar.
         """
         eff_base = (base_url or self._base_url).rstrip("/")
         eff_model = model or self._model
@@ -2268,6 +2267,13 @@ class ThinkingNarrator:
         headers = {"Content-Type": "application/json"}
         if eff_api_key:
             headers["Authorization"] = f"Bearer {eff_api_key}"
+        headers.update(
+            autograder_grapheus_headers(
+                pathway="narrator",
+                component="thinking_narrator",
+                model=eff_model,
+            )
+        )
 
         req = urllib.request.Request(
             f"{eff_base}/v1/chat/completions",
@@ -2356,6 +2362,13 @@ class ThinkingNarrator:
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
+        headers.update(
+            autograder_grapheus_headers(
+                pathway="narrator",
+                component="thinking_narrator",
+                model=self._model,
+            )
+        )
 
         req = urllib.request.Request(
             f"{self._base_url}/v1/chat/completions",

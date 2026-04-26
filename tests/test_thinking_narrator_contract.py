@@ -1064,10 +1064,12 @@ class ThinkingNarratorContract(unittest.TestCase):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink, model="Qwen3.6-35B-A3B-bf16")
         captured_bodies: list[dict[str, object]] = []
+        captured_headers: list[dict[str, str]] = []
 
         def _capture_request(url, data=None, headers=None, method=None):
             assert data is not None
             captured_bodies.append(json.loads(data.decode()))
+            captured_headers.append(headers or {})
             return object()
 
         with (
@@ -1088,6 +1090,8 @@ class ThinkingNarratorContract(unittest.TestCase):
             captured_bodies[-1]["chat_template_kwargs"],
             {"enable_thinking": False},
         )
+        self.assertEqual(captured_headers[-1]["X-AutoGrader-Pathway"], "narrator")
+        self.assertEqual(captured_headers[-1]["X-AutoGrader-Component"], "thinking_narrator")
 
     def test_non_qwen_sync_narrator_requests_do_not_force_chat_template_kwargs(self):
         sink = _DummySink()
@@ -1118,10 +1122,12 @@ class ThinkingNarratorContract(unittest.TestCase):
         sink = _DummySink()
         narrator = ThinkingNarrator(sink, model="Qwen3.6-35B-A3B-bf16")
         captured_bodies: list[dict[str, object]] = []
+        captured_headers: list[dict[str, str]] = []
 
         def _capture_request(url, data=None, headers=None, method=None):
             assert data is not None
             captured_bodies.append(json.loads(data.decode()))
+            captured_headers.append(headers or {})
             return object()
 
         with (
@@ -1141,6 +1147,8 @@ class ThinkingNarratorContract(unittest.TestCase):
             captured_bodies[-1]["chat_template_kwargs"],
             {"enable_thinking": False},
         )
+        self.assertEqual(captured_headers[-1]["X-AutoGrader-Pathway"], "narrator")
+        self.assertEqual(captured_headers[-1]["X-AutoGrader-Component"], "thinking_narrator")
 
 
 if __name__ == "__main__":

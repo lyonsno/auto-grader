@@ -21,6 +21,7 @@ import fitz  # pymupdf
 import yaml
 
 from auto_grader.eval_harness import EvalItem, Prediction
+from auto_grader.model_routing import DEFAULT_GRADER_MODEL, autograder_grapheus_headers
 
 
 @dataclass
@@ -83,7 +84,7 @@ class ServerConfig:
 
     base_url: str  # e.g. "http://192.168.68.128:8001"
     api_key: str = "1234"
-    model: str = "qwen3p5-35B-A3B"
+    model: str = DEFAULT_GRADER_MODEL
     max_tokens: int = 8192
     temperature: float = 0.6
     top_p: float = 0.95
@@ -616,6 +617,13 @@ def _stream_vision_completion_with_finish(
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
+        headers.update(
+            autograder_grapheus_headers(
+                pathway="grader",
+                component="vlm_inference",
+                model=config.model,
+            )
+        )
         return urllib.request.Request(
             url,
             data=body,

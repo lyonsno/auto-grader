@@ -64,6 +64,7 @@ from auto_grader.vlm_inference import (
     resolve_model_family,
     stream_vision_completion,
 )
+from auto_grader.model_routing import DEFAULT_GRAPHEUS_BASE_URL
 
 _GROUND_TRUTH = Path(__file__).resolve().parent.parent / "eval" / "ground_truth.yaml"
 _SCANS_DIR = Path.home() / "dev" / "auto-grader-assets" / "scans"
@@ -109,7 +110,7 @@ def _build_backend(args: argparse.Namespace) -> ProbeBackend:
     # local
     return ProbeBackend(
         name="local",
-        base_url=args.base_url or "http://macbook-pro-2.local:8001",
+        base_url=args.base_url or DEFAULT_GRAPHEUS_BASE_URL,
         api_key=os.environ.get("OMLX_SERVER_API_KEY", "1234"),
         is_openrouter=False,
     )
@@ -240,7 +241,7 @@ def main() -> int:
         "--base-url",
         default=None,
         help="Override the backend base URL. Defaults: local → "
-        "http://macbook-pro-2.local:8001, openrouter → "
+        f"{DEFAULT_GRAPHEUS_BASE_URL}, openrouter → "
         "https://openrouter.ai/api/v1",
     )
     parser.add_argument(

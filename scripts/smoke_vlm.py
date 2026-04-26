@@ -30,6 +30,7 @@ from auto_grader.focus_regions import (
     DEFAULT_FOCUS_REGIONS_PATH,
     load_focus_regions,
 )
+from auto_grader.model_routing import DEFAULT_GRAPHEUS_BASE_URL
 from auto_grader.narrator_sink import NarratorSink, SinkConfig
 from auto_grader.thinking_narrator import (
     ThinkingNarrator,
@@ -62,7 +63,7 @@ _TEMPLATE = (
     / "chm141-final-fall2023.yaml"
 )
 
-_DEFAULT_NARRATOR_URL = "http://nlm2pr.local:8002"
+_DEFAULT_NARRATOR_URL = DEFAULT_GRAPHEUS_BASE_URL
 _KNOWN_CLEAN_EXAM_IDS = frozenset(
     {
         "15-blue",
@@ -679,11 +680,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Number of items to grade (from first exam)")
     parser.add_argument(
         "--base-url",
-        default="http://macbook-pro-2.local:8001",
+        default=DEFAULT_GRAPHEUS_BASE_URL,
         help=(
-            "OpenAI-compatible grader server. Defaults to mDNS so it "
-            "follows the M4 Max's current LAN IP across DHCP renewals "
-            "instead of pinning a stale dotted-quad."
+            "OpenAI-compatible grader surface. Defaults to Grafeas on "
+            "the M4 Max, which forwards to the current grader backend."
         ),
     )
     parser.add_argument("--all", action="store_true",
@@ -731,11 +731,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--narrate", action="store_true",
-                        help="Enable Project Paint Dry bonsai narrator (rich Terminal window + log files)")
+                        help="Enable Project Paint Dry narrator (rich Terminal window + log files)")
     parser.add_argument("--narrate-stderr", action="store_true",
                         help="Plain-text narrator output to stderr (no Terminal window) — for dev")
     parser.add_argument("--narrator-url", default=_DEFAULT_NARRATOR_URL,
-                        help="Bonsai narrator OMLX server URL")
+                        help="OpenAI-compatible narrator surface")
     parser.add_argument("--narrator-model", default=_DEFAULT_NARRATOR_MODEL)
     parser.add_argument(
         "--wrap-up-url",
