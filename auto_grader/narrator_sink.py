@@ -28,6 +28,7 @@ import errno
 import json
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -113,7 +114,7 @@ class NarratorSink:
             self._fifo_writer = self._open_fifo_writer_with_timeout(self._fifo_path)
 
         if self.config.session_meta:
-            self._emit({"type": "session_meta", **self.config.session_meta})
+            self._emit({**self.config.session_meta, "type": "session_meta"})
 
     def close(self) -> None:
         if not self._started:
@@ -511,11 +512,6 @@ class NarratorSink:
 
         # Project root for uv run
         project_root = Path(__file__).resolve().parent.parent
-        project_python = project_root / ".venv" / "bin" / "python"
-        if not project_python.exists():
-            raise RuntimeError(
-                f"project python not found at {project_python}"
-            )
 
         runner = fifo.parent / "run.sh"
         diagnostics_dir = self.config.log_dir or fifo.parent
@@ -526,13 +522,13 @@ class NarratorSink:
         runner.write_text(
             "#!/bin/bash\n"
             "set -u\n"
-            f"cd {project_root}\n"
+            f"cd {shlex.quote(str(project_root))}\n"
             "unset PAINT_DRY_NO_INLINE_IMAGES\n"
             f"export PAINT_DRY_DEBUG_LOG=\"{reader_debug}\"\n"
             "if [ -r /dev/tty ]; then\n"
             "  exec </dev/tty\n"
             "fi\n"
-            f"\"{project_python}\" \"{reader_script}\" \"{fifo}\" "
+            f"uv run python \"{reader_script}\" \"{fifo}\" "
             f"2>\"{reader_stderr}\"\n"
             "status=$?\n"
             f"printf '%s\\n' \"$status\" >\"{reader_exit}\"\n"

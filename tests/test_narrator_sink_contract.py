@@ -50,7 +50,7 @@ class TestWezTermResolution(unittest.TestCase):
             ],
         )
 
-    def test_spawn_runner_uses_checkout_python_not_uv_run(self):
+    def test_spawn_runner_uses_uv_run_instead_of_checkout_venv_path(self):
         sink = NarratorSink()
         with tempfile.TemporaryDirectory() as tmpdir:
             fifo = Path(tmpdir) / "narrator.fifo"
@@ -66,8 +66,8 @@ class TestWezTermResolution(unittest.TestCase):
             runner = fifo.parent / "run.sh"
             script = runner.read_text()
 
-        self.assertIn(".venv/bin/python", script)
-        self.assertNotIn("uv run python", script)
+        self.assertIn("uv run python", script)
+        self.assertNotIn(".venv/bin/python", script)
 
     def test_spawn_runner_reclaims_tty_stdin_for_history_controls(self):
         sink = NarratorSink()
@@ -282,6 +282,29 @@ class TestWezTermResolution(unittest.TestCase):
         meta = next(event for event in events if event["type"] == "session_meta")
         self.assertEqual(meta["model"], "qwen3p5-35B-A3B")
         self.assertEqual(meta["set_label"], "TRICKY")
+
+    def test_session_meta_cannot_clobber_protocol_event_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = NarratorSink(
+                SinkConfig(
+                    log_dir=Path(tmpdir),
+                    fallback_stream=io.StringIO(),
+                    session_meta={
+                        "type": "not_session_meta",
+                        "model": "qwen3p5-35B-A3B",
+                    },
+                )
+            )
+            sink.start()
+            sink.close()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmpdir) / "narrator.jsonl").read_text().splitlines()
+            ]
+
+        self.assertEqual(events[0]["type"], "session_meta")
+        self.assertEqual(events[0]["model"], "qwen3p5-35B-A3B")
 
     def test_write_topic_can_emit_scorebug_tally_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
