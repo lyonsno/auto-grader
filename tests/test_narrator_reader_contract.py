@@ -5785,5 +5785,36 @@ class NarratorReaderContract(unittest.TestCase):
         )
 
 
+    def test_legibility_structured_rows_reach_history(self):
+        """Structured legibility rows (ambiguity, credit_preserved, deduction,
+        professor_mismatch) emitted by NarratorSink must appear in the
+        display's history deque, not be silently dropped by the dispatch loop.
+        """
+        display = self._make_display()
+        display.on_header("[item 1/6] first")
+
+        display.on_ambiguity("OCR uncertain on digit 4")
+        display.on_credit_preserved("partial credit for unit")
+        display.on_deduction("1pt off for sign error")
+        display.on_professor_mismatch("Prof gave 2/3, grader gave 1/3")
+
+        kinds = [kind for kind, _text, _parity in display.history]
+        for expected_kind in ("ambiguity", "credit_preserved", "deduction", "professor_mismatch"):
+            self.assertIn(
+                expected_kind,
+                kinds,
+                f"{expected_kind!r} event should appear in history after dispatch",
+            )
+
+        with mock.patch("scripts.narrator_reader.time.monotonic", return_value=0.0):
+            group = display.render()
+        plain = _extract_plain(group)
+        self.assertIn("Ambiguity:", plain)
+        self.assertIn("OCR uncertain on digit 4", plain)
+        self.assertIn("Credit preserved for:", plain)
+        self.assertIn("Deduction:", plain)
+        self.assertIn("Professor mismatch:", plain)
+
+
 if __name__ == "__main__":
     unittest.main()

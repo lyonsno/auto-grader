@@ -5526,6 +5526,25 @@ class PaintDryDisplay:
                     cycle_s=entry_cycle,
                     **history_modulation_kwargs,
                 )
+            elif kind in {"ambiguity", "credit_preserved", "deduction"}:
+                indent = "  ≡ "
+                label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
+                structured_kind = "checkpoint_alt" if parity == 1 else "checkpoint"
+                history_text.append(indent, style=chrome_faint_bone)
+                history_text.append(
+                    label,
+                    style=_history_label_style(_EMBER_ACCENT_RGB, render_layer),
+                )
+                _append_wrapped_shimmer_block(
+                    history_text, text, structured_kind,
+                    layer_index=render_layer,
+                    first_indent_width=len(indent) + len(label),
+                    continuation_prefix=" " * (len(indent) + len(label)),
+                    continuation_prefix_style=chrome_faint_bone,
+                    wrap_width=wrap_width,
+                    cycle_s=entry_cycle,
+                    **history_modulation_kwargs,
+                )
             elif kind in {"review_marker", "professor_mismatch"}:
                 indent = "  ! "
                 label = _LEGIBILITY_STRUCTURED_ROW_LABELS[kind] + ": "
@@ -6445,6 +6464,15 @@ class PaintDryDisplay:
             ("professor_mismatch", text, self._next_structured_row_parity())
         )
 
+    def on_ambiguity(self, text: str) -> None:
+        self.history.append(("ambiguity", text, self._next_structured_row_parity()))
+
+    def on_credit_preserved(self, text: str) -> None:
+        self.history.append(("credit_preserved", text, self._next_structured_row_parity()))
+
+    def on_deduction(self, text: str) -> None:
+        self.history.append(("deduction", text, self._next_structured_row_parity()))
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -6801,6 +6829,12 @@ def main() -> int:
                         display.on_review_marker(msg.get("text", ""))
                     elif msg_type == "professor_mismatch":
                         display.on_professor_mismatch(msg.get("text", ""))
+                    elif msg_type == "ambiguity":
+                        display.on_ambiguity(msg.get("text", ""))
+                    elif msg_type == "credit_preserved":
+                        display.on_credit_preserved(msg.get("text", ""))
+                    elif msg_type == "deduction":
+                        display.on_deduction(msg.get("text", ""))
                     elif msg_type == "checkpoint":
                         display.on_checkpoint(msg.get("text", ""))
                     elif msg_type == "drop":
